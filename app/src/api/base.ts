@@ -1,10 +1,12 @@
 // 服务器地址、接入令牌和请求工具。
 // 网页版默认和接口同源（地址留空）；原生 app 第一次打开要在连接页填自己服务器的地址和令牌，存在本机（iOS 钥匙串 / 浏览器 localStorage）。
 import { Platform } from 'react-native';
+import { acceptLanguage, L } from '../lang';  // 从 lang 而不是 i18n 引：i18n.tsx 自己引了本文件，反过来引会成环
 
 const KEY_SERVER = 'mousse.server';
 const KEY_TOKEN = 'mousse.token';
 const KEY_NAME = 'mousse.name';
+const KEY_LANG = 'mousse.lang';
 let base = '';
 let token = '';
 let loaded = false;
@@ -62,6 +64,9 @@ export async function saveServerConfig(newBase: string, newToken: string): Promi
 
 export const loadAgentName = () => readItem(KEY_NAME);
 export const persistAgentName = (n: string) => writeItem(KEY_NAME, n);
+/** 界面语言：'zh' / 'en'，空 = 跟随系统。 */
+export const loadLangPref = () => readItem(KEY_LANG);
+export const saveLangPref = (v: string) => writeItem(KEY_LANG, v);
 
 export function normalizeBase(v: string): string {
   let s = (v || '').trim().replace(/\/+$/, '');
@@ -76,8 +81,9 @@ export const serverConfigured = () => Platform.OS === 'web' || !!base;
 /** 网页版默认的服务器地址（同源）。 */
 export const defaultBase = () => (Platform.OS === 'web' && typeof window !== 'undefined' ? window.location.origin : '');
 
+/** 每个请求都带：令牌（有的话）+ 界面语言（服务器按它回中文或英文）。 */
 export function authHeaders(): Record<string, string> {
-  return token ? { Authorization: `Bearer ${token}` } : {};
+  return { 'Accept-Language': acceptLanguage(), ...(token ? { Authorization: `Bearer ${token}` } : {}) };
 }
 
 /** 给 <Image> 这类带不了请求头的地方用：令牌放在 query 里。 */
@@ -95,13 +101,13 @@ export async function testServer(b: string, tok: string): Promise<{ ok: true; ap
   const ctl = new AbortController();
   const timer = setTimeout(() => ctl.abort(), 12000);
   try {
-    const r = await fetch(url, { signal: ctl.signal, headers: { Accept: 'application/json', ...(tok.trim() ? { Authorization: `Bearer ${tok.trim()}` } : {}) } });
+    const r = await fetch(url, { signal: ctl.signal, headers: { Accept: 'application/json', 'Accept-Language': acceptLanguage(), ...(tok.trim() ? { Authorization: `Bearer ${tok.trim()}` } : {}) } });
     const j = await r.json().catch(() => ({}));
-    if (r.status === 401) return { ok: false, reason: 'auth', message: tok.trim() ? '令牌不对，服务器不认。' : '这个服务器要令牌。' };
+    if (r.status === 401) return { ok: false, reason: 'auth', message: tok.trim() ? L('令牌不对，服务器不认。', 'Wrong token. The server rejected it.') : L('这个服务器要令牌。', 'This server needs an access token.') };
     if (!r.ok || !j.ok) return { ok: false, reason: 'down', message: j.error || j.detail || `HTTP ${r.status}` };
     return { ok: true, appName: j.app_name || 'OpenMousse' };
   } catch (e) {
-    return { ok: false, reason: 'down', message: e instanceof Error && e.name === 'AbortError' ? '连接超时' : '地址不通，连不上。' };
+    return { ok: false, reason: 'down', message: e instanceof Error && e.name === 'AbortError' ? L('连接超时', 'Connection timed out.') : L('地址不通，连不上。', "Can't reach this address.") };
   } finally {
     clearTimeout(timer);
   }
@@ -119,7 +125,7 @@ export async function request<T>(path: string, init?: { method?: string; body?: 
       body: init?.body !== undefined ? JSON.stringify(init.body) : undefined,
     });
     const j = await r.json().catch(() => ({}));
-    if (r.status === 401) throw new AuthError(j.error || '接入令牌不对');
+    if (r.status === 401) throw new AuthError(j.error || L('接入令牌不对', 'Wrong access token'));
     if (!r.ok || j.ok === false) throw new Error(j.detail || j.error || `HTTP ${r.status}`);
     return j as T;
   } finally {

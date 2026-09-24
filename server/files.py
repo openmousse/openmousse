@@ -27,6 +27,7 @@ from chat import _lock, db, now_iso
 router = APIRouter()
 
 from config import settings  # noqa: E402
+from i18n import L  # noqa: E402
 
 UPLOAD_DIR = settings.uploads
 ENV_PATH = settings.env_file
@@ -63,7 +64,7 @@ def env_key(name: str) -> str:
             if line.strip().startswith(name + "="):
                 val = line.strip().split("=", 1)[1].strip().strip('"').strip("'")
     if not val:
-        raise RuntimeError(f"缺少 {name}")
+        raise RuntimeError(L(f"缺少 {name}", f"Missing {name}"))
     return val
 
 
@@ -90,6 +91,11 @@ def human(n: int) -> str:
     return f"{n / 1024 / 1024:.1f} MB" if n >= 1024 * 1024 else f"{max(1, n // 1024)} KB"
 
 
+def count(n: int, word: str) -> str:
+    """英文计数：1 page / 3 pages。"""
+    return f"{n} {word}{'' if n == 1 else 's'}"
+
+
 # —— 抽文字 ——
 
 def extract_text(path: Path, kind: str, mime: str) -> tuple[str, str]:
@@ -101,13 +107,13 @@ def extract_text(path: Path, kind: str, mime: str) -> tuple[str, str]:
             reader = PdfReader(str(path))
             parts, n = [], len(reader.pages)
             for i, page in enumerate(reader.pages[:300]):
-                parts.append(f"[第 {i + 1} 页]\n{(page.extract_text() or '').strip()}")
+                parts.append(L(f"[第 {i + 1} 页]", f"[Page {i + 1}]") + f"\n{(page.extract_text() or '').strip()}")
                 if sum(len(x) for x in parts) > TEXT_CHARS_PER_FILE:
                     break
             text = "\n\n".join(parts)
-            note = f"PDF，{n} 页"
-            if len(text.replace("[第", "").strip()) < 50 * min(n, 3):
-                note += "，几乎没有可抽取的文字（可能是扫描件）"
+            note = L(f"PDF，{n} 页", f"PDF, {count(n, 'page')}")
+            if len(text.replace(L("[第", "[Page"), "").strip()) < 50 * min(n, 3):
+                note += L("，几乎没有可抽取的文字（可能是扫描件）", ", almost no extractable text (probably a scan)")
             return text, note
         if ext == ".docx":
             import docx
@@ -116,32 +122,32 @@ def extract_text(path: Path, kind: str, mime: str) -> tuple[str, str]:
             for tbl in d.tables:
                 for row in tbl.rows:
                     parts.append("\t".join(c.text.strip() for c in row.cells))
-            return "\n".join(parts), f"Word，{len(d.paragraphs)} 段"
+            return "\n".join(parts), L(f"Word，{len(d.paragraphs)} 段", f"Word, {count(len(d.paragraphs), 'paragraph')}")
         if ext in {".xlsx", ".xlsm"}:
             import openpyxl
             wb = openpyxl.load_workbook(str(path), read_only=True, data_only=True)
             parts = []
             for ws in wb.worksheets:
-                parts.append(f"## 工作表 {ws.title}")
+                parts.append(L(f"## 工作表 {ws.title}", f"## Sheet {ws.title}"))
                 for r, row in enumerate(ws.iter_rows(values_only=True)):
                     if r >= 500:
-                        parts.append("…（只取前 500 行）")
+                        parts.append(L("…（只取前 500 行）", "…(first 500 rows only)"))
                         break
                     parts.append("\t".join("" if v is None else str(v) for v in row))
-            return "\n".join(parts), f"Excel，{len(wb.worksheets)} 个工作表"
+            return "\n".join(parts), L(f"Excel，{len(wb.worksheets)} 个工作表", f"Excel, {count(len(wb.worksheets), 'sheet')}")
         if ext == ".pptx":
             from pptx import Presentation
             prs = Presentation(str(path))
             parts = []
             for i, slide in enumerate(prs.slides):
                 texts = [sh.text_frame.text for sh in slide.shapes if getattr(sh, "has_text_frame", False) and sh.text_frame.text.strip()]
-                parts.append(f"[第 {i + 1} 页]\n" + "\n".join(texts))
-            return "\n\n".join(parts), f"PowerPoint，{len(prs.slides)} 页"
+                parts.append(L(f"[第 {i + 1} 页]", f"[Slide {i + 1}]") + "\n" + "\n".join(texts))
+            return "\n\n".join(parts), L(f"PowerPoint，{len(prs.slides)} 页", f"PowerPoint, {count(len(prs.slides), 'slide')}")
         if kind == "doc":
             raw = path.read_bytes()[: TEXT_CHARS_PER_FILE * 4]
-            return raw.decode("utf-8", "replace"), "文本"
+            return raw.decode("utf-8", "replace"), L("文本", "Text")
     except Exception as exc:  # noqa: BLE001 — 抽不出来不算失败，原文件还在
-        return "", f"抽取失败：{str(exc)[:120]}"
+        return "", L(f"抽取失败：{str(exc)[:120]}", f"Couldn't extract text: {str(exc)[:120]}")
     return "", ""
 
 
@@ -160,7 +166,7 @@ def transcribe(path: Path, mime: str | None = None) -> str:
             last = f"HTTP {r.status_code}: {r.text[:200]}"
         except httpx.HTTPError as exc:
             last = str(exc)
-    raise RuntimeError(f"转写失败：{last}")
+    raise RuntimeError(L(f"转写失败：{last}", f"Transcription failed: {last}"))
 
 
 # —— 图片 ——
@@ -218,7 +224,7 @@ def summary(r: sqlite3.Row | dict) -> dict:
 @router.post("/api/chat/upload")
 async def upload(thread: str = Form("main"), files: list[UploadFile] = File(...)):
     if len(files) > MAX_FILES:
-        raise HTTPException(400, f"一条消息最多 {MAX_FILES} 个附件")
+        raise HTTPException(400, L(f"一条消息最多 {MAX_FILES} 个附件", f"Up to {MAX_FILES} attachments per message"))
     out = []
     for f in files:
         name = safe_name(f.filename or "file")
@@ -234,7 +240,7 @@ async def upload(thread: str = Form("main"), files: list[UploadFile] = File(...)
                 if size > MAX_BYTES:
                     fh.close()
                     path.unlink(missing_ok=True)
-                    raise HTTPException(413, f"{name} 超过 {MAX_BYTES // 1024 // 1024} MB")
+                    raise HTTPException(413, L(f"{name} 超过 {MAX_BYTES // 1024 // 1024} MB", f"{name} is over {MAX_BYTES // 1024 // 1024} MB"))
                 fh.write(chunk)
         kind = kind_of(name, mime)
         text, note, status = "", "", "ok"
@@ -243,11 +249,11 @@ async def upload(thread: str = Form("main"), files: list[UploadFile] = File(...)
         elif kind == "audio":
             try:
                 text = transcribe(path, mime)
-                note = "已转写"
+                note = L("已转写", "Transcribed")
             except RuntimeError as exc:
                 note, status = str(exc)[:160], "warn"
         elif kind == "image":
-            note = "图片" if image_for_model(path) else "图片（打不开，只存了文件）"
+            note = L("图片", "Image") if image_for_model(path) else L("图片（打不开，只存了文件）", "Image (couldn't open it, file saved only)")
         text = text[:TEXT_CHARS_PER_FILE]
         ts = now_iso()
         with _lock, adb() as conn:
@@ -271,7 +277,7 @@ async def transcribe_endpoint(file: UploadFile = File(...)):
             while chunk := await file.read(1024 * 1024):
                 size += len(chunk)
                 if size > MAX_BYTES:
-                    raise HTTPException(413, "录音太大")
+                    raise HTTPException(413, L("录音太大", "Recording is too large"))
                 fh.write(chunk)
         try:
             text = transcribe(path, file.content_type)
@@ -287,7 +293,7 @@ def get_file(fid: str, thumb: int = 0):
     with _lock, adb() as conn:
         r = conn.execute("SELECT * FROM attachments WHERE id=?", (fid,)).fetchone()
     if not r or not Path(r["path"]).is_file():
-        raise HTTPException(404, "文件不在了")
+        raise HTTPException(404, L("文件不在了", "File no longer exists"))
     path = Path(r["path"])
     if thumb and r["kind"] == "image":
         t = thumbnail(path)
@@ -302,13 +308,13 @@ def load_pending(thread: str, ids: list[str]) -> list[sqlite3.Row]:
     if not ids:
         return []
     if len(ids) > MAX_FILES:
-        raise HTTPException(400, f"一条消息最多 {MAX_FILES} 个附件")
+        raise HTTPException(400, L(f"一条消息最多 {MAX_FILES} 个附件", f"Up to {MAX_FILES} attachments per message"))
     with _lock, adb() as conn:
         rows = conn.execute(f"SELECT * FROM attachments WHERE id IN ({','.join('?' * len(ids))}) AND thread=? AND message_id IS NULL", (*ids, thread)).fetchall()
     found = {r["id"]: r for r in rows}
     missing = [i for i in ids if i not in found]
     if missing:
-        raise HTTPException(400, f"附件已失效，请重新添加：{', '.join(missing)}")
+        raise HTTPException(400, L(f"附件已失效，请重新添加：{', '.join(missing)}", f"Attachment expired, please add it again: {', '.join(missing)}"))
     return [found[i] for i in ids]
 
 
@@ -316,23 +322,26 @@ def build_content(text: str, rows: list[sqlite3.Row]) -> tuple[str | list, str]:
     """返回 (发给 Gateway 的 content, 纯文字版)。有图片就是 OpenAI 的 content 数组，否则是字符串。"""
     if not rows:
         return text, text
-    lines = [text.strip()] if text.strip() else []
+    first = text.strip()
+    if first == "（见附件）":  # chat.py 只有附件时存的占位：app 按原文比较，存库的不动；发给模型的这份按语言给
+        first = L(first, "(see attachments)")
+    lines = [first] if first else []
     images: list[tuple[str, str]] = []
     budget = TEXT_CHARS_TOTAL
     for i, r in enumerate(rows, 1):
         path = Path(r["path"])
-        head = f"[附件 {i}] {r['name']}（{r['note'] or r['kind']}，{human(r['size'])}）"
+        head = L(f"[附件 {i}] {r['name']}（{r['note'] or r['kind']}，{human(r['size'])}）", f"[Attachment {i}] {r['name']} ({r['note'] or r['kind']}, {human(r['size'])})")
         if r["kind"] == "image" and len(images) < MAX_IMAGES and (im := image_for_model(path)):
             images.append(im)
-            lines.append(f"{head} 已随消息附上，第 {len(images)} 张图。")
+            lines.append(L(f"{head} 已随消息附上，第 {len(images)} 张图。", f"{head} is attached to this message as image {len(images)}."))
         elif r["text"]:
             body = r["text"][: max(0, budget)]
             budget -= len(body)
-            cut = "" if len(body) == len(r["text"]) else f"\n…（只截了前 {len(body)} 字，全文在 {path}）"
-            label = "转写" if r["kind"] == "audio" else "内容"
-            lines.append(f"{head} {label}如下：\n<<<\n{body}{cut}\n>>>")
+            cut = "" if len(body) == len(r["text"]) else L(f"\n…（只截了前 {len(body)} 字，全文在 {path}）", f"\n…(only the first {len(body)} characters; full text at {path})")
+            label = L("转写", "transcript") if r["kind"] == "audio" else L("内容", "content")
+            lines.append(L(f"{head} {label}如下：\n<<<\n{body}{cut}\n>>>", f"{head} {label} below:\n<<<\n{body}{cut}\n>>>"))
         else:
-            lines.append(f"{head} 存在 {path}，需要时用工具读取。")
+            lines.append(L(f"{head} 存在 {path}，需要时用工具读取。", f"{head} is saved at {path}; read it with your tools if needed."))
     plain = "\n\n".join(lines)
     if not images:
         return plain, plain

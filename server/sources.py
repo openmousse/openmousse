@@ -20,6 +20,7 @@ from fastapi import Request
 from fastapi.responses import JSONResponse
 
 from config import settings
+from i18n import L
 
 if settings.scripts.is_dir() and str(settings.scripts) not in sys.path:
     sys.path.insert(0, str(settings.scripts))
@@ -48,7 +49,12 @@ AVAILABLE: dict[str, bool] = {
     "health": apple_health is not None,
 }
 
-LABEL = {"workouts": "训练", "meals": "餐食", "body": "身体数据", "calendar": "日历", "health": "健康指标"}
+
+def label(kind: str) -> str:
+    """数据类型的显示名，按请求的语言（英文要能套进 "No {x} data connected yet"）。"""
+    names = {"workouts": L("训练", "workout"), "meals": L("餐食", "meal"), "body": L("身体数据", "body"),
+             "calendar": L("日历", "calendar"), "health": L("健康指标", "health")}
+    return names.get(kind, kind)
 
 
 class NoSource(Exception):
@@ -56,7 +62,7 @@ class NoSource(Exception):
 
     def __init__(self, kind: str) -> None:
         self.kind = kind
-        super().__init__(f"还没接{LABEL.get(kind, kind)}数据源")
+        super().__init__(L(f"还没接{label(kind)}数据源", f"No {label(kind)} data connected yet"))
 
 
 def require(kind: str) -> None:
@@ -66,4 +72,5 @@ def require(kind: str) -> None:
 
 async def no_source_handler(_: Request, exc: NoSource) -> JSONResponse:
     return JSONResponse({"ok": False, "error": str(exc), "missing_source": exc.kind,
-                         "hint": f"在 server.json 的 scripts 目录放一个提供{LABEL.get(exc.kind, exc.kind)}的脚本，或者直接在对话里记。"})
+                         "hint": L(f"在 server.json 的 scripts 目录放一个提供{label(exc.kind)}的脚本，或者直接在对话里记。",
+                                   f"Put a script that provides {label(exc.kind)} data in the scripts directory set in server.json, or just log it in chat.")})

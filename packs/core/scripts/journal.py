@@ -11,6 +11,7 @@
 kind：feeling（身体 / 训练 / 情绪感受）、thought（想法、观点）、decision（决定、承诺）、note（其它记录）。
 删除只标 status=deleted、清空正文，保留 id 和时间；activity_log 记一行不含内容。
 """
+# 上面这段是 --help 的中文版；英文版见 USAGE_EN（按 server.json 的 language 选）。
 from __future__ import annotations
 
 import argparse
@@ -21,9 +22,21 @@ import uuid
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from mousse_common import db_path, user_now  # noqa: E402
+from mousse_common import L, db_path, user_now  # noqa: E402
 
 KINDS = ("feeling", "thought", "decision", "note")
+USAGE_EN = """The user's journal (the `journal` table in the server database): how workouts felt, thoughts about things, decisions made, quick notes. The agent writes it during chat; the app shows it under "Me → Journal" and on each Agent's Memory page.
+
+  python3 journal.py add --kind feeling --group <agent id> --text "legs shaking on the third set of squats" [--tags squat,legs] [--context "after Leg A"]
+  python3 journal.py add --kind thought --text "..."            # leave out --group when it belongs to no Agent
+  echo "a long passage" | python3 journal.py add --kind decision --stdin --tags applications
+  python3 journal.py list [--group <id>] [--kind feeling] [--days 14] [--limit 30]
+  python3 journal.py search --q shoulder [--days 90]
+  python3 journal.py delete <id>
+
+kind: feeling (body / training / mood), thought (ideas, opinions), decision (decisions, commitments), note (anything else).
+Delete only marks status=deleted and clears the text, keeping the id and time; activity_log gets one line without the content.
+"""
 SCHEMA = """CREATE TABLE IF NOT EXISTS journal (id TEXT PRIMARY KEY, ts TEXT NOT NULL, group_id TEXT, kind TEXT NOT NULL, text TEXT NOT NULL,
     tags TEXT, context TEXT, source TEXT NOT NULL DEFAULT 'chat', status TEXT NOT NULL DEFAULT 'active');
 CREATE INDEX IF NOT EXISTS journal_ts ON journal(ts);
@@ -60,13 +73,13 @@ def row(r: sqlite3.Row) -> dict:
 def cmd_add(a: argparse.Namespace) -> None:
     text = sys.stdin.read().strip() if a.stdin else (a.text or "").strip()
     if not text:
-        sys.exit("要有 --text（或 --stdin）")
+        sys.exit(L("要有 --text（或 --stdin）", "Need --text (or --stdin)"))
     jid = uuid.uuid4().hex[:12]
     with connect() as conn:
         conn.execute("INSERT INTO journal(id, ts, group_id, kind, text, tags, context) VALUES(?,?,?,?,?,?,?)",
                      (jid, now_iso(), a.group or None, a.kind, text, tags_json(a.tags), a.context or None))
         conn.execute("INSERT INTO activity_log(ts, actor, text, kind) VALUES(?,?,?,?)",
-                     (now_iso(), a.group or "main", f"记了一条日志（{a.kind}）", "edit"))
+                     (now_iso(), a.group or "main", L(f"记了一条日志（{a.kind}）", f"Added a journal entry ({a.kind})"), "edit"))
     print(json.dumps({"ok": True, "id": jid, "kind": a.kind, "group": a.group, "text": text}, ensure_ascii=False))
 
 
@@ -101,12 +114,13 @@ def cmd_delete(a: argparse.Namespace) -> None:
     with connect() as conn:
         n = conn.execute("UPDATE journal SET status='deleted', text='', tags=NULL, context=NULL WHERE id=? AND status='active'", (a.id,)).rowcount
         if n:
-            conn.execute("INSERT INTO activity_log(ts, actor, text, kind) VALUES(?,?,?,?)", (now_iso(), "main", "删了一条日志", "deleted"))
+            conn.execute("INSERT INTO activity_log(ts, actor, text, kind) VALUES(?,?,?,?)",
+                         (now_iso(), "main", L("删了一条日志", "Deleted a journal entry"), "deleted"))
     print(json.dumps({"ok": bool(n), "id": a.id}, ensure_ascii=False))
 
 
 def main() -> None:
-    ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    ap = argparse.ArgumentParser(description=L(__doc__, USAGE_EN), formatter_class=argparse.RawDescriptionHelpFormatter)
     sp = ap.add_subparsers(dest="cmd", required=True)
     q = sp.add_parser("add"); q.add_argument("--kind", choices=KINDS, default="note"); q.add_argument("--group"); q.add_argument("--text")
     q.add_argument("--stdin", action="store_true"); q.add_argument("--tags", default=""); q.add_argument("--context", default=""); q.set_defaults(fn=cmd_add)

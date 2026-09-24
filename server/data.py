@@ -38,6 +38,7 @@ router = APIRouter()
 
 import agents  # noqa: E402
 from config import settings as cfg  # noqa: E402（这个模块里 settings 是接口函数名）
+from i18n import L, lang  # noqa: E402
 
 HOME = cfg.openclaw_home
 PROFILE = cfg.profile
@@ -45,6 +46,8 @@ PROFILE_HISTORY = cfg.profile_history
 MEMORY = cfg.workspace / "MEMORY.md"
 # 每个 agent 的长期记忆（L1）。有独立 workspace 的 Agent 各有自己的 MEMORY.md（server.json 的 agent_workspaces）。
 WEEKDAYS = "一二三四五六日"
+WEEKDAYS_EN = ("Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun")
+MONTHS_EN = ("Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec")
 
 
 # —— 基础设施 ————————————————————————————————————————————————
@@ -95,7 +98,8 @@ async def openclaw_cli(*args: str, timeout: float = 30) -> Any:
     proc = await asyncio.create_subprocess_exec(exe, *args, "--json", stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE)
     out, err = await asyncio.wait_for(proc.communicate(), timeout)
     if proc.returncode != 0:
-        raise HTTPException(502, f"openclaw {' '.join(args[:2])} 失败：{(err or out).decode('utf8', 'replace')[-300:]}")
+        cmd, tail = " ".join(args[:2]), (err or out).decode("utf8", "replace")[-300:]
+        raise HTTPException(502, L(f"openclaw {cmd} 失败：{tail}", f"openclaw {cmd} failed: {tail}"))
     return json.loads(out)
 
 
@@ -103,13 +107,19 @@ def london(ms: float | None) -> datetime | None:
     return datetime.fromtimestamp(ms / 1000, TZ) if ms else None
 
 
+def weekday(i: int) -> str:
+    """周五 / Fri（i：0 = 周一）。"""
+    return L(f"周{WEEKDAYS[i]}", WEEKDAYS_EN[i])
+
+
 def when(dt: datetime | None, with_time: bool = True) -> str:
-    """今天 09:00 / 明天 09:00 / 昨天 21:05 / 周五 09:00 / 9 月 30 日 09:00。"""
+    """今天 09:00 / 明天 09:00 / 昨天 21:05 / 周五 09:00 / 9 月 30 日 09:00（英文：Today 09:00 / Fri 09:00 / Sep 30 09:00）。"""
     if not dt:
         return ""
     d = (dt.date() - datetime.now(TZ).date()).days
     hm = dt.strftime("%H:%M") if with_time else ""
-    day = {0: "今天", 1: "明天", -1: "昨天"}.get(d) or (f"周{WEEKDAYS[dt.weekday()]}" if 1 < d < 7 else f"{dt.month} 月 {dt.day} 日")
+    day = ({0: L("今天", "Today"), 1: L("明天", "Tomorrow"), -1: L("昨天", "Yesterday")}.get(d)
+           or (weekday(dt.weekday()) if 1 < d < 7 else L(f"{dt.month} 月 {dt.day} 日", f"{MONTHS_EN[dt.month - 1]} {dt.day}")))
     return f"{day} {hm}".strip()
 
 
@@ -132,15 +142,15 @@ def surface(key: str, names: dict[str, str]) -> str:
     if not key:
         return ""
     if key == "agent:main:main":
-        return "主对话"
+        return L("主对话", "Main chat")
     parts = key.split(":")
     if len(parts) >= 4 and parts[2] == "grava":
         tid = ":".join(parts[3:])
-        return names.get(tid) or f"app 线程 {tid}"
+        return names.get(tid) or L(f"app 线程 {tid}", f"App thread {tid}")
     if len(parts) >= 3 and parts[2] == "subagent":
-        return "子会话"
+        return L("子会话", "Sub-session")
     if len(parts) >= 3 and parts[2] == "cron":
-        return "定时任务"
+        return L("定时任务", "Scheduled job")
     if len(parts) >= 3 and parts[2] in ("telegram", "discord"):
         return parts[2].capitalize()
     return key
@@ -183,7 +193,7 @@ def create_group(body: GroupIn):
     """新建 Agent = 建一个独立的 OpenClaw agent（workspace、记忆、skills）+ groups 表一行。失败就什么都不留。"""
     name = body.name.strip()
     if not name:
-        raise HTTPException(400, "Agent 要有名字")
+        raise HTTPException(400, L("Agent 要有名字", "The agent needs a name"))
     gid = f"g-{uuid.uuid4().hex[:8]}"
     ts = now_iso()
     try:
@@ -193,7 +203,7 @@ def create_group(body: GroupIn):
     with _lock, ddb() as conn:
         conn.execute("INSERT INTO groups(id, name, icon, purpose, created_at) VALUES(?,?,?,?,?)", (gid, name, body.icon, body.purpose.strip(), ts))
         conn.execute("INSERT INTO threads(id, model, updated_at) VALUES(?,?,?) ON CONFLICT(id) DO UPDATE SET model=excluded.model", (gid, body.model, ts))
-    log_activity(f"新建 Agent「{name}」", "edit")
+    log_activity(L(f"新建 Agent「{name}」", f'Created agent "{name}"'), "edit")
     return {"ok": True, "id": gid}
 
 
@@ -203,7 +213,7 @@ def delete_group(gid: str):
     with _lock, ddb() as conn:
         r = conn.execute("SELECT name FROM groups WHERE id=?", (gid,)).fetchone()
     if not r:
-        raise HTTPException(404, "没有这个 Agent")
+        raise HTTPException(404, L("没有这个 Agent", "No such agent"))
     try:
         archived = agents.remove(gid)
     except agents.ProvisionError as e:
@@ -211,7 +221,7 @@ def delete_group(gid: str):
     with _lock, ddb() as conn:
         conn.execute("DELETE FROM groups WHERE id=?", (gid,))
         conn.execute("DELETE FROM threads WHERE id=?", (gid,))
-    log_activity(f"删了 Agent「{r['name']}」（工作区已归档）", "deleted")
+    log_activity(L(f"删了 Agent「{r['name']}」（工作区已归档）", f'Deleted agent "{r["name"]}" (workspace archived)'), "deleted")
     return {"ok": True, "archived": str(archived) if archived else None}
 
 
@@ -236,7 +246,7 @@ def side_chats():
         text, ts = last.get(r["id"], ("", ""))
         updated = max(r["updated_at"], ts or "")
         out.append({"id": r["id"], "title": r["title"], "purpose": r["purpose"] or "", "modelId": r["model"], "archived": bool(r["archived"]),
-                    "lastLine": short(text) or "新空间，说点什么开始吧。", "createdAt": when(datetime.fromisoformat(r["created_at"]), False),
+                    "lastLine": short(text) or L("新空间，说点什么开始吧。", "New side chat. Say something to start."), "createdAt": when(datetime.fromisoformat(r["created_at"]), False),
                     "updatedAt": int(datetime.fromisoformat(updated).timestamp() * 1000)})
     return {"ok": True, "sideChats": out}
 
@@ -248,7 +258,7 @@ def create_side_chat(body: SideChatIn):
     with _lock, ddb() as conn:
         conn.execute("INSERT INTO side_chats(id, title, purpose, created_at, updated_at) VALUES(?,?,?,?,?)", (sid, body.title.strip(), body.purpose.strip(), ts, ts))
         conn.execute("INSERT INTO threads(id, model, updated_at) VALUES(?,?,?) ON CONFLICT(id) DO UPDATE SET model=excluded.model", (sid, body.model, ts))
-    log_activity(f"开了独立空间「{body.title.strip()}」", "edit")
+    log_activity(L(f"开了独立空间「{body.title.strip()}」", f'Opened side chat "{body.title.strip()}"'), "edit")
     return {"ok": True, "id": sid}
 
 
@@ -257,13 +267,14 @@ def patch_side_chat(sid: str, body: SideChatPatch):
     with _lock, ddb() as conn:
         r = conn.execute("SELECT * FROM side_chats WHERE id=?", (sid,)).fetchone()
         if not r:
-            raise HTTPException(404, "没有这个空间")
+            raise HTTPException(404, L("没有这个空间", "No such side chat"))
         if body.title is not None and body.title.strip():
             conn.execute("UPDATE side_chats SET title=?, updated_at=? WHERE id=?", (body.title.strip(), now_iso(), sid))
         if body.archived is not None:
             conn.execute("UPDATE side_chats SET archived=?, updated_at=? WHERE id=?", (int(body.archived), now_iso(), sid))
     if body.archived is not None:
-        log_activity(f"{'归档' if body.archived else '恢复'}了独立空间「{r['title']}」", "edit")
+        log_activity(L(f"{'归档' if body.archived else '恢复'}了独立空间「{r['title']}」",
+                       f'{"Archived" if body.archived else "Restored"} side chat "{r["title"]}"'), "edit")
     return {"ok": True}
 
 
@@ -272,7 +283,7 @@ async def delete_side_chat(sid: str):
     with _lock, ddb() as conn:
         r = conn.execute("SELECT * FROM side_chats WHERE id=?", (sid,)).fetchone()
         if not r:
-            raise HTTPException(404, "没有这个空间")
+            raise HTTPException(404, L("没有这个空间", "No such side chat"))
         conn.execute("DELETE FROM messages WHERE thread=?", (sid,))
         conn.execute("DELETE FROM threads WHERE id=?", (sid,))
         conn.execute("DELETE FROM side_chats WHERE id=?", (sid,))
@@ -280,7 +291,7 @@ async def delete_side_chat(sid: str):
         await gateway_call("sessions.delete", {"key": session_key(sid)}, timeout=20)
     except HTTPException:
         pass  # 从没发过消息的空间在 Gateway 里没有会话
-    log_activity(f"删除了独立空间「{r['title']}」的对话记录", "deleted")
+    log_activity(L(f"删除了独立空间「{r['title']}」的对话记录", f'Deleted the chat history of side chat "{r["title"]}"'), "deleted")
     return {"ok": True}
 
 
@@ -294,14 +305,14 @@ def bodyfat_readings() -> list[dict]:
         data = xunji.call("body_query", {"include_latest": True, "include_records": False, "limit": 1, "offset": 0}, ttl=3600)
         bf = ((data.get("res") or {}).get("latest") or {}).get("bodyfat") or {}
         if bf.get("value") is not None:
-            out.append({"value": float(bf["value"]), "date": bf.get("datestr"), "source": "训记"})
+            out.append({"value": float(bf["value"]), "date": bf.get("datestr"), "source": L("训记", "Xunji")})
     except Exception:  # noqa: BLE001
         pass
     with _lock, ddb() as conn:
         try:
             for r in conn.execute("SELECT date, avg FROM health_metrics WHERE metric='BodyFatPercentage' AND avg IS NOT NULL ORDER BY date DESC LIMIT 60"):
                 v = r["avg"] * 100 if r["avg"] <= 1 else r["avg"]
-                out.append({"value": round(v, 1), "date": r["date"], "source": "Apple 健康"})
+                out.append({"value": round(v, 1), "date": r["date"], "source": L("Apple 健康", "Apple Health")})
         except Exception:  # noqa: BLE001  health_metrics 还没建（从没同步过）
             pass
     return sorted(out, key=lambda x: x["date"] or "", reverse=True)
@@ -348,7 +359,7 @@ def delete_journal(jid: str):
     with _lock, ddb() as conn:
         n = conn.execute("UPDATE journal SET status='deleted', text='', tags=NULL, context=NULL WHERE id=? AND status='active'", (jid,)).rowcount
     if n:
-        log_activity("已按要求删掉 1 条日志", "forgot")
+        log_activity(L("已按要求删掉 1 条日志", "Deleted 1 journal entry as asked"), "forgot")
     return {"ok": bool(n)}
 
 
@@ -382,7 +393,7 @@ def feed(date: str | None = None):
     with _lock, ddb() as conn:
         if date:
             if len(date) != 10 or date[4] != "-" or date[7] != "-":
-                raise HTTPException(400, "date 要写成 YYYY-MM-DD")
+                raise HTTPException(400, L("date 要写成 YYYY-MM-DD", "date must be YYYY-MM-DD"))
             rows = conn.execute("SELECT * FROM feed_items WHERE dismissed=0 AND substr(created_at,1,10)=? ORDER BY created_at DESC LIMIT 50", (date,)).fetchall()
         else:
             rows = conn.execute("SELECT * FROM feed_items WHERE dismissed=0 ORDER BY created_at DESC LIMIT 20").fetchall()
@@ -399,20 +410,24 @@ def dismiss_feed(fid: str):
 
 # —— 接下来会自动做的事：OpenClaw cron + systemd timer ——————————————————
 
-CRON_TITLES = {
-    "heartbeat-main": "心跳检查（main）",
-    "heartbeat-gemini": "心跳检查（gemini）",
-    "memory-dreaming-promotion": "记忆整理：把工作记忆晋升为长期记忆（Dreaming）",
-    "skill-collection-review-main": "技能库复查（main）",
-    "skill-collection-review-gemini": "技能库复查（gemini）",
-}
-TIMERS = {
-    "lunar-birthday.timer": "父母农历生日提醒",
-    "daily-backup.timer": "每日加密备份",
-    "weekly-maintenance.timer": "每周系统维护",
-    "system-alert.timer": "系统告警检查",
-    "log-sanitizer.timer": "日志脱敏",
-}
+def cron_titles() -> dict[str, str]:
+    return {
+        "heartbeat-main": L("心跳检查（main）", "Heartbeat check (main)"),
+        "heartbeat-gemini": L("心跳检查（gemini）", "Heartbeat check (gemini)"),
+        "memory-dreaming-promotion": L("记忆整理：把工作记忆晋升为长期记忆（Dreaming）", "Memory tidy-up: promote working memory to long-term memory (Dreaming)"),
+        "skill-collection-review-main": L("技能库复查（main）", "Skill library review (main)"),
+        "skill-collection-review-gemini": L("技能库复查（gemini）", "Skill library review (gemini)"),
+    }
+
+
+def timer_titles() -> dict[str, str]:
+    return {
+        "lunar-birthday.timer": L("父母农历生日提醒", "Parents' lunar birthday reminder"),
+        "daily-backup.timer": L("每日加密备份", "Daily encrypted backup"),
+        "weekly-maintenance.timer": L("每周系统维护", "Weekly system maintenance"),
+        "system-alert.timer": L("系统告警检查", "System alert check"),
+        "log-sanitizer.timer": L("日志脱敏", "Log redaction"),
+    }
 
 
 def slug(text: str) -> str:
@@ -425,45 +440,54 @@ def repeat_of(schedule: dict, nxt: datetime | None) -> str:
     if kind == "every":
         ms = schedule.get("everyMs") or 0
         if ms == 86_400_000:
-            return f"每天 {hm}".strip()
+            return f"{L('每天', 'Daily')} {hm}".strip()
         if ms == 604_800_000:
-            return f"每周{WEEKDAYS[nxt.weekday()]} {hm}".strip() if nxt else "每周"
+            return L(f"每周{WEEKDAYS[nxt.weekday()]} {hm}", f"Every {WEEKDAYS_EN[nxt.weekday()]} {hm}").strip() if nxt else L("每周", "Weekly")
         if ms and ms % 3_600_000 == 0:
-            return f"每 {ms // 3_600_000} 小时"
-        return f"每 {round(ms / 60000)} 分钟" if ms else "重复"
+            return L(f"每 {ms // 3_600_000} 小时", f"Every {ms // 3_600_000} h")
+        return L(f"每 {round(ms / 60000)} 分钟", f"Every {round(ms / 60000)} min") if ms else L("重复", "Repeats")
     if kind == "cron":
         return cron_words(schedule.get("expr") or "", hm, schedule.get("tz"))
     if kind == "at":
-        return "一次"
+        return L("一次", "Once")
     return kind or ""
 
 
-DOW = {"*": "每天", "1-5": "工作日", "2-6": "周二至周六", "0,6": "周末", "6,0": "周末"}
-TZ_NAMES = {"Asia/Shanghai": "北京时间", "Europe/London": "伦敦时间", "America/New_York": "纽约时间", "UTC": "UTC", cfg.timezone: ""}  # 自己的时区不加后缀
+def dow_words() -> dict[str, str]:
+    return {"*": L("每天", "Daily"), "1-5": L("工作日", "Weekdays"), "2-6": L("周二至周六", "Tue–Sat"),
+            "0,6": L("周末", "Weekends"), "6,0": L("周末", "Weekends")}
+
+
+def tz_names() -> dict[str, str]:
+    return {"Asia/Shanghai": L("北京时间", "Beijing time"), "Europe/London": L("伦敦时间", "London time"),
+            "America/New_York": L("纽约时间", "New York time"), "UTC": "UTC", cfg.timezone: ""}  # 自己的时区不加后缀
 
 
 def cron_words(expr: str, hm: str, tz: str | None) -> str:
     """把常见的 cron 表达式说成人话；认不出来就原样给。hm 是按下次运行算出的伦敦时间，停用的任务没有。"""
     f = expr.split()
     if len(f) != 5:
-        return expr or "定时"
+        return expr or L("定时", "Scheduled")
     minute, hour, dom, month, dow = f
-    zone = TZ_NAMES.get(tz or "", tz or "")
-    at = hm or (f"{int(hour):02d}:{int(minute):02d}{'（' + zone + '）' if zone else ''}" if minute.isdigit() and hour.isdigit() else "")
+    zone = tz_names().get(tz or "", tz or "")
+    suffix = L(f"（{zone}）", f" ({zone})") if zone else ""
+    at = hm or (f"{int(hour):02d}:{int(minute):02d}{suffix}" if minute.isdigit() and hour.isdigit() else "")
     if minute.startswith("*/") and "-" in hour:
-        at = f"{hour.replace('-', '–')} 点每 {minute[2:]} 分钟"
+        span = hour.replace("-", "–")
+        at = L(f"{span} 点每 {minute[2:]} 分钟", f"{span}h every {minute[2:]} min")
     if month != "*":
         return expr
     if dom.startswith("*/") and dow == "*":
-        return f"每 {dom[2:]} 天 {at}".strip()
+        return L(f"每 {dom[2:]} 天 {at}", f"Every {dom[2:]} days {at}").strip()
     if dom != "*":
         return expr
-    day = DOW.get(dow) or (f"每周{WEEKDAYS[(int(dow) - 1) % 7]}" if dow.isdigit() else None)
+    day = dow_words().get(dow) or (L(f"每周{WEEKDAYS[(int(dow) - 1) % 7]}", f"Every {WEEKDAYS_EN[(int(dow) - 1) % 7]}") if dow.isdigit() else None)
     return f"{day} {at}".strip() if day else expr
 
 
 async def cron_jobs() -> list[dict]:
     data = await cached("cron", 30, lambda: gateway_call("cron.list", {"includeDisabled": True}, timeout=30))
+    titles = cron_titles()
     out = []
     for j in data.get("jobs", []):
         st = j.get("state") or {}
@@ -471,7 +495,7 @@ async def cron_jobs() -> list[dict]:
         name = j.get("displayName") or j.get("name") or j["id"]
         payload = j.get("payload") or {}
         last_status = st.get("lastRunStatus") or st.get("lastStatus")
-        out.append({"id": j["id"], "source": "cron", "title": CRON_TITLES.get(slug(j.get("name") or name)) or CRON_TITLES.get(slug(name)) or name,
+        out.append({"id": j["id"], "source": "cron", "title": titles.get(slug(j.get("name") or name)) or titles.get(slug(name)) or name,
                     "rawName": name, "agent": j.get("agentId") or "main", "modelId": payload.get("model"),
                     "when": when(nxt) if nxt else "", "repeat": repeat_of(j.get("schedule") or {}, nxt or london(st.get("nextRunAtMs"))),
                     "enabled": bool(j.get("enabled")), "toggleable": True, "nextAt": st.get("nextRunAtMs") or 0,
@@ -483,18 +507,19 @@ async def timers() -> list[dict]:
     proc = await asyncio.create_subprocess_exec("systemctl", "--user", "list-timers", "--all", "--output=json",
                                                 stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE)
     out, _ = await asyncio.wait_for(proc.communicate(), 10)
+    titles = timer_titles()
     rows = []
     for t in json.loads(out or b"[]"):
         unit = t.get("unit") or ""
         if unit.startswith("grava-reminder-") and unit.endswith(".timer"):
             rows.append(await reminder_row(t))
             continue
-        if unit not in TIMERS:
+        if unit not in titles:
             continue
         nxt = datetime.fromtimestamp(t["next"] / 1e6, TZ) if t.get("next") else None
         last = datetime.fromtimestamp(t["last"] / 1e6, TZ) if t.get("last") else None
-        rows.append({"id": t["unit"], "source": "systemd", "title": TIMERS[t["unit"]], "rawName": t["unit"], "agent": "系统", "modelId": None,
-                     "when": when(nxt), "repeat": "每天" if t["unit"] not in ("weekly-maintenance.timer",) else "每周",
+        rows.append({"id": t["unit"], "source": "systemd", "title": titles[t["unit"]], "rawName": t["unit"], "agent": L("系统", "System"), "modelId": None,
+                     "when": when(nxt), "repeat": L("每天", "Daily") if t["unit"] not in ("weekly-maintenance.timer",) else L("每周", "Weekly"),
                      "enabled": bool(nxt), "toggleable": False, "nextAt": int(nxt.timestamp() * 1000) if nxt else 0,
                      "last": {"status": None, "when": when(last)} if last else None})
     return rows
@@ -509,7 +534,7 @@ async def reminder_row(t: dict) -> dict:
     title = (desc or b"").decode().strip() or unit
     nxt = datetime.fromtimestamp(t["next"] / 1e6, TZ) if t.get("next") else None
     return {"id": unit, "source": "reminder", "title": title, "rawName": unit, "agent": cfg.app_name, "modelId": None,
-            "when": when(nxt) if nxt else "", "repeat": "一次", "enabled": bool(nxt), "toggleable": False,
+            "when": when(nxt) if nxt else "", "repeat": L("一次", "Once"), "enabled": bool(nxt), "toggleable": False,
             "nextAt": int(nxt.timestamp() * 1000) if nxt else 0, "last": None}
 
 
@@ -530,10 +555,12 @@ async def toggle_job(job_id: str, body: Toggle):
     jobs = await cron_jobs()
     job = next((j for j in jobs if j["id"] == job_id), None)
     if not job:
-        raise HTTPException(404, "只有 OpenClaw 的定时任务能在这里开关；系统定时器请在服务器上改")
+        raise HTTPException(404, L("只有 OpenClaw 的定时任务能在这里开关；系统定时器请在服务器上改",
+                                   "Only OpenClaw scheduled jobs can be switched here; change system timers on the server"))
     await gateway_call("cron.update", {"id": job_id, "patch": {"enabled": body.enabled}}, timeout=30)
     forget_cache("cron")
-    log_activity(f"{'启用' if body.enabled else '停用'}了定时任务「{job['title']}」", "toggled")
+    log_activity(L(f"{'启用' if body.enabled else '停用'}了定时任务「{job['title']}」",
+                   f'{"Enabled" if body.enabled else "Disabled"} scheduled job "{job["title"]}"'), "toggled")
     return {"ok": True}
 
 
@@ -546,10 +573,12 @@ async def approvals():
     for a in data.get("approvals", []):
         req = a.get("request") or a
         command = req.get("command") or req.get("commandText") or req.get("summary") or a.get("title") or ""
-        fields = [{"k": k, "v": str(v)} for k, v in (("命令", command), ("目录", req.get("cwd")), ("agent", req.get("agentId") or a.get("agentId")),
-                                                     ("主机", req.get("host"))) if v]
+        # 字段名在 app 里是一列 52pt 宽的标签，英文用短词
+        fields = [{"k": k, "v": str(v)} for k, v in ((L("命令", "Cmd"), command), (L("目录", "Dir"), req.get("cwd")),
+                                                     (L("agent", "Agent"), req.get("agentId") or a.get("agentId")),
+                                                     (L("主机", "Host"), req.get("host"))) if v]
         created = a.get("createdAtMs") or a.get("createdAt")
-        out.append({"id": a.get("id"), "kind": a.get("kind") or "exec", "action": short(command or a.get("kind") or "一个待审批的动作", 80),
+        out.append({"id": a.get("id"), "kind": a.get("kind") or "exec", "action": short(command or a.get("kind") or L("一个待审批的动作", "An action awaiting approval"), 80),
                     "detail": a.get("reason") or req.get("reason") or "", "fields": fields, "groupId": None,
                     "requestedAt": when(london(created)) if isinstance(created, (int, float)) else ""})
     return {"ok": True, "approvals": out}
@@ -563,15 +592,17 @@ class Decision(BaseModel):
 async def decide(aid: str, body: Decision):
     await openclaw_cli("approvals", "resolve", aid, "allow-once" if body.allow else "deny", timeout=20)
     forget_cache("approvals")
-    log_activity(f"{'批准' if body.allow else '拒绝'}了一个待审批的动作", "approved" if body.allow else "denied")
+    log_activity(L(f"{'批准' if body.allow else '拒绝'}了一个待审批的动作", f"{'Approved' if body.allow else 'Denied'} an action awaiting approval"),
+                 "approved" if body.allow else "denied")
     return {"ok": True}
 
 
 # —— 任务：OpenClaw 子会话 ————————————————————————————————————————
 
+# 状态值是给 app 比较的枚举，不翻译（app 按语言显示）
 TASK_STATUS = {"completed": "完成", "succeeded": "完成", "failed": "失败", "timed_out": "失败", "lost": "失败",
                "cancelled": "已取消", "canceled": "已取消", "running": "进行中", "queued": "进行中", "pending": "进行中"}
-_task_detail: dict[str, dict] = {}  # 做完的子会话不会再变，详情缓存起来
+_task_detail: dict[tuple[str, str], dict] = {}  # 做完的子会话不会再变，详情缓存起来；键是 (子会话 key, 语言)，步骤说明按请求语言写
 
 
 def origin_of(key: str) -> str:
@@ -597,7 +628,7 @@ def task_summary(t: dict, detail: dict | None) -> dict:
     status = TASK_STATUS.get(t.get("status") or "", "进行中" if (t.get("execution") or {}).get("state") != "finished" else "完成")
     info = (detail or {}).get("info") or {}
     model = f"{info['modelProvider']}/{info['model']}" if info.get("model") and info.get("modelProvider") else None
-    return {"id": t["id"], "title": t.get("title") or "子会话任务", "status": status, "origin": origin_of(t.get("ownerKey") or t.get("sessionKey") or ""),
+    return {"id": t["id"], "title": t.get("title") or L("子会话任务", "Sub-session task"), "status": status, "origin": origin_of(t.get("ownerKey") or t.get("sessionKey") or ""),
             "sessionKey": t.get("childSessionKey") or "", "modelId": model, "createdAt": when(london(t.get("createdAt"))),
             "startedAt": hm(t.get("startedAt")), "finishedAt": hm(t.get("endedAt")), "summary": t.get("progressSummary") or t.get("terminalSummary") or "",
             "error": t.get("error"), "toolUseCount": t.get("toolUseCount") or 0, "lastTool": t.get("lastToolName"),
@@ -621,8 +652,9 @@ def brief_of(text: str) -> str:
 async def task_detail(t: dict) -> dict:
     key = t.get("childSessionKey")
     done = (t.get("execution") or {}).get("state") == "finished"
-    if key in _task_detail and done:
-        return _task_detail[key]
+    ck = (key, lang())
+    if ck in _task_detail and done:
+        return _task_detail[ck]
     hist = await gateway_call("chat.history", {"sessionKey": key, "limit": 300}, timeout=30) if key else {}
     info = hist.get("sessionInfo") or {}
     runs: list[dict] = []
@@ -631,8 +663,9 @@ async def task_detail(t: dict) -> dict:
         role = m.get("role")
         if role == "user":
             text = text_of(m.get("content"))
+            got = L("收到任务", "Got the task") if len(runs) == 0 else L("收到修改意见", "Got revision notes")
             runs.append({"version": len(runs) + 1, "note": None if not runs else short(text, 300), "brief": brief_of(text) if not runs else None,
-                         "startedAt": ts, "finishedAt": None, "tokens": 0, "status": "running", "steps": [{"time": ts, "kind": "start", "text": "收到任务" if len(runs) == 0 else "收到修改意见"}], "result": None})
+                         "startedAt": ts, "finishedAt": None, "tokens": 0, "status": "running", "steps": [{"time": ts, "kind": "start", "text": got}], "result": None})
             continue
         if not runs:
             continue
@@ -643,24 +676,26 @@ async def task_detail(t: dict) -> dict:
                 if not isinstance(c, dict):
                     continue
                 if c.get("type") == "thinking":
-                    run["steps"].append({"time": ts, "kind": "think", "text": short(c.get("thinking") or "思考", 140)})
+                    run["steps"].append({"time": ts, "kind": "think", "text": short(c.get("thinking") or L("思考", "Thinking"), 140)})
                 elif c.get("type") in ("toolCall", "tool_use"):
                     args = c.get("arguments") or c.get("input") or {}
                     label = args.get("title") or args.get("description") or args.get("command") or args.get("path") or args.get("query") or ""
-                    run["steps"].append({"time": ts, "kind": "tool", "text": short(f"{c.get('name')}：{label}" if label else c.get("name") or "工具", 140)})
+                    name = c.get("name")
+                    run["steps"].append({"time": ts, "kind": "tool", "text": short(L(f"{name}：{label}", f"{name}: {label}") if label else name or L("工具", "Tool"), 140)})
                 elif c.get("type") == "text" and c.get("text", "").strip():
                     run["result"] = {"summary": c["text"].strip()}
             if m.get("stopReason") in ("stop", "end_turn"):
                 run["status"], run["finishedAt"] = "done", ts
-                run["steps"].append({"time": ts, "kind": "done", "text": "做完，交回派发者"})
+                run["steps"].append({"time": ts, "kind": "done", "text": L("做完，交回派发者", "Done, handed back")})
         elif role == "toolResult" and m.get("isError"):
-            run["steps"].append({"time": ts, "kind": "check", "text": short(f"{m.get('toolName')} 出错：{text_of(m.get('content'))}", 140)})
+            tool, err = m.get("toolName"), text_of(m.get("content"))
+            run["steps"].append({"time": ts, "kind": "check", "text": short(L(f"{tool} 出错：{err}", f"{tool} error: {err}"), 140)})
     if runs and t.get("status") == "failed" and runs[-1]["status"] == "running":
         runs[-1]["status"] = "failed"
-        runs[-1]["steps"].append({"time": hm(t.get("endedAt")), "kind": "check", "text": short(t.get("error") or "失败", 140)})
+        runs[-1]["steps"].append({"time": hm(t.get("endedAt")), "kind": "check", "text": short(t.get("error") or L("失败", "Failed"), 140)})
     out = {"info": info, "runs": runs}
     if key and done:
-        _task_detail[key] = out
+        _task_detail[ck] = out
     return out
 
 
@@ -677,7 +712,7 @@ async def tasks():
 async def task(tid: str):
     t = next((x for x in await task_rows() if x["id"] == tid), None)
     if not t:
-        raise HTTPException(404, "找不到这个任务")
+        raise HTTPException(404, L("找不到这个任务", "Task not found"))
     d = await task_detail(t)
     first = next((r for r in d["runs"] if r.get("brief")), None)
     return {"ok": True, "task": task_summary(t, d) | {"brief": first["brief"] if first else "", "runs": d["runs"]}}
@@ -687,10 +722,10 @@ async def task(tid: str):
 async def cancel_task(tid: str):
     t = next((x for x in await task_rows() if x["id"] == tid), None)
     if not t:
-        raise HTTPException(404, "找不到这个任务")
+        raise HTTPException(404, L("找不到这个任务", "Task not found"))
     await gateway_call("tasks.cancel", {"taskId": tid}, timeout=30)
     forget_cache("tasks")
-    log_activity(f"取消了任务「{t.get('title')}」", "denied")
+    log_activity(L(f"取消了任务「{t.get('title')}」", f'Cancelled task "{t.get("title")}"'), "denied")
     return {"ok": True}
 
 
@@ -703,14 +738,15 @@ async def revise_task(tid: str, body: Revise):
     """修改意见发给同一个子会话：它记得前面做了什么。回复存在 app 的 task:<id> 线程里，过程看子会话记录。"""
     t = next((x for x in await task_rows() if x["id"] == tid), None)
     if not t or not t.get("childSessionKey"):
-        raise HTTPException(404, "找不到这个任务的子会话")
+        raise HTTPException(404, L("找不到这个任务的子会话", "Can't find this task's sub-session"))
     d = await task_detail(t)
     info = d.get("info") or {}
     model = f"{info['modelProvider']}/{info['model']}" if info.get("model") and info.get("modelProvider") else None
     start_run(f"task:{tid}", body.note.strip(), model, key=t["childSessionKey"])
-    _task_detail.pop(t["childSessionKey"], None)
+    for ck in [k for k in _task_detail if k[0] == t["childSessionKey"]]:  # 两种语言的缓存都作废
+        _task_detail.pop(ck, None)
     forget_cache("tasks")
-    log_activity(f"给任务「{t.get('title')}」发了修改意见", "edit")
+    log_activity(L(f"给任务「{t.get('title')}」发了修改意见", f'Sent revision notes for task "{t.get("title")}"'), "edit")
     return {"ok": True}
 
 
@@ -740,10 +776,11 @@ async def activity(limit: int = 80):
     # 2) Gateway 审计：一次回复一行，带上用了哪些工具（审计只有元数据，没有内容）
     if isinstance(audit, dict):
         tools: dict[str, dict[str, int]] = {}
+        unnamed = L("工具", "tool")
         for e in audit.get("events", []):
             if e.get("action") == "tool.action.finished" and e.get("runId"):
                 tools.setdefault(e["runId"], {})
-                tools[e["runId"]][e.get("toolName") or "工具"] = tools[e["runId"]].get(e.get("toolName") or "工具", 0) + 1
+                tools[e["runId"]][e.get("toolName") or unnamed] = tools[e["runId"]].get(e.get("toolName") or unnamed, 0) + 1
         seen: set[str] = set()
         for e in audit.get("events", []):
             if e.get("action") != "agent.run.finished" or (e.get("runId") or e["eventId"]) in seen:
@@ -751,20 +788,27 @@ async def activity(limit: int = 80):
             seen.add(e.get("runId") or e["eventId"])
             where = surface(e.get("sessionKey") or "", names)
             used = tools.get(e.get("runId") or "", {})
-            tool_text = f"，用了工具 {'、'.join(f'{k} ×{v}' if v > 1 else k for k, v in used.items())}" if used else ""
+            counts = [f"{k} ×{v}" if v > 1 else k for k, v in used.items()]
+            tool_text = L(f"，用了工具 {'、'.join(counts)}", f", used tools: {', '.join(counts)}") if used else ""
             ok = e.get("status") == "succeeded"
             who = agent_label(e.get("agentId"))
             items.append((e["occurredAt"] / 1000, {"id": e["eventId"], "time": when(london(e["occurredAt"])), "actor": f"{who} · {where}" if where else who,
-                                                   "text": f"{'回复了一次' if ok else '一次回复失败了'}{tool_text}", "kind": "reply" if ok else "failed"}))
+                                                   "text": (L("回复了一次", "Replied") if ok else L("一次回复失败了", "A reply failed")) + tool_text,
+                                                   "kind": "reply" if ok else "failed"}))
     # 3) 定时任务的运行结果
     if isinstance(task_list, dict):
+        titles = cron_titles()
         for t in task_list.get("tasks", []):
             if t.get("kind") != "automation_run" or not t.get("endedAt"):
                 continue
-            title = CRON_TITLES.get(slug(t.get("title") or "")) or t.get("title") or "定时任务"
+            title = titles.get(slug(t.get("title") or "")) or t.get("title") or L("定时任务", "Scheduled job")
             ok = t.get("status") == "completed"
-            items.append((t["endedAt"] / 1000, {"id": t["id"], "time": when(london(t["endedAt"])), "actor": "定时任务",
-                                                "text": f"「{title}」{'跑完了' if ok else '没跑成：' + short(t.get('error') or '失败', 60)}", "kind": "cron" if ok else "failed"}))
+            if ok:
+                text = L(f"「{title}」跑完了", f'"{title}" finished')
+            else:
+                text = L(f"「{title}」没跑成：{short(t.get('error') or '失败', 60)}", f'"{title}" failed: {short(t.get("error") or "unknown error", 60)}')
+            items.append((t["endedAt"] / 1000, {"id": t["id"], "time": when(london(t["endedAt"])), "actor": L("定时任务", "Scheduled job"),
+                                                "text": text, "kind": "cron" if ok else "failed"}))
     items.sort(key=lambda x: x[0], reverse=True)
     return {"ok": True, "activity": [x for _, x in items[:limit]]}
 
@@ -810,16 +854,20 @@ def split_tags(raw: str) -> tuple[str, list[str], str | None]:
     return (body.strip() + ("\n" + "\n".join(sub) if sub else "")), tags, (m.group(2) if m else None)
 
 
-SOURCE = {"G": "Gemini 导出", "C": "Claude 导出", "P": "ChatGPT 导出", "Gr": "对话", "L": "你确认过"}
+def source_names() -> dict[str, str]:
+    """档案条目末尾的来源标签 → 显示名。"""
+    return {"G": L("Gemini 导出", "Gemini export"), "C": L("Claude 导出", "Claude export"), "P": L("ChatGPT 导出", "ChatGPT export"),
+            "Gr": L("对话", "Chat"), "L": L("你确认过", "Confirmed by you")}
 
 
 @router.get("/api/profile")
 def profile():
     _, items = parse_bullets(PROFILE)
+    names = source_names()
     out = []
     for it in items:
         text, tags, dt = split_tags(it["raw"])
-        out.append({"id": it["id"], "section": it["section"], "text": text, "sources": [SOURCE.get(t, t) for t in tags], "date": dt})
+        out.append({"id": it["id"], "section": it["section"], "text": text, "sources": [names.get(t, t) for t in tags], "date": dt})
     return {"ok": True, "file": str(PROFILE).replace(str(Path.home()), "~"), "exists": PROFILE.is_file(), "items": out}
 
 
@@ -841,14 +889,16 @@ def edit_profile(iid: str, body: ProfileEdit):
         lines, items = parse_bullets(PROFILE)
         it = next((x for x in items if x["id"] == iid), None)
         if not it:
-            raise HTTPException(409, "这一条已经变了，刷新再改")
+            raise HTTPException(409, L("这一条已经变了，刷新再改", "This item has changed. Refresh and try again."))
         today = date.today().isoformat()
         new = [] if body.text is None else [f"- {re.sub(r'\s+', ' ', body.text).strip()} [L] {today}"]
         rewrite(PROFILE, lines, it["start"], it["end"], new)
         PROFILE_HISTORY.parent.mkdir(parents=True, exist_ok=True)
+        verb = L("删除", "Deleted") if body.text is None else L("改写", "Edited")
         with PROFILE_HISTORY.open("a", encoding="utf8") as f:
-            f.write(f"\n## {now_iso()} · {'删除' if body.text is None else '改写'} · {it['section']}\n{it['raw']}\n")
-    log_activity(f"{'删了' if body.text is None else '改了'}档案「{it['section']}」里的一条", "edit")
+            f.write(f"\n## {now_iso()} · {verb} · {it['section']}\n{it['raw']}\n")
+    log_activity(L(f"{'删了' if body.text is None else '改了'}档案「{it['section']}」里的一条",
+                   f'{"Deleted" if body.text is None else "Edited"} an item in profile section "{it["section"]}"'), "edit")
     return {"ok": True}
 
 
@@ -876,14 +926,14 @@ def forget(iid: str):
     scope, _, raw = iid.partition(":")
     path = cfg.memory_files.get(scope)
     if not path or not raw or not path.exists():
-        raise HTTPException(404, "没有这条记忆")
+        raise HTTPException(404, L("没有这条记忆", "No such memory"))
     with _lock:
         lines, items = parse_bullets(path)
         it = next((x for x in items if x["id"] == raw), None)
         if not it:
-            raise HTTPException(409, "这一条已经变了，刷新再试")
+            raise HTTPException(409, L("这一条已经变了，刷新再试", "This item has changed. Refresh and try again."))
         rewrite(path, lines, it["start"], it["end"], [])
-    log_activity(f"遗忘了 1 条长期记忆（{scope}）", "forgot")  # 按规范不留内容
+    log_activity(L(f"遗忘了 1 条长期记忆（{scope}）", f"Forgot 1 long-term memory ({scope})"), "forgot")  # 按规范不留内容
     return {"ok": True}
 
 
@@ -914,8 +964,9 @@ def channel_fact(name: str, c: dict) -> dict:
     """私聊要白名单或配对，群聊不能是 open（没有白名单），两样都满足才算过。"""
     dm, group = c.get("dmPolicy"), c.get("groupPolicy")
     ok = dm in ("allowlist", "pairing") and group != "open"
-    note = "" if ok else "群聊策略是 open，没有白名单。" if group == "open" else "私聊没有限制。"
-    return {"title": name, "sub": f"私聊 {dm}，群聊 {group}。{note}", "state": "已满足" if ok else "注意", "tone": "good" if ok else "warn"}
+    note = "" if ok else L("群聊策略是 open，没有白名单。", "Group policy is open, with no allowlist.") if group == "open" else L("私聊没有限制。", "DMs are unrestricted.")
+    return {"title": name, "sub": L(f"私聊 {dm}，群聊 {group}。{note}", f"DMs: {dm}, groups: {group}. {note}".strip()),
+            "state": L("已满足", "OK") if ok else L("注意", "Review"), "tone": "good" if ok else "warn"}
 
 
 @router.get("/api/security")
@@ -933,21 +984,55 @@ async def security():
         sec = ask = None
     pending = len((await approvals())["approvals"])
     d = (c.get("agents") or {}).get("defaults") or {}
+    ok, review = L("已满足", "OK"), L("注意", "Review")
+    local = gw.get("bind") == "loopback"
+    bind, port = gw.get("bind"), gw.get("port")
+    gw_sub = (L(f"绑定 {bind}，端口 {port}，公网连不上。", f"Bound to {bind}, port {port}; not reachable from the internet.") if local
+              else L(f"绑定 {bind}，端口 {port}，不只本机能连到。", f"Bound to {bind}, port {port}; reachable from other machines."))
+    token_names, node_names = ", ".join(tokens), ", ".join(sorted(nodes))
+    auth_sub = L(f"接入令牌 {len(tokens)} 个（{token_names or '无'}）；Tailscale 免令牌设备：{node_names or '无'}；监听 {cfg.host}:{cfg.port}。",
+                 f"Access tokens: {len(tokens)} ({token_names or 'none'}); Tailscale devices without a token: {node_names or 'none'}; listening on {cfg.host}:{cfg.port}.")
+    app = cfg.app_name
+    if ask is None:
+        exec_sub, exec_state, exec_tone = L("读不到 OpenClaw 的执行审批设置。", "Couldn't read OpenClaw's exec approval settings."), L("未知", "Unknown"), "neutral"
+    elif ask == "off":
+        exec_sub = L(f"安全级别 {sec}，询问 {ask}：{app} 现在跑命令不需要你批准。想让它先问你，在 OpenClaw 的执行审批设置里把 ask 打开。",
+                     f"Security {sec}, ask {ask}: {app} runs commands without asking you. To require your OK first, turn on ask in OpenClaw's exec approval settings.")
+        exec_state, exec_tone = L("未设防", "Unguarded"), "warn"
+    else:
+        exec_sub = L(f"安全级别 {sec}，询问 {ask}：{app} 跑命令前会按这个设置问你。",
+                     f"Security {sec}, ask {ask}: {app} checks with you before running commands, per this setting.")
+        exec_state, exec_tone = L("有审批", "Approval on"), "good"
+    sandbox = bool(d.get("sandbox"))
     facts = [
-        {"title": "Gateway 只听本机", "sub": f"绑定 {gw.get('bind')}，端口 {gw.get('port')}，公网连不上。", "state": "已满足" if gw.get("bind") == "loopback" else "注意", "tone": "good" if gw.get("bind") == "loopback" else "warn"},
-        {"title": "app 接口认证", "sub": f"接入令牌 {len(tokens)} 个（{', '.join(tokens) or '无'}）；Tailscale 免令牌设备：{', '.join(sorted(nodes)) or '无'}；监听 {cfg.host}:{cfg.port}。", "state": "已满足" if (tokens or nodes) else "无认证", "tone": "good" if (tokens or nodes) else "warn"},
+        {"title": L("Gateway 只听本机", "Gateway is local-only"), "sub": gw_sub, "state": ok if local else review, "tone": "good" if local else "warn"},
+        {"title": L("app 接口认证", "App API auth"), "sub": auth_sub, "state": ok if (tokens or nodes) else L("无认证", "No auth"), "tone": "good" if (tokens or nodes) else "warn"},
         *[channel_fact(name, ch.get(key) or {}) for key, name in (("telegram", "Telegram"), ("discord", "Discord")) if (ch.get(key) or {}).get("enabled")],
-        {"title": "执行命令的权限", "sub": f"安全级别 {sec}，询问 {ask}：{cfg.app_name} 现在跑命令不需要你批准。安全底座（第 9 步）会改成要审批。", "state": "未设防" if ask == "off" else "有审批", "tone": "warn" if ask == "off" else "good"},
-        {"title": "沙箱", "sub": f"代办任务还没放进隔离环境，和 {cfg.app_name} 同一台机器、同一个用户。" if not d.get("sandbox") else "已配置。", "state": "未启用" if not d.get("sandbox") else "已启用", "tone": "warn" if not d.get("sandbox") else "good"},
-        {"title": "密钥存放", "sub": "密钥同时明文存在 openclaw.json 的 env 段和 .env 里，应收敛到一处。" if c.get("env") else "只在 .env。", "state": "待收敛" if c.get("env") else "已满足", "tone": "warn" if c.get("env") else "good"},
-        {"title": "待审批", "sub": f"审批队列里现在有 {pending} 个动作等你决定。", "state": str(pending), "tone": "neutral"},
+        {"title": L("执行命令的权限", "Command execution"), "sub": exec_sub, "state": exec_state, "tone": exec_tone},
+        {"title": L("沙箱", "Sandbox"),
+         "sub": L("已配置。", "Configured.") if sandbox else L(f"代办任务还没放进隔离环境，和 {app} 同一台机器、同一个用户。",
+                                                             f"Errands aren't isolated yet; they run on the same machine and as the same user as {app}."),
+         "state": L("已启用", "On") if sandbox else L("未启用", "Off"), "tone": "good" if sandbox else "warn"},
+        {"title": L("密钥存放", "Key storage"),
+         "sub": L("密钥同时明文存在 openclaw.json 的 env 段和 .env 里，应收敛到一处。", "Keys are in plain text in both the env section of openclaw.json and .env; keep them in one place.")
+         if c.get("env") else L("只在 .env。", "Only in .env."),
+         "state": L("待收敛", "Scattered") if c.get("env") else ok, "tone": "warn" if c.get("env") else "good"},
+        {"title": L("待审批", "Awaiting approval"),
+         "sub": L(f"审批队列里现在有 {pending} 个动作等你决定。", f"{pending} {'action' if pending == 1 else 'actions'} in the approval queue waiting for your OK."),
+         "state": str(pending), "tone": "neutral"},
     ]
     plan = [
-        {"title": "隔离执行环境", "sub": "浏览器、填表等代办任务在沙箱里跑，碰不到服务器上的密钥和文件。"},
-        {"title": "Sentinel 出网审批", "sub": "沙箱的出网请求先过一个独立模型；白名单外的转成审批卡。"},
-        {"title": "凭证代位", "sub": "沙箱里只有占位 token，真实凭证在出口处才注入。"},
+        {"title": L("隔离执行环境", "Isolated execution"),
+         "sub": L("浏览器、填表等代办任务在沙箱里跑，碰不到服务器上的密钥和文件。", "Errands like browsing and filling in forms run in a sandbox, away from the server's keys and files.")},
+        {"title": L("Sentinel 出网审批", "Sentinel egress approval"),
+         "sub": L("沙箱的出网请求先过一个独立模型；白名单外的转成审批卡。", "Outbound requests from the sandbox pass a separate model first; anything off the allowlist becomes an approval card.")},
+        {"title": L("凭证代位", "Credential stand-ins"),
+         "sub": L("沙箱里只有占位 token，真实凭证在出口处才注入。", "The sandbox only holds placeholder tokens; real credentials are added on the way out.")},
     ]
-    rules = [["后台执行", "免审"], ["浏览器只读", "免审"], ["发邮件", "每次审批"], ["登录后操作", "每次审批"], ["填表", "提交前审批"], ["订行程", "下单前审批"], ["付款", "每笔审批 + 限额虚拟卡"]]
+    each_time, no_need = L("每次审批", "Approve every time"), L("免审", "No approval")
+    rules = [[L("后台执行", "Background work"), no_need], [L("浏览器只读", "Read-only browsing"), no_need], [L("发邮件", "Sending email"), each_time],
+             [L("登录后操作", "Actions while logged in"), each_time], [L("填表", "Filling in forms"), L("提交前审批", "Approve before submitting")],
+             [L("订行程", "Booking travel"), L("下单前审批", "Approve before booking")], [L("付款", "Payments"), L("每笔审批 + 限额虚拟卡", "Approve each one + capped virtual card")]]
     return {"ok": True, "facts": facts, "plan": plan, "rules": rules}
 
 

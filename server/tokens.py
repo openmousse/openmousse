@@ -11,11 +11,22 @@ import secrets
 import sys
 
 from config import CONFIG_PATH, raw, save
+from i18n import L
+
+
+def usage() -> str:
+    """用法说明，按 server.json 的 language。"""
+    return L(__doc__, """Manage the app's access tokens (stored in server.json under auth.tokens; no server restart needed).
+
+  python3 tokens.py add <name>       create a new token and print it (shown only this once)
+  python3 tokens.py list             list the names (tokens are not shown)
+  python3 tokens.py remove <name>
+""")
 
 
 def main(argv: list[str]) -> int:
     if len(argv) < 1 or argv[0] not in ("add", "list", "remove"):
-        print(__doc__)
+        print(usage())
         return 2
     data = dict(raw(fresh=True))
     auth = dict(data.get("auth") or {})
@@ -24,10 +35,10 @@ def main(argv: list[str]) -> int:
         for name in tokens:
             print(name)
         if not tokens:
-            print("（还没有令牌）")
+            print(L("（还没有令牌）", "(no tokens yet)"))
         return 0
     if len(argv) < 2:
-        print("要给个名字，比如：tokens.py add 手机")
+        print(L("要给个名字，比如：tokens.py add 手机", "Give it a name, e.g.: tokens.py add phone"))
         return 2
     name = argv[1]
     if argv[0] == "add":
@@ -36,16 +47,17 @@ def main(argv: list[str]) -> int:
         auth["tokens"] = tokens
         data["auth"] = auth
         save(data)
-        print(f"{name} 的令牌（只显示这一次，填进 app 的连接页）：\n{tok}\n已写入 {CONFIG_PATH}")
+        print(L(f"{name} 的令牌（只显示这一次，填进 app 的连接页）：\n{tok}\n已写入 {CONFIG_PATH}",
+                f"Token for {name} (shown only this once; enter it on the app's connect screen):\n{tok}\nSaved to {CONFIG_PATH}"))
         return 0
     if name not in tokens:
-        print(f"没有叫 {name} 的令牌")
+        print(L(f"没有叫 {name} 的令牌", f"No token named {name}"))
         return 1
     del tokens[name]
     auth["tokens"] = tokens
     data["auth"] = auth
     save(data)
-    print(f"已删除 {name}")
+    print(L(f"已删除 {name}", f"Deleted {name}"))
     return 0
 
 

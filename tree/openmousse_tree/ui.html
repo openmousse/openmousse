@@ -25,22 +25,31 @@
 </style>
 </head>
 <body>
-<main>
-  <h1>世界树</h1>
-  <div class="sub">你所有 AI 平台共享的记忆。这一页只在你自己的网络里打开。</div>
+<main></main>
+<script>
+// 语言跟浏览器：navigator.language 以 zh 开头用中文，其他用英文
+const ZH = /^zh/i.test(navigator.language || "");
+const L = (zh, en) => ZH ? zh : en;
+document.documentElement.lang = L("zh", "en");
+document.title = L("世界树", "Memory tree");
+let source = "";
+const $ = s => document.querySelector(s);
+$("main").innerHTML = `
+  <h1>${L("世界树", "Memory tree")}</h1>
+  <div class="sub">${L("你所有 AI 平台共享的记忆。这一页只在你自己的网络里打开。", "The memory all your AI platforms share. Only open this page on your own network.")}</div>
   <nav>
-    <button data-tab="tree" class="on">记忆</button>
-    <button data-tab="pending">待确认 <span id="npending"></span></button>
-    <button data-tab="profile">档案</button>
+    <button data-tab="tree" class="on">${L("记忆", "Memories")}</button>
+    <button data-tab="pending">${L("待确认", "Pending")} <span id="npending"></span></button>
+    <button data-tab="profile">${L("档案", "Profile")}</button>
   </nav>
 
   <section id="tab-tree">
     <div class="stats" id="stats"></div>
     <div class="add">
-      <input type="text" id="addText" placeholder="手动加一条：一句话、第三人称，比如「X 周末习惯去公园跑步」">
-      <select id="addKind"><option value="fact">事实</option><option value="preference">偏好</option><option value="decision">决定</option><option value="event">近况</option></select>
-      <input type="text" id="addTags" placeholder="标签，逗号分隔" style="width:140px">
-      <button onclick="addOne()">加入</button>
+      <input type="text" id="addText" placeholder="${L("手动加一条：一句话、第三人称，比如「X 周末习惯去公园跑步」", "Add one by hand: one third-person sentence, e.g. &quot;X likes running in the park on weekends&quot;")}">
+      <select id="addKind"><option value="fact">${L("事实", "Fact")}</option><option value="preference">${L("偏好", "Preference")}</option><option value="decision">${L("决定", "Decision")}</option><option value="event">${L("近况", "Life update")}</option></select>
+      <input type="text" id="addTags" placeholder="${L("标签，逗号分隔", "Tags, comma-separated")}" style="width:140px">
+      <button onclick="addOne()">${L("加入", "Add")}</button>
     </div>
     <nav id="sources"></nav>
     <div id="list"></div>
@@ -51,13 +60,10 @@
   <section id="tab-profile" class="hidden">
     <div class="sub" id="ppath"></div>
     <textarea id="ptext"></textarea>
-    <div class="row"><button onclick="saveProfile()">保存档案</button><span class="sub" id="pmsg"></span></div>
-    <p class="sub">档案用 Markdown：<code>## 小节</code> 下面每行 <code>- 要点</code>。要点行会进入 recall 的检索；整份档案通过 profile 工具给模型。</p>
-  </section>
-</main>
-<script>
-let source = "";
-const $ = s => document.querySelector(s);
+    <div class="row"><button onclick="saveProfile()">${L("保存档案", "Save profile")}</button><span class="sub" id="pmsg"></span></div>
+    <p class="sub">${L("档案用 Markdown：<code>## 小节</code> 下面每行 <code>- 要点</code>。要点行会进入 recall 的检索；整份档案通过 profile 工具给模型。",
+      "The profile is Markdown: one <code>- point</code> per line under each <code>## section</code>. Bullet lines become searchable through recall; the whole profile reaches the model through the profile tool.")}</p>
+  </section>`;
 document.querySelectorAll("nav [data-tab]").forEach(b => b.onclick = () => {
   document.querySelectorAll("nav [data-tab]").forEach(x => x.classList.remove("on")); b.classList.add("on");
   ["tree","pending","profile"].forEach(t => $("#tab-"+t).classList.toggle("hidden", t !== b.dataset.tab));
@@ -78,21 +84,21 @@ async function api(path, body) {
   return r.json();
 }
 function locked() {
-  $("main").innerHTML = `<section><h2>需要管理链接 · Admin link required</h2>
-    <p class="sub">在装世界树的机器上运行 <code>mousse-tree urls</code>，用它打印的管理页链接打开（链接里带管理令牌）。</p>
-    <p class="sub">On the machine running the tree, run <code>mousse-tree urls</code> and open the admin link it prints (it carries the admin key).</p></section>`;
+  $("main").innerHTML = `<section><h2>${L("需要管理链接", "Admin link required")}</h2>
+    <p class="sub">${L("在装世界树的机器上运行 <code>mousse-tree urls</code>，用它打印的管理页链接打开（链接里带管理令牌）。",
+      "On the machine running the memory tree, run <code>mousse-tree urls</code> and open the admin link it prints (the link carries the admin key).")}</p></section>`;
 }
 function esc(s) { return String(s ?? "").replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c])); }
 function render(el, items, pendingOnly) {
-  el.innerHTML = items.length ? "" : "<div class='sub'>（空）</div>";
+  el.innerHTML = items.length ? "" : `<div class='sub'>${L("（空）", "(empty)")}</div>`;
   for (const it of items) {
     const d = document.createElement("div"); d.className = "item";
     d.innerHTML = `<div>${esc(it.text)}</div>
-      <div class="meta">${esc(it.kind)} · ${esc(it.source)} · ${esc(it.observed_at)}${it.tags ? " · #" + esc(it.tags) : ""} ${it.status === "pending" ? "<span class='pending'>待确认</span>" : ""}</div>
+      <div class="meta">${esc(it.kind)} · ${esc(it.source)} · ${esc(it.observed_at)}${it.tags ? " · #" + esc(it.tags) : ""} ${it.status === "pending" ? `<span class='pending'>${L("待确认", "Pending")}</span>` : ""}</div>
       <div class="row">
-        ${it.status === "pending" ? `<button onclick="act('confirm','${it.id}')">确认</button>` : ""}
-        <button onclick="editOne('${it.id}')">改</button>
-        <button onclick="act('forget','${it.id}')">忘记</button>
+        ${it.status === "pending" ? `<button onclick="act('confirm','${it.id}')">${L("确认", "Confirm")}</button>` : ""}
+        <button onclick="editOne('${it.id}')">${L("改", "Edit")}</button>
+        <button onclick="act('forget','${it.id}')">${L("忘记", "Forget")}</button>
       </div>`;
     el.appendChild(d);
   }
@@ -101,19 +107,19 @@ async function load() {
   const d = await api("list" + (source ? "?source=" + encodeURIComponent(source) : ""));
   const pend = d.items.filter(i => i.status === "pending");
   $("#npending").textContent = pend.length ? `(${pend.length})` : "";
-  $("#stats").textContent = d.stats.filter(s => s.source !== "profile").map(s => `${s.source} ${s.status} ${s.n}`).join(" · ") + (d.require_confirm ? " · 写入需确认：开" : " · 写入需确认：关");
+  $("#stats").textContent = d.stats.filter(s => s.source !== "profile").map(s => `${s.source} ${s.status} ${s.n}`).join(" · ") + (d.require_confirm ? L(" · 写入需确认：开", " · Confirm writes: on") : L(" · 写入需确认：关", " · Confirm writes: off"));
   const srcs = [...new Set(d.stats.map(s => s.source).filter(s => s !== "profile"))];
-  $("#sources").innerHTML = [""].concat(srcs).map(s => `<button class="${s === source ? "on" : ""}" onclick="source='${s}';load()">${s || "全部"}</button>`).join("");
+  $("#sources").innerHTML = [""].concat(srcs).map(s => `<button class="${s === source ? "on" : ""}" onclick="source='${s}';load()">${s || L("全部", "All")}</button>`).join("");
   render($("#list"), d.items, false);
   render($("#plist"), pend, true);
 }
 async function act(action, id) {
-  if (action === "forget" && !confirm("忘记这条？正文会清空，只留骨架。")) return;
+  if (action === "forget" && !confirm(L("忘记这条？正文会清空，只留骨架。", "Forget this one? The text is cleared; only its id and date are kept."))) return;
   await api("action", {action, id}); load();
 }
 async function editOne(id) {
   const cur = [...document.querySelectorAll(".item")].find(x => x.innerHTML.includes(`'${id}'`));
-  const text = prompt("改成：", cur ? cur.querySelector("div").textContent : "");
+  const text = prompt(L("改成：", "Change to:"), cur ? cur.querySelector("div").textContent : "");
   if (text) { await api("action", {action:"edit", id, text}); load(); }
 }
 async function addOne() {
@@ -125,7 +131,7 @@ async function loadProfile() {
   const d = await api("profile"); $("#ptext").value = d.text; $("#ppath").textContent = d.path;
 }
 async function saveProfile() {
-  const d = await api("profile", {text: $("#ptext").value}); $("#pmsg").textContent = `已保存，${d.lines} 条要点进树`;
+  const d = await api("profile", {text: $("#ptext").value}); $("#pmsg").textContent = L(`已保存，${d.lines} 条要点进树`, `Saved, ${d.lines} bullet points in the tree`);
 }
 load();
 </script>

@@ -20,6 +20,8 @@ mousse-tree init --name 你的称呼 --tz Asia/Shanghai         # 建库、生�
 mousse-tree install-service                                 # systemd 常驻，只监听 127.0.0.1:8787
 ```
 
+语言：`mousse-tree init --lang zh`（或 `en`）决定各平台看到的说明、工具描述、工具回话，以及命令行输出用中文还是英文。不给的话，第一次 `init` 看环境变量 `LANG`（zh 开头 → 中文，其它 → 英文）；加这个选项之前建的配置保持中文。改了之后重启服务生效。
+
 有 OpenClaw 的话再加一步，让你的 agent 能检索树的导出：
 
 ```bash
@@ -74,7 +76,7 @@ mousse-tree urls     # 打印各平台的接入地址（含秘密令牌，只在
 
 ## 管理页
 
-用 `mousse-tree urls` 打印的管理页链接打开（`http://127.0.0.1:8787/ui#key=…`）：按来源看记忆、改、忘记、确认待审条目、编辑档案。管理页的接口只认带管理令牌（`config.json` 的 `ui_token`）的请求，浏览器第一次打开后会记住。`config.json` 里 `require_confirm: true` 可让平台写入先进"待确认"。
+用 `mousse-tree urls` 打印的管理页链接打开（`http://127.0.0.1:8787/ui#key=…`）：按来源看记忆、改、忘记、确认待审条目、编辑档案。管理页的接口只认带管理令牌（`config.json` 的 `ui_token`）的请求，浏览器第一次打开后会记住。页面语言跟浏览器走。`config.json` 里 `require_confirm: true` 可让平台写入先进"待确认"。
 
 ## 命令行
 

@@ -3,6 +3,7 @@ import { agentName } from '../brand';
 import { Alert, StyleSheet, View } from 'react-native';
 import { Check, ShieldCheck, Terminal, X } from './icons';
 import type { Approval } from '../data/types';
+import { L } from '../i18n';
 import { useStore } from '../store';
 import { radius, space, useTheme } from '../theme';
 import { Btn, Pill, T } from './ui';
@@ -16,14 +17,14 @@ export function ApprovalCard({ approval }: { approval: Approval }) {
   const Icon = approval.kind === 'exec' ? Terminal : ShieldCheck;
   const act = (allow: boolean) => {
     setBusy(true);
-    decide(approval.id, allow).catch((e) => Alert.alert('没做成', e instanceof Error ? e.message : String(e))).finally(() => setBusy(false));
+    decide(approval.id, allow).catch((e) => Alert.alert(L('没做成', "Didn't go through"), e instanceof Error ? e.message : String(e))).finally(() => setBusy(false));
   };
   return (
     <View style={[styles.card, { backgroundColor: t.surface, borderColor: t.goldFill, opacity: busy ? 0.6 : 1 }]}>
       <View style={styles.head}>
         <Icon size={16} color={t.gold} />
         <T v="caption" color={t.ink2} style={{ flex: 1 }}>{from}{approval.requestedAt ? ` · ${approval.requestedAt}` : ''}</T>
-        <Pill label={approval.kind === 'exec' ? '执行命令' : approval.kind} tone="warn" />
+        <Pill label={approval.kind === 'exec' ? L('执行命令', 'Run command') : approval.kind} tone="warn" />
       </View>
       <T v="headline" style={{ marginTop: space.sm }}>{approval.action}</T>
       {approval.detail ? <T v="callout" color={t.ink2} style={{ marginTop: 4 }}>{approval.detail}</T> : null}
@@ -38,8 +39,8 @@ export function ApprovalCard({ approval }: { approval: Approval }) {
         </View>
       ) : null}
       <View style={{ flexDirection: 'row', gap: space.sm, marginTop: space.md }}>
-        <Btn flex kind="quiet" label="拒绝" icon={<X size={16} color={t.ink} />} onPress={() => !busy && act(false)} />
-        <Btn flex label="这一次同意" icon={<Check size={16} color={t.onGold} />} onPress={() => !busy && act(true)} />
+        <Btn flex kind="quiet" label={L('拒绝', 'Deny')} icon={<X size={16} color={t.ink} />} onPress={() => !busy && act(false)} />
+        <Btn flex label={L('这一次同意', 'Allow once')} icon={<Check size={16} color={t.onGold} />} onPress={() => !busy && act(true)} />
       </View>
     </View>
   );

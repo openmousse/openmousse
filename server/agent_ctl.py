@@ -16,12 +16,26 @@ import urllib.error
 import urllib.request
 
 from config import settings
+from i18n import L, lang
+
+
+def description() -> str:
+    """--help 的说明，按 server.json 的 language。"""
+    return L(__doc__, """Create / delete / list Agents from the command line (or let the main Agent do it in chat). Goes through the server's HTTP API, exactly like "Add agent" in the app.
+
+  python3 agent_ctl.py list
+  python3 agent_ctl.py create --name Sleep --purpose "Every morning, read last night's sleep…" [--icon moon] [--model anthropic/claude-opus-5-5] [--skills a,b]
+  python3 agent_ctl.py delete <id>
+
+Icons: dumbbell workouts / utensils meals / book study / wallet money / moon sleep / briefcase job search / heart health / plane travel.
+""")
 
 
 def call(method: str, path: str, body: dict | None = None) -> dict:
     url = f"http://{settings.host}:{settings.port}{path}"
     data = json.dumps(body, ensure_ascii=False).encode("utf8") if body is not None else None
-    headers = {"Content-Type": "application/json", "Accept": "application/json"}
+    # 服务回的文字（错误说明、新 Agent 的 AGENTS.md）和这个命令用同一种语言
+    headers = {"Content-Type": "application/json", "Accept": "application/json", "Accept-Language": "zh-CN" if lang() == "zh" else "en"}
     tokens = settings.tokens()
     if tokens:  # 本机跑，用第一个令牌；没令牌时靠 Tailscale 白名单 / trust_loopback
         headers["Authorization"] = f"Bearer {next(iter(tokens.values()))}"
@@ -35,13 +49,13 @@ def call(method: str, path: str, body: dict | None = None) -> dict:
             msg = j.get("detail") or j.get("error") or str(j)
         except ValueError:
             msg = str(e)
-        sys.exit(f"失败（HTTP {e.code}）：{msg}")
+        sys.exit(L(f"失败（HTTP {e.code}）：{msg}", f"Failed (HTTP {e.code}): {msg}"))
     except urllib.error.URLError as e:
-        sys.exit(f"连不上服务 {url}：{e.reason}")
+        sys.exit(L(f"连不上服务 {url}：{e.reason}", f"Can't reach the server at {url}: {e.reason}"))
 
 
 def main() -> None:
-    ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    ap = argparse.ArgumentParser(description=description(), formatter_class=argparse.RawDescriptionHelpFormatter)
     sub = ap.add_subparsers(dest="cmd", required=True)
     sub.add_parser("list")
     c = sub.add_parser("create")
@@ -49,7 +63,7 @@ def main() -> None:
     c.add_argument("--purpose", default="")
     c.add_argument("--icon", default="moon")
     c.add_argument("--model", default=settings.default_model)
-    c.add_argument("--skills", default=None, help="逗号分隔；不给用 server.json 的 agent_default_skills")
+    c.add_argument("--skills", default=None, help=L("逗号分隔；不给用 server.json 的 agent_default_skills", "comma-separated; defaults to agent_default_skills in server.json"))
     d = sub.add_parser("delete")
     d.add_argument("id")
     a = ap.parse_args()

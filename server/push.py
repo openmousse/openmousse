@@ -16,6 +16,7 @@ from pydantic import BaseModel
 
 from chat import _lock, db, now_iso
 from config import settings
+from i18n import L
 
 router = APIRouter()
 EXPO_PUSH = "https://exp.host/--/api/v2/push/send"
@@ -37,7 +38,7 @@ class Register(BaseModel):
 def register(body: Register):
     tok = body.token.strip()
     if not (tok.startswith("ExponentPushToken[") or tok.startswith("ExpoPushToken[")):
-        return {"ok": False, "error": "不是 Expo push token"}
+        return {"ok": False, "error": L("不是 Expo push token", "Not an Expo push token")}
     ts = now_iso()
     with _lock, pdb() as conn:
         conn.execute("""INSERT INTO push_tokens(token, platform, created_at, last_seen, disabled) VALUES(?,?,?,?,0)
@@ -54,12 +55,13 @@ def status():
 
 class TestBody(BaseModel):
     title: str = ""
-    body: str = "测试推送：收到就说明通了。"
+    body: str = ""  # 空 = 默认的测试文字（按请求语言）
 
 
 @router.post("/api/push/test")
 async def test(body: TestBody):
-    return await send_push(body.title or settings.app_name, body.body, {"thread": "main"})
+    text = body.body or L("测试推送：收到就说明通了。", "Test notification: if you can see this, push works.")
+    return await send_push(body.title or settings.app_name, text, {"thread": "main"})
 
 
 class SendBody(BaseModel):
@@ -83,7 +85,7 @@ def active_tokens() -> list[str]:
 async def send_push(title: str, body: str, data: dict | None = None, thread_id: str | None = None) -> dict:
     tokens = active_tokens()
     if not tokens:
-        return {"ok": False, "sent": 0, "error": "没有注册的设备"}
+        return {"ok": False, "sent": 0, "error": L("没有注册的设备", "No registered devices")}
     msgs = [{"to": t, "title": title, "body": body[:180], "data": data or {}, "sound": "default", "priority": "high",
              **({"threadId": thread_id} if thread_id else {})} for t in tokens]
     try:
@@ -129,8 +131,8 @@ def preview(text: str) -> str:
 
 
 async def notify_reply(thread: str, text: str, status: str) -> None:
-    body = preview(text) if status == "ok" else "这条没回成，点开看看。"
+    body = preview(text) if status == "ok" else L("这条没回成，点开看看。", "This reply didn't go through. Tap to take a look.")
     try:
-        await send_push(thread_title(thread), body or "回复好了。", {"thread": thread}, thread_id=thread)
+        await send_push(thread_title(thread), body or L("回复好了。", "Reply ready."), {"thread": thread}, thread_id=thread)
     except Exception:  # noqa: BLE001 — 推送失败不影响回复本身
         pass

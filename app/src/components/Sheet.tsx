@@ -1,6 +1,7 @@
 import React, { createContext, useCallback, useContext, useMemo, useState } from 'react';
 import { Pressable, ScrollView, StyleSheet, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { L } from '../i18n';
 import { radius, space, useTheme } from '../theme';
 import { T } from './ui';
 
@@ -21,7 +22,7 @@ export function SheetProvider({ children }: { children: React.ReactNode }) {
         {children}
         {spec ? (
           <View style={StyleSheet.absoluteFill} accessibilityViewIsModal>
-            <Pressable style={[StyleSheet.absoluteFill, { backgroundColor: 'rgba(0,0,0,0.45)' }]} onPress={close} accessibilityLabel="关闭" />
+            <Pressable style={[StyleSheet.absoluteFill, { backgroundColor: 'rgba(0,0,0,0.45)' }]} onPress={close} accessibilityLabel={L('关闭', 'Close')} />
             <View style={[styles.panel, { backgroundColor: t.bg, paddingBottom: insets.bottom + space.lg }]}>
               <View style={[styles.grabber, { backgroundColor: t.line }]} />
               <T v="title" style={{ marginBottom: space.md }}>{spec.title}</T>

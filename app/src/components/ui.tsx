@@ -2,6 +2,7 @@ import React from 'react';
 import { Pressable, StyleSheet, Text, TextProps, View, ViewProps } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { ChevronLeft, ChevronRight } from './icons';
+import { L } from '../i18n';
 import { radius, space, type, useTheme } from '../theme';
 
 export function Screen({ children, style, ...rest }: ViewProps) {
@@ -36,7 +37,7 @@ export function NavHeader({ title, onBack, right }: { title: string; onBack: () 
   const t = useTheme();
   return (
     <View style={[styles.navHeader, { borderBottomColor: t.line }]}>
-      <Pressable onPress={onBack} hitSlop={12} accessibilityRole="button" accessibilityLabel="返回" style={styles.navSide}>
+      <Pressable onPress={onBack} hitSlop={12} accessibilityRole="button" accessibilityLabel={L('返回', 'Back')} style={styles.navSide}>
         <ChevronLeft size={26} color={t.gold} />
       </Pressable>
       <T v="headline" numberOfLines={1} style={{ flex: 1, textAlign: 'center' }}>{title}</T>

@@ -4,6 +4,7 @@
   token()        名为 local 的接入令牌（安装器生成，给本机脚本调 /api 用）；没有就空字符串
   db_path()      服务的 SQLite（journal 表在里面）
   user_tz()      用户时区（server.json 的 timezone）
+  lang() / L(zh, en)   server.json 的 language（"zh" / "en"，没写 = en，和服务端 config.py 一致）；给用户或 agent 看的文字用 L("中文", "English")
   api(path, body=None, timeout=30)   带令牌的 JSON 请求
 """
 from __future__ import annotations
@@ -54,6 +55,15 @@ def user_tz() -> ZoneInfo:
 
 def user_now() -> datetime:
     return datetime.now(user_tz())
+
+
+def lang() -> str:
+    return "zh" if str(config().get("language") or "en").lower().startswith("zh") else "en"
+
+
+def L(zh: str, en: str) -> str:
+    """双语文字：按 server.json 的 language 挑一种。调用时才读配置，别在导入时（模块常量里）调用。"""
+    return zh if lang() == "zh" else en
 
 
 def api(path: str, body: dict | None = None, timeout: float = 30) -> dict:

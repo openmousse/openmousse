@@ -26,3 +26,5 @@ skills 里的命令都走固定路径 `~/.openmousse/repo/…`（安装器建的
 - `memory.search.extraPaths` 加 `<openclaw>/shared/digest`：主对话能查各 Agent 的日结
 
 主 agent 的 `AGENTS.md` 末尾追加一节 `## OpenMousse`（日结、自动触发、Agent 协作、不用 ask_user、日志与世界树）。删掉这一节 app 仍能对话，只是 Agent 之间不协作了。
+
+语言：安装器会问用 `zh` 还是 `en`（默认看 `LANG`；也可以设 `MOUSSE_LANG`，或 `setup.py --lang`），写进 `server.json` 的 `language`。安装器的输出、`## OpenMousse` 规则、世界树、脚本的提示（包括日结的触发文字）都按它；`【自动触发】` 这个标记本身永远不变。已有的 `## OpenMousse` 一节再跑安装器也不会重写。

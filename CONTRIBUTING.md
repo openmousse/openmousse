@@ -41,7 +41,7 @@ The CI workflow (`.github/workflows/ci.yml`) shows exactly what is checked: app 
 
 - **Blank slate**: nothing about a specific person's life ships in the code. Domain features live in `packs/`.
 - **No locked-in data sources**: a pack declares what data it needs; where it comes from is the user's choice (an MCP-capable app, an adapter script, or chat).
-- **Memory first**: facts about the user go to the world tree, not into an Agent's private notes.
+- **Memory first**: facts about the user go to the memory tree, not into an Agent's private notes.
 - **The app is a shell**: no sample data, no fake replies; when the server is unreachable it says so.
 
 ## Labels

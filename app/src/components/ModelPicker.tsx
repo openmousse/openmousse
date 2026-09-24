@@ -1,7 +1,8 @@
 import React, { useState } from 'react';
 import { Pressable, StyleSheet, View } from 'react-native';
 import { Check, ChevronDown } from './icons';
-import { MODELS } from '../data/models';
+import { MODELS, billingLabel, costLabel } from '../data/models';
+import { L } from '../i18n';
 import { useStore } from '../store';
 import type { ModelOption } from '../data/types';
 import { radius, space, useTheme } from '../theme';
@@ -26,8 +27,8 @@ function Option({ m, on, onPress }: { m: ModelOption; on: boolean; onPress: () =
       <View style={{ flex: 1, gap: 4 }}>
         <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
           <T v="headline">{m.name}</T>
-          <Pill label={billing} tone={billing === '订阅' ? 'gold' : billing === '免费' ? 'good' : 'cyan'} />
-          {m.cost === '贵' ? <Pill label="贵" tone="warn" /> : m.cost === '省' ? <Pill label="省" tone="neutral" /> : null}
+          <Pill label={billingLabel(billing)} tone={billing === '订阅' ? 'gold' : billing === '免费' ? 'good' : 'cyan'} />
+          {m.cost === '贵' ? <Pill label={costLabel(m.cost)} tone="warn" /> : m.cost === '省' ? <Pill label={costLabel(m.cost)} tone="neutral" /> : null}
         </View>
         <T v="callout" color={t.ink2}>{m.note}</T>
       </View>
@@ -53,11 +54,11 @@ function ModelList({ value, onPick }: { value: string; onPick: (id: string) => v
       {list.map((m) => <Option key={m.id} m={m} on={m.id === value} onPress={() => onPick(m.id)} />)}
       {!more ? (
         <Pressable onPress={() => setMore(true)} style={{ paddingVertical: space.md, alignItems: 'center' }} accessibilityRole="button">
-          <T v="callout" color={t.gold}>更多模型（{allowed.filter((m) => !m.featured).length}）</T>
+          <T v="callout" color={t.gold}>{L(`更多模型（${allowed.filter((m) => !m.featured).length}）`, `More models (${allowed.filter((m) => !m.featured).length})`)}</T>
         </Pressable>
       ) : null}
       <T v="callout" color={t.ink3} style={{ marginTop: space.xs }}>
-        切换只影响当前对话，记忆和历史不变。订阅额度用尽时会按回退链自动换下一个，回复上标的是实际回答的模型。
+        {L('切换只影响当前对话，记忆和历史不变。订阅额度用尽时会按回退链自动换下一个，回复上标的是实际回答的模型。', 'Switching only affects this chat; memory and history stay the same. When subscription quota runs out, the fallback chain moves to the next model, and each reply shows the model that actually answered.')}
       </T>
     </View>
   );
@@ -69,11 +70,11 @@ export function ModelSwitch({ value, onChange }: { value: string; onChange: (id:
   const sheet = useSheet();
   const m = modelOf(value);
   return (
-    <Pressable accessibilityRole="button" accessibilityLabel={`当前模型 ${m?.name}，点击切换`}
-      onPress={() => sheet.open({ title: '这段对话用哪个模型', content: (close) => <ModelList value={value} onPick={(id) => { onChange(id); close(); }} /> })}
+    <Pressable accessibilityRole="button" accessibilityLabel={L(`当前模型 ${m?.name}，点击切换`, `Current model ${m?.name}, tap to switch`)}
+      onPress={() => sheet.open({ title: L('这段对话用哪个模型', 'Model for this chat'), content: (close) => <ModelList value={value} onPick={(id) => { onChange(id); close(); }} /> })}
       style={({ pressed }) => [styles.switch, { backgroundColor: t.surface, opacity: pressed ? 0.7 : 1 }]}>
       <View style={{ width: 7, height: 7, borderRadius: 4, backgroundColor: m?.billing === '订阅' ? t.goldFill : t.chartA }} />
-      <T v="caption" style={{ fontSize: 13 }}>{m?.short ?? '模型'}</T>
+      <T v="caption" style={{ fontSize: 13 }}>{m?.short ?? L('模型', 'Model')}</T>
       <ChevronDown size={14} color={t.ink2} />
     </Pressable>
   );
@@ -86,11 +87,11 @@ export function ModelField({ value, onChange }: { value: string; onChange: (id: 
   const m = modelOf(value);
   return (
     <Pressable accessibilityRole="button"
-      onPress={() => sheet.open({ title: '这个 Agent 默认用哪个模型', content: (close) => <ModelList value={value} onPick={(id) => { onChange(id); close(); }} /> })}
+      onPress={() => sheet.open({ title: L('这个 Agent 默认用哪个模型', 'Default model for this agent'), content: (close) => <ModelList value={value} onPick={(id) => { onChange(id); close(); }} /> })}
       style={[styles.field, { backgroundColor: t.surface }]}>
       <T v="body">{m?.name}</T>
       <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
-        <T v="callout" color={t.ink2}>{m?.billing}</T>
+        <T v="callout" color={t.ink2}>{m ? billingLabel(m.billing) : null}</T>
         <ChevronDown size={16} color={t.ink3} />
       </View>
     </Pressable>

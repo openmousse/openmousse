@@ -1,4 +1,4 @@
-# OpenMousse · world tree (tree)
+# OpenMousse · memory tree (tree)
 
 [中文](README.zh-CN.md) · **English**
 
@@ -10,7 +10,7 @@ No LLM calls, so no model cost of its own; the model cost is whatever your platf
 
 ## The problem it solves
 
-Every AI platform has its own "memory", none of them talk to each other, and you cannot take it with you. The world tree turns that around: **memory is the trunk, platforms are branches**. Whatever any platform learns about you goes back to the tree; before any platform speaks, it reads the tree.
+Every AI platform has its own "memory", none of them talk to each other, and you cannot take it with you. The memory tree turns that around: **memory is the trunk, platforms are branches**. Whatever any platform learns about you goes back to the tree; before any platform speaks, it reads the tree.
 
 ## Install (Python 3.11+)
 
@@ -19,6 +19,8 @@ pipx install "git+https://github.com/openmousse/openmousse#subdirectory=tree"   
 mousse-tree init --name YourName --tz Europe/London          # create the db, generate one token per platform
 mousse-tree install-service                                 # systemd, listens on 127.0.0.1:8787 only
 ```
+
+Language: `mousse-tree init --lang en` (or `zh`) sets the language of everything the platforms see (instructions, tool descriptions, tool replies) and of the command line. Without it, the first `init` follows `LANG` (`zh…` → Chinese, anything else → English); configs created before this option keep Chinese. Restart the service after changing it.
 
 If you run OpenClaw, one more step lets your agents search the tree's export:
 
@@ -74,7 +76,7 @@ Then add one line to each platform's custom instructions, and switch off the pla
 
 ## Admin page
 
-Open the admin link printed by `mousse-tree urls` (`http://127.0.0.1:8787/ui#key=…`): browse memories by source, edit, forget, confirm pending entries, edit the profile. The page's API only answers requests that carry the admin key (`ui_token` in `config.json`); the browser remembers it after the first visit. `require_confirm: true` in `config.json` puts platform writes into "pending" until confirmed.
+Open the admin link printed by `mousse-tree urls` (`http://127.0.0.1:8787/ui#key=…`): browse memories by source, edit, forget, confirm pending entries, edit the profile. The page's API only answers requests that carry the admin key (`ui_token` in `config.json`); the browser remembers it after the first visit. The page itself follows your browser's language. `require_confirm: true` in `config.json` puts platform writes into "pending" until confirmed.
 
 ## Command line
 

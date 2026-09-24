@@ -227,13 +227,16 @@ def stats(conn: sqlite3.Connection) -> list[dict]:
 
 
 def fmt(rows: list[dict]) -> str:
+    """recall / recent 工具和命令行的输出（给模型读），按配置的语言。"""
     if not rows:
-        return "（没有相关记忆）"
+        return C.L("（没有相关记忆）", "(no matching memories)")
+    zh = C.lang() == "zh"
     lines = []
     for r in rows:
-        flag = " [待确认]" if r["status"] == "pending" else ""
+        flag = (" [待确认]" if zh else " [pending]") if r["status"] == "pending" else ""
         tags = f" #{r['tags']}" if r.get("tags") else ""
-        lines.append(f"- [{r['id']}] {r['text']}{tags} （{r['source']}，{r['observed_at']}{flag}）")
+        meta = f"（{r['source']}，{r['observed_at']}{flag}）" if zh else f"({r['source']}, {r['observed_at']}{flag})"
+        lines.append(f"- [{r['id']}] {r['text']}{tags} {meta}")
     return "\n".join(lines)
 
 
@@ -245,8 +248,13 @@ def export(conn: sqlite3.Connection) -> Path:
         "SELECT * FROM tree WHERE source != 'profile' AND status IN ('active','pending') ORDER BY observed_at DESC, created_at DESC"
     ).fetchall()
     path.parent.mkdir(parents=True, exist_ok=True)
-    out = ["# 世界树 TREE.md（mousse-tree 自动导出，勿手改）", "",
-           f"> 各 AI 平台共享的记忆，{len(rows)} 条，导出于 {now_iso()}。来源标在方括号里。", ""]
+    zh = C.lang() == "zh"  # 这份导出给 OpenClaw 的 agent 检索着读，跟配置的语言
+    if zh:
+        out = ["# 世界树 TREE.md（mousse-tree 自动导出，勿手改）", "",
+               f"> 各 AI 平台共享的记忆，{len(rows)} 条，导出于 {now_iso()}。来源标在方括号里。", ""]
+    else:
+        out = ["# Memory tree TREE.md (exported automatically by mousse-tree, do not edit by hand)", "",
+               f"> Memories shared by all AI platforms: {len(rows)} entries, exported at {now_iso()}. The source is in square brackets.", ""]
     by_kind: dict[str, list] = {}
     for r in rows:
         by_kind.setdefault(r["kind"], []).append(r)
@@ -254,7 +262,7 @@ def export(conn: sqlite3.Connection) -> Path:
         if kind in by_kind:
             out.append(f"## {kind}")
             for r in by_kind[kind]:
-                flag = "（待确认）" if r["status"] == "pending" else ""
+                flag = ("（待确认）" if zh else " (pending)") if r["status"] == "pending" else ""
                 tags = f" #{r['tags']}" if r["tags"] else ""
                 out.append(f"- {r['text']}{tags} [{r['source']} {r['observed_at']}]{flag}")
             out.append("")

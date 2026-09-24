@@ -10,10 +10,13 @@ import { Bubble } from '../components/ChatView';
 import { Search, X } from '../components/icons';
 import { Card, NavHeader, Pill, Screen, SectionLabel, T } from '../components/ui';
 import type { DayInfo, Message, SearchHit } from '../data/types';
+import { L } from '../i18n';
 import { useStore } from '../store';
 import { radius, space, useTheme } from '../theme';
 
 const WEEK = ['日', '一', '二', '三', '四', '五', '六'];
+const WEEK_EN = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+const MONTH_EN = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
 
 function dayLabel(day: string): string {
   const [y, m, d] = day.split('-').map(Number);
@@ -22,10 +25,12 @@ function dayLabel(day: string): string {
   today.setHours(today.getHours() - 4); // 逻辑日
   const iso = today.toLocaleDateString('en-CA');
   const yest = new Date(today); yest.setDate(yest.getDate() - 1);
-  const rel = day === iso ? '今天' : day === yest.toLocaleDateString('en-CA') ? '昨天' : '';
-  const base = `${m} 月 ${d} 日 周${WEEK[dt.getDay()]}`;
-  return rel ? `${rel} · ${base}` : y === today.getFullYear() ? base : `${y} 年 ${base}`;
+  const rel = day === iso ? L('今天', 'Today') : day === yest.toLocaleDateString('en-CA') ? L('昨天', 'Yesterday') : '';
+  const base = L(`${m} 月 ${d} 日 周${WEEK[dt.getDay()]}`, `${WEEK_EN[dt.getDay()]}, ${MONTH_EN[m - 1]} ${d}`);
+  return rel ? `${rel} · ${base}` : y === today.getFullYear() ? base : L(`${y} 年 ${base}`, `${base}, ${y}`);
 }
+
+const msgCount = (n: number) => L(`${n} 条`, n === 1 ? '1 message' : `${n} messages`);
 
 function useThreadName() {
   const { groups, sideChats } = useStore();
@@ -78,30 +83,30 @@ export function HistoryScreen() {
 
   return (
     <Screen>
-      <NavHeader title={`${name(thread)} · 历史`} onBack={() => nav.goBack()} />
+      <NavHeader title={L(`${name(thread)} · 历史`, `${name(thread)} · History`)} onBack={() => nav.goBack()} />
       <View style={{ paddingHorizontal: space.lg, paddingTop: space.sm, gap: space.sm }}>
         <View style={[styles.search, { backgroundColor: t.surface2 }]}>
           <Search size={18} color={t.ink3} />
-          <TextInput value={q} onChangeText={changeQ} placeholder="搜对话、建议卡、日志" placeholderTextColor={t.ink3} autoCorrect={false} returnKeyType="search"
-            style={[styles.input, { color: t.ink }]} accessibilityLabel="关键词搜索" />
-          {q ? <Pressable onPress={() => changeQ('')} hitSlop={8} accessibilityRole="button" accessibilityLabel="清空"><X size={16} color={t.ink3} /></Pressable> : null}
+          <TextInput value={q} onChangeText={changeQ} placeholder={L('搜对话、建议卡、日志', 'Search chats, suggestion cards, journal')} placeholderTextColor={t.ink3} autoCorrect={false} returnKeyType="search"
+            style={[styles.input, { color: t.ink }]} accessibilityLabel={L('关键词搜索', 'Search')} />
+          {q ? <Pressable onPress={() => changeQ('')} hitSlop={8} accessibilityRole="button" accessibilityLabel={L('清空', 'Clear')}><X size={16} color={t.ink3} /></Pressable> : null}
         </View>
         {q.trim() ? (
           <View style={{ flexDirection: 'row', gap: space.sm }}>
             {(['all', 'thread'] as const).map((s) => (
               <Pressable key={s} onPress={() => changeScope(s)} accessibilityRole="button" style={[styles.chip, { backgroundColor: scope === s ? t.goldSoft : t.surface2 }]}>
-                <T v="caption" color={scope === s ? t.gold : t.ink2} style={{ fontWeight: '600' }}>{s === 'all' ? '全部线程' : `只看${name(thread)}`}</T>
+                <T v="caption" color={scope === s ? t.gold : t.ink2} style={{ fontWeight: '600' }}>{s === 'all' ? L('全部线程', 'All threads') : L(`只看${name(thread)}`, `Only ${name(thread)}`)}</T>
               </Pressable>
             ))}
           </View>
         ) : null}
       </View>
       <ScrollView contentContainerStyle={{ padding: space.lg, paddingBottom: space.xxl }} keyboardShouldPersistTaps="handled">
-        {!connected ? <Card><T v="callout" color={t.ink2}>没连上服务器。</T></Card> : null}
+        {!connected ? <Card><T v="callout" color={t.ink2}>{L('没连上服务器。', 'Not connected to the server.')}</T></Card> : null}
         {error ? <Card><T v="callout" color={t.bad}>{error}</T></Card> : null}
         {q.trim() ? (
           searching && !hits ? <ActivityIndicator color={t.gold} style={{ marginTop: space.lg }} /> : !hits?.length ? (
-            <Card><T v="callout" color={t.ink2}>没搜到「{q.trim()}」。</T></Card>
+            <Card><T v="callout" color={t.ink2}>{L(`没搜到「${q.trim()}」。`, `No results for "${q.trim()}".`)}</T></Card>
           ) : grouped.map(([day, list]) => (
             <View key={day}>
               <SectionLabel>{dayLabel(day)}</SectionLabel>
@@ -111,7 +116,7 @@ export function HistoryScreen() {
                     style={({ pressed }) => [styles.hit, i < list.length - 1 && { borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: t.line }, { opacity: pressed ? 0.6 : 1 }]}>
                     <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, marginBottom: 4 }}>
                       <Pill label={name(h.thread)} tone={h.thread && h.thread !== 'main' ? 'cyan' : 'gold'} />
-                      <Pill label={h.kind === 'card' ? '建议卡' : h.kind === 'journal' ? '日志' : h.role === 'user' ? '你' : h.role === 'auto' ? '自动' : `${agentName()}`} />
+                      <Pill label={h.kind === 'card' ? L('建议卡', 'Suggestion card') : h.kind === 'journal' ? L('日志', 'Journal') : h.role === 'user' ? L('你', 'You') : h.role === 'auto' ? L('自动', 'Auto') : `${agentName()}`} />
                       <T v="caption" color={t.ink3}>{h.time}</T>
                     </View>
                     <T v="callout" numberOfLines={3}>{h.snippet}</T>
@@ -123,17 +128,17 @@ export function HistoryScreen() {
         ) : !days ? (
           connected ? <ActivityIndicator color={t.gold} style={{ marginTop: space.lg }} /> : null
         ) : !days.length ? (
-          <Card><T v="callout" color={t.ink2}>这个对话还没有记录。</T></Card>
+          <Card><T v="callout" color={t.ink2}>{L('这个对话还没有记录。', 'No history for this chat yet.')}</T></Card>
         ) : (
           <>
-            <SectionLabel>按天翻（04:00 为一天的边界）</SectionLabel>
+            <SectionLabel>{L('按天翻（04:00 为一天的边界）', 'By day (a day starts at 04:00)')}</SectionLabel>
             <Card style={{ paddingVertical: space.xs }}>
               {days.map((d, i) => (
                 <Pressable key={d.day} onPress={() => nav.navigate('HistoryDay', { thread, day: d.day })} accessibilityRole="button"
                   style={({ pressed }) => [styles.hit, i < days.length - 1 && { borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: t.line }, { opacity: pressed ? 0.6 : 1 }]}>
                   <View style={{ flexDirection: 'row', alignItems: 'center', gap: space.sm }}>
                     <T v="body" style={{ fontWeight: '600', flex: 1 }}>{dayLabel(d.day)}</T>
-                    <T v="caption" color={t.ink3}>{d.count} 条</T>
+                    <T v="caption" color={t.ink3}>{msgCount(d.count)}</T>
                   </View>
                   {d.first ? <T v="callout" color={t.ink2} numberOfLines={1} style={{ marginTop: 3 }}>{d.first}</T> : null}
                 </Pressable>
@@ -168,10 +173,10 @@ export function HistoryDayScreen() {
       <NavHeader title={`${name(thread)} · ${dayLabel(day)}`} onBack={() => nav.goBack()} />
       {error ? <Card style={{ margin: space.lg }}><T v="callout" color={t.bad}>{error}</T></Card> : null}
       {!msgs ? <ActivityIndicator color={t.gold} style={{ marginTop: space.lg }} /> : !msgs.length ? (
-        <Card style={{ margin: space.lg }}><T v="callout" color={t.ink2}>这一天没有记录。</T></Card>
+        <Card style={{ margin: space.lg }}><T v="callout" color={t.ink2}>{L('这一天没有记录。', 'Nothing on this day.')}</T></Card>
       ) : (
         <ScrollView ref={scroll} contentContainerStyle={{ padding: space.lg, gap: 14, paddingBottom: space.xxl }} onContentSizeChange={jump}>
-          <T v="caption" color={t.ink3} style={{ textAlign: 'center' }}>只读 · {msgs.length} 条</T>
+          <T v="caption" color={t.ink3} style={{ textAlign: 'center' }}>{L('只读', 'Read-only')} · {msgCount(msgs.length)}</T>
           {msgs.map((m, i) => (
             <View key={m.id} onLayout={(e) => { ys.current[m.id] = e.nativeEvent.layout.y; }}
               style={focus === m.id ? [styles.focus, { borderLeftColor: t.gold }] : undefined}>

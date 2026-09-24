@@ -5,6 +5,7 @@
 字段（都可省略）：
   app_name          界面上助手的名字（默认 OpenMousse）
   timezone          IANA 时区，逻辑日和时间显示都按它算
+  language          "zh" 或 "en"：没带 Accept-Language 的请求、推送、定时器用的语言（默认 en；app 的请求按它自己的语言）
   bind              {"host", "port"}：服务监听地址。loopback 给反向代理 / Tailscale Serve；Tailscale 私网地址只给自己的设备
   openclaw_home     OpenClaw 的家（默认 ~/.openclaw）
   workspace         主 agent 的 workspace（默认 <openclaw_home>/workspace）
@@ -78,6 +79,7 @@ class Settings:
         self.app_name: str = c.get("app_name") or "OpenMousse"
         self.timezone: str = c.get("timezone") or "UTC"
         self.tz = ZoneInfo(self.timezone)
+        self.language: str = "zh" if str(c.get("language") or "en").lower().startswith("zh") else "en"
         bind = c.get("bind") or {}
         self.host: str = bind.get("host") or "127.0.0.1"
         self.port: int = int(bind.get("port") or 8080)

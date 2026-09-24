@@ -10,7 +10,7 @@ Meta's Muse deploys an agent on its servers and wraps it in an app. OpenMousse d
 
 | Directory | What it is | Status |
 |---|---|---|
-| [`tree/`](tree/) | The world tree: one memory that Claude / ChatGPT / Gemini / Notion and your claw all attach to (over MCP). The app's "Memory" page is this | Usable (matured before the app) |
+| [`tree/`](tree/) | The memory tree: one memory that Claude / ChatGPT / Gemini / Notion and your claw all attach to (over MCP). The app's "Memory" page is this | Usable (matured before the app) |
 | [`app/`](app/) | iOS / Web client (Expo): chat, Agents, Today, Goals, Memory. Connects to your own server; you pick the name and icon | Usable (boards still assume the author's data sources, see packs) |
 | [`server/`](server/) | Thin API layer (FastAPI): token auth, chat relay, Agent create / delete, board data, push, hosts the web build | Usable |
 | [`packs/core/`](packs/core/) | What you get right after install: Agent-to-Agent handoff, creating Agents from chat, journal, the world-tree skill, the daily-close timer, and the installer itself | Usable |
@@ -20,7 +20,7 @@ Design principles:
 
 - **Blank slate.** After install there are no preset life domains. Say "I want to track sleep and weekly runs" and it creates an Agent for you. The author's own Agents ship as packs, to be used as templates.
 - **Data sources are never locked in.** A pack only declares what data it needs (workouts, meals, sleep, body metrics), not where it comes from. Sources can be Apple Health, any health / fitness / diet app that exposes MCP, a small adapter script, or just telling the agent in chat. If the software you already use has MCP, plug it in; if not, write a tiny adapter.
-- **Memory is the trunk.** The world tree is not a side feature; it is the app's memory layer. Every platform and every Agent is a branch on the same tree.
+- **Memory is the trunk.** The memory tree is not a side feature; it is the app's memory layer. Every platform and every Agent is a branch on the same tree.
 
 ## Install
 
@@ -30,7 +30,7 @@ Prerequisite: a Linux machine with OpenClaw installed and a model configured (`o
 curl -fsSL https://raw.githubusercontent.com/openmousse/openmousse/main/install.sh | bash
 ```
 
-It asks three questions (where OpenClaw lives, your timezone, what to call the assistant) and does the rest: clones the repo, installs Python dependencies into `~/.openmousse/venv`, writes `~/.openmousse/server.json`, generates a phone token, wires the [`packs/core`](packs/core/) skills and the daily-close timer into your OpenClaw (backing up `openclaw.json` first and validating afterwards), installs systemd services, and finally prints how to connect your phone. Running it again is safe: it only fills in what is missing.
+It asks four questions (language, where OpenClaw lives, your timezone, what to call the assistant) and does the rest: clones the repo, installs Python dependencies into `~/.openmousse/venv`, writes `~/.openmousse/server.json`, generates a phone token, wires the [`packs/core`](packs/core/) skills and the daily-close timer into your OpenClaw (backing up `openclaw.json` first and validating afterwards), installs systemd services, and finally prints how to connect your phone. Running it again is safe: it only fills in what is missing.
 
 Easiest if the machine is on Tailscale: the server binds to its Tailscale address and a phone with Tailscale can connect directly. Otherwise it listens on localhost only; expose it with `tailscale serve` or a reverse proxy as HTTPS.
 

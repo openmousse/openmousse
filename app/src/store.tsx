@@ -7,6 +7,7 @@ import { dataApi } from './api/data';
 import { healthSupported, syncHealth } from './api/health';
 import { HEALTH_KEYS, loadHealthParts, loadLive, probe, type LiveData } from './api/live';
 import { onNotificationOpen, registerPush } from './api/push';
+import { L } from './i18n';
 import { openThread } from './navigation';
 import type {
   Application, JournalEntry, PendingFile,
@@ -299,12 +300,13 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
 
   const send = useCallback((threadId: string, text: string, files?: PendingFile[]) => {
     const pending = files?.map((f, i) => ({ id: `local${i}`, name: f.name, mime: f.mime, size: f.size, kind: kindOf(f.name, f.mime), url: f.uri }));
+    // '（见附件）' 是占位标记，和服务端 chat.py 一致，ChatView 按原文比较后隐藏：不翻译。
     const mine: Message = { id: id('u'), role: 'user', time: timeNow(), body: { type: 'text', text: text || '（见附件）', attachments: pending } };
     const modelId = latest.current.threadModel[threadId] ?? latest.current.threadModel.main;
     setS((st) => ({ ...appendMsg(st, threadId, mine), typing: { ...st.typing, [threadId]: true }, sideChats: st.sideChats.map((c) => (c.id === threadId ? { ...c, updatedAt: Date.now() } : c)) }));
     const swapId = (userId: string) => setS((st) => ({ ...st, threads: { ...st.threads, [threadId]: (st.threads[threadId] ?? []).map((m) => (m.id === mine.id ? { ...m, id: userId } : m)) } }));
     api.current.send(threadId, text, modelId, (partial) => setS((st) => ({ ...st, streaming: { ...st.streaming, [threadId]: partial } })), swapId, files)
-      .catch((e: unknown): Message => ({ id: id('r'), role: 'grava', time: timeNow(), modelId, body: { type: 'text', text: '（这条没发出去。）' }, error: errText(e) }))
+      .catch((e: unknown): Message => ({ id: id('r'), role: 'grava', time: timeNow(), modelId, body: { type: 'text', text: L('（这条没发出去。）', "(This message wasn't sent.)") }, error: errText(e) }))
       .then((reply) => { reload('feed'); return reply; })  // Grava 可能刚写了一张建议卡
       .then((reply) => setS((st) => {
         const streaming = { ...st.streaming }; delete streaming[threadId];

@@ -27,6 +27,7 @@ from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
 from config import TZ, settings  # noqa: E402
+from i18n import L  # noqa: E402
 
 OPENCLAW = settings.openclaw_json
 DB = settings.db
@@ -68,7 +69,7 @@ def gateway_token() -> str:
     try:
         return json.loads(OPENCLAW.read_text(encoding="utf8"))["gateway"]["auth"]["token"]
     except (OSError, ValueError, KeyError) as e:  # noqa: BLE001
-        raise HTTPException(503, f"读不到 Gateway token：{e}") from e
+        raise HTTPException(503, L(f"读不到 Gateway token：{e}", f"Can't read the Gateway token: {e}")) from e
 
 
 PREFIX_RELAY = "【主对话转来】"  # 每个 Group 一个独立 OpenClaw agent（2026-09-24，第 7 步）
@@ -108,10 +109,10 @@ def db() -> sqlite3.Connection:
     return conn
 
 
-def log_activity(text: str, kind: str, actor: str = "你") -> None:
+def log_activity(text: str, kind: str, actor: str | None = None) -> None:
     """app 侧有后果的动作记一行（记忆规范 L4 activity_log）。不写被删 / 被忘的内容本身。"""
     with _lock, db() as conn:
-        conn.execute("INSERT INTO activity_log(ts, actor, text, kind) VALUES(?,?,?,?)", (now_iso(), actor, text, kind))
+        conn.execute("INSERT INTO activity_log(ts, actor, text, kind) VALUES(?,?,?,?)", (now_iso(), actor or L("你", "You"), text, kind))
 
 
 def now_iso() -> str:
@@ -164,7 +165,7 @@ def history(thread: str = "main", limit: int = 200, day: str | None = None, all:
             try:
                 lo, hi = day_bounds(day)
             except ValueError as exc:
-                raise HTTPException(400, "day 要写成 YYYY-MM-DD") from exc
+                raise HTTPException(400, L("day 要写成 YYYY-MM-DD", "day must be YYYY-MM-DD")) from exc
             # ts 是带时区的 ISO 字符串，同一时区下字符串比较等价于时间比较（伦敦夏令时切换的那两小时忽略）
             rows = conn.execute("SELECT * FROM messages WHERE thread=? AND ts>=? AND ts<? ORDER BY id DESC LIMIT 1000", (thread, lo, hi)).fetchall()
         else:
@@ -286,7 +287,7 @@ async def run_gateway(run: Run, text: str | list, token: str) -> None:
         run.status = "error"
         run.error = str(e)
     if run.status == "error" and not run.text:
-        run.text = f"（没拿到回复：{run.error}）"
+        run.text = L(f"（没拿到回复：{run.error}）", f"(Didn't get a reply: {run.error})")
     run.requested = run.model
     if run.status == "ok":
         run.model = await actual_model(run.key or session_key(run.thread)) or run.model
@@ -354,7 +355,7 @@ def start_run(thread: str, text: str, model: str | None, key: str | None = None,
     """记下用户这一条，在后台开跑。thread 决定记录存在哪；key 不给就按 thread 推 session key。
     有附件时：图片随消息给模型，文档 / 音频抽出的文字拼进消息，其它只给路径（见 files.py）。"""
     if (cur := RUNS.get(thread)) and not cur.done:
-        raise HTTPException(409, "上一条还没回完，等它结束或先接回去看。")
+        raise HTTPException(409, L("上一条还没回完，等它结束或先接回去看。", "The last reply isn't finished yet. Wait for it, or reconnect to see it."))
     token = gateway_token()
     import files as files_mod  # 延迟导入：files.py 依赖本模块
     rows = files_mod.load_pending(thread, attachment_ids or [])
@@ -371,7 +372,8 @@ def start_run(thread: str, text: str, model: str | None, key: str | None = None,
         shown = files_mod.bind(rows, user_id)
         with _lock, db() as conn:
             conn.execute("UPDATE messages SET attachments=? WHERE id=?", (json.dumps(shown, ensure_ascii=False), user_id))
-        log_activity(f"发了 {len(rows)} 个附件给 {settings.app_name}（{'、'.join(r['name'] for r in rows)[:80]}）", "upload")
+        log_activity(L(f"发了 {len(rows)} 个附件给 {settings.app_name}（{'、'.join(r['name'] for r in rows)[:80]}）",
+                       f"Sent {len(rows)} attachment{'' if len(rows) == 1 else 's'} to {settings.app_name} ({', '.join(r['name'] for r in rows)[:80]})"), "upload")
     run = Run(thread=thread, model=model, user_id=user_id, started=ts, key=key)
     RUNS[thread] = run
     asyncio.create_task(run_gateway(run, content, token))
@@ -382,9 +384,9 @@ def start_run(thread: str, text: str, model: str | None, key: str | None = None,
 async def send(body: SendBody):
     text = body.text.strip()
     if not text and not body.attachments:
-        raise HTTPException(400, "空消息")
+        raise HTTPException(400, L("空消息", "Empty message"))
     if not text:
-        text = "（见附件）"
+        text = "（见附件）"  # 不翻译：app 按这串原文隐藏占位（ChatView PLACEHOLDER_TEXT）；给模型的那份在 files.build_content 按语言换
     run = start_run(body.thread, text, body.model, attachment_ids=body.attachments, origin=body.origin)
     return StreamingResponse(attach(run), media_type="text/event-stream", headers={"Cache-Control": "no-store", "X-Accel-Buffering": "no"})
 
@@ -394,7 +396,7 @@ async def trigger(body: SendBody):
     """系统触发（suggestion_watcher 等）：记一条 auto 消息、后台开跑，立刻返回，不流式。"""
     text = body.text.strip()
     if not text:
-        raise HTTPException(400, "空消息")
+        raise HTTPException(400, L("空消息", "Empty message"))
     run = start_run(body.thread, text, body.model, origin="auto")
     run.notify = body.notify
     return {"ok": True, "thread": body.thread, "userId": f"db{run.user_id}", "modelId": run.model}
@@ -412,7 +414,7 @@ async def relay(body: RelayBody):
     不推送（用户在主对话里等着）。上一条没回完 → 409。超时 → 200 但 status=timeout，回复仍会在后台完成并入库。"""
     text = body.text.strip()
     if not text:
-        raise HTTPException(400, "空消息")
+        raise HTTPException(400, L("空消息", "Empty message"))
     run = start_run(body.thread, PREFIX_RELAY + text, None, origin="relay")
     run.notify = False
     deadline = time.time() + min(max(body.timeout, 10), 600)
@@ -440,7 +442,7 @@ class MessageRef(BaseModel):
 
 def row_id(ref: str) -> int:
     if not ref.startswith("db") or not ref[2:].isdigit():
-        raise HTTPException(400, "这条消息还没存进服务器，刷新后再试")
+        raise HTTPException(400, L("这条消息还没存进服务器，刷新后再试", "This message isn't saved on the server yet. Refresh and try again."))
     return int(ref[2:])
 
 
@@ -450,7 +452,7 @@ def delete_message(body: MessageRef):
     with _lock, db() as conn:
         n = conn.execute("DELETE FROM messages WHERE thread=? AND id=?", (body.thread, row_id(body.id))).rowcount
     if n:
-        log_activity("从对话记录里删了 1 条消息", "deleted")
+        log_activity(L("从对话记录里删了 1 条消息", "Deleted 1 message from the chat history"), "deleted")
     return {"ok": True, "deleted": n}
 
 
@@ -460,7 +462,8 @@ async def gateway_call(method: str, params: dict, timeout: float = 30) -> dict:
                                                 stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE)
     out, err = await asyncio.wait_for(proc.communicate(), timeout)
     if proc.returncode != 0:
-        raise HTTPException(502, f"Gateway {method} 失败：{(err or out).decode('utf8', 'replace')[-300:]}")
+        detail = (err or out).decode("utf8", "replace")[-300:]
+        raise HTTPException(502, L(f"Gateway {method} 失败：{detail}", f"Gateway {method} failed: {detail}"))
     return json.loads(out)
 
 
@@ -492,17 +495,18 @@ async def rewind(body: MessageRef):
     """撤回 / 重新编辑：会话退回到这条用户消息之前，它和之后的记录一起删掉，原文返回给输入框。"""
     rid = row_id(body.id)
     if (cur := RUNS.get(body.thread)) and not cur.done:
-        raise HTTPException(409, f"{settings.app_name} 还在回复，等它回完再撤回")
+        raise HTTPException(409, L(f"{settings.app_name} 还在回复，等它回完再撤回", f"{settings.app_name} is still replying. Wait until it's done to unsend."))
     with _lock, db() as conn:
         r = conn.execute("SELECT * FROM messages WHERE thread=? AND id=?", (body.thread, rid)).fetchone()
     if not r:
-        raise HTTPException(404, "找不到这条消息")
+        raise HTTPException(404, L("找不到这条消息", "Message not found"))
     if r["role"] != "user":
-        raise HTTPException(400, "只能撤回自己发的消息")
+        raise HTTPException(400, L("只能撤回自己发的消息", "You can only unsend your own messages"))
     entry = await find_entry(body.thread, (r["gw_text"] if "gw_text" in r.keys() and r["gw_text"] else r["text"]), r["ts"])
     if entry:
         await gateway_call("sessions.rewind", {"sessionKey": session_key(body.thread), "entryId": entry})
     with _lock, db() as conn:
         n = conn.execute("DELETE FROM messages WHERE thread=? AND id>=?", (body.thread, rid)).rowcount
-    log_activity(f"撤回了 {n} 条消息{f'，{settings.app_name} 的会话也退回到那之前' if entry else ''}", "deleted")
+    tail = L(f"，{settings.app_name} 的会话也退回到那之前", f"; {settings.app_name}'s session was rewound to before them too") if entry else ""
+    log_activity(L(f"撤回了 {n} 条消息{tail}", f"Unsent {n} message{'' if n == 1 else 's'}{tail}"), "deleted")
     return {"ok": True, "text": r["text"], "removed": n, "rewound": bool(entry)}

@@ -30,7 +30,7 @@ Meta Muse 把一个 agent 部署在它的服务器上，再用一个 app 包起�
 curl -fsSL https://raw.githubusercontent.com/openmousse/openmousse/main/install.sh | bash
 ```
 
-问三个问题（OpenClaw 在哪、时区、助手叫什么），其余全做：clone 仓库、装 Python 依赖到 `~/.openmousse/venv`、写 `~/.openmousse/server.json`、生成手机令牌、把 [`packs/core`](packs/core/) 的 skills 和日结定时器接进你的 OpenClaw（改 `openclaw.json` 前备份、改完校验）、装成 systemd 服务，最后打印手机怎么连。再跑一遍是安全的，只补缺的。
+问四个问题（语言、OpenClaw 在哪、时区、助手叫什么），其余全做：clone 仓库、装 Python 依赖到 `~/.openmousse/venv`、写 `~/.openmousse/server.json`、生成手机令牌、把 [`packs/core`](packs/core/) 的 skills 和日结定时器接进你的 OpenClaw（改 `openclaw.json` 前备份、改完校验）、装成 systemd 服务，最后打印手机怎么连。再跑一遍是安全的，只补缺的。
 
 机器在 Tailscale 里最省事：服务自动绑到 Tailscale 地址，手机装 Tailscale 就能连。不在的话服务只听本机，用 `tailscale serve` 或反向代理暴露成 HTTPS。
 

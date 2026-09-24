@@ -11,6 +11,7 @@ import { ModelField, ModelSwitch } from '../components/ModelPicker';
 import { useSheet } from '../components/Sheet';
 import { Btn, Pill, Screen, T } from '../components/ui';
 import type { SideChat } from '../data/types';
+import { L } from '../i18n';
 import { useStore } from '../store';
 import { radius, space, type, useTheme } from '../theme';
 
@@ -24,22 +25,22 @@ function NewSideChat({ close, onCreated }: { close: () => void; onCreated: (id: 
   const [busy, setBusy] = useState(false);
   const create = () => {
     if (!title.trim() || busy) return;
-    if (!connected) { Alert.alert('没连上服务器', '到「我 → 服务器」检查地址和令牌'); return; }
+    if (!connected) { Alert.alert(L('没连上服务器', 'Not connected to the server'), L('到「我 → 服务器」检查地址和令牌', 'Check the address and token in Me → Server.')); return; }
     setBusy(true);
     createSideChat({ title: title.trim(), purpose: purpose.trim(), modelId })
       .then((id) => { onCreated(id); close(); })
-      .catch((e) => Alert.alert('没开成', e instanceof Error ? e.message : String(e)))
+      .catch((e) => Alert.alert(L('没开成', "Couldn't create it"), e instanceof Error ? e.message : String(e)))
       .finally(() => setBusy(false));
   };
   return (
     <View style={{ gap: space.md }}>
-      <T v="callout" color={t.ink2}>会持续几天到几个月的事，给它一个自己的空间。它有独立的上下文，主对话不用背着这些；做完可以归档。</T>
-      <TextInput value={title} onChangeText={setTitle} placeholder="叫什么，比如：搬家" placeholderTextColor={t.ink3} accessibilityLabel="空间名字"
+      <T v="callout" color={t.ink2}>{L('会持续几天到几个月的事，给它一个自己的空间。它有独立的上下文，主对话不用背着这些；做完可以归档。', "For things that run for days or months. A side chat has its own context, so the main chat doesn't have to carry it. Archive it when you're done.")}</T>
+      <TextInput value={title} onChangeText={setTitle} placeholder={L('叫什么，比如：搬家', 'Name, e.g. Moving house')} placeholderTextColor={t.ink3} accessibilityLabel={L('空间名字', 'Side chat name')}
         style={[type.body, styles.input, { backgroundColor: t.surface, color: t.ink }]} />
-      <TextInput value={purpose} onChangeText={setPurpose} multiline placeholder="只管什么事，一两句" placeholderTextColor={t.ink3} accessibilityLabel="空间职责"
+      <TextInput value={purpose} onChangeText={setPurpose} multiline placeholder={L('只管什么事，一两句', "What it's for, in a sentence or two")} placeholderTextColor={t.ink3} accessibilityLabel={L('空间职责', 'What the side chat is for')}
         style={[type.body, styles.input, { backgroundColor: t.surface, color: t.ink, minHeight: 72, textAlignVertical: 'top' }]} />
       <ModelField value={modelId} onChange={setModelId} />
-      <Btn label={busy ? '正在开…' : '开这个空间'} onPress={create} />
+      <Btn label={busy ? L('正在开…', 'Creating…') : L('开这个空间', 'Create side chat')} onPress={create} />
     </View>
   );
 }
@@ -50,21 +51,21 @@ function SideChatMenu({ chat, close, onDeleted }: { chat: SideChat; close: () =>
   const { renameSideChat, archiveSideChat, deleteSideChat } = useStore();
   const [title, setTitle] = useState(chat.title);
   const [confirm, setConfirm] = useState(false);
-  const run = (p: Promise<void>, after?: () => void) => p.then(() => { after?.(); close(); }).catch((e) => Alert.alert('没做成', e instanceof Error ? e.message : String(e)));
+  const run = (p: Promise<void>, after?: () => void) => p.then(() => { after?.(); close(); }).catch((e) => Alert.alert(L('没做成', "Couldn't do that"), e instanceof Error ? e.message : String(e)));
   return (
     <View style={{ gap: space.md }}>
       <View style={{ flexDirection: 'row', gap: space.sm, alignItems: 'center' }}>
-        <TextInput value={title} onChangeText={setTitle} accessibilityLabel="空间名字" style={[type.body, styles.input, { flex: 1, backgroundColor: t.surface, color: t.ink }]} />
-        <Btn label="改名" kind="quiet" icon={<Pencil size={14} color={t.ink} />} onPress={() => { if (title.trim()) run(renameSideChat(chat.id, title.trim())); }} />
+        <TextInput value={title} onChangeText={setTitle} accessibilityLabel={L('空间名字', 'Side chat name')} style={[type.body, styles.input, { flex: 1, backgroundColor: t.surface, color: t.ink }]} />
+        <Btn label={L('改名', 'Rename')} kind="quiet" icon={<Pencil size={14} color={t.ink} />} onPress={() => { if (title.trim()) run(renameSideChat(chat.id, title.trim())); }} />
       </View>
       {chat.archived
-        ? <Btn label="恢复到侧栏" kind="quiet" icon={<ArchiveRestore size={16} color={t.ink} />} onPress={() => run(archiveSideChat(chat.id, false))} />
-        : <Btn label="归档" kind="quiet" icon={<Archive size={16} color={t.ink} />} onPress={() => run(archiveSideChat(chat.id, true))} />}
-      <T v="caption" color={t.ink3}>归档：从侧栏收进「已归档」，对话记录都在，可以恢复。（把结论沉淀进记忆还没做。）</T>
+        ? <Btn label={L('恢复到侧栏', 'Restore to sidebar')} kind="quiet" icon={<ArchiveRestore size={16} color={t.ink} />} onPress={() => run(archiveSideChat(chat.id, false))} />
+        : <Btn label={L('归档', 'Archive')} kind="quiet" icon={<Archive size={16} color={t.ink} />} onPress={() => run(archiveSideChat(chat.id, true))} />}
+      <T v="caption" color={t.ink3}>{L('归档：从侧栏收进「已归档」，对话记录都在，可以恢复。（把结论沉淀进记忆还没做。）', 'Archive: moves it from the sidebar into "Archived". The conversation is kept and you can restore it. (Saving its conclusions to memory isn\'t built yet.)')}</T>
       {confirm
-        ? <Btn label="确认删除对话记录" kind="danger" icon={<Trash2 size={16} color={t.bad} />} onPress={() => run(deleteSideChat(chat.id), onDeleted)} />
-        : <Btn label="删除" kind="danger" icon={<Trash2 size={16} color={t.bad} />} onPress={() => setConfirm(true)} />}
-      <T v="caption" color={t.ink3}>{`删除：app 里的记录删掉，${agentName()} 那边的会话也删掉（OpenClaw 会压缩存档一份）。活动记录里留一行。`}</T>
+        ? <Btn label={L('确认删除对话记录', 'Confirm: delete the conversation')} kind="danger" icon={<Trash2 size={16} color={t.bad} />} onPress={() => run(deleteSideChat(chat.id), onDeleted)} />
+        : <Btn label={L('删除', 'Delete')} kind="danger" icon={<Trash2 size={16} color={t.bad} />} onPress={() => setConfirm(true)} />}
+      <T v="caption" color={t.ink3}>{L(`删除：app 里的记录删掉，${agentName()} 那边的会话也删掉（OpenClaw 会压缩存档一份）。活动记录里留一行。`, `Delete: removes the conversation from the app and ${agentName()}'s session too (OpenClaw keeps a compressed archive copy). One line stays in Activity.`)}</T>
     </View>
   );
 }
@@ -97,7 +98,7 @@ function DrawerSection({ title, right, count, limit = 3, defaultOpen = true, emp
   return (
     <View>
       <View style={{ flexDirection: 'row', alignItems: 'center', paddingHorizontal: space.sm, marginTop: space.lg, marginBottom: 4, gap: 4 }}>
-        <Pressable onPress={() => setOpen((v) => !v)} accessibilityRole="button" accessibilityState={{ expanded: open }} accessibilityLabel={`${open ? '折叠' : '展开'}${title}`}
+        <Pressable onPress={() => setOpen((v) => !v)} accessibilityRole="button" accessibilityState={{ expanded: open }} accessibilityLabel={L(`${open ? '折叠' : '展开'}${title}`, `${open ? 'Collapse' : 'Expand'} ${title}`)}
           style={{ flexDirection: 'row', alignItems: 'center', gap: 4, flex: 1, paddingVertical: 2 }}>
           {open ? <ChevronDown size={14} color={t.ink3} /> : <ChevronRight size={14} color={t.ink3} />}
           <T v="label" color={t.ink3}>{title}</T>
@@ -112,12 +113,12 @@ function DrawerSection({ title, right, count, limit = 3, defaultOpen = true, emp
           {hidden > 0 ? (
             <Pressable onPress={() => setAll(true)} accessibilityRole="button" style={({ pressed }) => [styles.row, { opacity: pressed ? 0.6 : 1 }]}>
               <View style={{ width: 28 }} />
-              <T v="caption" color={t.gold}>还有 {hidden} 个</T>
+              <T v="caption" color={t.gold}>{L(`还有 ${hidden} 个`, `${hidden} more`)}</T>
             </Pressable>
           ) : all && rows.length > limit ? (
             <Pressable onPress={() => setAll(false)} accessibilityRole="button" style={({ pressed }) => [styles.row, { opacity: pressed ? 0.6 : 1 }]}>
               <View style={{ width: 28 }} />
-              <T v="caption" color={t.ink3}>收起</T>
+              <T v="caption" color={t.ink3}>{L('收起', 'Show less')}</T>
             </Pressable>
           ) : null}
         </>
@@ -142,39 +143,39 @@ function Drawer({ active, onPick, onClose }: { active: string; onPick: (id: stri
   const menu = (c: SideChat) => sheet.open({ title: c.title, content: (close) => <SideChatMenu chat={c} close={close} onDeleted={() => { if (active === c.id) onPick('main'); }} /> });
   return (
     <View style={StyleSheet.absoluteFill} accessibilityViewIsModal>
-      <Pressable style={[StyleSheet.absoluteFill, { backgroundColor: 'rgba(0,0,0,0.45)' }]} onPress={onClose} accessibilityLabel="关闭侧栏" />
+      <Pressable style={[StyleSheet.absoluteFill, { backgroundColor: 'rgba(0,0,0,0.45)' }]} onPress={onClose} accessibilityLabel={L('关闭侧栏', 'Close sidebar')} />
       <View style={[styles.drawer, { backgroundColor: t.bg, paddingTop: insets.top + space.sm, paddingBottom: insets.bottom + space.md }]}>
         <View style={{ flexDirection: 'row', alignItems: 'center', gap: space.sm, paddingHorizontal: space.md, marginBottom: space.sm }}>
           <LensAvatar size={28} config={avatar} />
           <T v="headline" style={{ flex: 1 }}>{`${agentName()}`}</T>
         </View>
         <ScrollView showsVerticalScrollIndicator={false}>
-          <DrawerRow icon={<LensAvatar size={20} config={avatar} />} label="主对话" sub="接待台，只放人话" on={active === 'main'} onPress={() => pick('main')} />
+          <DrawerRow icon={<LensAvatar size={20} config={avatar} />} label={L('主对话', 'Main chat')} sub={L('接待台，只放人话', 'Front desk, plain talk only')} on={active === 'main'} onPress={() => pick('main')} />
 
-          <DrawerSection title="独立空间" count={live.length} empty="会持续几天的事，给它开一个。"
-            right={<Pressable onPress={() => { onClose(); sheet.open({ title: '开一个独立空间', content: (close) => <NewSideChat close={close} onCreated={onPick} /> }); }} hitSlop={8} accessibilityRole="button" accessibilityLabel="开一个独立空间"><Plus size={16} color={t.gold} /></Pressable>}>
+          <DrawerSection title={L('独立空间', 'Side chats')} count={live.length} empty={L('会持续几天的事，给它开一个。', 'Open one for anything that runs for days.')}
+            right={<Pressable onPress={() => { onClose(); sheet.open({ title: L('开一个独立空间', 'New side chat'), content: (close) => <NewSideChat close={close} onCreated={onPick} /> }); }} hitSlop={8} accessibilityRole="button" accessibilityLabel={L('开一个独立空间', 'New side chat')}><Plus size={16} color={t.gold} /></Pressable>}>
             {live.map((c) => (
               <DrawerRow key={c.id} icon={<MessagesSquare size={18} color={active === c.id ? t.gold : t.cyan} />} label={c.title} sub={c.lastLine} on={active === c.id} onPress={() => pick(c.id)}
-                right={<Pressable onPress={() => menu(c)} hitSlop={8} accessibilityRole="button" accessibilityLabel={`${c.title} 的更多操作`}><Ellipsis size={18} color={t.ink3} /></Pressable>} />
+                right={<Pressable onPress={() => menu(c)} hitSlop={8} accessibilityRole="button" accessibilityLabel={L(`${c.title} 的更多操作`, `More actions for ${c.title}`)}><Ellipsis size={18} color={t.ink3} /></Pressable>} />
             ))}
           </DrawerSection>
 
           <DrawerSection title="Agents" count={groups.length}
-            right={<Pressable onPress={() => { onClose(); nav.navigate('Tabs', { screen: 'Agents' }); }} hitSlop={8} accessibilityRole="button" accessibilityLabel="全部 Agents"><LayoutGrid size={15} color={t.gold} /></Pressable>}>
+            right={<Pressable onPress={() => { onClose(); nav.navigate('Tabs', { screen: 'Agents' }); }} hitSlop={8} accessibilityRole="button" accessibilityLabel={L('全部 Agents', 'All agents')}><LayoutGrid size={15} color={t.gold} /></Pressable>}>
             {groups.map((g) => (
               <DrawerRow key={g.id} icon={<GroupBadge icon={g.icon} size={22} />} label={g.name} sub={g.lastLine} onPress={() => { onClose(); nav.navigate('Group', { id: g.id }); }} />
             ))}
           </DrawerSection>
 
-          <DrawerSection title="任务" count={running}>
-            {[<DrawerRow key="tasks" icon={<ClipboardList size={18} color={running ? t.cyan : t.ink3} />} label={running ? `${running} 个在跑` : '任务'} sub="派给谁、做到哪、怎么做的" onPress={() => { onClose(); nav.navigate('Tasks'); }}
+          <DrawerSection title={L('任务', 'Tasks')} count={running}>
+            {[<DrawerRow key="tasks" icon={<ClipboardList size={18} color={running ? t.cyan : t.ink3} />} label={running ? L(`${running} 个在跑`, `${running} running`) : L('任务', 'Tasks')} sub={L('派给谁、做到哪、怎么做的', "Who's on it, how far along, how it's done")} onPress={() => { onClose(); nav.navigate('Tasks'); }}
               right={running ? <Pill label={String(running)} tone="cyan" /> : undefined} />]}
           </DrawerSection>
 
-          <DrawerSection title="已归档" count={archived.length} defaultOpen={false} empty="还没有归档的空间。">
+          <DrawerSection title={L('已归档', 'Archived')} count={archived.length} defaultOpen={false} empty={L('还没有归档的空间。', 'No archived side chats yet.')}>
             {archived.map((c) => (
-              <DrawerRow key={c.id} icon={<Archive size={16} color={t.ink3} />} label={c.title} sub="独立空间 · 已归档" onPress={() => pick(c.id)}
-                right={<Pressable onPress={() => menu(c)} hitSlop={8} accessibilityRole="button" accessibilityLabel={`${c.title} 的更多操作`}><Ellipsis size={18} color={t.ink3} /></Pressable>} />
+              <DrawerRow key={c.id} icon={<Archive size={16} color={t.ink3} />} label={c.title} sub={L('独立空间 · 已归档', 'Side chat · Archived')} onPress={() => pick(c.id)}
+                right={<Pressable onPress={() => menu(c)} hitSlop={8} accessibilityRole="button" accessibilityLabel={L(`${c.title} 的更多操作`, `More actions for ${c.title}`)}><Ellipsis size={18} color={t.ink3} /></Pressable>} />
             ))}
           </DrawerSection>
         </ScrollView>
@@ -202,7 +203,7 @@ export function ChatScreen() {
   return (
     <Screen>
       <View style={[styles.head, { borderBottomColor: t.line }]}>
-        <Pressable onPress={() => setOpen(true)} hitSlop={10} accessibilityRole="button" accessibilityLabel="打开侧栏" style={styles.menuBtn}>
+        <Pressable onPress={() => setOpen(true)} hitSlop={10} accessibilityRole="button" accessibilityLabel={L('打开侧栏', 'Open sidebar')} style={styles.menuBtn}>
           <Menu size={22} color={t.ink} />
           {running ? <View style={[styles.dot, { backgroundColor: t.cyan }]} /> : null}
         </Pressable>
@@ -210,18 +211,18 @@ export function ChatScreen() {
         <View style={{ flex: 1 }}>
           <T v="headline" numberOfLines={1}>{side ? side.title : `${agentName()}`}</T>
           {side
-            ? <T v="caption" color={t.ink3} numberOfLines={1}>{side.archived ? '已归档 · ' : '独立空间 · '}{side.purpose || '自己的上下文'}</T>
+            ? <T v="caption" color={t.ink3} numberOfLines={1}>{side.archived ? L('已归档 · ', 'Archived · ') : L('独立空间 · ', 'Side chat · ')}{side.purpose || L('自己的上下文', 'Its own context')}</T>
             : <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
-                {connected ? <Pill label={sharedChannels.length ? `与 ${sharedChannels.join('、')} 共用主会话` : '主会话'} tone="good" /> : <Pressable onPress={() => nav.navigate('Connect')} accessibilityRole="button" accessibilityLabel="设置服务器"><Pill label={booting ? '正在连接…' : '未连接服务器，点这里设置'} tone="warn" /></Pressable>}
+                {connected ? <Pill label={sharedChannels.length ? L(`与 ${sharedChannels.join('、')} 共用主会话`, `Main session, shared with ${sharedChannels.join(', ')}`) : L('主会话', 'Main session')} tone="good" /> : <Pressable onPress={() => nav.navigate('Connect')} accessibilityRole="button" accessibilityLabel={L('设置服务器', 'Set up server')}><Pill label={booting ? L('正在连接…', 'Connecting…') : L('未连接服务器，点这里设置', 'Not connected, tap to set up')} tone="warn" /></Pressable>}
               </View>}
         </View>
-        <Pressable onPress={() => nav.navigate('History', { thread: active })} hitSlop={8} accessibilityRole="button" accessibilityLabel="历史与搜索" style={styles.menuBtn}>
+        <Pressable onPress={() => nav.navigate('History', { thread: active })} hitSlop={8} accessibilityRole="button" accessibilityLabel={L('历史与搜索', 'History and search')} style={styles.menuBtn}>
           <CalendarDays size={20} color={t.ink2} />
         </Pressable>
         <ModelSwitch value={threadModel[active] ?? threadModel.main} onChange={(id) => setThreadModel(active, id)} />
       </View>
-      <ChatView key={active} threadId={active} placeholder={side ? `跟「${side.title}」说点什么` : `跟 ${agentName()} 说点什么`}
-        empty={side ? (side.purpose ? `这个空间只管：${side.purpose}` : '新空间，说点什么开始吧。') : '主对话和 Telegram 共用同一个会话，这里还没有 app 发出的消息。'} />
+      <ChatView key={active} threadId={active} placeholder={side ? L(`跟「${side.title}」说点什么`, `Message "${side.title}"`) : L(`跟 ${agentName()} 说点什么`, `Message ${agentName()}`)}
+        empty={side ? (side.purpose ? L(`这个空间只管：${side.purpose}`, `This side chat is only for: ${side.purpose}`) : L('新空间，说点什么开始吧。', 'New side chat. Say something to start.')) : L('主对话和 Telegram 共用同一个会话，这里还没有 app 发出的消息。', 'The main chat shares one session with Telegram. No messages from the app here yet.')} />
       {open ? <Drawer active={active} onPick={setActive} onClose={() => setOpen(false)} /> : null}
     </Screen>
   );

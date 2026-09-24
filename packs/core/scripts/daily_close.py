@@ -18,9 +18,18 @@ from datetime import timedelta
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from mousse_common import api, db_path, user_now  # noqa: E402
+from mousse_common import L, api, db_path, user_now  # noqa: E402
 
-TEXT = "【自动触发】日结。按 AGENTS.md 的日结规则：把今天的结论写进 memory/今天.md 的「## 日结」和共享 digest，值得长期记住的进 MEMORY.md。回一行「日结好了」。"
+MARK = "【自动触发】"  # 协议标记：app 靠这个前缀认出系统消息，AGENTS.md 的规则也按它判断，不翻译；后面的说明跟 server.json 的 language
+
+
+def trigger_text() -> str:
+    return MARK + L(
+        "日结。按 AGENTS.md 的日结规则：把今天的结论写进 memory/今天.md 的「## 日结」和共享 digest，值得长期记住的进 MEMORY.md。回一行「日结好了」。",
+        "Daily digest. Follow the daily digest rules in AGENTS.md: write today's conclusions under \"## Daily digest\" in today's "
+        "memory/YYYY-MM-DD.md and in the shared digest, and put anything worth keeping long-term into MEMORY.md. "
+        "Reply with one line: \"Daily digest done\".",
+    )
 
 
 def threads() -> list[str]:
@@ -45,7 +54,7 @@ def active_today(thread: str, since_iso: str) -> int:
 
 def trigger(thread: str) -> str:
     try:
-        api("/api/chat/trigger", {"thread": thread, "text": TEXT, "origin": "auto"}, timeout=20)
+        api("/api/chat/trigger", {"thread": thread, "text": trigger_text(), "origin": "auto"}, timeout=20)
         return "ok"
     except urllib.error.HTTPError as exc:
         return "busy" if exc.code == 409 else f"error {exc.code}"

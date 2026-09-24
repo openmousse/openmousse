@@ -25,6 +25,8 @@ from fastapi.staticfiles import StaticFiles
 
 import sources  # noqa: E402 — 先于 health / data：把 scripts/ 放进 sys.path、加载可选数据源
 from config import TZ, settings  # noqa: E402
+import i18n  # noqa: E402
+from i18n import L  # noqa: E402
 from sources import calendar_ics, xunji  # noqa: E402
 from chat import router as chat_router  # noqa: E402
 from health import router as health_router  # noqa: E402
@@ -34,10 +36,25 @@ from push import router as push_router  # noqa: E402
 
 DIST = settings.dist
 settings.db.parent.mkdir(parents=True, exist_ok=True)  # 新实例第一次启动：数据目录还不存在
-WEEKDAYS = "一二三四五六日"
-MEALS = {"morning": "早餐", "breakfast": "早餐", "lunch": "午餐", "noon": "午餐", "dinner": "晚餐", "evening": "晚餐",
-         "night": "晚餐", "preworkout": "练前", "postworkout": "练后", "snack": "加餐", "snacks": "加餐", "extra": "加餐"}
-MEAL_ORDER = ["早餐", "午餐", "练前", "练后", "晚餐", "加餐"]
+# 训记的 meal_type → 餐次键（排序、分组用）；显示名按请求的语言给（meal_label），app 只显示不比较。
+MEALS = {"morning": "breakfast", "breakfast": "breakfast", "lunch": "lunch", "noon": "lunch", "dinner": "dinner", "evening": "dinner",
+         "night": "dinner", "preworkout": "preworkout", "postworkout": "postworkout", "snack": "snack", "snacks": "snack", "extra": "snack"}
+MEAL_ORDER = ["breakfast", "lunch", "preworkout", "postworkout", "dinner", "snack"]
+
+
+def weekday_name(i: int) -> str:
+    """周几（0 = 周一）：中文一个字（app 拼成「周一」），英文 Mon。"""
+    return L("一二三四五六日"[i], ("Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun")[i])
+
+
+def meal_label(key: str) -> str:
+    return {"breakfast": L("早餐", "Breakfast"), "lunch": L("午餐", "Lunch"), "dinner": L("晚餐", "Dinner"), "preworkout": L("练前", "Pre-workout"),
+            "postworkout": L("练后", "Post-workout"), "snack": L("加餐", "Snack")}.get(key) or L("其他", "Other")
+
+
+def xunji_name() -> str:
+    return L("训记", "Xunji")
+
 
 app = FastAPI(title=f"{settings.app_name} API", docs_url=None, redoc_url=None, openapi_url=None)
 app.include_router(chat_router)
@@ -89,13 +106,20 @@ def principal_of(request: Request) -> str | None:
 
 @app.middleware("http")
 async def guard(request: Request, call_next):
-    # 网页版的静态文件公开；/api/* 要认证。
-    if request.url.path.startswith("/api/"):
-        who = principal_of(request)
-        if not who:
-            return JSONResponse({"ok": False, "error": "没有有效的接入令牌。在服务器上运行 python3 tokens.py add <名字> 生成一个，填进 app 的连接页。"}, status_code=401)
-        request.state.principal = who
-    resp = await call_next(request)
+    # 这个请求用什么语言回文字（app 带 Accept-Language；没有就用 server.json 的 language）。下游任务会继承它。
+    lang_token = i18n.use(request.headers.get("accept-language"))
+    try:
+        # 网页版的静态文件公开；/api/* 要认证。
+        if request.url.path.startswith("/api/"):
+            who = principal_of(request)
+            if not who:
+                return JSONResponse({"ok": False, "error": L("没有有效的接入令牌。在服务器上运行 python3 tokens.py add <名字> 生成一个，填进 app 的连接页。",
+                                                             "No valid access token. On the server run python3 tokens.py add <name> and enter the token on the app's connect screen.")},
+                                    status_code=401)
+            request.state.principal = who
+        resp = await call_next(request)
+    finally:
+        i18n.reset(lang_token)
     # index.html 和接口都不缓存，避免主屏幕 app 看到旧版；带哈希的静态资源照常缓存
     if request.url.path.startswith("/api/") or request.url.path in ("/", "/index.html"):
         resp.headers["Cache-Control"] = "no-store"
@@ -122,7 +146,7 @@ def top_set(sets: list[dict]) -> str:
         if w > best_w:
             best_w = w
             reps = s.get("reps") or ""
-            best = (f"{s.get('weight')} {s.get('unit') or 'kg'} × {reps}" if w else (f"自重 × {reps}" if reps else "")).strip()
+            best = (f"{s.get('weight')} {s.get('unit') or 'kg'} × {reps}" if w else (L(f"自重 × {reps}", f"Bodyweight × {reps}") if reps else "")).strip()
     return best
 
 
@@ -141,7 +165,7 @@ def shape_train(t: dict) -> dict:
             kcal = round(float(note.split("calorie:")[1].split()[0]))
         except (ValueError, IndexError):
             kcal = None
-    return {"title": t.get("title") or "训练", "minutes": minutes, "kcal": kcal,
+    return {"title": t.get("title") or L("训练", "Workout"), "minutes": minutes, "kcal": kcal,
             "start": datetime.fromtimestamp(start / 1000, TZ).strftime("%H:%M") if start else "",
             "movements": moves, "sets_done": sum(x["sets_done"] for x in moves)}
 
@@ -173,7 +197,7 @@ def health(request: Request):
 @app.get("/api/fitness/week")
 def fitness_week(offset: int = 0):
     if not -26 <= offset <= 0:
-        raise HTTPException(400, "offset 取 -26 到 0")
+        raise HTTPException(400, L("offset 取 -26 到 0", "offset must be between -26 and 0"))
     sources.require("workouts")
     t = today()
     monday = t - timedelta(days=t.weekday()) + timedelta(weeks=offset)
@@ -185,12 +209,12 @@ def fitness_week(offset: int = 0):
             try:
                 trains = trains_on(d)
             except xunji.XunjiError as exc:
-                raise HTTPException(502, f"训记读取失败：{exc}") from exc
-        days.append({"date": d.isoformat(), "d": WEEKDAYS[i], "minutes": sum(x["minutes"] for x in trains),
-                     "label": " + ".join(x["title"] for x in trains) or ("休息" if d < t else ("今天还没练" if d == t else "")),
+                raise HTTPException(502, L(f"训记读取失败：{exc}", f"Couldn't read Xunji: {exc}")) from exc
+        days.append({"date": d.isoformat(), "d": weekday_name(i), "minutes": sum(x["minutes"] for x in trains),
+                     "label": " + ".join(x["title"] for x in trains) or (L("休息", "Rest") if d < t else (L("今天还没练", "No workout yet") if d == t else "")),
                      "future": d > t, "trains": trains})
     done = [x for x in days if x["trains"]]
-    return {"ok": True, "source": "训记", "week_start": monday.isoformat(), "today_index": t.weekday() if offset == 0 else 6,
+    return {"ok": True, "source": xunji_name(), "week_start": monday.isoformat(), "today_index": t.weekday() if offset == 0 else 6,
             "sessions": sum(len(x["trains"]) for x in days), "active_days": len(done),
             "total_minutes": sum(x["minutes"] for x in days), "total_sets": sum(tr["sets_done"] for x in days for tr in x["trains"]),
             "days": days}
@@ -201,7 +225,7 @@ def targets_of(day: dict | None) -> dict | None:
     训记不存热量目标，这里按 4/4/9 从三大营养素换算。配置文件里的 nutrition_targets 可以覆盖。"""
     override = settings.nutrition_targets()
     if override:
-        return {**override, "source": "手动设定"}
+        return {**override, "source": L("手动设定", "Set manually")}
     lim = ((day or {}).get("foods") or {}).get("limits") or {}
     try:
         p, c, f = float(lim.get("protein") or 0), float(lim.get("carb") or 0), float(lim.get("fat") or 0)
@@ -209,7 +233,7 @@ def targets_of(day: dict | None) -> dict | None:
         return None
     if not (p and c and f):
         return None
-    return {"kcal": round(p * 4 + c * 4 + f * 9), "protein": round(p), "carb": round(c), "fat": round(f), "source": "训记", "kcal_derived": True}
+    return {"kcal": round(p * 4 + c * 4 + f * 9), "protein": round(p), "carb": round(c), "fat": round(f), "source": xunji_name(), "kcal_derived": True}
 
 
 def grams_of(rec: dict) -> float | None:
@@ -235,21 +259,21 @@ def diet_day(date_: str | None = None):
         with _lock:
             data = xunji.call("food_query", {"start_date": d.isoformat(), "end_date": d.isoformat(), "include_detail": True}, ttl=ttl_for(d))
     except xunji.XunjiError as exc:
-        raise HTTPException(502, f"训记读取失败：{exc}") from exc
+        raise HTTPException(502, L(f"训记读取失败：{exc}", f"Couldn't read Xunji: {exc}")) from exc
     day = next((x for x in (data.get("res") or {}).get("days") or [] if x.get("datestr") == d.isoformat()), None)
     totals = (day or {}).get("totals") or {}
     meals: dict[str, dict] = {}
     for rec in ((day or {}).get("foods") or {}).get("records") or []:
-        label = MEALS.get(str(rec.get("meal_type") or "").lower(), "其他")
+        key = MEALS.get(str(rec.get("meal_type") or "").lower(), "other")
         g, ntr = grams_of(rec), rec.get("ntr") or {}
         kcal = round(float(ntr.get("cal") or 0) * g / 100) if g is not None else None
         protein = round(float(ntr.get("protein") or 0) * g / 100, 1) if g is not None else None
-        meal = meals.setdefault(label, {"label": label, "kcal": 0, "protein": 0.0, "items": []})
+        meal = meals.setdefault(key, {"label": meal_label(key), "kcal": 0, "protein": 0.0, "items": []})
         meal["items"].append({"name": rec.get("name"), "amount": rec.get("amount"), "unit": rec.get("unit") or "g", "kcal": kcal})
         meal["kcal"] += kcal or 0
         meal["protein"] = round(meal["protein"] + (protein or 0), 1)
-    ordered = sorted(meals.values(), key=lambda m: MEAL_ORDER.index(m["label"]) if m["label"] in MEAL_ORDER else 99)
-    return {"ok": True, "source": "训记", "date": d.isoformat(),
+    ordered = [meals[k] for k in sorted(meals, key=lambda k: MEAL_ORDER.index(k) if k in MEAL_ORDER else 99)]
+    return {"ok": True, "source": xunji_name(), "date": d.isoformat(),
             "totals": {"kcal": round(totals.get("totalCal") or 0), "protein": round(totals.get("totalProtein") or 0),
                        "carb": round(totals.get("totalCarb") or 0), "fat": round(totals.get("totalFat") or 0)},
             "targets": targets_of(day), "item_count": (day or {}).get("item_count") or 0, "meals": ordered}
@@ -262,9 +286,9 @@ def body_latest():
         with _lock:
             data = xunji.call("body_query", {"include_latest": True, "include_records": False, "limit": 1, "offset": 0}, ttl=3600)
     except xunji.XunjiError as exc:
-        raise HTTPException(502, f"训记读取失败：{exc}") from exc
+        raise HTTPException(502, L(f"训记读取失败：{exc}", f"Couldn't read Xunji: {exc}")) from exc
     latest = (data.get("res") or {}).get("latest") or {}
-    return {"ok": True, "source": "训记", "metrics": [
+    return {"ok": True, "source": xunji_name(), "metrics": [
         {"type": k, "label": v.get("label"), "value": v.get("value"), "unit": v.get("unit"), "date": v.get("datestr")}
         for k, v in latest.items()]}
 
@@ -273,13 +297,13 @@ def body_latest():
 def calendar(days: int = 1, from_: str | None = Query(None, alias="from")):
     """from 不给就从今天起；给了（YYYY-MM-DD）就从那天起，「今天」页翻到别的日子用。"""
     if not 1 <= days <= 14:
-        raise HTTPException(400, "days 取 1 到 14")
+        raise HTTPException(400, L("days 取 1 到 14", "days must be between 1 and 14"))
     start = today()
     if from_:
         try:
             start = date.fromisoformat(from_)
         except ValueError as exc:
-            raise HTTPException(400, "from 要写成 YYYY-MM-DD") from exc
+            raise HTTPException(400, L("from 要写成 YYYY-MM-DD", "from must be YYYY-MM-DD")) from exc
     lo = datetime.combine(start, datetime.min.time(), TZ)
     hi = lo + timedelta(days=days)
     if not sources.AVAILABLE["calendar"]:
@@ -287,15 +311,15 @@ def calendar(days: int = 1, from_: str | None = Query(None, alias="from")):
     try:
         items = calendar_ics.expand(calendar_ics.parse_events(calendar_ics.fetch("ic", False), TZ), lo, hi)
     except SystemExit as exc:
-        raise HTTPException(502, "日历拉取失败，链接可能已失效") from exc
+        raise HTTPException(502, L("日历拉取失败，链接可能已失效", "Couldn't fetch the calendar; the link may have expired")) from exc
     now = datetime.now(TZ)
     out = []
     for x in items:
         s, e = x["start"].astimezone(TZ), x["end"].astimezone(TZ)
-        out.append({"date": s.strftime("%Y-%m-%d"), "weekday": WEEKDAYS[s.weekday()], "all_day": x["all_day"],
-                    "start": "全天" if x["all_day"] else s.strftime("%H:%M"), "end": "" if x["all_day"] else e.strftime("%H:%M"),
+        out.append({"date": s.strftime("%Y-%m-%d"), "weekday": weekday_name(s.weekday()), "all_day": x["all_day"],
+                    "start": L("全天", "All day") if x["all_day"] else s.strftime("%H:%M"), "end": "" if x["all_day"] else e.strftime("%H:%M"),
                     "title": x["title"], "location": x["location"], "past": e < now, "tentative": x["busy"] == "TENTATIVE"})
-    return {"ok": True, "source": "日历", "timezone": settings.timezone, "events": out}
+    return {"ok": True, "source": L("日历", "Calendar"), "timezone": settings.timezone, "events": out}
 
 
 if DIST.is_dir():
@@ -304,5 +328,6 @@ else:
     @app.get("/")
     def no_web():
         return {"ok": True, "app_name": settings.app_name,
-                "note": f"网页版还没构建（{DIST} 不存在）。用 iOS app 连这个地址，或在 app/ 目录 npm run web:build。"}
+                "note": L(f"网页版还没构建（{DIST} 不存在）。用 iOS app 连这个地址，或在 app/ 目录 npm run web:build。",
+                          f"The web app isn't built yet ({DIST} doesn't exist). Connect the iOS app to this address, or run npm run web:build in app/.")}
 

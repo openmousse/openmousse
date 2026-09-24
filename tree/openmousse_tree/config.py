@@ -20,6 +20,7 @@ PLATFORMS = ("claude", "chatgpt", "gemini", "notion", "claude-code")
 DEFAULTS = {
     "port": 8787,
     "timezone": "",                      # 空 = 跟系统；写 "Europe/London" 之类
+    "language": "en",                    # "zh" | "en"：给模型的说明、工具描述和回话、命令行输出用哪种语言（改了重启服务生效）
     "profile_path": str(Path.home() / ".openclaw/workspace/USER.md"),
     "export_path": str(Path.home() / ".openclaw/shared/tree/TREE.md"),
     "public_hosts": [],                  # 公网域名，如 "xxx.tail1234.ts.net"；MCP SDK 的 DNS rebinding 保护只放行这些 Host
@@ -33,9 +34,16 @@ DEFAULTS = {
 def load() -> dict:
     cfg = dict(DEFAULTS)
     try:
-        cfg.update(json.loads(CONFIG.read_text(encoding="utf8")))
+        saved = json.loads(CONFIG.read_text(encoding="utf8"))
     except (OSError, ValueError):
-        pass
+        saved = None
+    if isinstance(saved, dict):
+        cfg.update(saved)
+        # language 是后来才加的键。配置文件已经存在却没有它 = 加这个选项之前装的，那时说明、工具描述、命令行全是中文：
+        # 按 zh 算，老用户升级后不会突然变成英文。只有还没有配置文件（全新安装）才落到 DEFAULTS 的 en；
+        # init 会按 --lang 或环境变量写进去。save() 存的是整份 cfg，所以第一次保存就把这里的推断固定进文件。
+        if "language" not in saved:
+            cfg["language"] = "zh"
     return cfg
 
 
@@ -61,6 +69,22 @@ def ensure_ui_token(cfg: dict) -> bool:
         return False
     cfg["ui_token"] = secrets.token_urlsafe(24)
     return True
+
+
+def lang(cfg: dict | None = None) -> str:
+    """配置的语言："zh" 或 "en"。"""
+    return "zh" if str((cfg or load()).get("language") or "").lower().startswith("zh") else "en"
+
+
+def L(zh: str, en: str) -> str:
+    """双语文字：按 config.json 的 language 挑一种。每次调用时读配置，别在导入时（模块常量里）调用。"""
+    return zh if lang() == "zh" else en
+
+
+def env_lang() -> str:
+    """环境变量的语言（LC_ALL 优先，其次 LANG）：zh 开头 → zh，其它 → en。init 没给 --lang 时用。"""
+    loc = os.environ.get("LC_ALL") or os.environ.get("LANG") or ""
+    return "zh" if loc.lower().startswith("zh") else "en"
 
 
 def tz(cfg: dict | None = None) -> ZoneInfo | None:

@@ -18,6 +18,7 @@ from datetime import datetime
 from pathlib import Path
 
 from config import settings
+from i18n import L
 
 ICON_EMOJI = {"dumbbell": "🏋️", "utensils": "🥗", "book": "📚", "wallet": "💷", "moon": "🌙", "briefcase": "💼", "heart": "❤️‍🩹", "plane": "✈️"}
 
@@ -39,9 +40,9 @@ def validate_config() -> None:
     try:
         p = subprocess.run([openclaw_bin(), "config", "validate"], capture_output=True, text=True, timeout=60, check=False)  # noqa: S603
     except (OSError, subprocess.SubprocessError) as e:
-        raise ProvisionError(f"跑不了 openclaw config validate：{e}") from e
+        raise ProvisionError(L(f"跑不了 openclaw config validate：{e}", f"Couldn't run openclaw config validate: {e}")) from e
     if p.returncode != 0:
-        raise ProvisionError(f"openclaw config validate 不通过：{clean_output(p)}")
+        raise ProvisionError(L(f"openclaw config validate 不通过：{clean_output(p)}", f"openclaw config validate failed: {clean_output(p)}"))
 
 
 def write_entry(agent_id: str, entry: dict | None, tag: str) -> None:
@@ -51,7 +52,7 @@ def write_entry(agent_id: str, entry: dict | None, tag: str) -> None:
     try:
         data = json.loads(path.read_text(encoding="utf8"))
     except (OSError, ValueError) as e:
-        raise ProvisionError(f"读不了 {path}：{e}") from e
+        raise ProvisionError(L(f"读不了 {path}：{e}", f"Couldn't read {path}: {e}")) from e
     entries = data.setdefault("agents", {}).setdefault("entries", {})
     if entry is None:
         if agent_id not in entries:
@@ -83,9 +84,10 @@ def backup_openclaw_json(tag: str) -> Path | None:
 
 
 def agents_md(agent_id: str, name: str, purpose: str) -> str:
+    """按请求的语言写（英文用户的 Agent 拿到英文的规则）。【自动触发】是系统发的标记，两种语言都原样保留。"""
     app = settings.app_name
     digest = settings.openclaw_home / "shared/digest" / agent_id
-    return f"""# AGENTS.md — {app} · {name}（Agent）
+    return L(f"""# AGENTS.md — {app} · {name}（Agent）
 
 > {datetime.now(settings.tz).strftime('%Y-%m-%d')} 在 app 里建。你是 {app} 在「{name}」这一块的分身：独立工作区、独立记忆。主对话（main）是接待台，会把属于这一块的问题转给你。
 
@@ -118,23 +120,63 @@ def agents_md(agent_id: str, name: str, purpose: str) -> str:
 - 流水进 `memory/YYYY-MM-DD.md`，结论进 `MEMORY.md`；结构化数据走工具脚本。
 - 不外泄私人数据；用户的数据只出现在给用户的回复里。
 - 服务器时间可能不是用户所在地，报时按 `USER.md` 的时区换算。
-"""
+""", f"""# AGENTS.md — {app} · {name} (Agent)
+
+> Created in the app on {datetime.now(settings.tz).strftime('%Y-%m-%d')}. You are {app}'s dedicated agent for "{name}", with your own workspace and your own memory. The main chat (main) is the front desk: it passes questions that belong to this area on to you.
+
+## Your job
+
+{purpose or '(Not written yet. In your first conversation, find out what this area should cover, then write the answer into MEMORY.md.)'}
+
+For anything outside your area, tell the user in one sentence to take it to the main chat or the right Agent.
+
+## Every session
+
+- `SOUL.md`, `USER.md` and `MEMORY.md` are already loaded. The user's full profile is at `{settings.profile}`; `memory_search` can search it.
+- Today's running log is `memory/YYYY-MM-DD.md`. The previous day's daily digest is at the end of that day's file: glance at it when a session starts.
+- **Ask the user questions in your reply, never with ask_user or any other tool that waits for input**: nobody can answer a tool's question through the app, so it would hang forever.
+- In the app these dedicated agents are called Agents. Say "Agent" when talking to the user.
+
+## Automatic triggers
+
+A message that starts with "【自动触发】" (automatic trigger) isn't the user talking: the system sent it at a scheduled time. Don't ask questions. Just do what needs doing and reply in two lines or fewer.
+
+## Daily digest (when a "【自动触发】" message asks for the daily digest, 日结)
+
+1. Write today's conclusions into a final `## Daily digest` section at the end of `memory/YYYY-MM-DD.md`: key points, what the user told you, what to keep an eye on tomorrow. 5–10 lines.
+2. Write the same section to `{digest}/YYYY-MM-DD.md` as well.
+3. Put anything worth remembering long term into `MEMORY.md`. Edit it in place; don't append entries that contradict it.
+4. Reply with one line: "Daily digest done".
+
+## Memory / security / time
+
+- Running notes go in `memory/YYYY-MM-DD.md`, conclusions in `MEMORY.md`; structured data goes through the tool scripts.
+- Never leak private data. The user's data only appears in your replies to the user.
+- Server time may not be the user's local time; convert times to the timezone in `USER.md`.
+""")
 
 
 def identity_md(name: str, icon: str) -> str:
     app = settings.app_name
-    return f"""# IDENTITY.md - Who Am I?
+    return L(f"""# IDENTITY.md - Who Am I?
 
 - **Name:** {app} · {name}
 - **Creature:** {app} 的一个分身，专管「{name}」这一块。同一个 {app}，同一个脾气，只是范围小、记得深。
 - **Vibe:** 说人话，不废话，直接。
 - **Emoji:** {ICON_EMOJI.get(icon, '✨')}
 - **Avatar:** 与主 {app} 相同。
-"""
+""", f"""# IDENTITY.md - Who Am I?
+
+- **Name:** {app} · {name}
+- **Creature:** A dedicated version of {app} that looks after "{name}". Same {app}, same temperament, just a narrower scope and a deeper memory.
+- **Vibe:** Plain-spoken, no filler, direct.
+- **Emoji:** {ICON_EMOJI.get(icon, '✨')}
+- **Avatar:** Same as the main {app}.
+""")
 
 
 def memory_md(name: str) -> str:
-    return f"""# MEMORY.md — {settings.app_name} · {name}
+    return L(f"""# MEMORY.md — {settings.app_name} · {name}
 
 > {datetime.now(settings.tz).strftime('%Y-%m-%d')} 建。只放提炼后的结论，日结时维护。
 
@@ -149,7 +191,22 @@ def memory_md(name: str) -> str:
 ## 当前状态
 
 - {datetime.now(settings.tz).strftime('%Y-%m-%d')}：Agent 新建。
-"""
+""", f"""# MEMORY.md — {settings.app_name} · {name}
+
+> Created {datetime.now(settings.tz).strftime('%Y-%m-%d')}. Distilled conclusions only; kept up to date at each daily digest.
+
+## Patterns noticed
+
+- (none yet)
+
+## Rules and preferences (this area)
+
+- (none yet)
+
+## Current state
+
+- {datetime.now(settings.tz).strftime('%Y-%m-%d')}: Agent created.
+""")
 
 
 def workspace_path(agent_id: str) -> Path:
@@ -159,7 +216,7 @@ def workspace_path(agent_id: str) -> Path:
 def build_workspace(agent_id: str, name: str, purpose: str, icon: str) -> Path:
     ws = workspace_path(agent_id)
     if ws.exists() and any(ws.iterdir()):
-        raise ProvisionError(f"{ws} 已经存在且不为空")
+        raise ProvisionError(L(f"{ws} 已经存在且不为空", f"{ws} already exists and isn't empty"))
     ws.mkdir(parents=True, exist_ok=True)
     (ws / "AGENTS.md").write_text(agents_md(agent_id, name, purpose), encoding="utf8")
     (ws / "IDENTITY.md").write_text(identity_md(name, icon), encoding="utf8")
@@ -178,7 +235,7 @@ def build_workspace(agent_id: str, name: str, purpose: str, icon: str) -> Path:
 
 def provision(agent_id: str, name: str, purpose: str, icon: str = "moon", skills: list[str] | None = None) -> Path:
     if not agent_id.replace("-", "").isalnum() or not agent_id.islower():
-        raise ProvisionError("agent id 只能是小写字母、数字和连字符")
+        raise ProvisionError(L("agent id 只能是小写字母、数字和连字符", "agent id may only contain lowercase letters, digits and hyphens"))
     entry: dict = {"workspace": str(workspace_path(agent_id))}
     allow = skills if skills is not None else settings.agent_default_skills
     if allow:
@@ -197,7 +254,7 @@ def provision(agent_id: str, name: str, purpose: str, icon: str = "moon", skills
 def remove(agent_id: str) -> Path | None:
     """去掉 OpenClaw 条目和路由；workspace 移到 archive/，返回归档路径。没 workspace 的（只在 groups 表里的旧 Group）只删路由。"""
     if agent_id == "main":
-        raise ProvisionError("main 不能删")
+        raise ProvisionError(L("main 不能删", "main can't be deleted"))
     if agent_id in settings.agent_workspaces:
         write_entry(agent_id, None, f"remove-{agent_id}")
         settings.set_agent_workspace(agent_id, None)

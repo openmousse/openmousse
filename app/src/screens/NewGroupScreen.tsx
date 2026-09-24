@@ -6,6 +6,7 @@ import { ModelField } from '../components/ModelPicker';
 import { SheetProvider } from '../components/Sheet';
 import { Btn, NavHeader, Screen, SectionLabel, T } from '../components/ui';
 import type { GroupIcon } from '../data/types';
+import { L } from '../i18n';
 import { useStore } from '../store';
 import { radius, space, type, useTheme } from '../theme';
 
@@ -26,8 +27,8 @@ function NewGroupForm() {
   const [err, setErr] = useState('');
 
   const create = () => {
-    if (!name.trim()) { setErr('先给这个 Agent 起个名字'); return; }
-    if (!connected) { setErr('没连上服务器，建不了'); return; }
+    if (!name.trim()) { setErr(L('先给这个 Agent 起个名字', 'Give this agent a name first')); return; }
+    if (!connected) { setErr(L('没连上服务器，建不了', "Not connected to the server, can't create it")); return; }
     setBusy(true);
     addGroup({ name: name.trim(), purpose: purpose.trim(), icon, modelId })
       .then((id) => nav.replace('Group', { id }))  // 服务器已建好 OpenClaw agent（独立工作区、记忆、skills）
@@ -37,19 +38,20 @@ function NewGroupForm() {
 
   return (
     <Screen>
-      <NavHeader title="新建 Agent" onBack={() => nav.goBack()} />
+      <NavHeader title={L('新建 Agent', 'New agent')} onBack={() => nav.goBack()} />
       <ScrollView contentContainerStyle={{ padding: space.lg, paddingBottom: space.xxl }} keyboardShouldPersistTaps="handled">
-        <SectionLabel>名字</SectionLabel>
-        <TextInput value={name} onChangeText={(v) => { setName(v); setErr(''); }} placeholder="比如：睡眠" placeholderTextColor={t.ink3}
-          accessibilityLabel="Agent 名字" style={[type.body, styles.input, { backgroundColor: t.surface, color: t.ink }]} />
+        <SectionLabel>{L('名字', 'Name')}</SectionLabel>
+        <TextInput value={name} onChangeText={(v) => { setName(v); setErr(''); }} placeholder={L('比如：睡眠', 'e.g. Sleep')} placeholderTextColor={t.ink3}
+          accessibilityLabel={L('Agent 名字', 'Agent name')} style={[type.body, styles.input, { backgroundColor: t.surface, color: t.ink }]} />
         {err ? <T v="callout" color={t.bad} style={{ marginTop: 6 }}>{err}</T> : null}
 
-        <SectionLabel>它负责什么</SectionLabel>
-        <TextInput value={purpose} onChangeText={setPurpose} multiline placeholder="一两句话说清职责。比如：记录每晚入睡和起床时间，发现规律，提醒我别熬夜。"
-          placeholderTextColor={t.ink3} accessibilityLabel="Agent 职责"
+        <SectionLabel>{L('它负责什么', 'What it does')}</SectionLabel>
+        <TextInput value={purpose} onChangeText={setPurpose} multiline
+          placeholder={L('一两句话说清职责。比如：记录每晚入睡和起床时间，发现规律，提醒我别熬夜。', 'Its job in a sentence or two. E.g. Log when I fall asleep and wake up, spot patterns, remind me not to stay up late.')}
+          placeholderTextColor={t.ink3} accessibilityLabel={L('Agent 职责', 'Agent purpose')}
           style={[type.body, styles.input, { backgroundColor: t.surface, color: t.ink, minHeight: 96, textAlignVertical: 'top' }]} />
 
-        <SectionLabel>图标</SectionLabel>
+        <SectionLabel>{L('图标', 'Icon')}</SectionLabel>
         <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: space.md }}>
           {GROUP_ICONS.map((g) => (
             <Pressable key={g.key} onPress={() => setIcon(g.key)} accessibilityRole="radio" accessibilityState={{ selected: icon === g.key }} accessibilityLabel={g.label}
@@ -60,11 +62,14 @@ function NewGroupForm() {
           ))}
         </View>
 
-        <SectionLabel>默认模型</SectionLabel>
+        <SectionLabel>{L('默认模型', 'Default model')}</SectionLabel>
         <ModelField value={modelId} onChange={setModelId} />
-        <T v="callout" color={t.ink3} style={{ marginTop: 6, paddingHorizontal: space.xs }}>默认跟主对话一样。记录类的 Agent 用省钱的就够；需要规划和判断的用贵的。进对话后随时能换。</T>
+        <T v="callout" color={t.ink3} style={{ marginTop: 6, paddingHorizontal: space.xs }}>{L(
+          '默认跟主对话一样。记录类的 Agent 用省钱的就够；需要规划和判断的用贵的。进对话后随时能换。',
+          'Same as the main chat by default. A cheap model is enough for logging agents; use a pricier one for planning and judgment. You can switch anytime in the chat.',
+        )}</T>
 
-        <View style={{ marginTop: space.xl }}><Btn label={busy ? '创建中…' : '创建'} onPress={() => !busy && create()} /></View>
+        <View style={{ marginTop: space.xl }}><Btn label={busy ? L('创建中…', 'Creating…') : L('创建', 'Create')} onPress={() => !busy && create()} /></View>
       </ScrollView>
     </Screen>
   );

@@ -15,6 +15,7 @@ import { TaskScreen, TasksScreen } from './screens/TasksScreen';
 import { TodayScreen } from './screens/TodayScreen';
 import { HistoryDayScreen, HistoryScreen } from './screens/HistoryScreen';
 import { ConnectScreen } from './screens/ConnectScreen';
+import { L } from './i18n';
 import { useStore } from './store';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useTheme } from './theme';
@@ -26,6 +27,7 @@ function Tabs() {
   const t = useTheme();
   const { approvals } = useStore();
   const insets = useSafeAreaInsets();
+  // Tab 的 name 是路由标识（深链 ?screen=今天、navigate 都用它），不翻译；界面上显示的是 tabBarLabel。
   return (
     <Tab.Navigator
       screenOptions={{
@@ -35,12 +37,12 @@ function Tabs() {
         tabBarStyle: { backgroundColor: t.surface, borderTopColor: t.line, height: 68 + insets.bottom, paddingTop: 8, paddingBottom: insets.bottom + 10 },
         tabBarLabelStyle: { fontSize: 11, fontWeight: '600', lineHeight: 14 },
       }}>
-      <Tab.Screen name="对话" component={ChatScreen} options={{ tabBarIcon: ({ color, size }) => <MessageCircle color={color} size={size} /> }} />
+      <Tab.Screen name="对话" component={ChatScreen} options={{ tabBarLabel: L('对话', 'Chat'), tabBarIcon: ({ color, size }) => <MessageCircle color={color} size={size} /> }} />
       <Tab.Screen name="Agents" component={GroupsScreen} options={{ tabBarIcon: ({ color, size }) => <LayoutGrid color={color} size={size} /> }} />
       <Tab.Screen name="今天" component={TodayScreen}
-        options={{ tabBarIcon: ({ color, size }) => <Sparkles color={color} size={size} />, tabBarBadge: approvals.length || undefined, tabBarBadgeStyle: { backgroundColor: t.goldFill, color: t.onGold } }} />
-      <Tab.Screen name="目标" component={GoalsScreen} options={{ tabBarIcon: ({ color, size }) => <Target color={color} size={size} /> }} />
-      <Tab.Screen name="我" component={MeScreen} options={{ tabBarIcon: ({ color, size }) => <User color={color} size={size} /> }} />
+        options={{ tabBarLabel: L('今天', 'Today'), tabBarIcon: ({ color, size }) => <Sparkles color={color} size={size} />, tabBarBadge: approvals.length || undefined, tabBarBadgeStyle: { backgroundColor: t.goldFill, color: t.onGold } }} />
+      <Tab.Screen name="目标" component={GoalsScreen} options={{ tabBarLabel: L('目标', 'Goals'), tabBarIcon: ({ color, size }) => <Target color={color} size={size} /> }} />
+      <Tab.Screen name="我" component={MeScreen} options={{ tabBarLabel: L('我', 'Me'), tabBarIcon: ({ color, size }) => <User color={color} size={size} /> }} />
     </Tab.Navigator>
   );
 }

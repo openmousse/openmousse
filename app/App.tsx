@@ -3,6 +3,7 @@ import { StatusBar } from 'expo-status-bar';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 import { SheetProvider } from './src/components/Sheet';
 import { UpdateBanner } from './src/components/UpdateBanner';
+import { LangProvider } from './src/i18n';
 import { RootNavigator } from './src/navigation';
 import { StoreProvider } from './src/store';
 import { ThemeProvider, useTheme } from './src/theme';
@@ -22,9 +23,11 @@ export default function App() {
   return (
     <SafeAreaProvider>
       <ThemeProvider>
-        <StoreProvider>
-          <Shell />
-        </StoreProvider>
+        <LangProvider>
+          <StoreProvider>
+            <Shell />
+          </StoreProvider>
+        </LangProvider>
       </ThemeProvider>
     </SafeAreaProvider>
   );

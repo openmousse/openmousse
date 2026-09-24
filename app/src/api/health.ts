@@ -9,6 +9,7 @@ import {
   queryStatisticsCollectionForQuantity, queryWorkoutSamples, requestAuthorization, WorkoutActivityType,
 } from '@kingstinct/react-native-healthkit';
 import { CATEGORY_TYPES, QUANTITY_TYPES } from '../data/healthTypes';
+import { L } from '../i18n';
 import { authHeaders, getBase } from './base';
 
 const READ = [
@@ -220,7 +221,7 @@ export async function readAllMetrics(days: number): Promise<MetricRow[]> {
 
 async function post(path: string, body: object) {
   const r = await fetch(`${getBase()}${path}`, { method: 'POST', headers: { 'Content-Type': 'application/json', ...authHeaders() }, body: JSON.stringify(body) });
-  if (!r.ok) throw new Error(`上传失败 HTTP ${r.status}`);
+  if (!r.ok) throw new Error(L(`上传失败 HTTP ${r.status}`, `Upload failed: HTTP ${r.status}`));
   return r.json();
 }
 

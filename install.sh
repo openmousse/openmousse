@@ -3,8 +3,8 @@
 #   curl -fsSL https://raw.githubusercontent.com/openmousse/openmousse/main/install.sh | bash
 # 或在仓库里：bash install.sh
 #
-# 做的事：clone / 更新仓库到 ~/openmousse → 建 ~/.openmousse/venv 装依赖 → 问三个问题 → packs/core/setup.py 配好一切。
-# 环境变量（非交互）：MOUSSE_OPENCLAW_HOME、MOUSSE_TZ、MOUSSE_NAME、MOUSSE_DIR（仓库位置）、MOUSSE_BIND（auto|127.0.0.1|<ip>）
+# 做的事：clone / 更新仓库到 ~/openmousse → 建 ~/.openmousse/venv 装依赖 → 问四个问题 → packs/core/setup.py 配好一切。
+# 环境变量（非交互）：MOUSSE_LANG（zh|en）、MOUSSE_OPENCLAW_HOME、MOUSSE_TZ、MOUSSE_NAME、MOUSSE_DIR（仓库位置）、MOUSSE_BIND（auto|127.0.0.1|<ip>）
 # 其它参数原样传给 setup.py，比如 --no-systemd、--no-tree。
 set -euo pipefail
 
@@ -50,7 +50,7 @@ fi
 "$VENV/bin/python" -m pip install -q -r "$MOUSSE_DIR/server/requirements.txt"
 "$VENV/bin/python" -m pip install -q "$MOUSSE_DIR/tree"
 
-# 三个问题（有环境变量就不问；管道里跑时从 /dev/tty 读）
+# 四个问题（有环境变量就不问；管道里跑时从 /dev/tty 读）
 ask() {  # ask <变量名> <提示> <默认值>
   local var="$1" prompt="$2" def="$3" ans=""
   if [ -n "${!var:-}" ]; then return; fi
@@ -61,10 +61,18 @@ ask() {  # ask <变量名> <提示> <默认值>
   fi
   printf -v "$var" '%s' "${ans:-$def}"
 }
+# 语言默认：上次安装选的（server.json 的 language），没有就看 LC_ALL / LANG：zh 开头 → zh，其它 → en
+DEF_LANG=""
+if [ -f "$HOME/.openmousse/server.json" ]; then
+  DEF_LANG="$(python3 -c 'import json, sys; print(json.load(open(sys.argv[1])).get("language") or "")' "$HOME/.openmousse/server.json" 2>/dev/null || true)"
+fi
+case "${DEF_LANG:-${LC_ALL:-${LANG:-}}}" in zh*|ZH*) DEF_LANG=zh ;; *) DEF_LANG=en ;; esac
 DEF_HOME="${OPENCLAW_STATE_DIR:-$HOME/.openclaw}"
 DEF_TZ="$(cat /etc/timezone 2>/dev/null || timedatectl show -p Timezone --value 2>/dev/null || echo UTC)"
 [ "$DEF_TZ" = "Etc/UTC" ] && DEF_TZ="UTC"
-say "三个问题，直接回车用默认值 / three questions, Enter keeps the default"
+say "四个问题，直接回车用默认值 / four questions, Enter keeps the default"
+ask MOUSSE_LANG "语言 / language (zh = 中文, en = English)" "$DEF_LANG"
+case "$(printf '%s' "$MOUSSE_LANG" | tr '[:upper:]' '[:lower:]')" in zh*|cn*|chinese*|中*) MOUSSE_LANG=zh ;; *) MOUSSE_LANG=en ;; esac
 ask MOUSSE_OPENCLAW_HOME "OpenClaw 装在哪 / OpenClaw home (directory with openclaw.json)" "$DEF_HOME"
 ask MOUSSE_TZ "你的时区 / your timezone (IANA name)" "$DEF_TZ"
 ask MOUSSE_NAME "助手叫什么 / assistant name (shown in the app)" "Mousse"
@@ -72,4 +80,4 @@ ask MOUSSE_NAME "助手叫什么 / assistant name (shown in the app)" "Mousse"
 
 say "配置 / configuring"
 exec "$VENV/bin/python" "$MOUSSE_DIR/packs/core/setup.py" --repo "$MOUSSE_DIR" --venv "$VENV" \
-  --openclaw-home "$MOUSSE_OPENCLAW_HOME" --tz "$MOUSSE_TZ" --name "$MOUSSE_NAME" --bind "${MOUSSE_BIND:-auto}" "$@"
+  --openclaw-home "$MOUSSE_OPENCLAW_HOME" --tz "$MOUSSE_TZ" --name "$MOUSSE_NAME" --lang "$MOUSSE_LANG" --bind "${MOUSSE_BIND:-auto}" "$@"

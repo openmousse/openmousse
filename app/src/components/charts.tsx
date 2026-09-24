@@ -1,7 +1,14 @@
 import React, { useState } from 'react';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
 import Svg, { Circle } from 'react-native-svg';
+import { L } from '../i18n';
 import { type, useTheme } from '../theme';
+
+// 服务器给的星期是「一」…「日」（数据，不翻译）：中文拼成「周一」，英文换成「Mon」。已经是别的写法的原样显示。
+const WEEKDAY_EN: Record<string, string> = { 一: 'Mon', 二: 'Tue', 三: 'Wed', 四: 'Thu', 五: 'Fri', 六: 'Sat', 日: 'Sun' };
+export const weekdayName = (d: string) => (WEEKDAY_EN[d] ? L(`周${d}`, WEEKDAY_EN[d]) : d);
+/** 坐标轴上的短写：中文「一」，英文「Mon」。 */
+export const weekdayShort = (d: string) => L(d, WEEKDAY_EN[d] ?? d);
 
 /** 进度环。呼应头像的光环，用在目标和当日营养上。 */
 export function Ring({ size = 64, stroke = 7, value, target, color, children }: { size?: number; stroke?: number; value: number; target: number; color?: string; children?: React.ReactNode }) {
@@ -52,7 +59,7 @@ export function WeekBars({ days, unit, todayIndex }: { days: { d: string; minute
   return (
     <View>
       <Text style={[type.callout, { color: t.ink2, marginBottom: 10, fontVariant: ['tabular-nums'] }]}>
-        周{cur.d} · {cur.label}{cur.minutes > 0 ? ` · ${cur.minutes} ${unit}` : sel > todayIndex ? ' · 未开始' : ' · 0'}
+        {weekdayName(cur.d)} · {cur.label}{cur.minutes > 0 ? ` · ${cur.minutes} ${unit}` : sel > todayIndex ? L(' · 未开始', ' · Not yet') : ' · 0'}
       </Text>
       <View style={{ flexDirection: 'row', alignItems: 'flex-end', height: H, borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: t.line }}>
         {days.map((x, i) => {
@@ -60,7 +67,7 @@ export function WeekBars({ days, unit, todayIndex }: { days: { d: string; minute
           const on = i === sel;
           return (
             <Pressable key={x.d} onPress={() => setSel(i)} style={{ flex: 1, height: H, alignItems: 'center', justifyContent: 'flex-end' }}
-              accessibilityRole="button" accessibilityLabel={`周${x.d} ${x.label} ${x.minutes} ${unit}`}>
+              accessibilityRole="button" accessibilityLabel={`${weekdayName(x.d)} ${x.label} ${x.minutes} ${unit}`}>
               <View style={{ width: 14, height: Math.max(h, x.minutes > 0 ? 4 : 0), backgroundColor: t.chartA, opacity: on ? 1 : 0.55, borderTopLeftRadius: 4, borderTopRightRadius: 4 }} />
             </Pressable>
           );
@@ -68,7 +75,7 @@ export function WeekBars({ days, unit, todayIndex }: { days: { d: string; minute
       </View>
       <View style={{ flexDirection: 'row', marginTop: 6 }}>
         {days.map((x, i) => (
-          <Text key={x.d} style={[type.caption, { flex: 1, textAlign: 'center', color: i === sel ? t.ink : t.ink3, fontWeight: i === todayIndex ? '700' : '500' }]}>{x.d}</Text>
+          <Text key={x.d} style={[type.caption, { flex: 1, textAlign: 'center', color: i === sel ? t.ink : t.ink3, fontWeight: i === todayIndex ? '700' : '500' }]}>{weekdayShort(x.d)}</Text>
         ))}
       </View>
     </View>

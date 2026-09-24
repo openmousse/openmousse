@@ -5,6 +5,7 @@ import { AppState, Platform, Pressable, StyleSheet, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import * as Updates from 'expo-updates';
 import { T } from './ui';
+import { L } from '../i18n';
 import { space, useTheme } from '../theme';
 
 const CHECK_EVERY_MS = 60_000;
@@ -38,7 +39,7 @@ export function UpdateBanner() {
     <View pointerEvents="box-none" style={[styles.wrap, { top: insets.top + 6 }]}>
       <Pressable onPress={() => Updates.reloadAsync().catch(() => setReady(false))} accessibilityRole="button"
         style={({ pressed }) => [styles.pill, { backgroundColor: t.gold, opacity: pressed ? 0.8 : 1 }]}>
-        <T v="callout" color="#FFFFFF" style={{ fontWeight: '600' }}>新版本已下载 · 点一下重载</T>
+        <T v="callout" color="#FFFFFF" style={{ fontWeight: '600' }}>{L('新版本已下载 · 点一下重载', 'New version downloaded · Tap to reload')}</T>
       </Pressable>
     </View>
   );

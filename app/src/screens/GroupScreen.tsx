@@ -9,6 +9,7 @@ import { ApplicationsBoard, JournalList, SleepReportSection, TrainingPlanSection
 import { MemoryList } from '../components/MemoryList';
 import { ModelSwitch } from '../components/ModelPicker';
 import { Btn, Card, NavHeader, Screen, SectionLabel, Segmented, T } from '../components/ui';
+import { L } from '../i18n';
 import { useStore } from '../store';
 import { space, useTheme } from '../theme';
 
@@ -26,30 +27,30 @@ export function GroupScreen() {
     <Screen>
       <NavHeader title={g.name} onBack={() => nav.goBack()} right={(
         <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
-          <Pressable onPress={() => nav.navigate('History', { thread: g.id })} hitSlop={8} accessibilityRole="button" accessibilityLabel="历史与搜索" style={{ width: 32, height: 32, alignItems: 'center', justifyContent: 'center' }}>
+          <Pressable onPress={() => nav.navigate('History', { thread: g.id })} hitSlop={8} accessibilityRole="button" accessibilityLabel={L('历史与搜索', 'History and search')} style={{ width: 32, height: 32, alignItems: 'center', justifyContent: 'center' }}>
             <CalendarDays size={20} color={t.ink2} />
           </Pressable>
           <ModelSwitch value={threadModel[g.id]} onChange={(m) => setThreadModel(g.id, m)} />
         </View>
       )} />
       <View style={{ paddingHorizontal: space.lg, paddingVertical: space.sm }}>
-        <Segmented value={tab} onChange={setTab} options={[{ value: 'chat', label: '对话' }, { value: 'board', label: '看板' }, { value: 'memory', label: '记忆' }]} />
+        <Segmented value={tab} onChange={setTab} options={[{ value: 'chat', label: L('对话', 'Chat') }, { value: 'board', label: L('看板', 'Dashboard') }, { value: 'memory', label: L('记忆', 'Memory') }]} />
       </View>
-      {tab === 'chat' ? <ChatView threadId={g.id} placeholder={`在「${g.name}」里说`} empty={g.purpose ? `这个 Agent 负责：${g.purpose}` : undefined} /> : (
+      {tab === 'chat' ? <ChatView threadId={g.id} placeholder={L(`在「${g.name}」里说`, `Message "${g.name}"`)} empty={g.purpose ? L(`这个 Agent 负责：${g.purpose}`, `This agent handles: ${g.purpose}`) : undefined} /> : (
         <ScrollView contentContainerStyle={{ padding: space.lg, paddingTop: space.sm, paddingBottom: space.xxl }}
           refreshControl={<RefreshControl refreshing={liveLoading || !!loading.feed || !!loading.journal} onRefresh={() => refreshBoards().catch(() => {})} />}>
           {tab === 'board' ? (
             !live ? (
-              <Card><T v="callout" color={t.ink2}>{booting || liveLoading ? '正在读…' : !connected ? '没连上服务器。检查「我 → 服务器」后回到这一页。' : '看板数据没读到。'}</T></Card>
+              <Card><T v="callout" color={t.ink2}>{booting || liveLoading ? L('正在读…', 'Loading…') : !connected ? L('没连上服务器。检查「我 → 服务器」后回到这一页。', 'Not connected to the server. Check Me → Server, then come back here.') : L('看板数据没读到。', "Couldn't load the dashboard data.")}</T></Card>
             ) : g.dashboard === 'fitness' ? (
               <>
                 <TrainingPlanSection groupId={g.id} onAsk={() => setTab('chat')} />
                 <LiveRecoveryCard />
-                {live.week ? <LiveFitnessBoard week={live.week} /> : live.sources.workouts === false ? <NoSourceCard kind="训练" /> : <Card><T v="callout" color={t.bad}>训练数据没读到{liveErrors.week ? `：${liveErrors.week}` : ''}</T></Card>}
+                {live.week ? <LiveFitnessBoard week={live.week} /> : live.sources.workouts === false ? <NoSourceCard kind={L('训练', 'workout')} /> : <Card><T v="callout" color={t.bad}>{L(`训练数据没读到${liveErrors.week ? `：${liveErrors.week}` : ''}`, `Couldn't load workout data${liveErrors.week ? `: ${liveErrors.week}` : ''}`)}</T></Card>}
                 {live.trend ? <LiveFitnessTrendCard trend={live.trend} /> : null}
               </>
             ) : g.dashboard === 'diet' ? (
-              live.diet ? <LiveDietBoard diet={live.diet} energy={live.energy} energyError={liveErrors.energy} groupId={g.id} onAsk={() => setTab('chat')} /> : live.sources.meals === false ? <NoSourceCard kind="饮食" /> : <Card><T v="callout" color={t.bad}>饮食数据没读到{liveErrors.diet ? `：${liveErrors.diet}` : ''}</T></Card>
+              live.diet ? <LiveDietBoard diet={live.diet} energy={live.energy} energyError={liveErrors.energy} groupId={g.id} onAsk={() => setTab('chat')} /> : live.sources.meals === false ? <NoSourceCard kind={L('饮食', 'meal')} /> : <Card><T v="callout" color={t.bad}>{L(`饮食数据没读到${liveErrors.diet ? `：${liveErrors.diet}` : ''}`, `Couldn't load meal data${liveErrors.diet ? `: ${liveErrors.diet}` : ''}`)}</T></Card>
             ) : g.dashboard === 'health' ? (
               <>
                 <SleepReportSection groupId={g.id} onAsk={() => setTab('chat')} />
@@ -58,20 +59,20 @@ export function GroupScreen() {
             ) : g.dashboard === 'apply' || g.dashboard === 'masters' ? (
               <ApplicationsBoard apps={applications.filter((a) => (a.kind === 'masters') === (g.dashboard === 'masters'))} school={g.dashboard === 'masters'} />
             ) : (
-              <Card><T v="callout" color={t.ink2}>{`这个 Agent 还没有看板。等它开始记录结构化数据后，${agentName()} 会按数据类型生成一个。`}</T></Card>
+              <Card><T v="callout" color={t.ink2}>{L(`这个 Agent 还没有看板。等它开始记录结构化数据后，${agentName()} 会按数据类型生成一个。`, `This agent has no dashboard yet. Once it starts recording structured data, ${agentName()} will build one for that kind of data.`)}</T></Card>
             )
           ) : (
             <>
               <T v="callout" color={t.ink2} style={{ marginBottom: space.md }}>{g.purpose}</T>
-              <SectionLabel>日志</SectionLabel>
-              <JournalList entries={journal.filter((e) => e.groupId === g.id)} empty={`还没有记录。在对话里说感受、想法或决定，${agentName()} 会记在这里。`} />
-              <SectionLabel>长期记忆</SectionLabel>
+              <SectionLabel>{L('日志', 'Journal')}</SectionLabel>
+              <JournalList entries={journal.filter((e) => e.groupId === g.id)} empty={L(`还没有记录。在对话里说感受、想法或决定，${agentName()} 会记在这里。`, `Nothing yet. Share feelings, thoughts or decisions in chat and ${agentName()} will log them here.`)} />
+              <SectionLabel>{L('长期记忆', 'Long-term memory')}</SectionLabel>
               <MemoryList scope={g.id} />
-              <T v="caption" color={t.ink3} style={{ marginTop: space.md, paddingHorizontal: space.xs }}>这个 Agent 有自己的长期记忆（workspace-{g.id}/MEMORY.md），每天 04:00 前做日结、把结论写进这里。点垃圾桶让它忘记。</T>
+              <T v="caption" color={t.ink3} style={{ marginTop: space.md, paddingHorizontal: space.xs }}>{L(`这个 Agent 有自己的长期记忆（workspace-${g.id}/MEMORY.md），每天 04:00 前做日结、把结论写进这里。点垃圾桶让它忘记。`, `This agent has its own long-term memory (workspace-${g.id}/MEMORY.md). Before 04:00 each day it writes a daily digest and saves the conclusions here. Tap the trash icon to make it forget something.`)}</T>
               <View style={{ marginTop: space.xl }}>
-                <Btn label="删除这个 Agent" kind="danger" onPress={() => Alert.alert(`删除「${g.name}」？`, '它在服务器上的 OpenClaw agent 会去掉，工作区和记忆归档到 archive/（不删）。这里的对话记录、日志和卡片留着当历史。', [
-                  { text: '取消', style: 'cancel' },
-                  { text: '删除', style: 'destructive', onPress: () => removeGroup(g.id).then(() => nav.goBack()).catch((e) => Alert.alert('删不了', e instanceof Error ? e.message : String(e))) },
+                <Btn label={L('删除这个 Agent', 'Delete this agent')} kind="danger" onPress={() => Alert.alert(L(`删除「${g.name}」？`, `Delete "${g.name}"?`), L('它在服务器上的 OpenClaw agent 会去掉，工作区和记忆归档到 archive/（不删）。这里的对话记录、日志和卡片留着当历史。', 'Its OpenClaw agent on the server is removed, and its workspace and memory are moved to archive/ (not deleted). Its chats, journal and cards here are kept as history.'), [
+                  { text: L('取消', 'Cancel'), style: 'cancel' },
+                  { text: L('删除', 'Delete'), style: 'destructive', onPress: () => removeGroup(g.id).then(() => nav.goBack()).catch((e) => Alert.alert(L('删不了', "Couldn't delete it"), e instanceof Error ? e.message : String(e))) },
                 ])} />
               </View>
             </>

@@ -2,14 +2,14 @@
 
 [中文](README.zh-CN.md) · **English**
 
-The layer you get right after install: how the main chat and the Agents cooperate, journal, world tree, daily close. The installer (`install.sh` at the repository root → `packs/core/setup.py`) wires it into your OpenClaw.
+The layer you get right after install: how the main chat and the Agents cooperate, journal, memory tree, daily close. The installer (`install.sh` at the repository root → `packs/core/setup.py`) wires it into your OpenClaw.
 
 | Path | What it is |
 |---|---|
 | `skills/handoff` | The main chat hands a question to the Agent that owns it (`scripts/ask_agent.py` → the server's `/api/chat/relay`) |
 | `skills/agent-builder` | Create / delete Agents from chat (`server/agent_ctl.py`) |
 | `skills/journal` | Feelings, thoughts and decisions the user mentions go into a journal (`scripts/journal.py` → the `journal` table; readable under "Me → Journal" in the app) |
-| `skills/memory-tree` | Write new facts about the user to the world tree (`mousse-tree add`), read it before answering |
+| `skills/memory-tree` | Write new facts about the user to the memory tree (`mousse-tree add`), read it before answering |
 | `scripts/daily_close.py` | At 03:45 sends "【自动触发】日结" (daily close) to every thread that talked today, so each agent writes its conclusions to memory before the 04:00 session reset |
 | `scripts/mousse_common.py` | Shared by the scripts: reads the server address, the `local` token, the database path and the timezone from `~/.openmousse/server.json` |
 | `systemd/` | Templates for `openmousse-server` and `openmousse-daily-close.timer` |
@@ -25,4 +25,6 @@ What the installer changes in `openclaw.json` (each time: backup to `~/.openmous
 - `tools.deny` gets `ask_user`: nobody can answer a tool prompt through the app channel, it would hang the session
 - `memory.search.extraPaths` gets `<openclaw>/shared/digest`: the main chat can search each Agent's daily digest
 
-The main agent's `AGENTS.md` gets a `## OpenMousse` section appended (daily close, automatic triggers, Agent cooperation, no `ask_user`, journal and world tree). Removing that section keeps chat working; the Agents just stop cooperating.
+The main agent's `AGENTS.md` gets a `## OpenMousse` section appended (daily close, automatic triggers, Agent cooperation, no `ask_user`, journal and memory tree). Removing that section keeps chat working; the Agents just stop cooperating.
+
+Language: the installer asks for `zh` or `en` (default from `LANG`, or set `MOUSSE_LANG`; `setup.py --lang`) and writes it to `server.json` as `language`. It decides the language of the installer output, the `## OpenMousse` rules, the memory tree and the scripts' messages, including the daily digest trigger (the `【自动触发】` marker itself never changes). An existing `## OpenMousse` section is not rewritten on reruns.
