@@ -5,6 +5,7 @@ node_modules/
 **/node_modules/
 app/dist/
 app/preview/
+docs/
 app/.expo/
 server/
 tree/

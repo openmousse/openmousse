@@ -5,9 +5,9 @@
 **A personal-agent app for people who run [OpenClaw](https://github.com/openclaw/openclaw).** Chat with your agent from your phone, give each part of your life its own Agent, and keep one memory that Claude, ChatGPT, Gemini and your agent all share. Self-hosted: your machine, your model accounts, your data.
 
 <p align="center">
-  <img src="docs/screenshots/en-today.png" width="30%" alt="Today: suggestions and schedule">
-  <img src="docs/screenshots/en-chat.png" width="30%" alt="Chatting with the agent">
-  <img src="docs/screenshots/en-agent-fitness.png" width="30%" alt="A Fitness agent's dashboard">
+  <picture><source media="(prefers-color-scheme: dark)" srcset="docs/screenshots/en-today-dark.png"><img src="docs/screenshots/en-today.png" width="30%" alt="Today: suggestion cards from two Agents"></picture>
+  <picture><source media="(prefers-color-scheme: dark)" srcset="docs/screenshots/en-chat-dark.png"><img src="docs/screenshots/en-chat.png" width="30%" alt="Chatting with the agent"></picture>
+  <picture><source media="(prefers-color-scheme: dark)" srcset="docs/screenshots/en-fitness-dark.png"><img src="docs/screenshots/en-fitness.png" width="30%" alt="A Fitness Agent's dashboard"></picture>
 </p>
 
 - **Your agent in your pocket.** An iOS and web app for the OpenClaw you already run: streaming chat, voice notes, photos and files, push notifications.

@@ -5,9 +5,9 @@
 **给自己跑 [OpenClaw](https://github.com/openclaw/openclaw) 的人的私人 agent app。** 在手机上直接跟你的 agent 对话，生活的每一块交给一个 Agent，再用一份记忆把 Claude、ChatGPT、Gemini 和你的 agent 串起来。自托管：你的机器、你的模型账号、你的数据。
 
 <p align="center">
-  <img src="docs/screenshots/zh-today.png" width="30%" alt="今天：建议和日程">
-  <img src="docs/screenshots/zh-chat.png" width="30%" alt="和 agent 对话">
-  <img src="docs/screenshots/zh-agent-fitness.png" width="30%" alt="健身 Agent 的看板">
+  <picture><source media="(prefers-color-scheme: dark)" srcset="docs/screenshots/zh-today-dark.png"><img src="docs/screenshots/zh-today.png" width="30%" alt="今天：两个 Agent 给的建议卡"></picture>
+  <picture><source media="(prefers-color-scheme: dark)" srcset="docs/screenshots/zh-chat-dark.png"><img src="docs/screenshots/zh-chat.png" width="30%" alt="和 agent 对话"></picture>
+  <picture><source media="(prefers-color-scheme: dark)" srcset="docs/screenshots/zh-fitness-dark.png"><img src="docs/screenshots/zh-fitness.png" width="30%" alt="健身 Agent 的看板"></picture>
 </p>
 
 - **口袋里的 agent。** 给你已经在跑的 OpenClaw 配一个 iOS 和网页 app：流式对话、语音输入、照片和文件、推送通知。
