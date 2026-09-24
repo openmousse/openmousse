@@ -22,8 +22,9 @@ from fastapi.responses import JSONResponse
 from config import settings
 from i18n import L
 
+# 放在 sys.path 最后：scripts/ 里的文件（agent 能写）不能顶替服务自己的模块（chat.py、data.py 这些同名文件）。
 if settings.scripts.is_dir() and str(settings.scripts) not in sys.path:
-    sys.path.insert(0, str(settings.scripts))
+    sys.path.append(str(settings.scripts))
 
 
 def _load(name: str) -> ModuleType | None:

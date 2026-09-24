@@ -20,7 +20,7 @@ python3 run.py                   # 或按 openmousse-server.service.example 装�
 
 ## 认证
 
-`/api/*` 要 `Authorization: Bearer <令牌>`（也认 `X-API-Key` 和 `?token=`）。没凭证返回 401。两个免令牌的口子都默认关：`auth.tailscale_nodes`（Tailscale 设备名白名单，本机要装 tailscale）和 `auth.trust_loopback`（反向代理在本机时不能开）。网页版的静态文件公开。
+`/api/*` 要 `Authorization: Bearer <令牌>`（也认 `X-API-Key`；`?token=` 只用于 `GET /api/files/…`，给带不了请求头的图片用）。没凭证返回 401。两个免令牌的口子都默认关：`auth.tailscale_nodes`（Tailscale 设备名白名单，本机要装 tailscale）和 `auth.trust_loopback`（反向代理在本机时不能开）。网页版的静态文件公开。
 
 ## 让手机连上
 

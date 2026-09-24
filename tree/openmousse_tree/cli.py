@@ -8,11 +8,13 @@
   mousse-tree add --source myclaw --text "..." [--kind ...] [--tags ...]
   mousse-tree recall --q 关键词 | recent [--days 7] | stats | export
   mousse-tree confirm <id> | forget <id>
+  mousse-tree rotate <平台> | revoke <平台>                               给某个平台换令牌 / 删令牌（令牌泄露时用）
 """
 from __future__ import annotations
 
 import argparse
 import json
+import secrets
 import shutil
 import subprocess
 import sys
@@ -32,6 +34,7 @@ USAGE_EN = """mousse-tree command line.
   mousse-tree add --source myclaw --text "..." [--kind ...] [--tags ...]
   mousse-tree recall --q keyword | recent [--days 7] | stats | export
   mousse-tree confirm <id> | forget <id>
+  mousse-tree rotate <platform> | revoke <platform>                    issue a new token for a platform / delete its token (if one leaked)
 """
 
 SERVICE = """[Unit]
@@ -179,6 +182,27 @@ def cmd_stats(_: argparse.Namespace) -> None:
         print(f"{r['source']:12} {r['status']:10} {r['n']}")
 
 
+def cmd_token(action: str):
+    """rotate：给某个平台换一个新令牌（旧的立即作废）；revoke：删掉它的令牌。改完要重启服务才生效。"""
+    def run(a: argparse.Namespace) -> None:
+        cfg = C.load()
+        tokens: dict[str, str] = cfg.setdefault("tokens", {})
+        old = [t for t, name in tokens.items() if name == a.platform]
+        if not old and action == "revoke":
+            sys.exit(C.L(f"没有 {a.platform} 的令牌", f"No token for {a.platform}"))
+        for t in old:
+            del tokens[t]
+        if action == "rotate":
+            tokens[secrets.token_urlsafe(24)] = a.platform
+        C.save(cfg)
+        print(C.L(f"{a.platform}：{'已换新令牌' if action == 'rotate' else '令牌已删除'}。重启服务生效：systemctl --user restart mousse-tree",
+                  f"{a.platform}: {'new token issued' if action == 'rotate' else 'token revoked'}. Restart the service to apply: systemctl --user restart mousse-tree"))
+        if action == "rotate":
+            print(C.L("新地址见 mousse-tree urls，记得在该平台的连接器设置里换掉。",
+                      "See mousse-tree urls for the new address, and update it in that platform's connector settings."))
+    return run
+
+
 def main() -> None:
     p = argparse.ArgumentParser(prog="mousse-tree", description=C.L(__doc__, USAGE_EN), formatter_class=argparse.RawDescriptionHelpFormatter)
     sp = p.add_subparsers(dest="cmd", required=True)
@@ -198,6 +222,8 @@ def main() -> None:
         q = sp.add_parser(name); q.add_argument("id"); q.set_defaults(fn=cmd_status(st))
     sp.add_parser("export").set_defaults(fn=cmd_export)
     sp.add_parser("stats").set_defaults(fn=cmd_stats)
+    for action in ("rotate", "revoke"):
+        q = sp.add_parser(action); q.add_argument("platform"); q.set_defaults(fn=cmd_token(action))
     a = p.parse_args()
     a.fn(a)
 

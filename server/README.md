@@ -20,7 +20,7 @@ Every field of `server.json` is documented at the top of [`config.py`](config.py
 
 ## Auth
 
-`/api/*` requires `Authorization: Bearer <token>` (`X-API-Key` and `?token=` also work). No credentials → 401. Two token-free doors are off by default: `auth.tailscale_nodes` (a whitelist of Tailscale device names; needs tailscale on this machine) and `auth.trust_loopback` (never enable it when a reverse proxy runs on the same host). The web build's static files are public.
+`/api/*` requires `Authorization: Bearer <token>` (`X-API-Key` also works; `?token=` only for `GET /api/files/…`, which image views can't send headers to). No credentials → 401. Two token-free doors are off by default: `auth.tailscale_nodes` (a whitelist of Tailscale device names; needs tailscale on this machine) and `auth.trust_loopback` (never enable it when a reverse proxy runs on the same host). The web build's static files are public.
 
 ## Letting the phone connect
 

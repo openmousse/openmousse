@@ -70,7 +70,12 @@ export const saveLangPref = (v: string) => writeItem(KEY_LANG, v);
 
 export function normalizeBase(v: string): string {
   let s = (v || '').trim().replace(/\/+$/, '');
-  if (s && !/^https?:\/\//i.test(s)) s = `http://${s}`;
+  if (s && !/^https?:\/\//i.test(s)) {
+    // 没写协议：IP、localhost、.local 是私网直连，按 http；域名一律 https（令牌不能明文走公网）
+    const host = s.split('/')[0].replace(/:\d+$/, '');
+    const plain = /^\d{1,3}(\.\d{1,3}){3}$/.test(host) || host.startsWith('[') || host === 'localhost' || host.endsWith('.local');
+    s = `${plain ? 'http' : 'https'}://${s}`;
+  }
   return s;
 }
 

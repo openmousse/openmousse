@@ -88,7 +88,10 @@ def node_of(ip: str) -> str | None:
 def principal_of(request: Request) -> str | None:
     """这个请求是谁：token:<名字> / tailscale:<设备> / loopback，都不是就 None。"""
     auth = request.headers.get("authorization", "")
-    token = auth[7:].strip() if auth.lower().startswith("bearer ") else (request.headers.get("x-api-key") or request.query_params.get("token") or "").strip()
+    token = auth[7:].strip() if auth.lower().startswith("bearer ") else (request.headers.get("x-api-key") or "").strip()
+    # ?token= 只给 <Image> 这类带不了请求头的地方用：只认 GET /api/files/…，别的接口不收 URL 里的令牌（会进日志和浏览记录）
+    if not token and request.method == "GET" and request.url.path.startswith("/api/files/"):
+        token = (request.query_params.get("token") or "").strip()
     if token:
         for name, tok in settings.tokens().items():
             if tok and secrets.compare_digest(tok, token):

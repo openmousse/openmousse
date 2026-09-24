@@ -14,3 +14,13 @@ install.sh
 *.db
 __pycache__/
 .venv/
+# 密钥和证书永远不随构建上传（有 .easignore 时 EAS 不看 .gitignore，这里要自己列全）
+.env
+.env.*
+*.p8
+*.p12
+*.key
+*.pem
+*.jks
+*.keystore
+*.mobileprovision
