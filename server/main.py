@@ -53,6 +53,12 @@ def meal_label(key: str) -> str:
 
 
 def xunji_name() -> str:
+    """看板上训练 / 饮食 / 身体数据的来源名。适配器脚本可以自报 SOURCE_NAME（字符串，或 {"zh": ..., "en": ...}），没写就是训记。"""
+    name = getattr(xunji, "SOURCE_NAME", None) if xunji else None
+    if isinstance(name, dict):
+        return L(name.get("zh") or name.get("en") or "", name.get("en") or name.get("zh") or "")
+    if isinstance(name, str) and name:
+        return name
     return L("训记", "Xunji")
 
 

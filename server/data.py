@@ -64,7 +64,7 @@ def ddb():
             metric TEXT, unit TEXT, target_low REAL, target_high REAL, due TEXT, group_id TEXT, source TEXT,
             status TEXT NOT NULL DEFAULT 'active', position INTEGER NOT NULL DEFAULT 99, created_at TEXT NOT NULL);
         CREATE TABLE IF NOT EXISTS feed_items (id TEXT PRIMARY KEY, group_id TEXT, title TEXT NOT NULL, body TEXT, cta TEXT,
-            created_at TEXT NOT NULL, dismissed INTEGER NOT NULL DEFAULT 0);
+            created_at TEXT NOT NULL, dismissed INTEGER NOT NULL DEFAULT 0, kind TEXT, data TEXT);
         CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT NOT NULL);
         CREATE TABLE IF NOT EXISTS journal (id TEXT PRIMARY KEY, ts TEXT NOT NULL, group_id TEXT, kind TEXT NOT NULL, text TEXT NOT NULL,
             tags TEXT, context TEXT, source TEXT NOT NULL DEFAULT 'chat', status TEXT NOT NULL DEFAULT 'active');
@@ -72,7 +72,17 @@ def ddb():
             status TEXT NOT NULL DEFAULT 'planned', progress INTEGER NOT NULL DEFAULT 0, next_step TEXT, notes TEXT, link TEXT, materials TEXT,
             created_at TEXT NOT NULL, updated_at TEXT NOT NULL);
     """)
+    global _feed_migrated
+    if not _feed_migrated:  # 老库的 feed_items 没有 kind / data（结构化建议卡要用）：补上列，只查一次
+        have = {r[1] for r in conn.execute("PRAGMA table_info(feed_items)")}
+        for col in ("kind", "data"):
+            if col not in have:
+                conn.execute(f"ALTER TABLE feed_items ADD COLUMN {col} TEXT")
+        _feed_migrated = True
     return conn
+
+
+_feed_migrated = False
 
 
 _cache: dict[str, tuple[float, Any]] = {}
@@ -496,7 +506,7 @@ async def cron_jobs() -> list[dict]:
         payload = j.get("payload") or {}
         last_status = st.get("lastRunStatus") or st.get("lastStatus")
         out.append({"id": j["id"], "source": "cron", "title": titles.get(slug(j.get("name") or name)) or titles.get(slug(name)) or name,
-                    "rawName": name, "agent": j.get("agentId") or "main", "modelId": payload.get("model"),
+                    "rawName": name, "agent": agent_label(j.get("agentId")), "modelId": payload.get("model"),
                     "when": when(nxt) if nxt else "", "repeat": repeat_of(j.get("schedule") or {}, nxt or london(st.get("nextRunAtMs"))),
                     "enabled": bool(j.get("enabled")), "toggleable": True, "nextAt": st.get("nextRunAtMs") or 0,
                     "last": ({"status": last_status, "when": when(london(st.get("lastRunAtMs")))} if st.get("lastRunAtMs") else None)})

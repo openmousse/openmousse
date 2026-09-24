@@ -34,7 +34,7 @@ function Tabs() {
         headerShown: false,
         tabBarActiveTintColor: t.gold,
         tabBarInactiveTintColor: t.ink3,
-        tabBarStyle: { backgroundColor: t.surface, borderTopColor: t.line, height: 68 + insets.bottom, paddingTop: 8, paddingBottom: insets.bottom + 10 },
+        tabBarStyle: { backgroundColor: t.surface, borderTopColor: t.line, height: 72 + insets.bottom, paddingTop: 8, paddingBottom: insets.bottom + 10 },
         tabBarLabelStyle: { fontSize: 11, fontWeight: '600', lineHeight: 14 },
       }}>
       <Tab.Screen name="对话" component={ChatScreen} options={{ tabBarLabel: L('对话', 'Chat'), tabBarIcon: ({ color, size }) => <MessageCircle color={color} size={size} /> }} />

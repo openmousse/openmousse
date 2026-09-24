@@ -122,7 +122,8 @@ export function Segmented<V extends string>({ options, value, onChange }: { opti
 const styles = StyleSheet.create({
   largeHeader: { flexDirection: 'row', alignItems: 'flex-end', paddingHorizontal: space.lg, paddingTop: space.md, paddingBottom: space.md, gap: space.md },
   navHeader: { flexDirection: 'row', alignItems: 'center', height: 48, paddingHorizontal: space.sm, borderBottomWidth: StyleSheet.hairlineWidth },
-  navSide: { width: 72, justifyContent: 'center' },
+  // 两侧至少 72 宽让标题大体居中；右侧放了日历按钮 + 模型选择这种宽内容时按内容撑开，不能挤出屏幕
+  navSide: { minWidth: 72, flexShrink: 0, justifyContent: 'center' },
   sectionLabel: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingHorizontal: space.xs, marginTop: space.xl, marginBottom: space.sm },
   btn: { flexDirection: 'row', gap: 6, alignItems: 'center', justifyContent: 'center', borderRadius: radius.md, paddingVertical: 11, paddingHorizontal: space.lg },
   row: { flexDirection: 'row', alignItems: 'center', gap: space.md, paddingVertical: 13 },

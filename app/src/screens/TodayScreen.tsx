@@ -213,8 +213,8 @@ export function TodayScreen() {
                 {dataErrors.approvals
                   ? L(`读不到审批队列：${dataErrors.approvals}`, `Couldn't load the approval queue: ${dataErrors.approvals}`)
                   : L(
-                    `审批队列是空的。现在 ${agentName()} 跑命令不需要审批（见「我 → 安全」），要你点头的动作会出现在这里。`,
-                    `The approval queue is empty. Right now ${agentName()} runs commands without approval (see Me → Security). Actions that need your OK will show up here.`,
+                    `没有等你点头的事。${agentName()} 要做需要审批的动作时会出现在这里（审批开没开，见「我 → 安全」）。`,
+                    `Nothing waiting for your OK. When ${agentName()} wants to do something that needs approval, it shows up here (whether approvals are on: Me → Security).`,
                   )}
               </T>
             </Card>

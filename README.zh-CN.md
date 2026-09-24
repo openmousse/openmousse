@@ -1,10 +1,36 @@
 # OpenMousse
 
-**中文** · [English](README.md)
+**中文** · [English](README.md) · [openmousse.ai](https://openmousse.ai)
 
-**给有自己 claw 的人的个人 agent 界面与基础功能包。** 自托管，接你自己的 OpenClaw、你自己的模型订阅、你自己的数据。
+**给自己跑 [OpenClaw](https://github.com/openclaw/openclaw) 的人的私人 agent app。** 在手机上直接跟你的 agent 对话，生活的每一块交给一个 Agent，再用一份记忆把 Claude、ChatGPT、Gemini 和你的 agent 串起来。自托管：你的机器、你的模型账号、你的数据。
 
-Meta Muse 把一个 agent 部署在它的服务器上，再用一个 app 包起来。OpenMousse 做同样的包装，但 agent 跑在你自己的机器上，模型是你自己的账号，数据不出门。
+<p align="center">
+  <img src="docs/screenshots/zh-today.png" width="30%" alt="今天：建议和日程">
+  <img src="docs/screenshots/zh-chat.png" width="30%" alt="和 agent 对话">
+  <img src="docs/screenshots/zh-agent-fitness.png" width="30%" alt="健身 Agent 的看板">
+</p>
+
+- **口袋里的 agent。** 给你已经在跑的 OpenClaw 配一个 iOS 和网页 app：流式对话、语音输入、照片和文件、推送通知。
+- **生活的每一块，一个 Agent。** 健身、饮食、睡眠、求职……每个都是真正的 OpenClaw agent，有自己的记忆、skills 和看板。在对话里说一句就建好。
+- **它会主动找你。** 起床报告；新数据一到就更新的建议卡；每天的日结，让每个 Agent 记得昨天。
+- **所有 AI 共用一份记忆。** [世界树](tree/)是一个 MCP 服务，Claude.ai、ChatGPT、Gemini、Notion 都能接。没有 OpenClaw 也能单独用。
+
+**OpenClaw 是什么？** 跑在你自己机器上的开源个人 AI agent（[openclaw.ai](https://openclaw.ai)）：skills、定时任务、Telegram 之类的聊天渠道、任意模型。OpenMousse 不替代它，而是在它上面加一个 app、一组 Agents 和一份共享记忆。
+
+**不是 OpenMuse。** [CopilotKit 的 OpenMuse](https://github.com/CopilotKit/openmuse) 是一台"agent 电脑"（浏览器、终端、邮件、填表），自带 agent。OpenMousse 不自带 agent：它建在你的 OpenClaw 上，专注你的生活数据、会主动找你的 Agents，和一份所有 AI 共用的记忆。
+
+**状态：刚起步。** 作者每天在用；在别人机器上的安装还在试，非常欢迎安装反馈。iPhone app 的 TestFlight 公开链接等 Apple 的测试审核过了就放出来。
+
+### 哪些数据会离开你的机器
+
+对话、记忆和健康数据都留在你的服务器上。按设计会出去的只有：
+
+- 发给你在 OpenClaw 里配置的模型服务商的消息；
+- 经 Expo 和 Apple 的推送通知（标题和一段简短预览）；
+- 语音发给 `server.json` 里配置的转写服务（默认 OpenAI；把 `transcribe_url` 指向你自己的 Whisper 服务就不出门）；
+- 如果你把 Claude.ai / ChatGPT / Gemini / Notion 接到世界树，它们会通过你暴露的地址读写它。
+
+详见[隐私政策](https://openmousse.ai/privacy.html)和 [SECURITY.md](SECURITY.md)。
 
 ## 组成
 
