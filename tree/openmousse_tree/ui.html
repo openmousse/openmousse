@@ -1,0 +1,133 @@
+<!doctype html>
+<html lang="zh">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>世界树</title>
+<style>
+  :root { --bg:#fff; --fg:#111; --muted:#777; --line:#e5e5e5; --card:#fafafa; --accent:#0a7; --warn:#c60; }
+  @media (prefers-color-scheme: dark) { :root { --bg:#111; --fg:#eee; --muted:#999; --line:#2a2a2a; --card:#181818; } }
+  body { margin:0; background:var(--bg); color:var(--fg); font:15px/1.5 -apple-system, "PingFang SC", "Noto Sans CJK SC", sans-serif; }
+  main { max-width:820px; margin:0 auto; padding:24px 16px 64px; }
+  h1 { font-size:20px; margin:0 0 4px; } .sub { color:var(--muted); font-size:13px; margin-bottom:16px; }
+  nav button, .row button { border:1px solid var(--line); background:var(--card); color:var(--fg); padding:6px 10px; border-radius:6px; cursor:pointer; font-size:13px; }
+  nav button.on { border-color:var(--accent); color:var(--accent); }
+  nav { display:flex; gap:6px; flex-wrap:wrap; margin-bottom:12px; }
+  .item { border-top:1px solid var(--line); padding:10px 0; }
+  .item .meta { color:var(--muted); font-size:12px; margin-top:2px; }
+  .item .pending { color:var(--warn); }
+  .row { display:flex; gap:6px; margin-top:6px; flex-wrap:wrap; }
+  textarea { width:100%; box-sizing:border-box; min-height:120px; background:var(--card); color:var(--fg); border:1px solid var(--line); border-radius:6px; padding:8px; font:14px/1.5 ui-monospace, Menlo, monospace; }
+  input, select { background:var(--card); color:var(--fg); border:1px solid var(--line); border-radius:6px; padding:6px 8px; font-size:14px; }
+  .add { display:flex; gap:6px; flex-wrap:wrap; margin:8px 0 16px; } .add input[type=text] { flex:1; min-width:200px; }
+  .stats { font-size:12px; color:var(--muted); margin-bottom:8px; }
+  .hidden { display:none; }
+</style>
+</head>
+<body>
+<main>
+  <h1>世界树</h1>
+  <div class="sub">你所有 AI 平台共享的记忆。这一页只在你自己的网络里打开。</div>
+  <nav>
+    <button data-tab="tree" class="on">记忆</button>
+    <button data-tab="pending">待确认 <span id="npending"></span></button>
+    <button data-tab="profile">档案</button>
+  </nav>
+
+  <section id="tab-tree">
+    <div class="stats" id="stats"></div>
+    <div class="add">
+      <input type="text" id="addText" placeholder="手动加一条：一句话、第三人称，比如「X 周末习惯去公园跑步」">
+      <select id="addKind"><option value="fact">事实</option><option value="preference">偏好</option><option value="decision">决定</option><option value="event">近况</option></select>
+      <input type="text" id="addTags" placeholder="标签，逗号分隔" style="width:140px">
+      <button onclick="addOne()">加入</button>
+    </div>
+    <nav id="sources"></nav>
+    <div id="list"></div>
+  </section>
+
+  <section id="tab-pending" class="hidden"><div id="plist"></div></section>
+
+  <section id="tab-profile" class="hidden">
+    <div class="sub" id="ppath"></div>
+    <textarea id="ptext"></textarea>
+    <div class="row"><button onclick="saveProfile()">保存档案</button><span class="sub" id="pmsg"></span></div>
+    <p class="sub">档案用 Markdown：<code>## 小节</code> 下面每行 <code>- 要点</code>。要点行会进入 recall 的检索；整份档案通过 profile 工具给模型。</p>
+  </section>
+</main>
+<script>
+let source = "";
+const $ = s => document.querySelector(s);
+document.querySelectorAll("nav [data-tab]").forEach(b => b.onclick = () => {
+  document.querySelectorAll("nav [data-tab]").forEach(x => x.classList.remove("on")); b.classList.add("on");
+  ["tree","pending","profile"].forEach(t => $("#tab-"+t).classList.toggle("hidden", t !== b.dataset.tab));
+  if (b.dataset.tab === "profile") loadProfile(); else load();
+});
+// 管理令牌：mousse-tree urls 打印的链接带 #key=…（片段不会发给服务器、不进日志），记在本机浏览器里，之后直接开 /ui 也行。
+const KEY_STORE = "mousse-tree-key";
+let key = new URLSearchParams(location.hash.slice(1)).get("key") || "";
+try {
+  if (key) { localStorage.setItem(KEY_STORE, key); history.replaceState(null, "", location.pathname); }
+  else key = localStorage.getItem(KEY_STORE) || "";
+} catch (e) { /* 隐私模式没有 localStorage：只在这次打开有效 */ }
+async function api(path, body) {
+  const headers = {authorization: "Bearer " + key};
+  if (body) headers["content-type"] = "application/json";
+  const r = await fetch("/ui/api/" + path, body ? {method:"POST", headers, body: JSON.stringify(body)} : {headers});
+  if (r.status === 401) { locked(); throw new Error("unauthorized"); }
+  return r.json();
+}
+function locked() {
+  $("main").innerHTML = `<section><h2>需要管理链接 · Admin link required</h2>
+    <p class="sub">在装世界树的机器上运行 <code>mousse-tree urls</code>，用它打印的管理页链接打开（链接里带管理令牌）。</p>
+    <p class="sub">On the machine running the tree, run <code>mousse-tree urls</code> and open the admin link it prints (it carries the admin key).</p></section>`;
+}
+function esc(s) { return String(s ?? "").replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c])); }
+function render(el, items, pendingOnly) {
+  el.innerHTML = items.length ? "" : "<div class='sub'>（空）</div>";
+  for (const it of items) {
+    const d = document.createElement("div"); d.className = "item";
+    d.innerHTML = `<div>${esc(it.text)}</div>
+      <div class="meta">${esc(it.kind)} · ${esc(it.source)} · ${esc(it.observed_at)}${it.tags ? " · #" + esc(it.tags) : ""} ${it.status === "pending" ? "<span class='pending'>待确认</span>" : ""}</div>
+      <div class="row">
+        ${it.status === "pending" ? `<button onclick="act('confirm','${it.id}')">确认</button>` : ""}
+        <button onclick="editOne('${it.id}')">改</button>
+        <button onclick="act('forget','${it.id}')">忘记</button>
+      </div>`;
+    el.appendChild(d);
+  }
+}
+async function load() {
+  const d = await api("list" + (source ? "?source=" + encodeURIComponent(source) : ""));
+  const pend = d.items.filter(i => i.status === "pending");
+  $("#npending").textContent = pend.length ? `(${pend.length})` : "";
+  $("#stats").textContent = d.stats.filter(s => s.source !== "profile").map(s => `${s.source} ${s.status} ${s.n}`).join(" · ") + (d.require_confirm ? " · 写入需确认：开" : " · 写入需确认：关");
+  const srcs = [...new Set(d.stats.map(s => s.source).filter(s => s !== "profile"))];
+  $("#sources").innerHTML = [""].concat(srcs).map(s => `<button class="${s === source ? "on" : ""}" onclick="source='${s}';load()">${s || "全部"}</button>`).join("");
+  render($("#list"), d.items, false);
+  render($("#plist"), pend, true);
+}
+async function act(action, id) {
+  if (action === "forget" && !confirm("忘记这条？正文会清空，只留骨架。")) return;
+  await api("action", {action, id}); load();
+}
+async function editOne(id) {
+  const cur = [...document.querySelectorAll(".item")].find(x => x.innerHTML.includes(`'${id}'`));
+  const text = prompt("改成：", cur ? cur.querySelector("div").textContent : "");
+  if (text) { await api("action", {action:"edit", id, text}); load(); }
+}
+async function addOne() {
+  const text = $("#addText").value.trim(); if (!text) return;
+  await api("action", {action:"add", text, kind: $("#addKind").value, tags: $("#addTags").value});
+  $("#addText").value = ""; $("#addTags").value = ""; load();
+}
+async function loadProfile() {
+  const d = await api("profile"); $("#ptext").value = d.text; $("#ppath").textContent = d.path;
+}
+async function saveProfile() {
+  const d = await api("profile", {text: $("#ptext").value}); $("#pmsg").textContent = `已保存，${d.lines} 条要点进树`;
+}
+load();
+</script>
+</body>
+</html>

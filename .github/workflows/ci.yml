@@ -1,0 +1,56 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  app:
+    name: app · typecheck + lint
+    runs-on: ubuntu-latest
+    defaults: { run: { working-directory: app } }
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: 22, cache: npm, cache-dependency-path: app/package-lock.json }
+      - run: npm ci
+      - run: npm run typecheck
+      - run: npm run lint
+
+  python:
+    name: server + packs + tree · lint + smoke
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: "3.12" }
+      - run: pip install -r server/requirements.txt pyflakes ./tree
+      - run: python -m pyflakes server tree/openmousse_tree packs/core/scripts packs/core/setup.py
+      - run: bash -n install.sh
+      - name: server starts on a blank instance and answers /api/health
+        run: |
+          mkdir -p /tmp/oc/workspace /tmp/om
+          echo '{"agents":{"defaults":{"workspace":"/tmp/oc/workspace"}},"gateway":{"auth":{"token":"x"}}}' > /tmp/oc/openclaw.json
+          echo '{"app_name":"CI","timezone":"UTC","bind":{"host":"127.0.0.1","port":8099},"openclaw_home":"/tmp/oc","workspace":"/tmp/oc/workspace","data_dir":"/tmp/om/data","dist":"/tmp/none","auth":{"tokens":{"ci":"secret"}}}' > /tmp/om/server.json
+          (cd server && MOUSSE_SERVER_CONFIG=/tmp/om/server.json python run.py > /tmp/om/server.log 2>&1 &)
+          for i in $(seq 1 40); do curl -sf -o /dev/null http://127.0.0.1:8099/ && break; sleep 0.5; done
+          curl -sf -H 'Authorization: Bearer secret' http://127.0.0.1:8099/api/health | tee /tmp/om/health.json
+          grep -q '"app_name":"CI"' /tmp/om/health.json
+          test "$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:8099/api/health)" = "401"
+          curl -sf -H 'Authorization: Bearer secret' http://127.0.0.1:8099/api/fitness/week | grep -q missing_source
+      - name: tree CLI
+        run: |
+          export MOUSSE_TREE_HOME=/tmp/tree
+          mousse-tree init --name CI --tz UTC
+          mousse-tree add --source ci --text "CI likes green checks"
+          mousse-tree recall --q green | grep -q "green"
+      - name: tree server starts; admin API needs the admin key
+        run: |
+          export MOUSSE_TREE_HOME=/tmp/tree
+          (mousse-tree serve > /tmp/tree/serve.log 2>&1 &)
+          for i in $(seq 1 40); do curl -sf -o /dev/null http://127.0.0.1:8787/health && break; sleep 0.5; done
+          curl -sf http://127.0.0.1:8787/health || { cat /tmp/tree/serve.log; exit 1; }
+          KEY=$(python -c "import json; print(json.load(open('/tmp/tree/config.json'))['ui_token'])")
+          test "$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:8787/ui/api/list)" = "401"
+          curl -sf -H "Authorization: Bearer $KEY" http://127.0.0.1:8787/ui/api/list | grep -q green

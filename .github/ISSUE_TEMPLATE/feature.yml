@@ -1,0 +1,15 @@
+name: Feature / pack idea · 功能或 pack 提议
+description: Something OpenMousse should do, or a data source / pack you want / 想要的功能、数据源或 pack
+labels: [enhancement]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: The problem / 想解决什么
+      description: What you want to do with your agent that you cannot today. / 你想让 agent 做到而现在做不到的事。
+    validations: { required: true }
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposal / 打算怎么做
+      description: Optional. If it is a data source, name the app / API and what data it exposes. / 可选。数据源的话写清是什么软件、能拿到什么数据。

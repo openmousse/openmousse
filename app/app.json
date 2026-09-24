@@ -1,0 +1,77 @@
+{
+  "expo": {
+    "name": "OpenMousse",
+    "slug": "openmousse",
+    "version": "1.0.4",
+    "orientation": "portrait",
+    "icon": "./assets/icon.png",
+    "userInterfaceStyle": "automatic",
+    "ios": {
+      "supportsTablet": false,
+      "bundleIdentifier": "app.openmousse.ios",
+      "buildNumber": "1",
+      "infoPlist": {
+        "NSAppTransportSecurity": {
+          "NSAllowsArbitraryLoads": true
+        },
+        "NSHealthShareUsageDescription": "{name} 读取睡眠、心率变异性、静息心率等数据，用于每天的状态判断和训练建议。",
+        "NSHealthUpdateUsageDescription": "{name} 不会向健康写入数据。",
+        "ITSAppUsesNonExemptEncryption": false
+      },
+      "entitlements": {
+        "com.apple.developer.healthkit": true,
+        "com.apple.developer.healthkit.access": []
+      }
+    },
+    "android": {
+      "adaptiveIcon": {
+        "backgroundColor": "#E6F4FE",
+        "foregroundImage": "./assets/android-icon-foreground.png",
+        "backgroundImage": "./assets/android-icon-background.png",
+        "monochromeImage": "./assets/android-icon-monochrome.png"
+      },
+      "predictiveBackGestureEnabled": false,
+      "package": "app.openmousse.android"
+    },
+    "web": {
+      "favicon": "./assets/favicon.png",
+      "bundler": "metro",
+      "output": "single"
+    },
+    "scheme": "openmousse",
+    "runtimeVersion": {
+      "policy": "appVersion"
+    },
+    "plugins": [
+      [
+        "@kingstinct/react-native-healthkit",
+        {
+          "NSHealthShareUsageDescription": "{name} 读取睡眠、心率变异性、静息心率等数据，用于每天的状态判断和训练建议。",
+          "NSHealthUpdateUsageDescription": "{name} 不会向健康写入数据。",
+          "background": false
+        }
+      ],
+      [
+        "expo-audio",
+        {
+          "microphonePermission": "{name} 需要用麦克风，把你说的话转成文字。"
+        }
+      ],
+      [
+        "expo-image-picker",
+        {
+          "photosPermission": "{name} 需要访问相册，把你选的照片发给它看。",
+          "cameraPermission": "{name} 需要用相机，拍照直接发给它看。"
+        }
+      ],
+      "expo-asset",
+      [
+        "expo-notifications",
+        {
+          "color": "#D9AE62"
+        }
+      ],
+      "expo-secure-store"
+    ]
+  }
+}

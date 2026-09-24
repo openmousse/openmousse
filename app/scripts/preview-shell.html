@@ -1,0 +1,67 @@
+<title>Grava App 原型</title>
+<style>
+  :root {
+    --ground: #E4E7E9; --ink: #12151A; --ink2: #4B535C; --ink3: #7D858F; --line: #CBD0D4;
+    --app-bg: #F1F3F4; --bezel: #101216; --gold: #9A6B16; --cyan: #0F7A93; --tabbar: #FFFFFF;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --ground: #050607; --ink: #ECEEF0; --ink2: #A6AEB7; --ink3: #737C86; --line: #252A31;
+      --app-bg: #0B0D10; --bezel: #1E2329; --gold: #DDB56A; --cyan: #5CCFE6; --tabbar: #14171C;
+    }
+  }
+  :root[data-theme="dark"] {
+    --ground: #050607; --ink: #ECEEF0; --ink2: #A6AEB7; --ink3: #737C86; --line: #252A31;
+    --app-bg: #0B0D10; --bezel: #1E2329; --gold: #DDB56A; --cyan: #5CCFE6; --tabbar: #14171C;
+  }
+  html, body { height: 100%; }
+  body {
+    background: var(--ground); color: var(--ink); overflow: hidden;
+    font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "PingFang SC", "Helvetica Neue", "Noto Sans SC", "Microsoft YaHei", sans-serif;
+  }
+  .stage { height: 100%; display: flex; align-items: center; justify-content: center; gap: 56px; padding-inline: 24px; box-sizing: border-box; }
+  .notes { max-width: 300px; display: flex; flex-direction: column; gap: 18px; }
+  .notes h1 { margin: 0; font-size: 30px; font-weight: 700; letter-spacing: -0.02em; line-height: 1.15; text-wrap: balance; }
+  .notes h1 span { color: var(--gold); }
+  .notes p { margin: 0; font-size: 14px; line-height: 1.65; color: var(--ink2); }
+  .notes .tag { align-self: flex-start; font-size: 11px; font-weight: 600; letter-spacing: 0.08em; color: var(--cyan); border: 1px solid var(--line); border-radius: 999px; padding: 4px 10px; }
+  .notes ul { margin: 0; padding: 0; list-style: none; display: flex; flex-direction: column; gap: 10px; border-top: 1px solid var(--line); padding-top: 18px; }
+  .notes li { font-size: 13px; line-height: 1.5; color: var(--ink2); display: grid; grid-template-columns: 52px 1fr; gap: 10px; }
+  .notes li b { color: var(--ink); font-weight: 600; }
+  .device {
+    flex: none; width: 390px; height: min(844px, calc(100% - 40px)); box-sizing: content-box;
+    border: 10px solid var(--bezel); border-radius: 52px; overflow: hidden; background: var(--app-bg);
+    display: flex; flex-direction: column; position: relative;
+  }
+  .statusbar { flex: none; height: 46px; display: flex; align-items: flex-end; justify-content: space-between; padding: 0 30px 6px; font-size: 15px; font-weight: 600; color: var(--ink); font-variant-numeric: tabular-nums; }
+  .statusbar i { display: block; width: 24px; height: 11px; border: 1.5px solid var(--ink3); border-radius: 4px; position: relative; }
+  .statusbar i::after { content: ""; position: absolute; inset: 1.5px; right: 6px; background: var(--ink); border-radius: 1.5px; }
+  .homebar { flex: none; height: 24px; display: flex; align-items: center; justify-content: center; background: var(--tabbar); }
+  .homebar::before { content: ""; width: 134px; height: 5px; border-radius: 3px; background: var(--ink); opacity: 0.85; }
+  #root { flex: 1; min-height: 0; display: flex; position: relative; }
+  @media (max-width: 760px) {
+    .stage { padding: 0; gap: 0; }
+    .notes, .statusbar, .homebar { display: none; }
+    .device { width: 100%; height: 100%; border: 0; border-radius: 0; }
+  }
+</style>
+<div class="stage">
+  <aside class="notes">
+    <span class="tag">界面原型 · 示例数据</span>
+    <h1><span>Grava</span> 的 iOS app，先看样子</h1>
+    <p>右边的手机可以直接点。它和将来装在 iPhone 上的是同一份代码，只是还没连上服务器，回复和数据都是模拟的。</p>
+    <ul>
+      <li><b>对话</b><span>点右上角换模型，发一条消息试试；K3 会明显慢一些。</span></li>
+      <li><b>Groups</b><span>进「饮食记录」看看板和记忆，或者右上角新建一个。</span></li>
+      <li><b>今天</b><span>两张审批卡，同意或拒绝后去「我 → 活动记录」看结果。</span></li>
+      <li><b>我</b><span>换 Grava 的形象，切深色，让它忘记一条记忆。</span></li>
+    </ul>
+  </aside>
+  <main class="device" aria-label="Grava app 预览">
+    <div class="statusbar" aria-hidden="true"><span>9:41</span><i></i></div>
+    <div id="root"></div>
+    <div class="homebar" aria-hidden="true"></div>
+  </main>
+</div>
+<noscript>这个原型需要 JavaScript。</noscript>
+<script>/*__BUNDLE__*/</script>

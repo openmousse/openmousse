@@ -1,0 +1,10 @@
+{
+  "name": "你的助手名",
+  "slug": "your-slug",
+  "scheme": "your-slug",
+  "iosBundleId": "app.yourname.ios",
+  "androidPackage": "app.yourname.android",
+  "easProjectId": "在 expo.dev 建项目后拿到的 id",
+  "owner": "你的 Expo 账号或团队",
+  "icons": "assets/local"
+}

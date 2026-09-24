@@ -1,0 +1,41 @@
+{
+  "cli": {
+    "version": ">= 16.0.0",
+    "appVersionSource": "remote"
+  },
+  "build": {
+    "production": {
+      "distribution": "store",
+      "autoIncrement": true,
+      "ios": {
+        "resourceClass": "m-medium"
+      },
+      "channel": "production"
+    },
+    "preview": {
+      "distribution": "internal",
+      "ios": {
+        "simulator": false
+      },
+      "channel": "preview"
+    },
+    "production-openmousse": {
+      "extends": "production",
+      "env": {
+        "MOUSSE_LOCAL": "app.local.openmousse.json"
+      }
+    }
+  },
+  "submit": {
+    "production": {
+      "ios": {
+        "ascAppId": "6814970833"
+      }
+    },
+    "production-openmousse": {
+      "ios": {
+        "ascAppId": "6815754710"
+      }
+    }
+  }
+}

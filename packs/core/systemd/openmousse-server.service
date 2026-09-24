@@ -1,0 +1,13 @@
+# 由 packs/core/setup.py 生成；{venv} {repo} 会被替换
+[Unit]
+Description=OpenMousse server (API + web app)
+After=network-online.target
+
+[Service]
+WorkingDirectory={repo}/server
+ExecStart={venv}/bin/python run.py
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=default.target

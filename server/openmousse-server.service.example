@@ -1,0 +1,15 @@
+# ~/.config/systemd/user/openmousse-server.service
+# systemctl --user daemon-reload && systemctl --user enable --now openmousse-server
+# 用户级服务在登出后要能继续跑：loginctl enable-linger $USER
+[Unit]
+Description=OpenMousse server (API + web app)
+After=network-online.target
+
+[Service]
+WorkingDirectory=%h/openmousse/server
+ExecStart=/usr/bin/python3 run.py
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=default.target

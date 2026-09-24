@@ -1,0 +1,16 @@
+# EAS 打包时排除的文件（仓库根目录才生效；有这个文件时 EAS 就不看 .gitignore 了，
+# 所以 app/app.local*.json 和 app/assets/local/ 这些不进 git 的身份文件会随构建上传）
+.git/
+node_modules/
+**/node_modules/
+app/dist/
+app/preview/
+app/.expo/
+server/
+tree/
+packs/
+install.sh
+*.md
+*.db
+__pycache__/
+.venv/

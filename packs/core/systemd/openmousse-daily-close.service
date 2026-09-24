@@ -1,0 +1,6 @@
+[Unit]
+Description=OpenMousse daily close — ask each active agent to write its 日结 before the 04:00 session reset
+
+[Service]
+Type=oneshot
+ExecStart={venv}/bin/python {repo}/packs/core/scripts/daily_close.py

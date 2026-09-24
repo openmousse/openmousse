@@ -1,0 +1,28 @@
+name: Bug report / 问题报告
+description: Something is broken / 哪里坏了
+labels: [bug]
+body:
+  - type: dropdown
+    id: part
+    attributes:
+      label: Part / 哪一块
+      options: [app (iOS / Web), server, tree (memory over MCP), packs / skills, installer (install.sh)]
+    validations: { required: true }
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened / 发生了什么
+      description: What you did, what you expected, what you got. / 做了什么、预期什么、实际什么。
+    validations: { required: true }
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs / 日志
+      description: "server: `journalctl --user -u openmousse-server -n 100` · app: screenshot · installer: the full output. Remove tokens. / 去掉令牌。"
+      render: shell
+  - type: input
+    id: versions
+    attributes:
+      label: Versions / 版本
+      placeholder: "OpenClaw 2026.9.5 · OpenMousse commit abc123 · iOS 26 / Chrome · Ubuntu 24.04"
+    validations: { required: true }

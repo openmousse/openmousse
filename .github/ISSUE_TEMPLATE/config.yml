@@ -1,0 +1,5 @@
+blank_issues_enabled: true
+contact_links:
+  - name: Question / 提问
+    url: https://github.com/openmousse/openmousse/discussions
+    about: How-to questions and ideas go to Discussions. / 用法问题和想法去 Discussions。

@@ -1,0 +1,9 @@
+[Unit]
+Description=OpenMousse daily close — 03:45 {tz}
+
+[Timer]
+OnCalendar=*-*-* 03:45:00 {tz}
+Persistent=false
+
+[Install]
+WantedBy=timers.target

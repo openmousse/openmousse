@@ -1,0 +1,25 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "openmousse-tree"
+version = "0.1.0"
+description = "OpenMousse 世界树：一份自托管的个人记忆，Claude / ChatGPT / Gemini / Notion 和你的 OpenClaw 都接到同一棵树上"
+readme = "README.md"
+license = { text = "MIT" }
+requires-python = ">=3.11"
+dependencies = [
+  "mcp>=1.23,<2",  # 2.x renamed FastMCP and changed the server API; migrate before lifting this
+  "starlette>=0.40",
+  "uvicorn>=0.30",
+]
+
+[project.scripts]
+mousse-tree = "openmousse_tree.cli:main"
+
+[tool.setuptools]
+packages = ["openmousse_tree"]
+
+[tool.setuptools.package-data]
+openmousse_tree = ["ui.html"]
