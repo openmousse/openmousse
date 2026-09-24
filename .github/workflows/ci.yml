@@ -19,12 +19,15 @@ jobs:
       - run: npm run lint
 
   python:
-    name: server + packs + tree · lint + smoke
+    name: server + packs + tree · lint + smoke (py${{ matrix.python }})
     runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python: ["3.11", "3.12"]  # install.sh accepts 3.11+, so both must work
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
-        with: { python-version: "3.12" }
+        with: { python-version: "${{ matrix.python }}" }
       - run: pip install -r server/requirements.txt pyflakes ./tree
       - run: python -m pyflakes server tree/openmousse_tree packs/core/scripts packs/core/setup.py
       - run: bash -n install.sh

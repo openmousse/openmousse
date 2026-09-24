@@ -891,7 +891,8 @@ def edit_profile(iid: str, body: ProfileEdit):
         if not it:
             raise HTTPException(409, L("这一条已经变了，刷新再改", "This item has changed. Refresh and try again."))
         today = date.today().isoformat()
-        new = [] if body.text is None else [f"- {re.sub(r'\s+', ' ', body.text).strip()} [L] {today}"]
+        text = "" if body.text is None else re.sub(r"\s+", " ", body.text).strip()  # 别写进 f-string 的 {} 里：3.11 不允许反斜杠
+        new = [] if body.text is None else [f"- {text} [L] {today}"]
         rewrite(PROFILE, lines, it["start"], it["end"], new)
         PROFILE_HISTORY.parent.mkdir(parents=True, exist_ok=True)
         verb = L("删除", "Deleted") if body.text is None else L("改写", "Edited")
