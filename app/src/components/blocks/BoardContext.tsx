@@ -5,7 +5,9 @@ import { Pressable, StyleSheet, View } from 'react-native';
 import { boardsApi, type Block, type Board } from '../../api/boards';
 import { L } from '../../i18n';
 import { radius, space, useTheme } from '../../theme';
-import { Sparkles } from '../icons';
+import { ArrowUp, ChevronRight, Clock, Eye, EyeOff, MessageCircle, Sparkles, Trash2 } from '../icons';
+import { setChatDraft } from '../chatInput';
+import { useSheet } from '../Sheet';
 import { showError, T } from '../ui';
 import { BlockView } from './Blocks';
 import { Ctx, useBoard } from './ctx';
@@ -57,13 +59,147 @@ export function useAgentBoard(agent: string, active: boolean) {
   return { board, error, reload: fetchBoard };
 }
 
+/** 按显示顺序分好的几段（最前面 / 每个内置小节后面 / 最后）。没有内置看板的只有一段。 */
+function slotsOf(board: Board): { keys: string[]; lists: Map<string, Block[]> } {
+  const layout = layoutOf(board.blocks, board.anchors);
+  if (board.dashboard === 'none' || !board.anchors.some((a) => a !== 'top')) {
+    return { keys: [''], lists: new Map([['', [...(layout.get('top') ?? []), ...[...layout.entries()].filter(([k]) => k !== 'top').flatMap(([, v]) => v)]]]) };
+  }
+  const keys = ['top', ...board.anchors.filter((a) => a !== 'top'), ''];
+  return { keys, lists: new Map(keys.map((k) => [k, [...(layout.get(k) ?? [])]])) };
+}
+
+/** 段 → 配置：每块的 after 就写它所在的段（「接在另一块后面」这种链条摊平），藏起来的原样留在最后。 */
+function blocksFrom(board: Board, keys: string[], lists: Map<string, Block[]>): Block[] {
+  const shown = keys.flatMap((k) => (lists.get(k) ?? []).map((b) => ({ ...b, after: k || undefined })));
+  return [...shown, ...board.blocks.filter((b) => b.hidden)];
+}
+
+/** 挪一格：段里换位置；已经在段头 / 段尾就跨过一个内置小节，挪到上一段末尾 / 下一段开头。 */
+export function moved(board: Board, id: string, dir: -1 | 1): Block[] | null {
+  const { keys, lists } = slotsOf(board);
+  const si = keys.findIndex((k) => (lists.get(k) ?? []).some((b) => b.id === id));
+  if (si < 0) return null;
+  const list = lists.get(keys[si]) as Block[];
+  const i = list.findIndex((b) => b.id === id);
+  const j = i + dir;
+  if (j >= 0 && j < list.length) {
+    [list[i], list[j]] = [list[j], list[i]];
+  } else {
+    const ti = si + dir;
+    if (ti < 0 || ti >= keys.length) return null;
+    const [b] = list.splice(i, 1);
+    const target = lists.get(keys[ti]) as Block[];
+    if (dir < 0) target.push(b); else target.unshift(b);
+  }
+  return blocksFrom(board, keys, lists);
+}
+
 export function BoardProvider({ agent, board, error, reload, onChat, readOnly = false, children }: {
   agent: string; board: Board | null; error?: string | null; reload: () => Promise<void>; onChat: () => void; readOnly?: boolean; children: React.ReactNode;
 }) {
+  const sheet = useSheet();
   const layout = useMemo(() => layoutOf(board?.blocks ?? [], board?.anchors ?? []), [board]);
   const fresh = useMemo(() => new Set(board?.strip?.added ?? []), [board]);
-  const value = useMemo(() => ({ agent, board, error: error ?? null, reload, layout, fresh, readOnly, onChat }), [agent, board, error, reload, layout, fresh, readOnly, onChat]);
+  const openMenu = useCallback((block: Block) => {
+    if (!board || readOnly) return;
+    const save = (blocks: Block[] | null, note: string) => {
+      if (!blocks) return;
+      boardsApi.put(agent, blocks, note).then(() => reload()).catch((e) => showError(L('没改成', "Couldn't change the board"), e));
+    };
+    const name = block.title || block.actions?.map((a) => a.label).join(' / ') || block.id;
+    sheet.open({
+      title: name,
+      content: (close) => <BlockMenu board={board} block={block} close={close} onSave={(b, note) => { close(); save(b, note); }}
+        onAsk={() => { setChatDraft(agent, L(`看板上「${name}」这一块：`, `About the "${name}" block on the board: `)); close(); onChat(); }} />,
+    });
+  }, [agent, board, readOnly, reload, sheet, onChat]);
+  const value = useMemo(() => ({ agent, board, error: error ?? null, reload, layout, fresh, readOnly, onChat, openMenu }), [agent, board, error, reload, layout, fresh, readOnly, onChat, openMenu]);
   return <Ctx.Provider value={value}>{children}</Ctx.Provider>;
+}
+
+function BlockMenu({ board, block, close, onSave, onAsk }: { board: Board; block: Block; close: () => void; onSave: (blocks: Block[] | null, note: string) => void; onAsk: () => void }) {
+  const t = useTheme();
+  const [sure, setSure] = useState(false);
+  const up = moved(board, block.id, -1);
+  const down = moved(board, block.id, 1);
+  const name = block.title || block.id;
+  const Row = MenuRow;
+  return (
+    <View style={{ gap: space.sm }}>
+      <Row icon={<ArrowUp size={20} color={t.ink2} />} label={L('挪到上面', 'Move up')} disabled={!up} onPress={() => onSave(up, L(`把「${name}」往上挪了`, `Moved "${name}" up`))} />
+      <Row icon={<View style={{ transform: [{ rotate: '180deg' }] }}><ArrowUp size={20} color={t.ink2} /></View>} label={L('挪到下面', 'Move down')} disabled={!down}
+        onPress={() => onSave(down, L(`把「${name}」往下挪了`, `Moved "${name}" down`))} />
+      <Row icon={<EyeOff size={20} color={t.ink2} />} label={L('先藏起来', 'Hide for now')} sub={L('看板最底下「藏起来的」里能放回来', 'Bring it back from "Hidden" at the bottom of the board')}
+        onPress={() => onSave(board.blocks.map((b) => (b.id === block.id ? { ...b, hidden: true } : b)), L(`藏起了「${name}」`, `Hid "${name}"`))} />
+      <Row icon={<MessageCircle size={20} color={t.gold} />} label={L('让它改这一块', 'Ask it to change this')} sub={L('比如「只看 2 天内到期的」', 'e.g. "only show what expires within 2 days"')} onPress={onAsk} />
+      <Row icon={<Trash2 size={20} color={t.bad} />} color={t.bad} label={sure ? L('确定删掉这一块', 'Delete this block') : L('删掉这一块', 'Delete this block')}
+        sub={L('只删这一块，数据还在；改动记录里能回到删之前', 'Only the block goes; the data stays, and the board history can bring it back')}
+        onPress={() => (sure ? onSave(board.blocks.filter((b) => b.id !== block.id), L(`删了「${name}」`, `Deleted "${name}"`)) : setSure(true))} />
+      <Pressable onPress={close} accessibilityRole="button" style={({ pressed }) => [styles.menuRow, { justifyContent: 'center', opacity: pressed ? 0.6 : 1 }]}>
+        <T v="headline" color={t.ink2}>{L('取消', 'Cancel')}</T>
+      </Pressable>
+    </View>
+  );
+}
+
+function MenuRow({ icon, label, sub, color, onPress, disabled }: { icon: React.ReactNode; label: string; sub?: string; color?: string; onPress: () => void; disabled?: boolean }) {
+  const t = useTheme();
+  return (
+    <Pressable onPress={onPress} disabled={disabled} accessibilityRole="button" style={({ pressed }) => [styles.menuRow, { backgroundColor: t.surface, opacity: disabled ? 0.4 : pressed ? 0.7 : 1 }]}>
+      {icon}
+      <View style={{ flex: 1, gap: 2 }}>
+        <T v="headline" color={color}>{label}</T>
+        {sub ? <T v="caption" color={t.ink3} style={{ fontWeight: '400', fontSize: 13 }}>{sub}</T> : null}
+      </View>
+    </Pressable>
+  );
+}
+
+/** 看板最底下：藏起来的块（能放回来）、改动记录。 */
+export function BoardFooter({ onHistory }: { onHistory: () => void }) {
+  const t = useTheme();
+  const ctx = useBoard();
+  const sheet = useSheet();
+  if (!ctx?.board || ctx.readOnly) return null;
+  const { board, agent, reload } = ctx;
+  const hidden = board.blocks.filter((b) => b.hidden);
+  const hasAny = board.blocks.length > 0 || board.version > 0;
+  if (!hasAny) return null;
+  const restore = (id: string, close: () => void) => {
+    close();
+    boardsApi.put(agent, board.blocks.map((b) => (b.id === id ? { ...b, hidden: false } : b)), L('放回了一块', 'Brought a block back'))
+      .then(() => reload()).catch((e) => showError(L('没改成', "Couldn't change the board"), e));
+  };
+  return (
+    <View style={{ marginTop: space.xl, gap: space.sm }}>
+      {hidden.length ? (
+        <Pressable accessibilityRole="button" onPress={() => sheet.open({
+          title: L('藏起来的', 'Hidden'),
+          content: (close) => (
+            <View style={{ gap: space.sm }}>
+              {hidden.map((b) => (
+                <Pressable key={b.id} onPress={() => restore(b.id, close)} accessibilityRole="button" style={({ pressed }) => [styles.menuRow, { backgroundColor: t.surface, opacity: pressed ? 0.7 : 1 }]}>
+                  <View style={{ flex: 1 }}><T v="headline">{b.title || b.id}</T></View>
+                  <T v="callout" color={t.gold} style={{ fontWeight: '700' }}>{L('放回来', 'Show again')}</T>
+                </Pressable>
+              ))}
+            </View>
+          ),
+        })} style={({ pressed }) => [styles.footRow, { backgroundColor: t.surface, opacity: pressed ? 0.7 : 1 }]}>
+          <Eye size={18} color={t.ink2} />
+          <T v="callout" style={{ flex: 1 }}>{L(`藏起来的 ${hidden.length} 块`, `${hidden.length} hidden block${hidden.length === 1 ? '' : 's'}`)}</T>
+          <ChevronRight size={16} color={t.ink3} />
+        </Pressable>
+      ) : null}
+      <Pressable accessibilityRole="button" onPress={onHistory} style={({ pressed }) => [styles.footRow, { backgroundColor: t.surface, opacity: pressed ? 0.7 : 1 }]}>
+        <Clock size={18} color={t.ink2} />
+        <T v="callout" style={{ flex: 1 }}>{L('看板改动记录', 'Board history')}</T>
+        <ChevronRight size={16} color={t.ink3} />
+      </Pressable>
+      <T v="caption" color={t.ink3} style={{ fontWeight: '400', textAlign: 'center', marginTop: 2 }}>{L('长按任意一块：挪位置、藏起来、让它改、删掉', 'Long-press a block to move, hide, change or delete it')}</T>
+    </View>
+  );
 }
 
 /** 内置看板某一节后面挂的积木。 */
@@ -135,5 +271,7 @@ function StripBtn({ label, color, onPress, disabled }: { label: string; color: s
 }
 
 const styles = StyleSheet.create({
+  menuRow: { flexDirection: 'row', alignItems: 'center', gap: space.md, borderRadius: radius.md, paddingHorizontal: space.lg, paddingVertical: 12, minHeight: 52 },
+  footRow: { flexDirection: 'row', alignItems: 'center', gap: space.md, borderRadius: radius.md, paddingHorizontal: space.lg, height: 48 },
   strip: { borderRadius: radius.md + 2, paddingVertical: 12, paddingHorizontal: 14, flexDirection: 'row', alignItems: 'center', gap: 10, marginTop: space.md },
 });

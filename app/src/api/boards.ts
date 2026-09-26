@@ -44,13 +44,28 @@ export interface Board {
   changed?: string[]; removed?: string[];   // 提案预览：相对它照着写的那一版，哪些块是新的或改过的、哪些去掉了
 }
 
+export interface BoardVersion {
+  version: number; status: 'live' | 'old' | 'draft' | 'rejected'; note: string; by: string; inboxId: string | null; basedOn: number | null; createdAt: string;
+  blocks: { id: string; type: string; title: string }[];
+}
+export interface TableRow { id: string; data: Record<string, unknown>; display: Record<string, string>; createdAt: string; deletedAt: string | null }
+
 const enc = encodeURIComponent;
+/** 存回去的配置不带算好的数据。 */
+export const configOf = (blocks: Block[]) => blocks.map(({ data: _data, ...rest }) => rest);
 
 export const boardsApi = {
   get: (agent: string) => request<Board & { ok: true }>(`/api/boards/${enc(agent)}`),
   proposal: (inboxId: string) => request<Board & { ok: true }>(`/api/boards/proposal/${enc(inboxId)}`),
   revert: (agent: string, version: number) => request<{ ok: true; version: number }>(`/api/boards/${enc(agent)}/revert`, { method: 'POST', body: { version } }),
   ack: (agent: string) => request<{ ok: true }>(`/api/boards/${enc(agent)}/ack`, { method: 'POST', body: {} }),
+  /** 你自己在 app 里挪、藏、删：整份配置换成这一版（by user，不出撤回条）。 */
+  put: (agent: string, blocks: Block[], note: string) =>
+    request<{ ok: true; version: number }>(`/api/boards/${enc(agent)}`, { method: 'PUT', body: { blocks: configOf(blocks), note, mode: 'apply', by: 'user' } }),
+  history: (agent: string) => request<{ ok: true; versions: BoardVersion[] }>(`/api/boards/${enc(agent)}/history`),
+  collections: (agent: string) => request<{ ok: true; collections: Collection[] }>(`/api/collections/${enc(agent)}`),
+  rows: (agent: string, name: string, deleted = false) =>
+    request<{ ok: true; total: number; rows: TableRow[]; collection: Collection }>(`/api/collections/${enc(agent)}/${enc(name)}/rows?limit=200${deleted ? '&deleted=1' : ''}`),
   /** 改一行：data 是要改的字段（rowActions 的 "-1" / "today" 这类写法由服务器换算）。 */
   patchRow: (rid: string, data: Record<string, unknown>) => request<{ ok: true }>(`/api/rows/${enc(rid)}`, { method: 'PATCH', body: { data, by: 'user' } }),
   deleteRow: (rid: string) => request<{ ok: true }>(`/api/rows/${enc(rid)}`, { method: 'DELETE' }),

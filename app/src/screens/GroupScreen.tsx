@@ -3,7 +3,7 @@ import { Pressable, ScrollView, View } from 'react-native';
 import { CalendarDays, Sparkles } from '../components/icons';
 import { useNavigation, useRoute } from '@react-navigation/native';
 import { AgentMemory } from '../components/AgentMemory';
-import { AllBlocks, BoardProvider, hasBlocks, Slot, UndoStrip, useAgentBoard } from '../components/blocks/BoardContext';
+import { AllBlocks, BoardFooter, BoardProvider, hasBlocks, Slot, UndoStrip, useAgentBoard } from '../components/blocks/BoardContext';
 import { ChatView } from '../components/ChatView';
 import { DietBoard } from '../components/DietBoard';
 import { FitnessBoard } from '../components/FitnessBoard';
@@ -91,6 +91,7 @@ export function GroupScreen() {
               ) : <AllBlocks />}
               {/* 内置看板画出来了：没指定位置的积木放在最后（没画出来的时候上面已经用 AllBlocks 全放了） */}
               {live && (['fitness', 'health', 'apply', 'masters'].includes(g.dashboard) || (g.dashboard === 'diet' && !!live.diet)) ? <Slot at="" /> : null}
+              <BoardFooter onHistory={() => nav.navigate('BoardHistory', { id: g.id })} />
               {blocks.error ? <Card style={{ marginTop: space.md }}><T v="callout" color={t.bad}>{L(`看板里的积木没读到：${blocks.error}`, `Couldn't load the dashboard blocks: ${blocks.error}`)}</T></Card> : null}
             </BoardProvider>
           ) : <View style={{ paddingTop: space.sm }}><AgentMemory groupId={g.id} /></View>}

@@ -11,6 +11,7 @@ export interface BoardCtx {
   fresh: Set<string>;             // 刚加的块（撤回条还在时标「新」）
   readOnly: boolean;              // 提案预览：只看，不能点
   onChat: () => void;             // 发了消息之后切到对话
+  openMenu?: (block: Block) => void;  // 长按一块：挪、藏、让它改、删
 }
 
 export const Ctx = createContext<BoardCtx | null>(null);

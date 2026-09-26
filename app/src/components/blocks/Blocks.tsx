@@ -43,7 +43,10 @@ function BlockHeader({ block }: { block: Block }) {
 
 export function BlockView({ block }: { block: Block }) {
   const t = useTheme();
+  const ctx = useBoard();
   const d = block.data ?? {};
+  // 长按一块（标题、卡片空白处、列表的一行、按钮都行）：挪、藏、让它改、删
+  const onLong = ctx?.openMenu && !ctx.readOnly ? () => ctx.openMenu?.(block) : undefined;
   let body: React.ReactNode;
   if (d.error) body = <Card><T v="callout" color={t.bad}>{L(`这一块出错了：${d.error}`, `This block has a problem: ${d.error}`)}</T></Card>;
   else if (block.type === 'stat') body = <StatBody block={block} />;
@@ -55,10 +58,10 @@ export function BlockView({ block }: { block: Block }) {
   else if (block.type === 'action') body = <ActionBody block={block} />;
   else body = <Card><T v="callout" color={t.ink2}>{L('这一块要新版 app 才能显示。', 'This block needs a newer version of the app.')}</T></Card>;
   return (
-    <View>
+    <Pressable onLongPress={onLong} delayLongPress={450} disabled={!onLong}>
       <BlockHeader block={block} />
       {body}
-    </View>
+    </Pressable>
   );
 }
 
@@ -179,7 +182,7 @@ function ChartBody({ block }: { block: Block }) {
 
 // —— 列表 ——
 
-function RowLine({ row, first, onPress, disabled }: { row: BoardRow; first: boolean; onPress?: () => void; disabled?: boolean }) {
+function RowLine({ row, first, onPress, onLongPress, disabled }: { row: BoardRow; first: boolean; onPress?: () => void; onLongPress?: () => void; disabled?: boolean }) {
   const t = useTheme();
   const [bg, fg] = toneColors(t, row.badge?.tone);
   const body = (
@@ -193,8 +196,9 @@ function RowLine({ row, first, onPress, disabled }: { row: BoardRow; first: bool
       {row.right && row.badge ? <T v="caption" color={t.ink3} numberOfLines={1} style={{ fontWeight: '400' }}>{row.right}</T> : null}
     </View>
   );
-  return onPress ? (
-    <Pressable onPress={onPress} disabled={disabled} accessibilityRole="button" style={({ pressed }) => ({ opacity: pressed ? 0.6 : 1 })}>{body}</Pressable>
+  return onPress || onLongPress ? (
+    <Pressable onPress={onPress} onLongPress={onLongPress} delayLongPress={450} disabled={disabled} accessibilityRole={onPress ? 'button' : undefined}
+      style={({ pressed }) => ({ opacity: pressed && onPress ? 0.6 : 1 })}>{body}</Pressable>
   ) : body;
 }
 
@@ -232,7 +236,7 @@ function ListBody({ block }: { block: Block }) {
           {d.groups.map((g) => <GroupChip key={g.key} label={`${g.key || L('其他', 'Other')} ${g.count}`} on={group === g.key} onPress={() => setGroup(group === g.key ? null : g.key)} />)}
         </View>
       ) : null}
-      {rows.slice(0, limit).map((r, i) => <RowLine key={r.id} row={r} first={i === 0 && !(block.group && d.groups && d.groups.length > 1)} onPress={tap(r)} />)}
+      {rows.slice(0, limit).map((r, i) => <RowLine key={r.id} row={r} first={i === 0 && !(block.group && d.groups && d.groups.length > 1)} onPress={tap(r)} onLongPress={ctx?.openMenu && !ctx.readOnly ? () => ctx.openMenu?.(block) : undefined} />)}
       {hiddenN > 0 || (open && block.limit && rows.length > block.limit) ? (
         <Pressable onPress={() => setOpen((v) => !v)} accessibilityRole="button" accessibilityState={{ expanded: open }}
           style={({ pressed }) => [styles.row, { borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: t.line, opacity: pressed ? 0.6 : 1 }]}>
@@ -285,7 +289,8 @@ function ChecklistBody({ block }: { block: Block }) {
           style={[styles.check, { borderColor: on ? t.cyan : t.ink3, backgroundColor: on ? t.cyan : 'transparent' }]}>
           {on ? <Check size={15} color={t.surface} strokeWidth={3} /> : null}
         </Pressable>
-        <Pressable style={{ flex: 1, gap: 2 }} onPress={ctx && !ctx.readOnly && block.edit !== false ? () => openRow(sheet, ctx, block, r) : undefined}>
+        <Pressable style={{ flex: 1, gap: 2 }} onPress={ctx && !ctx.readOnly && block.edit !== false ? () => openRow(sheet, ctx, block, r) : undefined}
+          onLongPress={ctx?.openMenu && !ctx.readOnly ? () => ctx.openMenu?.(block) : undefined} delayLongPress={450}>
           <T v="body" style={{ fontSize: 15, fontWeight: on ? '400' : '600', color: on ? t.ink3 : t.ink, textDecorationLine: on ? 'line-through' : 'none' }}>{r.title}</T>
           {r.sub ? <T v="callout" color={t.ink3} numberOfLines={1} style={{ fontSize: 13 }}>{r.sub}</T> : null}
         </Pressable>
@@ -359,7 +364,8 @@ function ActionBody({ block }: { block: Block }) {
         const fg = primary ? t.onGold : t.ink;
         const disabled = ctx.readOnly || busy != null || (a.kind !== 'form' && agentBusy);
         return (
-          <Pressable key={`${i}-${a.label}`} onPress={() => run(a, i)} disabled={disabled} accessibilityRole="button" accessibilityLabel={a.label}
+          <Pressable key={`${i}-${a.label}`} onPress={() => run(a, i)} onLongPress={ctx.openMenu && !ctx.readOnly ? () => ctx.openMenu?.(block) : undefined} delayLongPress={450}
+            disabled={disabled} accessibilityRole="button" accessibilityLabel={a.label}
             style={({ pressed }) => [styles.btn, { backgroundColor: primary ? t.goldFill : t.surface2, flexGrow: primary ? 2 : 1, opacity: disabled && busy !== i ? 0.5 : pressed ? 0.75 : 1 }]}>
             {busy === i ? <ActivityIndicator size="small" color={fg} /> : icon(a, fg)}
             <Text numberOfLines={1} style={[type.headline, { fontSize: 15, color: fg, flexShrink: 1 }]}>{a.label}</Text>

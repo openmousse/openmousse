@@ -11,6 +11,7 @@ import { GroupsScreen } from './screens/GroupsScreen';
 import { MeScreen } from './screens/MeScreen';
 import { ActivityScreen, AvatarScreen, IdentityScreen, JournalScreen, MemoryScreen, ModelsScreen, SecurityScreen } from './screens/MoreScreens';
 import { NewGroupScreen } from './screens/NewGroupScreen';
+import { BoardHistoryScreen } from './screens/BoardHistoryScreen';
 import { EditGroupScreen } from './screens/EditGroupScreen';
 import { TaskScreen, TasksScreen } from './screens/TasksScreen';
 import { ScheduleFeedScreen } from './screens/ScheduleFeedScreen';
@@ -129,6 +130,7 @@ export function RootNavigator() {
         <Stack.Screen name="Connect" component={ConnectScreen} />
         <Stack.Screen name="Group" component={GroupScreen} />
         <Stack.Screen name="History" component={HistoryScreen} />
+        <Stack.Screen name="BoardHistory" component={BoardHistoryScreen} />
         <Stack.Screen name="HistoryDay" component={HistoryDayScreen} />
         <Stack.Screen name="Inbox" component={InboxScreen} />
         <Stack.Screen name="NewGroup" component={NewGroupScreen} options={{ presentation: 'modal' }} />

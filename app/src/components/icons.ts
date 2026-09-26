@@ -55,6 +55,7 @@ export { default as Layers } from 'lucide-react-native/icons/layers';
 export { default as CircleDot } from 'lucide-react-native/icons/circle-dot';
 export { default as Lightbulb } from 'lucide-react-native/icons/lightbulb';
 export { default as Eye } from 'lucide-react-native/icons/eye';
+export { default as EyeOff } from 'lucide-react-native/icons/eye-off';
 export { default as Menu } from 'lucide-react-native/icons/menu';
 export { default as Ellipsis } from 'lucide-react-native/icons/ellipsis';
 export { default as Archive } from 'lucide-react-native/icons/archive';
