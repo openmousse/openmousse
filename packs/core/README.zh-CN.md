@@ -12,6 +12,7 @@
 | `skills/memory-tree` | 学到关于用户的新东西写进世界树（`mousse-tree add`），回答前先查 |
 | `skills/inbox` | 先问再做：自己的主意、会发给别人或撤不回的事、新定时任务 / 推送、改代码配置，先交到 app 的「等你点头」；用户明确让做、能撤回的直接做（`server/inbox_ctl.py` → 服务的 `/api/inbox`） |
 | `skills/dispatch` | 派后台任务：先看今天的额度（`server/tasks_ctl.py quota`），按「目标 / 要交 / 约束」写任务；app 对话里出一张任务卡，显示在做哪一步和结果，「改一下」直接发给同一个子会话 |
+| `skills/board` | 每个 Agent 自己的表和看板：用户想长期记的东西记进它自己定义的表，用积木（数字、进度、趋势、列表、清单、文字、按钮）摆到看板上，app 按配置画，不用改代码。用户让加的直接加（看板顶上能撤回）；它自己想到的交提案，「等你点头」里带预览（`server/board_ctl.py` → 服务的 `/api/boards`） |
 | `scripts/daily_close.py` | 03:45 给当天有过对话的线程发「【自动触发】日结」，04:00 会话重置前把结论写进记忆（回完不推送） |
 | `scripts/mousse_common.py` | 上面几个脚本共用：从 `~/.openmousse/server.json` 读服务地址、`local` 令牌、数据库、时区 |
 | `systemd/` | `openmousse-server`、`openmousse-daily-close.timer` 的模板 |

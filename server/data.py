@@ -14,6 +14,7 @@
 | 基础档案 | L0 `~/.openclaw/shared/profile/USER.md`：改一条就写回，旧版本存 `grava/profile-history.md`（不在检索路径里） |
 | 记忆 | L1 各 agent 工作区的 `MEMORY.md`：忘记 = 删掉这一条，活动记录只留一行、不含内容 |
 | 日志（Group 记忆页、我 → 日志） | grava.db `journal`（Grava 经 `scripts/grava_journal.py` 写） |
+| Agent 看板里的积木（Agent 自己的表、看板配置和版本） | grava.db `collections` / `records` / `boards`（Agent 经 `server/board_ctl.py` 写；提案走收件箱 kind block；见 boards.py） |
 | 求职 / 申请学校看板 | grava.db `applications`（Grava 经 `scripts/grava_apps.py` 写；kind=masters 进「申请学校」，其余进「求职」） |
 | 模型与计费 | openclaw.json 的默认链、子会话默认、允许列表 + `models.authStatus` |
 | 安全 | 配置和运行状态的实测结果，外加蓝图里还没做的计划项（标明"计划"） |
