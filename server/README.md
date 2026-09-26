@@ -101,7 +101,7 @@ python3 tasks_ctl.py list
 | `GET /api/tasks/quota` | `{today, running, limit, left, maxMinutes}`; `today` / `left` are null when the ledger can't be read |
 | `GET /api/tasks` | now also `quota` (plus `tokens` used today), and per task `minutes`, `timedOut`, `step` |
 
-Handoff card: `{kind: "handoff", id, thread, messageId, createdAt, status: running / done / error / busy / lost, to, toName, from, fromName, question, seconds, relayId, replyId, error}`. Task card: `{kind: "task", id, thread, messageId, createdAt, status (进行中 / 完成 / 失败 / 已取消), timedOut, title, deliverable: [], modelId, minutes, startedAt, finishedAt, tools, step, result, error, round, roundStatus, note, roundResult, tokens, limitMinutes}`. `deliverable` is the task text's "要交：" / "Deliverable:" line plus the list under it.
+Handoff card: `{kind: "handoff", id, thread, messageId, createdAt, status: running / done / error / busy / lost, to, toName, from, fromName, question, seconds, relayId, replyId, error}`. Task card: `{kind: "task", id, thread, messageId, createdAt, status (进行中 / 完成 / 失败 / 已取消), timedOut, title, deliverable: [], modelId, minutes, startedAt, finishedAt, tools, step, result, error, round, roundStatus, note, roundResult, tokens, limitMinutes, seq, dailyLimit}` (`seq` = the how-manyth task started today). `deliverable` is the task text's "要交：" / "Deliverable:" line plus the list under it.
 
 ## Notifications
 

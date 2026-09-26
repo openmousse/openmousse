@@ -11,6 +11,7 @@ The layer you get right after install: how the main chat and the Agents cooperat
 | `skills/journal` | Feelings, thoughts and decisions the user mentions go into a journal (`scripts/journal.py` → the `journal` table; readable under "Me → Journal" in the app) |
 | `skills/memory-tree` | Write new facts about the user to the memory tree (`mousse-tree add`), read it before answering |
 | `skills/inbox` | Ask before acting: the agents' own ideas, anything that reaches other people or can't be undone, new scheduled jobs / notifications and code or config changes go to the app's "Needs your OK" first; things the user asked for that can be undone are just done (`server/inbox_ctl.py` → the server's `/api/inbox`) |
+| `skills/dispatch` | Background tasks: check today's allowance first (`server/tasks_ctl.py quota`), write the task as goal / deliverable / constraints; a task card in the app's chat shows the current step and the result, and "Revise" goes straight to the same sub-session |
 | `scripts/daily_close.py` | At 03:45 sends "【自动触发】日结" (daily close) to every thread that talked today, so each agent writes its conclusions to memory before the 04:00 session reset (no notification for the reply) |
 | `scripts/mousse_common.py` | Shared by the scripts: reads the server address, the `local` token, the database path and the timezone from `~/.openmousse/server.json` |
 | `systemd/` | Templates for `openmousse-server` and `openmousse-daily-close.timer` |

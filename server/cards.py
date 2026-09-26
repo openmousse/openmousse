@@ -323,7 +323,8 @@ def rounds(conn: sqlite3.Connection | None, tid: str) -> tuple[int, str | None, 
     return 1 + len(notes), notes[-1], "failed" if last is None or last["status"] == "error" else "done", last["text"] if last else None
 
 
-def task_json(r: dict, message_id: int | None = None, conn: sqlite3.Connection | None = None) -> dict:
+def task_json(r: dict, message_id: int | None = None, conn: sqlite3.Connection | None = None, seq: dict[str, int] | None = None) -> dict:
+    """seq：今天派的任务 id → 第几个（today_seq），卡片上写「今天第 3 个」；不是今天派的没有。"""
     tid = r["task_id"]
     st = status_of(r)
     now = time.time() * 1000
@@ -338,7 +339,7 @@ def task_json(r: dict, message_id: int | None = None, conn: sqlite3.Connection |
             "tools": int(r.get("tool_use_count") or 0), "step": step_of(tid, r.get("last_tool_name")) if st == "进行中" else "",
             "result": push.clip(result_of(r), RESULT_MAX) if st != "进行中" else "", "error": r.get("error") or None,
             "round": n, "roundStatus": round_status, "note": note, "roundResult": push.clip(round_text, RESULT_MAX) if round_text else None,
-            "tokens": det.get("tokens"), "limitMinutes": limit_minutes(r)}
+            "tokens": det.get("tokens"), "limitMinutes": limit_minutes(r), "seq": (seq or {}).get(tid), "dailyLimit": limits()[0]}
 
 
 def handoff_json(h: sqlite3.Row, nm: dict[str, str]) -> dict:
@@ -437,9 +438,10 @@ async def watch_run(run: chat.Run) -> None:
         rows = await asyncio.to_thread(ledger, "owner_key=? AND created_at>=?", (key, since), 20)
         if rows is None:
             return
+        seq = await asyncio.to_thread(today_seq) if rows else {}
         for r in reversed(rows):
             want_detail(r)
-            card = task_json(r)
+            card = task_json(r, seq=seq)
             old = run.cards.get(card["id"])
             if not old or any(old.get(k) != card.get(k) for k in ("status", "tools", "step", "result", "modelId")):
                 publish(run, card)
@@ -447,11 +449,21 @@ async def watch_run(run: chat.Run) -> None:
 
 # —— 额度 ——————————————————————————————————————————————————————————
 
+def today_rows() -> list[dict] | None:
+    lo, _hi = chat.day_bounds(chat.day_of(now_iso()))
+    return ledger("created_at>=?", (ms_of(lo),), 500)
+
+
+def today_seq(rows: list[dict] | None = None) -> dict[str, int]:
+    """今天派的任务 id → 第几个（按派的先后，从 1 数）。"""
+    rows = today_rows() if rows is None else rows
+    return {r["task_id"]: i for i, r in enumerate(sorted(rows or [], key=lambda r: r.get("created_at") or 0), 1)}
+
+
 def quota() -> dict:
     """今天（逻辑日，04:00 起）派了几个后台任务。读不到台账时 today / left 是 null。"""
     daily, max_min = limits()
-    lo, _hi = chat.day_bounds(chat.day_of(now_iso()))
-    rows = ledger("created_at>=?", (ms_of(lo),), 500)
+    rows = today_rows()
     if rows is None:
         return {"ok": True, "today": None, "running": None, "limit": daily, "left": None, "maxMinutes": max_min}
     return {"ok": True, "today": len(rows), "running": sum(1 for r in rows if status_of(r) == "进行中"), "limit": daily,
@@ -482,7 +494,8 @@ async def cards(thread: str = "main", day: str | None = None):
         incoming = [handoff_json(h, nm) for h in conn.execute("SELECT * FROM handoffs WHERE to_thread=? AND created_at>=? AND created_at<? "
                                                               "ORDER BY created_at, rowid", (thread, lo, hi))]
         links = {r["task_id"]: r["message_id"] for r in conn.execute("SELECT task_id, message_id FROM task_links WHERE thread=?", (thread,))}
-        out += [task_json(r, links.get(r["task_id"]), conn) for r in reversed(rows or [])]
+        seq = today_seq() if rows else {}
+        out += [task_json(r, links.get(r["task_id"]), conn, seq) for r in reversed(rows or [])]
     for r in rows or []:
         want_detail(r)
     out.sort(key=lambda c: c["createdAt"] or "")
