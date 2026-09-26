@@ -49,6 +49,7 @@ from inbox import router as inbox_router  # noqa: E402
 from unread import router as unread_router  # noqa: E402
 from schedule import router as schedule_router  # noqa: E402
 from boards import router as boards_router  # noqa: E402
+from projects import router as projects_router  # noqa: E402 — 顺带把 kind=project 的收件箱钩子挂上
 
 DIST = settings.dist
 settings.db.parent.mkdir(parents=True, exist_ok=True)  # 新实例第一次启动：数据目录还不存在
@@ -96,6 +97,7 @@ app.include_router(inbox_router)
 app.include_router(unread_router)
 app.include_router(schedule_router)  # 含 /cal/<令牌>.ics（在网页版的静态文件之前注册）
 app.include_router(boards_router)
+app.include_router(projects_router)
 app.add_exception_handler(sources.NoSource, sources.no_source_handler)
 _whois: dict[str, tuple[float, str | None]] = {}
 _lock = threading.Lock()

@@ -392,16 +392,19 @@ class SideChatPatch(BaseModel):
 
 @router.get("/api/sidechats")
 def side_chats():
+    """项目（以前叫独立空间）列表。每个多给项目卡的摘要：目标、最近的截止、还剩几件下一步、有没有结论（见 projects.py）。"""
     last = last_lines()
     with _lock, ddb() as conn:
         rows = conn.execute("SELECT s.*, t.model FROM side_chats s LEFT JOIN threads t ON t.id = s.id").fetchall()
+    import projects  # 延迟导入：projects 依赖 chat / schedule
+    extra = projects.side_extra()
     out = []
     for r in rows:
         text, ts = last.get(r["id"], ("", ""))
         updated = max(r["updated_at"], ts or "")
         out.append({"id": r["id"], "title": r["title"], "purpose": r["purpose"] or "", "modelId": r["model"], "archived": bool(r["archived"]),
-                    "lastLine": short(text) or L("新空间，说点什么开始吧。", "New side chat. Say something to start."), "createdAt": when(datetime.fromisoformat(r["created_at"]), False),
-                    "updatedAt": int(datetime.fromisoformat(updated).timestamp() * 1000)})
+                    "lastLine": short(text) or L("新项目，说点什么开始吧。", "New project. Say something to start."), "createdAt": when(datetime.fromisoformat(r["created_at"]), False),
+                    "updatedAt": int(datetime.fromisoformat(updated).timestamp() * 1000), **extra.get(r["id"], {})})
     return {"ok": True, "sideChats": out}
 
 
@@ -412,7 +415,7 @@ def create_side_chat(body: SideChatIn):
     with _lock, ddb() as conn:
         conn.execute("INSERT INTO side_chats(id, title, purpose, created_at, updated_at) VALUES(?,?,?,?,?)", (sid, body.title.strip(), body.purpose.strip(), ts, ts))
         conn.execute("INSERT INTO threads(id, model, updated_at) VALUES(?,?,?) ON CONFLICT(id) DO UPDATE SET model=excluded.model", (sid, body.model, ts))
-    log_activity(L(f"开了独立空间「{body.title.strip()}」", f'Opened side chat "{body.title.strip()}"'), "edit")
+    log_activity(L(f"开了项目「{body.title.strip()}」", f'Opened the project "{body.title.strip()}"'), "edit")
     return {"ok": True, "id": sid}
 
 
@@ -421,14 +424,16 @@ def patch_side_chat(sid: str, body: SideChatPatch):
     with _lock, ddb() as conn:
         r = conn.execute("SELECT * FROM side_chats WHERE id=?", (sid,)).fetchone()
         if not r:
-            raise HTTPException(404, L("没有这个空间", "No such side chat"))
+            raise HTTPException(404, L("没有这个项目", "No such project"))
         if body.title is not None and body.title.strip():
             conn.execute("UPDATE side_chats SET title=?, updated_at=? WHERE id=?", (body.title.strip(), now_iso(), sid))
-        if body.archived is not None:
+        if body.archived is not None:  # 只收起来、不写结论；要写结论走 POST /api/projects/{id}/archive
             conn.execute("UPDATE side_chats SET archived=?, updated_at=? WHERE id=?", (int(body.archived), now_iso(), sid))
     if body.archived is not None:
-        log_activity(L(f"{'归档' if body.archived else '恢复'}了独立空间「{r['title']}」",
-                       f'{"Archived" if body.archived else "Restored"} side chat "{r["title"]}"'), "edit")
+        import projects  # 延迟导入
+        projects.mark_archived(sid, body.archived)
+        log_activity(L(f"{'归档' if body.archived else '恢复'}了项目「{r['title']}」",
+                       f'{"Archived" if body.archived else "Restored"} the project "{r["title"]}"'), "edit")
     return {"ok": True}
 
 
@@ -437,15 +442,20 @@ async def delete_side_chat(sid: str):
     with _lock, ddb() as conn:
         r = conn.execute("SELECT * FROM side_chats WHERE id=?", (sid,)).fetchone()
         if not r:
-            raise HTTPException(404, L("没有这个空间", "No such side chat"))
+            raise HTTPException(404, L("没有这个项目", "No such project"))
         conn.execute("DELETE FROM messages WHERE thread=?", (sid,))
         conn.execute("DELETE FROM threads WHERE id=?", (sid,))
         conn.execute("DELETE FROM side_chats WHERE id=?", (sid,))
+    try:  # 项目自己的截止从日程里拿掉，卡上的条目软删（见 projects.py）
+        import projects  # 延迟导入
+        projects.on_delete(sid)
+    except Exception as e:  # noqa: BLE001
+        print(f"[data] 删项目时没清掉它的截止：{e}")
     try:  # Gateway 那边的会话也删掉（OpenClaw 会压缩存档一份到 sessions/ 下，不是彻底抹掉）
         await gateway_call("sessions.delete", {"key": session_key(sid)}, timeout=20)
     except HTTPException:
-        pass  # 从没发过消息的空间在 Gateway 里没有会话
-    log_activity(L(f"删除了独立空间「{r['title']}」的对话记录", f'Deleted the chat history of side chat "{r["title"]}"'), "deleted")
+        pass  # 从没发过消息的项目在 Gateway 里没有会话
+    log_activity(L(f"删除了项目「{r['title']}」的对话记录", f'Deleted the chat history of the project "{r["title"]}"'), "deleted")
     return {"ok": True}
 
 

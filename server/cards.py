@@ -405,6 +405,11 @@ def on_run_end(run: chat.Run) -> None:
         schedule_mod.link_run(run)
     except Exception:  # noqa: BLE001
         pass
+    try:  # 改的项目卡也是（见 projects.py）
+        import projects as projects_mod  # 延迟导入
+        projects_mod.link_run(run)
+    except Exception:  # noqa: BLE001
+        pass
     row = None
     with _lock, cdb() as conn:
         conn.execute("UPDATE handoffs SET message_id=? WHERE from_thread=? AND message_id IS NULL AND rowid>?",
@@ -508,6 +513,8 @@ async def cards(thread: str = "main", day: str | None = None):
         want_detail(r)
     import schedule as schedule_mod  # 延迟导入
     out += await asyncio.to_thread(schedule_mod.changes_for, thread, lo, hi)  # Agent 在回复里改的日程（日程卡）
+    import projects as projects_mod  # 延迟导入
+    out += await asyncio.to_thread(projects_mod.changes_for, thread, lo, hi)  # 改的项目卡、开的项目（项目小卡）
     out.sort(key=lambda c: c["createdAt"] or "")
     return {"ok": True, "thread": thread, "day": day, "cards": out, "incoming": incoming, "tasksAvailable": rows is not None}
 

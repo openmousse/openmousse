@@ -136,6 +136,39 @@ python3 schedule_ctl.py undo 42
 
 `server.json` 的 `remember.mail`（可选）：`{"items": "<邮件抽取脚本写的 JSON>", "cmd": ["python3", ".../mail_digest.py"], "sources": {"<键>": "<显示名>"}, "link": "https://mail.google.com/mail/?authuser=…#all/{thread_id}"}`。
 
+## 项目
+
+有始有终的事：持续几天到几周、有目标和截止（小组作业、求职冲刺）。一个项目 = 一个对话线程（以前的「独立空间」，id `sc-…`）+ 顶上一张**项目卡**：目标、截止、下一步、已定的、进度、在项目里派的任务，归档后加一份结论。见 [`projects.py`](projects.py)。
+
+- **截止放在日程层**：自己的截止是 `schedule_items` 的一行（kind deadline，key `project:<id>:…`）；已有的（课程作业、邮件条目、申请截止、别的截止）按 ref 挂上。打勾、提醒、「要记得的」都照旧，`/api/remember`、`/api/schedule` 的条目多一个 `project: {id, title}`。
+- **跨天接得上**：项目里每天第一句话、项目卡改过以后，`chat.start_run` 把项目卡拼在消息前面（模型看得到，对话里不显示；`side_chats.fed_rev` / `fed_at`）。日结脚本给每个项目发「【自动触发】日结（项目）」，让它更新进度和下一步。
+- **Agent 改的**（`project_ctl.py`，带 `source` 调这些接口）：回复进行中在 SSE 流里出一张 `project` 卡，回复结束挂到那条回复下（`project_log.message_id`），能撤销（`/api/projects/undo/{id}`）。截止的改动是日程层的改动，出 `schedule` 卡。
+- **开项目**：app 里开，或用户让 Agent 开（`POST /api/projects`，可带 `brief`，像转交一样转进新项目）。Agent 自己想到的走收件箱（`POST /api/projects/propose` → kind `project`），同意了服务端开好、把 brief 转进去。
+- **归档**：`POST /api/projects/{id}/archive {summarize}` 马上收进「已归档」；带 `summarize` 就在项目里发「【自动触发】项目归档」，让它写结论（`/conclude`）和记忆。`POST /api/projects/review`（日结调）对最后一个截止过了 3 天以上的项目，经收件箱问一次「归档？」。
+
+```bash
+python3 project_ctl.py list
+python3 project_ctl.py create --title "小组作业" --goal "…" --deadline "组内彩排|2026-10-01 18:00" --link "canvas:…" --brief "…"
+python3 project_ctl.py add sc-1a2b3c4d decision "视频 8 分钟以内"
+python3 project_ctl.py done sc-1a2b3c4d pi-5e6f7a8b
+python3 project_ctl.py ask sc-1a2b3c4d "周五前还差什么"
+python3 project_ctl.py conclude sc-1a2b3c4d --done "…" --learned "…"
+```
+
+| 接口 | 做什么 |
+|---|---|
+| `GET /api/projects?all=` | 没归档的项目（`all=1` 全部），每个带 `goal`、`next`（最近一个没勾的截止）、`stepsLeft`、`hasSummary` |
+| `POST /api/projects` | 开一个：`{title, goal?, model?, deadlines: [{title, due} 或 {ref}], steps?, decisions?, brief?, source?}` |
+| `GET /api/projects/{id}` | 项目卡：`goal, progress, deadlines, steps, decisions, next, stepsLeft, tasks, summary, archived, closing, rev` |
+| `PATCH /api/projects/{id}` | `{title?, goal?, progress?}` |
+| `POST /api/projects/{id}/items` | `{kind: step/decision/deadline, text, due?, ref?}` |
+| `POST /api/projects/{id}/items/update` / `…/delete` | `{id, text?, due?, done?}` / `{id}`（挂上的截止只能打勾或拿掉） |
+| `POST /api/projects/undo/{log}` | 撤销项目卡的一次改动（`{redo: true}` 做回来） |
+| `POST /api/projects/propose` | Agent 的提议 → 收件箱 kind `project` |
+| `POST /api/projects/{id}/archive` / `restore` / `conclude` | 归档（`{summarize}`）、恢复、写结论（`{done, decided: [], learned, saved}`） |
+| `POST /api/projects/review` | 截止都过了的项目问「归档？」（日结用） |
+| `GET /api/sidechats` | 侧栏列表，每个项目也带上面那几个摘要字段 |
+
 ## 推送
 
 三档：**ring** 响铃（有声音，interruptionLevel active）、**quiet** 静默（不出声，进通知中心，passive）、**none** 不推。`server.json` 的 `push.quiet_hours`（默认 `["23:00", "07:30"]`，按 `timezone`；`[]` = 不设）里 ring 自动降成 quiet。

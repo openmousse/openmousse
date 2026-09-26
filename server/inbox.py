@@ -7,7 +7,7 @@
   改一下 → 在 Agent 的对话里引用这张卡回复（/api/chat/send 带 inboxId：条目变 revising，模型另外看到是在回复哪一条），
   它改好用 update 重新提交（同一个 id）。POST /api/inbox/{id} 的 revise 仍然能用（把意见当一条【收件箱】消息发进线程）。
 - 状态：pending 等你点头 → approved 同意了 → done 做完 / failed 没做成；rejected 拒绝；revising 等它改；withdrawn 它自己撤回；expired 过了 expires_at。
-- kind 决定默认推送档位：task / write / send / spend / calendar 响铃，skill / agent / block / code / schedule / push / other 静默。
+- kind 决定默认推送档位：task / write / send / spend / calendar 响铃，skill / agent / block / project / code / schedule / push / other 静默。
   exec 是虚拟的：OpenClaw 的执行审批（`openclaw approvals pending`），id 写成 exec:<审批 id>，同意 = allow-once，拒绝 = deny，不能「改一下」。
 - 这是征得同意的界面，不是沙箱：不检查是谁提交的；真正拦住危险动作的是 OpenClaw 的执行审批和各 skill 自己的规则。
 """
@@ -34,7 +34,7 @@ from config import TZ, settings
 from i18n import L, LS
 
 router = APIRouter()
-KINDS = ("task", "write", "send", "spend", "schedule", "push", "skill", "agent", "block", "code", "calendar", "other")
+KINDS = ("task", "write", "send", "spend", "schedule", "push", "skill", "agent", "block", "project", "code", "calendar", "other")
 RING_KINDS = {"task", "write", "send", "spend", "calendar"}  # 你让它做、它要动外面的东西：响铃；它自己的提议：静默
 OPEN = ("pending", "revising")  # 还没定下来的
 CTL = Path(__file__).resolve().parent / "inbox_ctl.py"
@@ -46,6 +46,8 @@ _tasks: set[asyncio.Task] = set()  # 后台等待中的任务（留个引用，�
 # kind → 点了同意 / 拒绝 / 撤回之后服务端自己先做的事。返回 {"result": …} = 已经做完了（条目直接标 done，Agent 只收到一句知会）；
 # None = 照常让 Agent 去做。boards.py 注册 block：同意就把提案那一版看板换上去，拒绝就把草稿作废。
 HOOKS: dict[str, Callable[[dict, str], Awaitable[dict | None]]] = {}
+# kind → 条目 JSON 里多给 app 的东西（在锁外调）。projects.py 注册 project：提案内容（预览）和开好的项目（「去看看」）。
+EXTRAS: dict[str, Callable[[str], dict | None]] = {}
 
 
 def idb() -> sqlite3.Connection:
@@ -77,7 +79,7 @@ def kind_label(kind: str) -> str:
     """推送副标题里的种类名。"""
     return {"task": L("任务", "Task"), "write": L("写入", "Write"), "send": L("发送", "Send"), "spend": L("花钱", "Spend"),
             "schedule": L("定时任务", "Schedule"), "push": L("推送", "Notification"), "skill": L("新技能", "New skill"),
-            "agent": L("新 Agent", "New agent"), "block": L("看板", "Board"), "code": L("改代码", "Code change"),
+            "agent": L("新 Agent", "New agent"), "block": L("看板", "Board"), "project": L("项目", "Project"), "code": L("改代码", "Code change"),
             "calendar": L("日历", "Calendar"), "exec": L("运行命令", "Run a command"), "other": L("其他", "Other")}.get(kind, kind)
 
 
@@ -131,7 +133,18 @@ def item_json(r: sqlite3.Row, nm: dict[str, str]) -> dict:
             "title": r["title"], "why": r["why"] or "", "changes": changes_of(r["changes"]), "detail": r["detail"] or "",
             "approveLabel": r["approve_label"] or "", "status": r["status"], "note": r["note"] or "", "result": r["result"] or "",
             "level": r["level"] or default_level(r["kind"]), "createdAt": r["created_at"], "updatedAt": r["updated_at"],
-            "decidedAt": r["decided_at"], "expiresAt": r["expires_at"], "messageId": r["message_id"]}
+            "decidedAt": r["decided_at"], "expiresAt": r["expires_at"], "messageId": r["message_id"], **extra_of(r)}
+
+
+def extra_of(r: sqlite3.Row) -> dict:
+    fn = EXTRAS.get(r["kind"])
+    if not fn:
+        return {}
+    try:
+        got = fn(r["id"])
+    except Exception:  # noqa: BLE001 — 多给的东西拿不到，卡片照常
+        return {}
+    return {r["kind"]: got} if got else {}
 
 
 def expire(conn: sqlite3.Connection) -> None:

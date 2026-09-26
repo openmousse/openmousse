@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 """日结：每天 03:45（用户时区）给今天有过对话的线程发「【自动触发】日结」，让各 agent 在 04:00 会话重置前把结论写进记忆。
 
-- 线程：main + 现在所有的 Agent（服务的 /api/groups）。当天（逻辑日 04:00 起）没有消息的线程跳过。
+- 线程：main + 现在所有的 Agent（服务的 /api/groups）+ 没归档的项目（/api/projects，发「日结（项目）」，按 project skill 更新项目卡）。
+  当天（逻辑日 04:00 起）没有消息的线程跳过。最后调一次 /api/projects/review：截止都过了 3 天的项目问一次「归档？」（收件箱，静音）。
 - 走服务端 /api/chat/trigger（origin=auto，level=none：回完不推送）。上一条还没回完（409）→ 等 60 秒再试一次。
 - 日志：~/.openmousse/data/daily_close.log
 用法：daily_close.py [--dry-run] [--thread <id>]
@@ -32,6 +33,32 @@ def trigger_text() -> str:
     )
 
 
+def project_text() -> str:
+    return MARK + L(
+        "日结（项目）。按 project skill 的「日结」：用 project_ctl.py 更新这个项目的进度、下一步和今天定的事，今天的要点追加到 "
+        "memory/projects/<项目 id>.md（别写 memory/今天.md）。回一行「日结好了」。",
+        "Daily digest (project). Follow the project skill's daily digest: update this project's progress, next steps and today's "
+        "decisions with project_ctl.py, and append today's notes to memory/projects/<project id>.md (not today's memory file). "
+        "Reply with one line: \"Daily digest done\".",
+    )
+
+
+def projects() -> list[str]:
+    """没归档的项目。读不到（老服务端）就没有。"""
+    try:
+        return [p["id"] for p in api("/api/projects", timeout=20)["projects"]]
+    except Exception:  # noqa: BLE001
+        return []
+
+
+def review() -> list[dict]:
+    """截止都过了几天的项目：服务端问一次「归档？」。返回问了哪些。"""
+    try:
+        return api("/api/projects/review", {}, timeout=60).get("asked") or []
+    except Exception as exc:  # noqa: BLE001
+        return [{"error": str(exc)}]
+
+
 def threads() -> list[str]:
     try:
         return ["main"] + [g["id"] for g in api("/api/groups", timeout=10)["groups"]]
@@ -52,9 +79,9 @@ def active_today(thread: str, since_iso: str) -> int:
         c.close()
 
 
-def trigger(thread: str) -> str:
+def trigger(thread: str, text: str) -> str:
     try:  # 日结是给 agent 的，回完不推送（level none；notify false 给还不认识 level 的旧服务）
-        api("/api/chat/trigger", {"thread": thread, "text": trigger_text(), "origin": "auto", "level": "none", "notify": False}, timeout=20)
+        api("/api/chat/trigger", {"thread": thread, "text": text, "origin": "auto", "level": "none", "notify": False}, timeout=20)
         return "ok"
     except urllib.error.HTTPError as exc:
         return "busy" if exc.code == 409 else f"error {exc.code}"
@@ -70,7 +97,8 @@ def main() -> None:
     now = user_now()
     since = (now - timedelta(hours=4)).replace(hour=4, minute=0, second=0, microsecond=0).isoformat()  # 当前逻辑日的 04:00
     results = []
-    for th in ([a.thread] if a.thread else threads()):
+    projs = [] if a.thread else projects()
+    for th in ([a.thread] if a.thread else threads() + projs):
         n = active_today(th, since)
         if not n:
             results.append({"thread": th, "result": "idle"})
@@ -78,12 +106,15 @@ def main() -> None:
         if a.dry_run:
             results.append({"thread": th, "result": f"would trigger ({n} msgs)"})
             continue
-        r = trigger(th)
+        text = project_text() if th in projs or th.startswith("sc-") else trigger_text()
+        r = trigger(th, text)
         if r == "busy":
             time.sleep(60)
-            r = trigger(th)
+            r = trigger(th, text)
         results.append({"thread": th, "result": r, "msgs": n})
         time.sleep(5)
+    if not a.dry_run and not a.thread:
+        results.append({"review": review()})
     line = f"{now.strftime('%Y-%m-%d %H:%M')} daily_close {json.dumps(results, ensure_ascii=False)}"
     if not a.dry_run:
         log = db_path().parent / "daily_close.log"

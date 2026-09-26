@@ -12,6 +12,7 @@
 | `skills/memory-tree` | 学到关于用户的新东西写进世界树（`mousse-tree add`），回答前先查 |
 | `skills/inbox` | 先问再做：自己的主意、会发给别人或撤不回的事、新定时任务 / 推送、改代码配置，先交到 app 的「等你点头」；用户明确让做、能撤回的直接做（`server/inbox_ctl.py` → 服务的 `/api/inbox`） |
 | `skills/dispatch` | 派后台任务：先看今天的额度（`server/tasks_ctl.py quota`），按「目标 / 要交 / 约束」写任务；app 对话里出一张任务卡，显示在做哪一步和结果，「改一下」直接发给同一个子会话 |
+| `skills/project` | 项目，有始有终的事（几天到几周、有目标和截止）：用户让开就开，一件事要聊好几天就提议开；在项目里随手更新项目卡，项目的事转进项目，归档时写结论（`server/project_ctl.py` → 服务的 `/api/projects`） |
 | `skills/board` | 每个 Agent 自己的表和看板：用户想长期记的东西记进它自己定义的表，用积木（数字、进度、趋势、列表、清单、文字、按钮）摆到看板上，app 按配置画，不用改代码。用户让加的直接加（看板顶上能撤回）；它自己想到的交提案，「等你点头」里带预览（`server/board_ctl.py` → 服务的 `/api/boards`） |
 | `scripts/daily_close.py` | 03:45 给当天有过对话的线程发「【自动触发】日结」，04:00 会话重置前把结论写进记忆（回完不推送） |
 | `scripts/mousse_common.py` | 上面几个脚本共用：从 `~/.openmousse/server.json` 读服务地址、`local` 令牌、数据库、时区 |
@@ -22,7 +23,7 @@ skills 里的命令都走固定路径 `~/.openmousse/repo/…`（安装器建的
 
 安装器对 `openclaw.json` 做的改动（都先备份到 `~/.openmousse/backups/`，改完 `openclaw config validate`，不过就恢复）：
 
-- `agents.defaults.skills` 是列表时追加这五个 skill；没有这个键（= 不限制）就不动
+- `agents.defaults.skills` 是列表时追加主对话用的 skill（上面除了 board 都是）；没有这个键（= 不限制）就不动
 - `gateway.http.endpoints.chatCompletions.enabled = true`：app 的对话走 Gateway 的 OpenAI 兼容接口（仍只在本机）
 - `session.reset = {daily, 04:00}`：对话按天，之前的在历史页
 - `tools.deny` 加 `ask_user`：app 的通道没人能回答工具里的提问，会把会话卡死

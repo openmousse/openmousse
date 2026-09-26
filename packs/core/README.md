@@ -12,6 +12,7 @@ The layer you get right after install: how the main chat and the Agents cooperat
 | `skills/memory-tree` | Write new facts about the user to the memory tree (`mousse-tree add`), read it before answering |
 | `skills/inbox` | Ask before acting: the agents' own ideas, anything that reaches other people or can't be undone, new scheduled jobs / notifications and code or config changes go to the app's "Needs your OK" first; things the user asked for that can be undone are just done (`server/inbox_ctl.py` → the server's `/api/inbox`) |
 | `skills/dispatch` | Background tasks: check today's allowance first (`server/tasks_ctl.py quota`), write the task as goal / deliverable / constraints; a task card in the app's chat shows the current step and the result, and "Revise" goes straight to the same sub-session |
+| `skills/project` | Projects, things with an end (days to weeks, a goal and deadlines): open one when asked, suggest one when something spans several days, keep the project card up to date inside it, hand project matters into it, write the summary when it's archived (`server/project_ctl.py` → the server's `/api/projects`) |
 | `skills/board` | Each Agent's own tables and dashboard: it records what the user wants to keep track of in tables it defines and lays out blocks (numbers, progress, trends, lists, checklists, text, buttons) on its board; the app draws them, no code. Asked for → applied at once with an undo strip; its own idea → a proposal with a live preview in "Needs your OK" (`server/board_ctl.py` → the server's `/api/boards`) |
 | `scripts/daily_close.py` | At 03:45 sends "【自动触发】日结" (daily close) to every thread that talked today, so each agent writes its conclusions to memory before the 04:00 session reset (no notification for the reply) |
 | `scripts/mousse_common.py` | Shared by the scripts: reads the server address, the `local` token, the database path and the timezone from `~/.openmousse/server.json` |
@@ -22,7 +23,7 @@ Commands inside the skills use fixed paths, `~/.openmousse/repo/…` (a symlink 
 
 What the installer changes in `openclaw.json` (each time: backup to `~/.openmousse/backups/`, then `openclaw config validate`, restore on failure):
 
-- `agents.defaults.skills`: appends these five skills if the key is a list; if the key is absent (= unrestricted) it is left alone
+- `agents.defaults.skills`: appends the main chat's skills (all of these except board) if the key is a list; if the key is absent (= unrestricted) it is left alone
 - `gateway.http.endpoints.chatCompletions.enabled = true`: the app's chat goes through the Gateway's OpenAI-compatible endpoint (still loopback only)
 - `session.reset = {daily, 04:00}`: one conversation per day, earlier days in the history page
 - `tools.deny` gets `ask_user`: nobody can answer a tool prompt through the app channel, it would hang the session

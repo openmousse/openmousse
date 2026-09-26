@@ -425,6 +425,13 @@ def start_run(thread: str, text: str, model: str | None, key: str | None = None,
     rows = files_mod.load_pending(thread, attachment_ids or [])
     role = "auto" if origin in ("auto", "relay") else "user"
     content, gw_text = files_mod.build_content(text, rows)
+    try:  # 项目：每天第一句话、项目卡改过以后，把项目卡带给模型（OpenClaw 每天重置会话，靠它接上；见 projects.py）
+        import projects as projects_mod  # 延迟导入：projects.py 依赖本模块
+        card = projects_mod.context_for(thread)
+    except Exception:  # noqa: BLE001 — 带不上只是模型少看一眼项目卡，消息照发
+        card = None
+    if card:
+        context = f"{card}\n\n{context}" if context else card
     if context:
         content, gw_text = with_context(context, content), f"{context}\n\n{gw_text}"
     with _lock, db() as conn:

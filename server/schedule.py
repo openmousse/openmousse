@@ -443,6 +443,7 @@ def build_timeline(lo: date, days: int) -> dict:
     out.sort(key=order_key)
     for e in out:
         e["weekday"] = weekday(date.fromisoformat(e["date"]))
+    with_projects(out)
     errors = {k: v for k, v in (("calendar", cal_err), ("canvas", canvas_err)) if v}
     return {"ok": True, "from": lo_s, "days": days, "timezone": settings.timezone, "calendar": sources.calendar_ics is not None,
             "events": out, "errors": errors}
@@ -505,7 +506,17 @@ def build_remember(include_done: bool = False) -> dict:
     for e in items:
         if e["date"]:
             e["weekday"] = weekday(date.fromisoformat(e["date"]))
+    with_projects(items)
     return {"ok": True, "today": t.isoformat(), "items": items, "errors": {"canvas": canvas_err} if canvas_err else {}}
+
+
+def with_projects(entries: list[dict]) -> None:
+    """属于某个项目的截止带上 project {id, title}，自己的截止小标写项目名（见 projects.py）。在锁外调。"""
+    try:
+        import projects  # 延迟导入：projects 依赖本模块
+        projects.annotate(entries)
+    except Exception:  # noqa: BLE001 — 标不上只是少一个小标
+        pass
 
 
 # —— 改动、日志、卡片 ——————————————————————————————————————————————————

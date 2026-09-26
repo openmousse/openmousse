@@ -136,6 +136,39 @@ python3 schedule_ctl.py undo 42
 
 `server.json` → `remember.mail` (optional): `{"items": "<the JSON the mail extractor writes>", "cmd": ["python3", ".../mail_digest.py"], "sources": {"<key>": "<label>"}, "link": "https://mail.google.com/mail/?authuser=…#all/{thread_id}"}`.
 
+## Projects
+
+Things with an end: they run for days or weeks and have a goal and deadlines (a group assignment, a job-hunt sprint). A project is a chat thread (the old "side chat", id `sc-…`) with a **project card** on top: goal, deadlines, next steps, decisions, progress, the tasks started inside it, and a summary once it's archived. See [`projects.py`](projects.py).
+
+- **Deadlines live in the schedule layer**: your own are `schedule_items` rows (kind deadline, key `project:<id>:…`); existing ones (coursework, mail items, applications, other deadlines) are linked by their ref. Ticking, reminders and "To remember" all work the same, and `/api/remember` / `/api/schedule` entries carry `project: {id, title}`.
+- **Carried across the daily reset**: on the first message of the day in a project, and after the card changes, `chat.start_run` puts the card in front of the message (the model sees it, the chat doesn't show it; `side_chats.fed_rev` / `fed_at`). The daily digest script sends each project "【自动触发】日结（项目）" so the Agent updates progress and next steps.
+- **Changes by Agents** (`project_ctl.py`, which calls this API with `source`): a `project` card goes out on the reply's SSE stream and is attached to the reply at the end (`project_log.message_id`), undoable via `/api/projects/undo/{id}`. Deadline changes are schedule changes and show `schedule` cards.
+- **Opening**: the app or an Agent asked by the user (`POST /api/projects`, optional `brief` handed over into the new project like a handoff). An Agent's own idea goes through the inbox (`POST /api/projects/propose` → kind `project`); approving it opens the project on the server and hands the brief over.
+- **Archiving**: `POST /api/projects/{id}/archive {summarize}` moves it to Archived right away and, with `summarize`, sends "【自动触发】项目归档" into the project so the Agent writes the summary (`/conclude`) and its memory entries. `POST /api/projects/review` (called by the daily digest) asks once, through the inbox, to archive projects whose last deadline passed 3+ days ago.
+
+```bash
+python3 project_ctl.py list
+python3 project_ctl.py create --title "Group project" --goal "…" --deadline "Rehearsal|2026-10-01 18:00" --link "canvas:…" --brief "…"
+python3 project_ctl.py add sc-1a2b3c4d decision "Video under 8 minutes"
+python3 project_ctl.py done sc-1a2b3c4d pi-5e6f7a8b
+python3 project_ctl.py ask sc-1a2b3c4d "What's left before Friday?"
+python3 project_ctl.py conclude sc-1a2b3c4d --done "…" --learned "…"
+```
+
+| Endpoint | What it does |
+|---|---|
+| `GET /api/projects?all=` | Projects that aren't archived (`all=1`: all), each with `goal`, `next` (nearest open deadline), `stepsLeft`, `hasSummary` |
+| `POST /api/projects` | Open one: `{title, goal?, model?, deadlines: [{title, due} or {ref}], steps?, decisions?, brief?, source?}` |
+| `GET /api/projects/{id}` | The card: `goal, progress, deadlines, steps, decisions, next, stepsLeft, tasks, summary, archived, closing, rev` |
+| `PATCH /api/projects/{id}` | `{title?, goal?, progress?}` |
+| `POST /api/projects/{id}/items` | `{kind: step/decision/deadline, text, due?, ref?}` |
+| `POST /api/projects/{id}/items/update` / `…/delete` | `{id, text?, due?, done?}` / `{id}` (a linked deadline can only be ticked or unlinked) |
+| `POST /api/projects/undo/{log}` | Undo a card change (`{redo: true}` to redo) |
+| `POST /api/projects/propose` | An Agent's proposal → inbox kind `project` |
+| `POST /api/projects/{id}/archive` / `restore` / `conclude` | Archive (`{summarize}`), restore, write the summary (`{done, decided: [], learned, saved}`) |
+| `POST /api/projects/review` | Ask "archive?" for projects whose deadlines are all past (daily digest) |
+| `GET /api/sidechats` | The sidebar list, now with the same summary fields per project |
+
 ## Notifications
 
 Three levels: **ring** (sound, interruptionLevel active), **quiet** (no sound, goes to Notification Center, passive), **none** (not sent). During `push.quiet_hours` in `server.json` (default `["23:00", "07:30"]`, in `timezone`; `[]` turns it off) ring is downgraded to quiet.
@@ -154,7 +187,7 @@ If the reply wrote a card (a new `feed_items` row whose group_id is this thread;
 
 ## Unread
 
-`GET /api/unread` → `{threads: {<thread>: {n, mine, last: {id, text, ts, origin}}}, feedNew: [card ids], inbox, badge}`. Only threads with something unread are listed (main, every Agent, side chats that aren't archived); n = assistant replies after the read mark, mine = those answering something you sent (`messages.origin = user`; timer- and inbox-triggered ones don't count); inbox = items waiting for you (exec approvals included); badge = inbox + the sum of mine. `POST /api/unread/read {thread, upto?}` moves the read mark forward (never back) and returns the same summary. New cards on the Today page: every item of `GET /api/feed` has `seen`; `POST /api/feed/seen {ids}` marks them seen.
+`GET /api/unread` → `{threads: {<thread>: {n, mine, last: {id, text, ts, origin}}}, feedNew: [card ids], inbox, badge}`. Only threads with something unread are listed (main, every Agent, projects that aren't archived); n = assistant replies after the read mark, mine = those answering something you sent (`messages.origin = user`; timer- and inbox-triggered ones don't count); inbox = items waiting for you (exec approvals included); badge = inbox + the sum of mine. `POST /api/unread/read {thread, upto?}` moves the read mark forward (never back) and returns the same summary. New cards on the Today page: every item of `GET /api/feed` has `seen`; `POST /api/feed/seen {ids}` marks them seen.
 
 ## Study desk
 

@@ -4,9 +4,9 @@
 把一台已经装好 OpenClaw 的机器配成能跑 OpenMousse：
   1. ~/.openmousse/repo → 仓库（skills 里的命令都走这个固定路径）
   2. ~/.openmousse/server.json：名字、时区、语言、监听地址、OpenClaw 的位置、令牌（phone 给手机，local 给本机脚本）
-  3. 主 agent 工作区的 skills/ 里软链 packs/core 的七个 skill（handoff / agent-builder / journal / memory-tree / inbox / dispatch / board）；AGENTS.md 末尾追加 OpenMousse 的规则（按所选语言写）
+  3. 主 agent 工作区的 skills/ 里软链 packs/core 的八个 skill（handoff / agent-builder / journal / memory-tree / inbox / dispatch / project / board）；AGENTS.md 末尾追加 OpenMousse 的规则（按所选语言写）
   4. openclaw.json（先备份，改完 openclaw config validate，不过就恢复）：
-     - agents.defaults.skills 是列表的话追加主对话用的六个 skill（board 只给 Agent，写在 server.json 的 agent_default_skills；没有这个键 = 不限制，不动）
+     - agents.defaults.skills 是列表的话追加主对话用的七个 skill（board 只给 Agent，写在 server.json 的 agent_default_skills；没有这个键 = 不限制，不动）
      - gateway.http.endpoints.chatCompletions.enabled = true（app 的对话走它）
      - session.reset = daily 04:00（对话页按天，日结在 03:45）
      - tools.deny 加 ask_user（app 通道没人能回答工具里的提问，会卡死）
@@ -34,8 +34,8 @@ from pathlib import Path
 HERE = Path(__file__).resolve().parent
 MOUSSE_HOME = Path("~/.openmousse").expanduser()
 SERVER_JSON = MOUSSE_HOME / "server.json"
-SKILLS = ("handoff", "agent-builder", "journal", "memory-tree", "inbox", "dispatch", "board")
-MAIN_SKILLS = SKILLS[:6]  # 主对话用的；board（Agent 自己的表和看板）只给 Agent
+SKILLS = ("handoff", "agent-builder", "journal", "memory-tree", "inbox", "dispatch", "project", "board")
+MAIN_SKILLS = tuple(s for s in SKILLS if s != "board")  # 主对话用的；board（Agent 自己的表和看板）只给 Agent
 AGENTS_MARK = "## OpenMousse"
 AGENTS_RULES_ZH = """
 
@@ -47,6 +47,7 @@ AGENTS_RULES_ZH = """
 - **自动触发**：消息以「【自动触发】」开头的不是用户在说话，是系统按时间点发的。不要提问，直接做该做的事，回复两行以内。
 - **Agent**：用户在 app 里可以建多个 Agent，每个是独立的 OpenClaw agent（自己的工作区、记忆、skills），app 里叫「Agent」。用户说"帮我做个 XX agent"用 `skills/agent-builder/` 直接建；属于某个 Agent 那一块的事（要建议、要计划、要记录）用 `skills/handoff/` 转给它，把答案带回来并标明来源。各 Agent 的日结在 `{digest_root}/<agent id>/`，`memory_search` 可查。
 - **派活**：超过一两轮的重活（深读长文档、整理资料、写长稿、查一堆网页）用 `sessions_spawn` 派成后台任务，主对话只放人话。派之前按 `skills/dispatch/` 看额度、按「目标 / 要交 / 约束」写任务：app 对话里会出一张任务卡跟着它。
+- **项目**：持续几天到几周、有目标和截止的事放项目（app 侧栏「项目」），按 `skills/project/`：用户说开就开，你发现一件事要做好几天就提议；项目的事转进项目。消息前面带「【项目空间】」项目卡时你在项目里：先看卡（每天重置后靠它接上），聊的过程中随手更新。
 - **要问用户的问题写在回复里，不要用 ask_user 之类等待输入的工具**：app 的通道没人能回答工具里的提问，会一直卡住。
 - **日志**：用户说的感受、想法、决定用 `skills/journal/` 记进日志，只回一句确认。关于用户本人的新事实、偏好、决定、近况写进世界树（`skills/memory-tree/`）。
 - **先问再做**：用户明确让你做、能撤回的直接做，说清怎么撤回；只读的事直接做。你自己的主意（新技能、新 Agent、他没开口的补记录）、会发给别人或撤不回的（发送、花钱、超出后台额度）、新的定时任务或推送、改代码 / 配置 / 凭证，先用 `skills/inbox/` 交到 app 的「等你点头」，用户同意了再做。消息以「【收件箱】」开头、或用户引用收件箱的卡回复时，按那个 skill 接着做。
@@ -62,6 +63,7 @@ AGENTS_RULES_EN = """
 - **Automatic triggers**: a message that starts with "【自动触发】" is not the user talking; the system sends it at a set time. Don't ask questions, just do what it asks, and keep the reply to two lines or less.
 - **Agents**: in the app the user can create several Agents. Each one is a separate OpenClaw agent (its own workspace, memory and skills), called an "Agent" in the app. When the user says "make me an XX agent", create it right away with `skills/agent-builder/`. Anything that belongs to an Agent's area (advice, plans, records) goes to that Agent through `skills/handoff/`; bring its answer back and say where it came from. Each Agent's daily digests are in `{digest_root}/<agent id>/`, searchable with `memory_search`.
 - **Background tasks**: heavy work that takes more than a turn or two (reading a long document, gathering material, drafting something long, going through many web pages) goes out as a background task with `sessions_spawn`; the main chat keeps to plain conversation. Before you start one, check the allowance and write the task as goal / deliverable / constraints, per `skills/dispatch/`: a task card follows it in the app's chat.
+- **Projects**: things that run for days or weeks with a goal and deadlines live in a project ("Projects" in the app's sidebar), per `skills/project/`: open one when the user asks, suggest one when something clearly spans several days, and send project matters into the project. When a message starts with a "【项目空间】" project card you are inside that project: read the card first (it carries you across the daily reset) and keep it updated as you go.
 - **Put questions for the user in your reply; don't use ask_user or any other tool that waits for input**: nobody can answer a tool's prompt through the app channel, so the session would hang.
 - **Journal**: feelings, thoughts and decisions the user mentions go into the journal with `skills/journal/`; reply with a single line of confirmation. New facts, preferences, decisions and life updates about the user go into the memory tree (`skills/memory-tree/`).
 - **Ask before you act**: things the user explicitly asked for that can be undone, just do, and say how to undo them; read-only work, just do. Your own ideas (a new skill, a new Agent, filling in a record they didn't ask about), anything that reaches other people or can't be undone (sending, spending money, going over the background budget), new scheduled jobs or notifications, and code / config / credential changes go to the app's "Needs your OK" first with `skills/inbox/`; do them only once the user approves. A message that starts with "【收件箱】", or a reply that quotes an inbox card, continues from there, per that skill.
