@@ -1,16 +1,16 @@
 // app 其余页面的数据接口（server/data.py）。每一项的真源写在 data.py 顶部的表格里。
 import type {
-  ActivityEntry, AgentColor, DayInfo, SearchHit, Application, Approval, AvatarConfig, FeedItem, Goal, Group, GroupIcon, InboxAction, InboxItem, InboxStatus, JournalEntry, MemoryItem, ModelsInfo, ProfileItem, SecurityInfo, SideChat, Task, UnreadSummary, UpcomingTask,
+  ActivityEntry, AgentColor, ChatCard, DayInfo, HandoffCard, SearchHit, Application, Approval, AvatarConfig, FeedItem, Goal, Group, GroupIcon, InboxAction, InboxItem, InboxStatus, JournalEntry, MemoryItem, ModelsInfo, ProfileItem, SecurityInfo, SideChat, Task, TaskQuota, ThreadCards, UnreadSummary, UpcomingTask,
 } from '../data/types';
 import { L } from '../lang';
 import { httpStatus, request } from './base';
 
 /**
- * 这个服务器有没有收件箱 / 未读接口。老服务器上它们 404（POST 是 405）：收件箱退回读 /api/approvals，未读当作没有、也不轮询。
- * null = 还没试过。换服务器、重新连接时 resetServerSupport()。
+ * 这个服务器有没有收件箱 / 未读 / 对话卡片接口。老服务器上它们 404（POST 是 405）：收件箱退回读 /api/approvals，未读当作没有、也不轮询，
+ * 对话里不显示转交卡和任务卡。null = 还没试过。换服务器、重新连接时 resetServerSupport()。
  */
-export const serverSupport: { inbox: boolean | null; unread: boolean | null } = { inbox: null, unread: null };
-export const resetServerSupport = () => { serverSupport.inbox = null; serverSupport.unread = null; };
+export const serverSupport: { inbox: boolean | null; unread: boolean | null; cards: boolean | null } = { inbox: null, unread: null, cards: null };
+export const resetServerSupport = () => { serverSupport.inbox = null; serverSupport.unread = null; serverSupport.cards = null; };
 const missing = (e: unknown) => { const s = httpStatus(e); return s === 404 || s === 405; };
 
 /** 消息 id：数字，也认 "db123" 和 "123" 这种写法。 */
@@ -53,6 +53,24 @@ const fromApproval = (a: Approval): InboxItem => normalizeInbox({
 });
 
 const AFTER: Record<InboxAction, InboxStatus> = { approve: 'approved', reject: 'rejected', revise: 'revising' };
+
+/** 对话里的卡片：服务器在另一边同时开发，认不出的种类丢掉，缺的字段补默认值。 */
+function normalizeCard(raw: any): ChatCard | null {
+  if (!raw || typeof raw.id !== 'string') return null;
+  const num = (v: unknown) => (typeof v === 'number' && Number.isFinite(v) ? v : null);
+  const str = (v: unknown) => (typeof v === 'string' ? v : '');
+  if (raw.kind === 'handoff') {
+    return { ...raw, messageId: msgNum(raw.messageId), seconds: num(raw.seconds), question: str(raw.question), toName: str(raw.toName) || str(raw.to),
+      from: str(raw.from) || 'main', fromName: str(raw.fromName), status: ['running', 'done', 'error', 'busy', 'lost'].includes(raw.status) ? raw.status : 'done' } as HandoffCard;
+  }
+  if (raw.kind === 'task') {
+    return { ...raw, messageId: msgNum(raw.messageId), title: str(raw.title), step: str(raw.step), result: str(raw.result), minutes: num(raw.minutes) ?? 0,
+      tools: num(raw.tools) ?? 0, round: num(raw.round) ?? 1, deliverable: Array.isArray(raw.deliverable) ? raw.deliverable.map(String) : [],
+      status: ['进行中', '完成', '失败', '已取消'].includes(raw.status) ? raw.status : '完成', timedOut: !!raw.timedOut } as ChatCard;
+  }
+  return null;
+}
+export const cardOf = normalizeCard;
 
 /** 未读摘要：只留 n > 0 的线程。回来的不像摘要（比如只有 {ok}）就返回 null，别拿它把本地的清空。 */
 function normalizeUnread(j: Partial<UnreadSummary> | null | undefined): UnreadSummary | null {
@@ -169,7 +187,22 @@ export const dataApi = {
   /** 这几张建议卡看过了（「今天」页上出现在屏幕里 1.5 秒）。 */
   feedSeen: (ids: string[]) => request('/api/feed/seen', { method: 'POST', body: { ids } }),
 
-  tasks: () => request<{ tasks: Task[] }>('/api/tasks', { timeoutMs: 90000 }).then((j) => j.tasks),
+  tasks: () => request<{ tasks: Task[]; quota?: TaskQuota }>('/api/tasks', { timeoutMs: 90000 }).then((j) => ({ tasks: j.tasks, quota: j.quota ?? null })),
+  /** 一个对话里的转交卡和任务卡。老服务器没有这个接口：返回 null（serverSupport.cards 变成 false，之后不再请求）。 */
+  cards: async (thread: string): Promise<ThreadCards | null> => {
+    if (serverSupport.cards === false) return null;
+    try {
+      const j = await request<{ cards: unknown[]; incoming?: unknown[] }>(`/api/chat/cards?thread=${encodeURIComponent(thread)}`, { timeoutMs: 20000 });
+      serverSupport.cards = true;
+      return {
+        cards: (j.cards ?? []).map(normalizeCard).filter((c): c is ChatCard => !!c),
+        incoming: (j.incoming ?? []).map(normalizeCard).filter((c): c is HandoffCard => !!c && c.kind === 'handoff'),
+      };
+    } catch (e) {
+      if (missing(e)) { serverSupport.cards = false; return null; }
+      throw e;
+    }
+  },
   task: (id: string) => request<{ task: Task }>(`/api/tasks/${id}`, { timeoutMs: 60000 }).then((j) => j.task),
   cancelTask: (id: string) => request(`/api/tasks/${id}/cancel`, { method: 'POST', timeoutMs: 60000 }),
   reviseTask: (id: string, note: string) => request(`/api/tasks/${id}/revise`, { method: 'POST', body: { note }, timeoutMs: 60000 }),

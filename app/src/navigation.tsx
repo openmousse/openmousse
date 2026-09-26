@@ -72,26 +72,29 @@ function initialFromQuery() {
 /** 给推送通知和小窗跳转用（src/store.tsx、components/Banner.tsx）。 */
 export const navigationRef = createNavigationContainerRef<any>();
 
-/** 从收件箱「去对话里说」带到对话里的引用：输入框上面显示「回复：标题」，发出去时带上 inboxId。 */
-export interface ChatQuote { inboxId: string; title: string }
+/**
+ * 输入框上面的引用：从收件箱「去对话里说」带过来的（inboxId：显示「回复：标题」，发出去时带上），
+ * 或者任务卡上点了「改一下」（taskId：显示「改：标题」，发出去的话直接交给做这件事的子会话，不进这个对话）。
+ */
+export interface ChatQuote { inboxId?: string; taskId?: string; title: string; model?: string | null }
 
 // 冷启动时点通知，那一下可能比导航器准备好还早（RootNavigator 要等本机配置读完才渲染）：先记下来，onReady 时补上。
-let queued: { target: PushTarget; isGroup: boolean; quote?: ChatQuote } | null = null;
+let queued: { target: PushTarget; isGroup: boolean; quote?: ChatQuote; focus?: string } | null = null;
 
 /**
  * 打开推送 / 小窗指向的地方：
  * 对话 → main / 独立空间在「对话」tab 里，Agent 有自己的页；卡片、收件箱 → 「今天」页，滚到那一张闪一下金边。
  * 去 tab 用 pop：从「已处理」「任务」这类叠在上面的页过去时退回到 tab，不再叠一层新的。
  */
-export function openTarget(target: PushTarget, isGroup = false, quote?: ChatQuote) {
-  if (!navigationRef.isReady()) { queued = { target, isGroup, quote }; return; }
+export function openTarget(target: PushTarget, isGroup = false, quote?: ChatQuote, focus?: string) {
+  if (!navigationRef.isReady()) { queued = { target, isGroup, quote, focus }; return; }
   const at = Date.now();
   const tab = (screen: string, params: object) => navigationRef.navigate('Tabs', { screen, params }, { pop: true });
   switch (target.type) {
     case 'thread':
       if (target.thread === 'today') tab('今天', { at });
-      else if (isGroup) navigationRef.navigate('Group', { id: target.thread, tab: 'chat', at, quote });
-      else tab('对话', { thread: target.thread, at, quote });
+      else if (isGroup) navigationRef.navigate('Group', { id: target.thread, tab: 'chat', at, quote, focus });
+      else tab('对话', { thread: target.thread, at, quote, focus });
       return;
     case 'card':
     case 'inbox':
@@ -102,14 +105,14 @@ export function openTarget(target: PushTarget, isGroup = false, quote?: ChatQuot
   }
 }
 
-/** 打开某个对话（quote：顺带一条收件箱引用）。 */
-export const openThread = (thread: string, isGroup: boolean, quote?: ChatQuote) => openTarget({ type: 'thread', thread }, isGroup, quote);
+/** 打开某个对话（quote：顺带一条收件箱引用；focus：滚到这条消息（"db<id>"）闪一下，比如点转交卡去看 Agent 那边的那个问题）。 */
+export const openThread = (thread: string, isGroup: boolean, quote?: ChatQuote, focus?: string) => openTarget({ type: 'thread', thread }, isGroup, quote, focus);
 
 function flushQueued() {
   if (!queued || !navigationRef.isReady()) return;
   const q = queued;
   queued = null;
-  openTarget(q.target, q.isGroup, q.quote);
+  openTarget(q.target, q.isGroup, q.quote, q.focus);
 }
 
 export function RootNavigator() {

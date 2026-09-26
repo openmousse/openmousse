@@ -42,6 +42,7 @@ export { default as RefreshCw } from 'lucide-react-native/icons/refresh-cw';
 export { default as MapPin } from 'lucide-react-native/icons/map-pin';
 export { default as ClipboardList } from 'lucide-react-native/icons/clipboard-list';
 export { default as Send } from 'lucide-react-native/icons/send';
+export { default as CornerDownLeft } from 'lucide-react-native/icons/corner-down-left';
 export { default as Pencil } from 'lucide-react-native/icons/pencil';
 export { default as GitFork } from 'lucide-react-native/icons/git-fork';
 export { default as MessagesSquare } from 'lucide-react-native/icons/messages-square';

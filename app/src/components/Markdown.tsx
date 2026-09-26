@@ -8,11 +8,12 @@ import { radius, type, useTheme } from '../theme';
 const md = MarkdownIt({ typographer: false, linkify: true, breaks: true });
 const mono = Platform.select({ ios: 'Menlo', android: 'monospace', default: 'ui-monospace, SFMono-Regular, Menlo, monospace' });
 
-export function Markdown({ text, color, compact }: { text: string; color?: string; compact?: boolean }) {
+/** compact：段落、列表之间更紧（卡片里的说明）。small：字号降到 callout、表格格子更窄（卡片里的结果预览）。 */
+export function Markdown({ text, color, compact, small }: { text: string; color?: string; compact?: boolean; small?: boolean }) {
   const t = useTheme();
   const ink = color ?? t.ink;
   const styles = useMemo(() => ({
-    body: { ...type.body, color: ink },
+    body: { ...(small ? type.callout : type.body), color: ink },
     paragraph: { marginTop: 0, marginBottom: compact ? 4 : 8 },
     text: { color: ink },
     strong: { fontWeight: '700' as const },
@@ -25,8 +26,8 @@ export function Markdown({ text, color, compact }: { text: string; color?: strin
     bullet_list: { marginBottom: compact ? 4 : 8 },
     ordered_list: { marginBottom: compact ? 4 : 8 },
     list_item: { marginBottom: 2, flexDirection: 'row' as const },
-    bullet_list_icon: { color: ink, marginLeft: 2, marginRight: 8, ...type.body },
-    ordered_list_icon: { color: ink, marginLeft: 2, marginRight: 8, ...type.body },
+    bullet_list_icon: { color: ink, marginLeft: 2, marginRight: 8, ...(small ? type.callout : type.body) },
+    ordered_list_icon: { color: ink, marginLeft: 2, marginRight: 8, ...(small ? type.callout : type.body) },
     code_inline: { fontFamily: mono, fontSize: 14, backgroundColor: t.surface2, color: ink, borderRadius: 4, paddingHorizontal: 4, borderWidth: 0 },
     code_block: { fontFamily: mono, fontSize: 13, backgroundColor: t.surface2, color: ink, borderRadius: radius.md, padding: 10, borderWidth: 0, marginBottom: 8 },
     fence: { fontFamily: mono, fontSize: 13, backgroundColor: t.surface2, color: ink, borderRadius: radius.md, padding: 10, borderWidth: 0, marginBottom: 8 },
@@ -35,11 +36,11 @@ export function Markdown({ text, color, compact }: { text: string; color?: strin
     hr: { backgroundColor: t.line, height: 1, marginVertical: 8 },
     table: { borderWidth: 1, borderColor: t.line, borderRadius: radius.sm, marginBottom: 8 },
     thead: { backgroundColor: t.surface2 },
-    th: { padding: 6, fontWeight: '700' as const },
+    th: { padding: small ? 4 : 6, fontWeight: '700' as const },
     tr: { borderBottomWidth: 1, borderColor: t.line, flexDirection: 'row' as const },
-    td: { padding: 6 },
+    td: { padding: small ? 4 : 6 },
     image: { borderRadius: radius.md },
-  }), [t, ink, compact]);
+  }), [t, ink, compact, small]);
   return (
     <MarkdownDisplay style={styles as any} markdownit={md} onLinkPress={(url: string) => { Linking.openURL(url).catch(() => {}); return false; }}>
       {text}

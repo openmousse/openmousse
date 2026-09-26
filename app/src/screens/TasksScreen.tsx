@@ -3,11 +3,12 @@ import { agentName } from '../brand';
 import { Alert, Pressable, ScrollView, StyleSheet, View } from 'react-native';
 import { useNavigation, useRoute } from '@react-navigation/native';
 import { dataApi } from '../api/data';
-import { Check, CircleDot, CircleX, Eye, LoaderCircle, Lightbulb, ListChecks, Pencil, Terminal } from '../components/icons';
+import { Check, CircleAlert, CircleDot, CircleX, Clock, Eye, Inbox, LoaderCircle, Lightbulb, ListChecks, Pencil, Terminal } from '../components/icons';
+import { Spinner } from '../components/ChatCards';
 import { useSheet } from '../components/Sheet';
 import { ReviseSheetContent, fmtTokens, modelName, originName } from '../components/TaskCard';
 import { Btn, Card, ListRow, NavHeader, Pill, PullRefresh, Screen, SectionLabel, T } from '../components/ui';
-import type { Task, TaskRun, TaskStep } from '../data/types';
+import type { Task, TaskQuota, TaskRun, TaskStep } from '../data/types';
 import { L } from '../i18n';
 import { useStore } from '../store';
 import { radius, space, useTheme } from '../theme';
@@ -17,31 +18,91 @@ const statusTone = (s: Task['status']) => (s === '进行中' ? 'cyan' : s === '�
 const statusLabel = (s: Task['status']) =>
   ({ 进行中: L('进行中', 'Running'), 完成: L('完成', 'Done'), 失败: L('失败', 'Failed'), 已取消: L('已取消', 'Cancelled') })[s] ?? s;
 
+/** 逻辑日从 04:00 开始（和服务器一样）：凌晨 1 点派的算前一天。 */
+function dayStartMs(): number {
+  const d = new Date();
+  if (d.getHours() < 4) d.setDate(d.getDate() - 1);
+  d.setHours(4, 0, 0, 0);
+  return d.getTime();
+}
+
+/** 左边的状态圆点：在做 = 青色转圈，做完 = 绿勾，到点停了 = 钟，没做成 = 红色感叹号，停掉 = 灰叉。 */
+function StatusDot({ task }: { task: Task }) {
+  const t = useTheme();
+  const [bg, fg, Icon] = task.status === '进行中' ? [t.cyanSoft, t.cyan, null]
+    : task.status === '完成' ? [t.goodSoft, t.good, Check]
+      : task.status === '已取消' ? [t.surface2, t.ink2, CircleX]
+        : task.timedOut ? [t.warnSoft, t.warn, Clock] : [t.badSoft, t.bad, CircleAlert];
+  return (
+    <View style={{ width: 30, height: 30, borderRadius: 15, backgroundColor: bg, alignItems: 'center', justifyContent: 'center' }}>
+      {Icon ? <Icon size={16} color={fg} /> : <Spinner size={16} color={fg} />}
+    </View>
+  );
+}
+
 function TaskRowItem({ task, last }: { task: Task; last: boolean }) {
+  const t = useTheme();
   const nav = useNavigation<any>();
   const { groups, sideChats } = useStore();
+  const who = `${originName(task.origin, groups, sideChats)} → ${modelName(task.modelId)}`;
+  const mins = task.minutes != null ? L(`${task.minutes} 分钟`, `${task.minutes} min`) : '';
+  const tokens = task.tokens ? `${fmtTokens(task.tokens)} tokens` : '';
   const n = task.toolUseCount;
-  const tools = n ? L(` · ${n} 次工具`, ` · ${n} tool call${n === 1 ? '' : 's'}`) : '';
-  const sub = `${originName(task.origin, groups, sideChats)} → ${modelName(task.modelId)}${tools} · ${fmtTokens(task.tokens)} tokens · ${task.createdAt}`;
-  return <ListRow title={task.title} sub={sub} last={last} onPress={() => nav.navigate('Task', { id: task.id })}
-    right={<Pill label={statusLabel(task.status)} tone={statusTone(task.status)} />} />;
+  const detail = task.status === '进行中' ? task.step || (n ? L(`第 ${n} 步`, `step ${n}`) : L('在想', 'thinking'))
+    : task.status === '已取消' ? L('已停掉', 'stopped')
+      : task.timedOut ? L('到时间上限停了，没做完', 'hit the time limit, unfinished')
+        : task.status === '失败' ? L(`没做成${task.error ? `：${task.error}` : ''}`, `failed${task.error ? `: ${task.error}` : ''}`)
+          : [mins, tokens].filter(Boolean).join(' · ');
+  const right = task.status === '进行中' ? mins : task.finishedAt || task.createdAt;
+  return <ListRow icon={<StatusDot task={task} />} title={task.title} sub={[who, detail].filter(Boolean).join(' · ')} last={last} onPress={() => nav.navigate('Task', { id: task.id })}
+    right={right ? <T v="caption" color={t.ink3} style={{ fontVariant: ['tabular-nums'] }}>{right}</T> : undefined} />;
+}
+
+/** 顶上的额度：今天派了几个 / 上限，单个最长几分钟，超了先问你。 */
+function QuotaCard({ q }: { q: TaskQuota }) {
+  const t = useTheme();
+  if (q.today == null) return null;
+  const full = q.today >= q.limit;
+  return (
+    <Card style={{ gap: 10, marginTop: space.lg }}>
+      <View style={{ flexDirection: 'row', alignItems: 'baseline', gap: 8 }}>
+        <T v="label" color={t.ink3}>{L('今天', 'TODAY')}</T>
+        <T v="title" style={{ fontSize: 28, fontWeight: '800', fontVariant: ['tabular-nums'] }}>{q.today}</T>
+        <T v="headline" color={t.ink3}>{L(`/ ${q.limit} 个`, `/ ${q.limit}`)}</T>
+        <View style={{ flex: 1 }} />
+        {q.tokens ? <T v="callout" color={t.ink2}>{fmtTokens(q.tokens)} tokens</T> : null}
+      </View>
+      <View style={{ height: 8, borderRadius: 4, backgroundColor: t.track, overflow: 'hidden' }}
+        accessible accessibilityRole="progressbar" accessibilityLabel={L(`今天派了 ${q.today} 个，上限 ${q.limit} 个`, `${q.today} of ${q.limit} started today`)}>
+        <View style={{ width: `${Math.min(100, (q.today / Math.max(1, q.limit)) * 100)}%`, height: 8, borderRadius: 4, backgroundColor: full ? t.warn : t.cyan }} />
+      </View>
+      <View style={{ gap: 4 }}>
+        <View style={styles.qline}><Clock size={14} color={t.ink2} /><T v="callout" color={t.ink2} style={{ flex: 1 }}>{L(`单个最长 ${q.maxMinutes} 分钟，到点自动停`, `Each task stops after ${q.maxMinutes} minutes`)}</T></View>
+        <View style={styles.qline}><Inbox size={14} color={t.ink2} /><T v="callout" color={t.ink2} style={{ flex: 1 }}>{L('超出的先进「等你点头」，你点了才派', 'Anything over the limit waits in "Needs your OK" until you say yes')}</T></View>
+      </View>
+    </Card>
+  );
 }
 
 export function TasksScreen() {
   const t = useTheme();
   const nav = useNavigation<any>();
-  const { tasks, reload, loading, dataErrors, connected } = useStore();
-  const by = (s: Task['status'][]) => tasks.filter((x) => s.includes(x.status));
-  const sections: [string, Task[]][] = [[L('进行中', 'Running'), by(['进行中'])], [L('做完的', 'Done'), by(['完成'])], [L('失败或取消', 'Failed or cancelled'), by(['失败', '已取消'])]];
+  const { tasks, taskQuota, reload, loading, dataErrors, connected } = useStore();
+  const start = dayStartMs();
+  const running = tasks.filter((x) => x.status === '进行中');
+  const today = tasks.filter((x) => x.status !== '进行中' && (x.createdMs ?? 0) >= start);
+  const earlier = tasks.filter((x) => x.status !== '进行中' && (x.createdMs ?? 0) < start);
+  const sections: [string, Task[]][] = [[L('进行中', 'Running'), running], [L('今天做完', 'Finished today'), today], [L('更早', 'Earlier'), earlier]];
   return (
     <Screen>
       <NavHeader title={L('任务', 'Tasks')} onBack={() => nav.goBack()} />
       <ScrollView contentContainerStyle={{ padding: space.lg, paddingBottom: space.xxl }}
         refreshControl={<PullRefresh onRefresh={() => reload('tasks')} />}>
         <T v="callout" color={t.ink2}>{L(
-          `${agentName()} 派出去的活。每个任务是 OpenClaw 的一个子会话：派给谁、做到哪、怎么做的，都在这里。在对话里让 ${agentName()}「派给 Fable 做」就会出现一个。`,
-          `Work ${agentName()} has sent out. Each task is an OpenClaw sub-session; see who got it, how far along it is and how it was done. Ask ${agentName()} in chat to "send this to Fable" and one shows up.`,
+          `${agentName()} 派出去的后台任务。每个任务是 OpenClaw 的一个子会话：派给谁、做到哪、怎么做的，都在这里；对话里也有一张卡跟着它。在对话里让 ${agentName()}「派给 Fable 做」就会出现一个。`,
+          `Background tasks ${agentName()} has sent out. Each is an OpenClaw sub-session: who got it, how far along it is and how it was done. A card in the chat follows it too. Ask ${agentName()} to "send this to Fable" and one shows up.`,
         )}</T>
+        {taskQuota ? <QuotaCard q={taskQuota} /> : null}
         {dataErrors.tasks ? <Card style={{ marginTop: space.lg }}><T v="callout" color={t.bad}>{L(`读不到任务：${dataErrors.tasks}`, `Couldn't load tasks: ${dataErrors.tasks}`)}</T></Card> : null}
         {sections.filter(([, list]) => list.length).map(([title, list]) => (
           <View key={title}>
@@ -178,6 +239,7 @@ export function TaskScreen() {
 }
 
 const styles = StyleSheet.create({
+  qline: { flexDirection: 'row', alignItems: 'center', gap: 6 },
   note: { flexDirection: 'row', alignItems: 'flex-start', gap: 6, borderRadius: radius.sm, padding: space.sm },
   result: { borderRadius: radius.md, padding: space.md },
   meta: { flexDirection: 'row', gap: space.md, paddingVertical: 10 },

@@ -141,10 +141,79 @@ export interface Task {
   lastTool?: string | null;
   tokens: number;
   costUsd?: number | null;
+  /** 做了多久（进行中 = 到现在），分钟。老服务器没有 */
+  minutes?: number | null;
+  /** 到单个任务的时间上限被停了 */
+  timedOut?: boolean;
+  /** 进行中：正在做哪一步（「在读 L2.pdf」） */
+  step?: string;
+  /** 派的时间（毫秒），分「今天」和「更早」用 */
+  createdMs?: number;
   /** 详情页才有 */
   brief?: string;
   runs?: TaskRun[];
 }
+
+/** 后台任务的额度：今天（04:00 起）派了几个、上限、单个最长几分钟。today / left 为 null = 服务器读不到任务台账。 */
+export interface TaskQuota { today: number | null; running: number | null; limit: number; left: number | null; maxMinutes: number; tokens?: number | null }
+
+/**
+ * 对话里的转交卡：主对话把问题转给了某个 Agent。running 在问 → done 答完 / error 出错；busy 那边正忙，没转过去；lost 服务器重启过，没等到。
+ * messageId：挂在哪条回复下面（"db<messageId>"）；那条回复还没结束时是 null。relayId：转过去的那一条在 Agent 对话里的 id。
+ */
+export interface HandoffCard {
+  kind: 'handoff';
+  id: string;
+  thread: string | null;
+  messageId: number | null;
+  createdAt: string;
+  status: 'running' | 'done' | 'error' | 'busy' | 'lost';
+  to: string;
+  toName: string;
+  from: string;
+  fromName: string;
+  question: string;
+  seconds: number | null;
+  relayId: string | null;
+  replyId: string | null;
+  error?: string | null;
+}
+
+/** 对话里的任务卡：这条回复派出去的后台任务（OpenClaw 子会话）。round ≥ 2 = 「改一下」过，roundStatus / note / roundResult 是最近一轮的。 */
+export interface TaskCardInfo {
+  kind: 'task';
+  id: string;
+  thread: string | null;
+  messageId: number | null;
+  createdAt: string | null;
+  status: TaskStatus;
+  timedOut: boolean;
+  title: string;
+  /** 要交什么（任务正文里「要交：」那几行） */
+  deliverable: string[];
+  modelId: string | null;
+  minutes: number;
+  startedAt: string | null;
+  finishedAt: string | null;
+  tools: number;
+  step: string;
+  /** 第一轮的结果（Markdown，服务器截到 1200 字） */
+  result: string;
+  error?: string | null;
+  round: number;
+  roundStatus: 'running' | 'done' | 'failed' | null;
+  note: string | null;
+  roundResult: string | null;
+  tokens: number | null;
+  limitMinutes: number | null;
+  /** 今天第几个派的 */
+  seq?: number | null;
+  dailyLimit?: number | null;
+}
+
+export type ChatCard = HandoffCard | TaskCardInfo;
+/** 一个对话里的卡片（GET /api/chat/cards）：它自己转出去、派出去的，加上别的对话转给它的（incoming）。 */
+export interface ThreadCards { cards: ChatCard[]; incoming: HandoffCard[] }
 
 /** 有生命周期的独立对话空间：比一段对话大，比 Group 小。 */
 export interface SideChat {

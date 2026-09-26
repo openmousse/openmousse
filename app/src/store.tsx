@@ -14,8 +14,8 @@ import { L } from './i18n';
 import { openTarget } from './navigation';
 import type {
   Application, JournalEntry, PendingFile,
-  ActivityEntry, AgentColor, AvatarConfig, FeedItem, Goal, Group, GroupIcon, GroupPatch, InboxAction, InboxItem, MemoryItem, Message, ModelsInfo, ProfileItem, PushTarget, Receipt,
-  SecurityInfo, SideChat, Task, UnreadSummary, UpcomingTask,
+  ActivityEntry, AgentColor, AvatarConfig, ChatCard, FeedItem, Goal, Group, GroupIcon, GroupPatch, InboxAction, InboxItem, MemoryItem, Message, ModelsInfo, ProfileItem, PushTarget, Receipt,
+  SecurityInfo, SideChat, Task, TaskQuota, ThreadCards, UnreadSummary, UpcomingTask,
 } from './data/types';
 
 // 2026-09-23 起：界面上的每一项都来自服务器上的真实来源，没有示例数据。连不上服务器时各页显示"未连接"，不冒充。
@@ -46,6 +46,12 @@ interface State {
   /** 流式输出中的半截回复 */
   streaming: Record<string, string>;
   tasks: Task[];
+  /** 后台任务的额度（任务页顶上）。老服务器没有 */
+  taskQuota: TaskQuota | null;
+  /** 每个对话里的转交卡、任务卡（服务器记的）：对话里挂在对应的回复上 */
+  cardsByThread: Record<string, ThreadCards>;
+  /** 进行中的回复里刚出的卡（流里的 card 事件）。回复结束、按服务器重读 cardsByThread 之后清掉 */
+  liveCards: Record<string, Record<string, ChatCard>>;
   /** 收件箱：等你点头的 */
   inbox: InboxItem[];
   /** 最近 7 天点过头的（「已处理」页；「今天」页的回执也拿它看做完没有） */
@@ -188,7 +194,7 @@ export function receiptItems(receipts: Receipt[], recent: InboxItem[], pending: 
 const LOADERS: Record<DataKey, () => Promise<Partial<State>>> = {
   groups: async () => ({ groups: await dataApi.groups() }),
   sideChats: async () => ({ sideChats: await dataApi.sideChats() }),
-  tasks: async () => ({ tasks: await dataApi.tasks() }),
+  tasks: async () => { const r = await dataApi.tasks(); return { tasks: r.tasks, taskQuota: r.quota }; },
   inbox: async () => ({ inbox: await dataApi.inbox('pending') }),
   inboxRecent: async () => ({ inboxRecent: await dataApi.inbox('recent') }),
   unread: async () => { const u = await dataApi.unread(); return u ? { unread: u } : {}; },
@@ -210,6 +216,10 @@ const STARTUP_KEYS = ALL_KEYS.filter((k) => !['groups', 'sideChats', 'unread', '
 /** 后台轮询的：不亮「正在读」、读失败也不报错，没变化就不更新（不让整棵树白白重画）。 */
 const QUIET = new Set<DataKey>(['unread']);
 const POLL_MS = 45_000;
+/** 看着的对话里有还在问的转交、还在做的任务：隔多久重读一次卡片（回复进行中不用，流里会来） */
+const CARD_POLL_MS = 6_000;
+/** 这张卡还在变（在问、在做、在改）。 */
+const cardBusy = (c: ChatCard) => (c.kind === 'handoff' ? c.status === 'running' : c.status === '进行中' || c.roundStatus === 'running');
 
 export function StoreProvider({ children }: { children: React.ReactNode }) {
   const api = useRef<GravaApi>(new OfflineApi());
@@ -232,6 +242,9 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
     typing: {},
     streaming: {},
     tasks: [],
+    taskQuota: null,
+    cardsByThread: {},
+    liveCards: {},
     inbox: [],
     inboxRecent: [],
     receipts: [],
@@ -314,14 +327,33 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
     }
   }, [reload]);
 
+  /** 重读一个对话里的转交卡、任务卡。clearLive：这个对话的回复刚结束，流里收到的那些换成服务器记的（已经挂到回复上）。 */
+  const loadThreadCards = useCallback(async (threadId: string, clearLive = false) => {
+    if (!api.current.connected || serverSupport.cards === false) return;
+    const c = await dataApi.cards(threadId).catch(() => null);
+    if (!c) return;
+    setS((st) => {
+      const liveCards = { ...st.liveCards };
+      if (clearLive) delete liveCards[threadId];
+      return { ...st, cardsByThread: { ...st.cardsByThread, [threadId]: c }, liveCards };
+    });
+  }, []);
+
+  /** 流里来了一张卡：进行中的回复里转给了某个 Agent、派了一个任务，或者它们的状态变了。 */
+  const onLiveCard = useCallback((threadId: string) => (card: ChatCard) => {
+    setS((st) => ({ ...st, liveCards: { ...st.liveCards, [threadId]: { ...(st.liveCards[threadId] ?? {}), [card.id]: card } } }));
+  }, []);
+
   /** 读回所有线程的对话记录；服务端还在回的线程接回去。 */
   const loadThreads = useCallback(async (fresh?: Partial<State>) => {
     const st0 = { ...latest.current, ...fresh };
     const ids = ['main', ...st0.groups.map((g) => g.id), ...st0.sideChats.map((c) => c.id)];
     const withInbox = api.current.connected && serverSupport.inbox !== false;
-    const [hist, boxes] = await Promise.all([
+    const withCards = api.current.connected && serverSupport.cards !== false;
+    const [hist, boxes, cardLists] = await Promise.all([
       Promise.all(ids.map(async (tid) => [tid, await api.current.history(tid).catch(() => null)] as const)),
       Promise.all(ids.map(async (tid) => [tid, withInbox ? await dataApi.inboxForThread(tid).catch(() => null) : null] as const)),
+      Promise.all(ids.map(async (tid) => [tid, withCards ? await dataApi.cards(tid).catch(() => null) : null] as const)),
     ]);
     const inFlight = hist.filter(([, h]) => h?.inFlight).map(([tid]) => tid);
     setS((st) => {
@@ -337,17 +369,20 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
         if (h.modelId) threadModel[tid] = h.modelId;
       }
       for (const [tid, items] of boxes) if (items) inboxByThread[tid] = items;
-      return { ...st, threads, threadModel, typing, streaming, inboxByThread };
+      const cardsByThread = { ...st.cardsByThread };
+      for (const [tid, c] of cardLists) if (c) cardsByThread[tid] = c;
+      return { ...st, threads, threadModel, typing, streaming, inboxByThread, cardsByThread };
     });
     for (const tid of inFlight) {
-      api.current.attach(tid, (partial) => setS((st) => ({ ...st, streaming: { ...st.streaming, [tid]: partial } })))
+      api.current.attach(tid, (partial) => setS((st) => ({ ...st, streaming: { ...st.streaming, [tid]: partial } })), onLiveCard(tid))
         .then((reply) => setS((st) => {
           const streaming = { ...st.streaming }; delete streaming[tid];
           return reply ? { ...appendMsg(st, tid, reply), typing: { ...st.typing, [tid]: false }, streaming } : { ...st, typing: { ...st.typing, [tid]: false }, streaming };
         }))
-        .catch(() => setS((st) => ({ ...st, typing: { ...st.typing, [tid]: false } })));
+        .catch(() => setS((st) => ({ ...st, typing: { ...st.typing, [tid]: false } })))
+        .finally(() => { loadThreadCards(tid, true).catch(() => {}); });
     }
-  }, []);
+  }, [loadThreadCards, onLiveCard]);
 
   /** 重读一个对话里的收件箱（对话里跟着消息显示的那些卡）。 */
   const loadThreadInbox = useCallback(async (threadId: string) => {
@@ -359,16 +394,18 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
   /** 按服务器记录重读一个线程，进行中的回复接上（下拉刷新、来了新消息、点通知进来都走这里）。 */
   const refreshThread = useCallback(async (threadId: string) => {
     loadThreadInbox(threadId).catch(() => {});
+    loadThreadCards(threadId).catch(() => {});
     const h = await api.current.history(threadId);
     if (!h) return;
     setS((st) => ({ ...st, threads: { ...st.threads, [threadId]: h.messages }, threadModel: h.modelId ? { ...st.threadModel, [threadId]: h.modelId } : st.threadModel }));
     if (h.inFlight && !latest.current.typing[threadId]) {
       setS((st) => ({ ...st, typing: { ...st.typing, [threadId]: true }, streaming: { ...st.streaming, [threadId]: h.inFlight?.text ?? '' } }));
-      api.current.attach(threadId, (partial) => setS((st) => ({ ...st, streaming: { ...st.streaming, [threadId]: partial } })))
+      api.current.attach(threadId, (partial) => setS((st) => ({ ...st, streaming: { ...st.streaming, [threadId]: partial } })), onLiveCard(threadId))
         .then((reply) => setS((st) => { const streaming = { ...st.streaming }; delete streaming[threadId]; return reply ? { ...appendMsg(st, threadId, reply), typing: { ...st.typing, [threadId]: false }, streaming } : { ...st, typing: { ...st.typing, [threadId]: false }, streaming }; }))
-        .catch(() => setS((st) => ({ ...st, typing: { ...st.typing, [threadId]: false } })));
+        .catch(() => setS((st) => ({ ...st, typing: { ...st.typing, [threadId]: false } })))
+        .finally(() => { loadThreadCards(threadId, true).catch(() => {}); });
     }
-  }, [loadThreadInbox]);
+  }, [loadThreadInbox, loadThreadCards, onLiveCard]);
 
   /** 收件箱变了：对话里的卡也重读。新出现的待处理在哪些对话、哪些对话里还有没办完的、正看着的那个。 */
   const refreshThreadInboxes = useCallback((pending?: InboxItem[]) => {
@@ -688,6 +725,18 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
     return () => clearInterval(h);
   }, [s.connected, reload]);
 
+  // 看着的对话里有还在问的转交、还在做的任务：每 6 秒重读一次卡片（回复进行中不用，流里会来；app 在后台不读）
+  const activeCardsBusy = !!(s.activeThread && s.cardsByThread[s.activeThread]?.cards.some(cardBusy));
+  useEffect(() => {
+    const tid = s.activeThread;
+    if (!s.connected || !tid || !activeCardsBusy) return undefined;
+    const h = setInterval(() => {
+      if (AppState.currentState !== 'active' || latest.current.typing[tid]) return;
+      loadThreadCards(tid).catch(() => {});
+    }, CARD_POLL_MS);
+    return () => clearInterval(h);
+  }, [s.connected, s.activeThread, activeCardsBusy, loadThreadCards]);
+
   const send = useCallback((threadId: string, text: string, files?: PendingFile[], opts?: { inboxId?: string }) => {
     const pending = files?.map((f, i) => ({ id: `local${i}`, name: f.name, mime: f.mime, size: f.size, kind: kindOf(f.name, f.mime), url: f.uri }));
     // '（见附件）' 是占位标记，和服务端 chat.py 一致，ChatView 按原文比较后隐藏：不翻译。
@@ -701,9 +750,11 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
       return item ? settle(next, { ...item, status: 'revising', note: text, decidedAt: new Date().toISOString() }) : next;
     });
     const swapId = (userId: string) => setS((st) => ({ ...st, threads: { ...st.threads, [threadId]: (st.threads[threadId] ?? []).map((m) => (m.id === mine.id ? { ...m, id: userId } : m)) } }));
-    api.current.send(threadId, text, modelId, (partial) => setS((st) => ({ ...st, streaming: { ...st.streaming, [threadId]: partial } })), swapId, files, opts?.inboxId ? { inboxId: opts.inboxId } : undefined)
+    api.current.send(threadId, text, modelId, (partial) => setS((st) => ({ ...st, streaming: { ...st.streaming, [threadId]: partial } })), swapId, files,
+      { ...(opts?.inboxId ? { inboxId: opts.inboxId } : {}), onCard: onLiveCard(threadId) })
       .catch((e: unknown): Message => ({ id: id('r'), role: 'grava', time: timeNow(), modelId, body: { type: 'text', text: L('（这条没发出去。）', "(This message wasn't sent.)") }, error: errText(e) }))
-      .then((reply) => { reload('feed'); loadThreadInbox(threadId).catch(() => {}); return reply; })  // 可能刚写了一张建议卡、提了一件要你点头的事
+      // 可能刚写了一张建议卡、提了一件要你点头的事、转给了某个 Agent、派了任务
+      .then((reply) => { reload('feed'); loadThreadInbox(threadId).catch(() => {}); loadThreadCards(threadId, true).catch(() => {}); return reply; })
       .then((reply) => setS((st) => {
         const streaming = { ...st.streaming }; delete streaming[threadId];
         return {
@@ -714,7 +765,7 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
           sideChats: st.sideChats.map((c) => (c.id === threadId ? { ...c, lastLine: reply.body.text, updatedAt: Date.now() } : c)),
         };
       }));
-  }, [reload, loadThreadInbox]);
+  }, [reload, loadThreadInbox, loadThreadCards, onLiveCard]);
 
   // 调试用：开发服务器（npm run web）里 ?say=你好 会在连上后自动往主对话发一条（真的发给 agent），方便截图流式输出。
   // 生产构建不认它：否则别人发一个带 ?say= 的链接，点开就等于替你给 agent 下指令。
@@ -724,6 +775,12 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
     const text = new URLSearchParams(window.location.search).get('say');
     if (text) { said.current = true; timers.current.push(setTimeout(() => send('main', text), 300)); }
   }, [s.connected, send]);
+
+  /** 这个任务的卡在哪个对话里（对话里读到过的；没读到过就用任务页记的派发者）。 */
+  const cardThread = (tid: string): string | undefined => {
+    const st = latest.current;
+    return Object.entries(st.cardsByThread).find(([, c]) => c.cards.some((x) => x.id === tid))?.[0] ?? st.tasks.find((x) => x.id === tid)?.origin;
+  };
 
   const actions: Actions = useMemo(() => ({
     refreshLive,
@@ -832,13 +889,17 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
     },
     cancelTask: async (tid) => {
       await dataApi.cancelTask(tid);
+      const where = cardThread(tid);
+      if (where) loadThreadCards(where).catch(() => {});
       await reload('tasks', 'activity');
     },
     reviseTask: async (tid, note) => {
       await dataApi.reviseTask(tid, note);
+      const where = cardThread(tid);  // 对话里那张任务卡变成下一轮
+      if (where) loadThreadCards(where).catch(() => {});
       await reload('tasks', 'activity');
     },
-  }), [refreshLive, reload, syncHealthNow, send, refreshThread, decide, markFeedSeen, markRead, setActiveThread]);
+  }), [refreshLive, reload, syncHealthNow, send, refreshThread, decide, markFeedSeen, markRead, setActiveThread, loadThreadCards]);
 
   const value = useMemo(() => ({ ...s, ...actions }), [s, actions]);
   return <Ctx.Provider value={value}>{children}</Ctx.Provider>;

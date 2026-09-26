@@ -21,7 +21,7 @@ type Tab = 'chat' | 'board' | 'memory';
 export function GroupScreen() {
   const t = useTheme();
   const nav = useNavigation<any>();
-  const { id, tab: initialTab, at, quote } = useRoute<any>().params as { id: string; tab?: Tab; at?: number; quote?: ChatQuote };
+  const { id, tab: initialTab, at, quote, focus } = useRoute<any>().params as { id: string; tab?: Tab; at?: number; quote?: ChatQuote; focus?: string };
   const { groups, threadModel, setThreadModel, live, liveErrors, liveLoading, connected, booting, applications, refreshBoards, reload } = useStore();
   const g = groups.find((x) => x.id === id);
   const [tab, setTab] = useState<Tab>(initialTab ?? 'chat');
@@ -49,7 +49,7 @@ export function GroupScreen() {
       <View style={{ paddingHorizontal: space.lg, paddingVertical: space.sm }}>
         <Segmented value={tab} onChange={setTab} options={[{ value: 'chat', label: L('对话', 'Chat') }, { value: 'board', label: L('看板', 'Dashboard') }, { value: 'memory', label: L('记忆', 'Memory') }]} />
       </View>
-      {tab === 'chat' ? <ChatView threadId={g.id} quote={quote} quoteAt={quote ? at ?? 0 : 0} placeholder={L(`在「${g.name}」里说`, `Message "${g.name}"`)} empty={g.purpose ? L(`这个 Agent 负责：${g.purpose}`, `This agent handles: ${g.purpose}`) : undefined} /> : (
+      {tab === 'chat' ? <ChatView threadId={g.id} quote={quote} quoteAt={quote ? at ?? 0 : 0} focus={focus} focusAt={focus ? at ?? 0 : 0} placeholder={L(`在「${g.name}」里说`, `Message "${g.name}"`)} empty={g.purpose ? L(`这个 Agent 负责：${g.purpose}`, `This agent handles: ${g.purpose}`) : undefined} /> : (
         <ScrollView contentContainerStyle={{ padding: space.lg, paddingTop: 0, paddingBottom: space.xxl }}
           refreshControl={<PullRefresh onRefresh={tab === 'board' ? refreshBoards : () => reload('memories', 'journal')} />}>
           {tab === 'board' ? (

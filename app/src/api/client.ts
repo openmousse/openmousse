@@ -2,21 +2,22 @@
 // - HttpApi：真实对话。走 server/chat.py，SSE 流式，主对话与 Telegram 共用 main 会话。
 // - OfflineApi：没连上服务器时用，不假装回复。
 import { fetch as expoFetch } from 'expo/fetch';
-import type { Attachment, Message, PendingFile } from '../data/types';
+import type { Attachment, ChatCard, Message, PendingFile } from '../data/types';
 import { L } from '../i18n';
 import { authHeaders, fileUrl, getBase } from './base';
 
 export interface GravaApi {
   readonly connected: boolean;
   /** 发一条消息，拿回 Grava 的回复。threadId 为 'main'、groupId 或独立空间 id。onDelta 在流式输出时逐段回调。
-   *  extra.inboxId：这条是对收件箱里某件事的修改意见（从「去对话里说」带过来的引用），老服务器不认、忽略。 */
-  send(threadId: string, text: string, modelId: string, onDelta?: (partial: string) => void, onStart?: (userId: string) => void, files?: PendingFile[], extra?: { inboxId?: string }): Promise<Message>;
+   *  extra.inboxId：这条是对收件箱里某件事的修改意见（从「去对话里说」带过来的引用），老服务器不认、忽略。
+   *  extra.onCard：回复进行中出的转交卡、任务卡（SSE 的 card 事件；同一张卡状态变了会再来一次）。 */
+  send(threadId: string, text: string, modelId: string, onDelta?: (partial: string) => void, onStart?: (userId: string) => void, files?: PendingFile[], extra?: SendExtra): Promise<Message>;
   /** 语音输入：录音传上去，拿回文字。 */
   transcribe(file: PendingFile): Promise<string>;
   /** 读线程的历史记录（真实接入后从服务器取）。inFlight 表示服务端还在回上一条。 */
   history(threadId: string, day?: string): Promise<{ messages: Message[]; modelId: string; inFlight?: { text: string; modelId: string } | null } | null>;
-  /** 重新接上服务端正在进行的回复。没有的话返回 null。 */
-  attach(threadId: string, onDelta?: (partial: string) => void): Promise<Message | null>;
+  /** 重新接上服务端正在进行的回复（这次回复里已经出的卡会补发给 onCard）。没有的话返回 null。 */
+  attach(threadId: string, onDelta?: (partial: string) => void, onCard?: (card: ChatCard) => void): Promise<Message | null>;
   /** 记住这个线程默认用哪个模型。 */
   setModel(threadId: string, modelId: string): Promise<void>;
   /** 只从对话记录里删掉这一条，Grava 的上下文不变。 */
@@ -24,6 +25,8 @@ export interface GravaApi {
   /** 会话退回到这条用户消息之前（它和之后的都去掉，Grava 也忘掉），返回原文。 */
   rewind(threadId: string, msgId: string): Promise<string>;
 }
+
+export interface SendExtra { inboxId?: string; onCard?: (card: ChatCard) => void }
 
 const now = () => {
   const d = new Date();
@@ -64,7 +67,7 @@ async function readSse(body: ReadableStream<Uint8Array>, onEvent: (event: string
   }
 }
 
-async function consume(r: Response, onDelta?: (partial: string) => void, onStart?: (userId: string) => void): Promise<Message> {
+async function consume(r: Response, onDelta?: (partial: string) => void, onStart?: (userId: string) => void, onCard?: (card: ChatCard) => void): Promise<Message> {
   if (!r.ok) {
     const j = await r.json().catch(() => ({}));
     throw new Error(j.detail ?? j.error ?? `HTTP ${r.status}`);
@@ -76,6 +79,7 @@ async function consume(r: Response, onDelta?: (partial: string) => void, onStart
     if (event === 'start') onStart?.(data.userId);
     else if (event === 'delta') { partial += data.text; onDelta?.(partial); }
     else if (event === 'done') done = data;
+    else if (event === 'card' && data && (data.kind === 'handoff' || data.kind === 'task')) onCard?.(data as ChatCard);
   });
   if (!done) throw new Error(L('流中断', 'Reply stream cut off'));
   return { id: done.id, role: 'grava', time: done.time, modelId: done.modelId, fallbackFrom: done.fallbackFrom ?? undefined, body: { type: 'text', text: done.text }, error: done.status === 'error' ? done.error : undefined };
@@ -120,7 +124,7 @@ const withBase = (m: any): Attachment[] | undefined => (m.attachments ? (m.attac
 
 export class HttpApi implements GravaApi {
   readonly connected = true;
-  async send(threadId: string, text: string, modelId: string, onDelta?: (partial: string) => void, onStart?: (userId: string) => void, files?: PendingFile[], extra?: { inboxId?: string }): Promise<Message> {
+  async send(threadId: string, text: string, modelId: string, onDelta?: (partial: string) => void, onStart?: (userId: string) => void, files?: PendingFile[], extra?: SendExtra): Promise<Message> {
     const attachments = files?.length ? (await uploadFiles(threadId, files)).map((a) => a.id) : [];
     const r = await expoFetch(`${getBase()}/api/chat/send`, {
       method: 'POST', headers: { 'Content-Type': 'application/json', Accept: 'text/event-stream', ...authHeaders() },
@@ -133,11 +137,11 @@ export class HttpApi implements GravaApi {
     let userId: string | null = null;
     const started = (id: string) => { userId = id; onStart?.(id); };
     try {
-      return await consume(r as unknown as Response, onDelta, started);
+      return await consume(r as unknown as Response, onDelta, started, extra?.onCard);
     } catch (e) {
       // 流断了（切后台、锁屏、5G/Wi-Fi 切换）：服务端照样跑完。先重新接上（15 分钟内回完的也接得上）；
       // 再不行就去历史记录里找这条之后的回复。只有都找不到才算真的没发出去。
-      const again = await this.attach(threadId, onDelta).catch(() => null);
+      const again = await this.attach(threadId, onDelta, extra?.onCard).catch(() => null);
       if (again) return again;
       const h = await this.history(threadId).catch(() => null);
       const msgs = h?.messages ?? [];
@@ -147,10 +151,10 @@ export class HttpApi implements GravaApi {
       throw e;
     }
   }
-  async attach(threadId: string, onDelta?: (partial: string) => void): Promise<Message | null> {
+  async attach(threadId: string, onDelta?: (partial: string) => void, onCard?: (card: ChatCard) => void): Promise<Message | null> {
     const r = await expoFetch(`${getBase()}/api/chat/stream?thread=${encodeURIComponent(threadId)}`, { headers: { Accept: 'text/event-stream', ...authHeaders() } });
     if (r.status === 204) return null;
-    return consume(r as unknown as Response, onDelta);
+    return consume(r as unknown as Response, onDelta, undefined, onCard);
   }
   async history(threadId: string, day?: string) {
     const r = await expoFetch(`${getBase()}/api/chat/history?thread=${encodeURIComponent(threadId)}${day ? `&day=${day}` : ''}`, { headers: { Accept: 'application/json', ...authHeaders() } });

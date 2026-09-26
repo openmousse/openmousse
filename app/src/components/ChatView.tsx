@@ -8,7 +8,7 @@ import * as DocumentPicker from 'expo-document-picker';
 import * as ImagePicker from 'expo-image-picker';
 import { AudioModule, RecordingPresets, setAudioModeAsync, useAudioRecorder, useAudioRecorderState } from 'expo-audio';
 import { ArrowUp, Camera, Copy, FileAudio, FileText, Film, ImageIcon, Inbox, Mic, Paperclip, Pencil, Square, Trash2, Undo2, X } from './icons';
-import type { Attachment, InboxItem, Message, PendingFile } from '../data/types';
+import type { Attachment, ChatCard, HandoffCard, InboxItem, Message, PendingFile, TaskCardInfo } from '../data/types';
 import { L } from '../i18n';
 import type { ChatQuote } from '../navigation';
 import { useStore } from '../store';
@@ -20,6 +20,7 @@ import { useSheet } from './Sheet';
 import { PullRefresh, T } from './ui';
 import { Markdown } from './Markdown';
 import { InboxCard } from './InboxCard';
+import { HandoffChip, HandoffFrom, TaskCardView, modelLabel } from './ChatCards';
 
 // 没发出去的草稿按线程记着：切到看板、换线程、离开页面再回来还在（只在内存里，退出 app 就没了）。
 const drafts = new Map<string, string>();
@@ -61,6 +62,37 @@ function placeInbox(items: InboxItem[], msgs: Message[]): Map<number, InboxItem[
 function ChatInbox({ items }: { items?: InboxItem[] }) {
   if (!items?.length) return null;
   return <>{items.map((it) => <View key={it.id} style={{ paddingLeft: 36 }}><InboxCard item={it} variant="chat" /></View>)}</>;
+}
+
+/**
+ * 转交卡、任务卡放在哪：挂在 db<messageId> 那条回复上（转交卡在回复文字上面，是先问的；任务卡在下面，是回复里说的那件事）。
+ * 还没挂上的（那条回复还在进行）：正在回复就放进进行中的那一块（live），否则按时间排进去（放在比它早的最后一条消息下面）。
+ */
+function placeCards(cards: ChatCard[], msgs: Message[], busy: boolean) {
+  const index = new Map(msgs.map((m, i) => [m.id, i]));
+  const above = new Map<number, HandoffCard[]>();
+  const below = new Map<number, TaskCardInfo[]>();
+  const live: ChatCard[] = [];
+  const start = logicalDayStart();
+  const lastUser = [...msgs].reverse().find((m) => m.role === 'user');
+  const add = <V,>(map: Map<number, V[]>, at: number, v: V) => map.set(at, [...(map.get(at) ?? []), v]);
+  for (const c of cards) {
+    const at = c.messageId != null ? index.get(`db${c.messageId}`) : undefined;
+    if (at !== undefined) { if (c.kind === 'handoff') add(above, at, c); else add(below, at, c); continue; }
+    const ms = Date.parse(c.createdAt ?? '');
+    const minute = !Number.isNaN(ms) && ms >= start ? dayMinute(new Date(ms).toTimeString().slice(0, 5)) : -1;
+    if (busy && (!lastUser || !/^\d{1,2}:\d{2}$/.test(lastUser.time) || minute >= dayMinute(lastUser.time))) { live.push(c); continue; }
+    let slot = -1;
+    msgs.forEach((m, i) => { if (/^\d{1,2}:\d{2}$/.test(m.time) && minute >= 0 && dayMinute(m.time) <= minute) slot = i; });
+    add(below, slot, c as TaskCardInfo);
+  }
+  return { above, below, live };
+}
+
+/** 回复下面的任务卡（和转交卡一样让出头像那一列；转交卡如果按时间排到这里，也走这里）。 */
+function ChatTasks({ cards, onRevise }: { cards?: ChatCard[]; onRevise: (c: TaskCardInfo) => void }) {
+  if (!cards?.length) return null;
+  return <>{cards.map((c) => <View key={c.id} style={{ paddingLeft: 36 }}>{c.kind === 'task' ? <TaskCardView card={c} onRevise={onRevise} /> : <HandoffChip card={c} />}</View>)}</>;
 }
 
 // 上限对齐主流 LLM 产品（服务端 files.py 同样的数）：一条消息 10 个附件，每个 30 MB，类型不限。
@@ -130,7 +162,15 @@ function AttachmentList({ items, mine }: { items: Attachment[]; mine: boolean })
   );
 }
 
-export function Bubble({ m, showAvatar, onLongPress }: { m: Message; showAvatar: boolean; onLongPress?: () => void }) {
+export function Bubble({ m, showAvatar, onLongPress, before, from, highlight }: {
+  m: Message; showAvatar: boolean; onLongPress?: () => void;
+  /** 回复文字上面的东西（这条回复里转出去的转交卡） */
+  before?: React.ReactNode;
+  /** 「主对话转来」这一条对应的转交记录（点一下回去） */
+  from?: HandoffCard;
+  /** 从别处点过来定位到这一条：闪一下金边 */
+  highlight?: boolean;
+}) {
   const t = useTheme();
   const { avatar } = useStore();
   const att = m.body.attachments ?? [];
@@ -145,9 +185,11 @@ export function Bubble({ m, showAvatar, onLongPress }: { m: Message; showAvatar:
         </View>
       );
     }
+    // 【主对话转来】：别的对话（一般是主对话）把问题转给了这个 Agent。点一下回到转交它的那条回复。
+    if (text.startsWith('【主对话转来】')) return <HandoffFrom question={text.replace(/^【主对话转来】\s*/, '')} time={m.time} card={from} highlight={highlight} />;
     return (
       <View style={{ alignItems: 'center', paddingVertical: 2 }}>
-        <T v="caption" color={t.ink3} style={{ textAlign: 'center' }}>{text.startsWith('【主对话转来】') ? L('↪ 主对话转来：', '↪ From main chat: ') : '⚙ '}{text.replace(/^【(自动触发|主对话转来)】/, '')} · {m.time}</T>
+        <T v="caption" color={t.ink3} style={{ textAlign: 'center' }}>⚙ {text.replace(/^【自动触发】/, '')} · {m.time}</T>
       </View>
     );
   }
@@ -166,8 +208,9 @@ export function Bubble({ m, showAvatar, onLongPress }: { m: Message; showAvatar:
   }
   return (
     <Pressable onLongPress={onLongPress} delayLongPress={350} style={{ flexDirection: 'row', gap: space.sm }}>
-      <View style={{ width: 28 }}>{showAvatar ? <LensAvatar size={28} config={avatar} /> : null}</View>
+      <View style={{ width: 28 }}>{showAvatar || before ? <LensAvatar size={28} config={avatar} /> : null}</View>
       <View style={{ flex: 1 }}>
+        {before ? <View style={{ gap: 8, marginBottom: 8 }}>{before}</View> : null}
         <Markdown text={m.body.text} />
         {att.length ? <View style={{ marginTop: 6 }}><AttachmentList items={att} mine={false} /></View> : null}
         <ModelTag m={m} />
@@ -213,18 +256,30 @@ async function pickMedia(camera: boolean): Promise<PendingFile[]> {
   });
 }
 
-export function ChatView({ threadId, placeholder, empty, quote: quoteProp, quoteAt = 0 }: {
+export function ChatView({ threadId, placeholder, empty, quote: quoteProp, quoteAt = 0, focus, focusAt = 0 }: {
   threadId: string; placeholder: string; empty?: string;
   /** 从收件箱「去对话里说」带过来的那件事；quoteAt 是那次跳转的时间（同一个对话再带一次也认得出） */
   quote?: ChatQuote; quoteAt?: number;
+  /** 从转交卡点过来：滚到这条消息（"db<id>"）闪一下；focusAt 是那次跳转的时间 */
+  focus?: string; focusAt?: number;
 }) {
   const t = useTheme();
-  const { threads, typing, send, avatar, streaming, connected, booting, deleteMessage, rewindMessage, transcribe, refreshThread, sharedChannels, inboxByThread } = useStore();
+  const { threads, typing, send, avatar, streaming, connected, booting, deleteMessage, rewindMessage, transcribe, refreshThread, sharedChannels, inboxByThread, cardsByThread, liveCards, reviseTask } = useStore();
   const sheet = useSheet();
   const msgs = threads[threadId] ?? [];
   // 这个对话里的收件箱卡片：跟在提它的那条消息下面（处理过的显示成回执）
   const slots = placeInbox(inboxByThread[threadId] ?? [], msgs);
   const inboxCount = inboxByThread[threadId]?.length ?? 0;
+  // 转交卡、任务卡：服务器记的，加上进行中的回复里刚出的（同一张卡以新的为准，挂在哪条回复下面以服务器的为准）
+  const liveHere = liveCards[threadId] ?? {};
+  const serverCards = cardsByThread[threadId]?.cards ?? [];
+  const allCards: ChatCard[] = [
+    ...serverCards.map((c) => (liveHere[c.id] ? ({ ...c, ...liveHere[c.id], messageId: c.messageId ?? liveHere[c.id].messageId } as ChatCard) : c)),
+    ...Object.values(liveHere).filter((c) => !serverCards.some((x) => x.id === c.id)),
+  ];
+  const incoming = cardsByThread[threadId]?.incoming ?? [];
+  const cardCount = allCards.length;
+  const cardState = allCards.map((c) => `${c.id}:${c.status}:${c.kind === 'task' ? `${c.round}${c.roundStatus}` : ''}`).join(',');
   // 引用：跳转带来的新引用替换旧的；发出去或点 × 就没了
   const [quote, setQuote] = useState<ChatQuote | null>(() => quoteProp ?? quotes.get(threadId) ?? null);
   const [quoteSeen, setQuoteSeen] = useState(quoteAt);
@@ -252,6 +307,12 @@ export function ChatView({ threadId, placeholder, empty, quote: quoteProp, quote
   const list = useRef({ y: 0, content: 0, height: 0 });
   const nav = useNavigation<any>();
   const busy = !!typing[threadId];
+  const placed = placeCards(allCards, msgs, busy);
+  const liveHandoffs = placed.live.filter((c): c is HandoffCard => c.kind === 'handoff');
+  const liveTasks = placed.live.filter((c): c is TaskCardInfo => c.kind === 'task');
+  // 每条消息在列表里的位置（定位到某一条用）；从转交卡点过来的那一条闪一下
+  const ys = useRef<Record<string, number>>({});
+  const [flash, setFlash] = useState<string | null>(null);
   const recorder = useAudioRecorder(SPEECH_PRESET);
   const rec = useAudioRecorderState(recorder, 250);
   const canRecord = Platform.OS !== 'web';
@@ -262,7 +323,21 @@ export function ChatView({ threadId, placeholder, empty, quote: quoteProp, quote
       list.current.y = Math.max(0, list.current.content - list.current.height);  // 滚动事件回来之前先按目标位置算
     }, 60);
     return () => clearTimeout(h);
-  }, [msgs.length, busy, partial?.length, inboxCount]);
+  }, [msgs.length, busy, partial?.length, inboxCount, cardCount, cardState]);
+
+  // 从转交卡 / 「主对话转来」点过来：等列表排好（上面那个滚到底之后）再滚到那一条，闪一下金边
+  useEffect(() => {
+    if (!focus || !focusAt) return undefined;
+    const go = setTimeout(() => {
+      const y = ys.current[focus];
+      if (y == null) return;
+      scroller.current?.scrollTo({ y: Math.max(0, y - 24), animated: true });
+      list.current.y = Math.max(0, y - 24);
+      setFlash(focus);
+    }, 450);
+    const off = setTimeout(() => setFlash(null), 2600);
+    return () => { clearTimeout(go); clearTimeout(off); };
+  }, [focus, focusAt, msgs.length]);
 
   useEffect(() => {
     if (draft) drafts.set(threadId, draft);
@@ -316,12 +391,28 @@ export function ChatView({ threadId, placeholder, empty, quote: quoteProp, quote
 
   const submit = () => {
     const text = draft.trim();
+    // 改一下任务：意见直接交给做这件事的子会话（不进这个对话），任务卡变成下一轮
+    if (quote?.taskId) {
+      if (!text || transcribing) return;
+      if (pending.length) { Alert.alert(L('改一下不能带附件', "Revisions can't carry attachments"), L('把要改的写成文字发给它。', 'Say what to change in words.')); return; }
+      reviseTask(quote.taskId, text).catch(fail);
+      setDraft('');
+      setQuote(null);
+      return;
+    }
     if ((!text && !pending.length) || busy || transcribing) return;
     // 带着引用：这条是对收件箱里那件事的修改意见（服务器收到 inboxId 会把它退回去改）
-    send(threadId, text, pending.length ? pending : undefined, quote ? { inboxId: quote.inboxId } : undefined);
+    send(threadId, text, pending.length ? pending : undefined, quote?.inboxId ? { inboxId: quote.inboxId } : undefined);
     setDraft('');
     setPending([]);
     setQuote(null);
+  };
+
+  // 任务卡上点「改一下」/「接着做」：输入框上面带「改：标题」，光标放进去；接着做的先填一句
+  const reviseCard = (c: TaskCardInfo) => {
+    setQuote({ taskId: c.id, title: c.title, model: c.modelId });
+    if (c.timedOut && !draft.trim()) setDraft(L('接着做完，从停下的地方继续', 'Keep going from where you stopped'));
+    setTimeout(() => input.current?.focus(), 250);
   };
 
   const startRecording = async () => {
@@ -372,7 +463,8 @@ export function ChatView({ threadId, placeholder, empty, quote: quoteProp, quote
     });
   };
 
-  const canSend = (!!draft.trim() || pending.length > 0) && !busy && !transcribing;
+  // 改一下任务不经过这个对话：这边正在回复也能发
+  const canSend = quote?.taskId ? !!draft.trim() && !transcribing : (!!draft.trim() || pending.length > 0) && !busy && !transcribing;
   // 手机上回车键是「发送」，发完键盘留着接着打（submitBehavior）。网页的多行输入框不认 submitBehavior，
   // 自己接 Enter：发送、不丢焦点；Shift+Enter 换行；输入法选字时按的 Enter 不算。
   const webEnter = Platform.OS === 'web' ? (e: NativeSyntheticEvent<TextInputKeyPressEventData>) => {
@@ -405,25 +497,44 @@ export function ChatView({ threadId, placeholder, empty, quote: quoteProp, quote
           </View>
         ) : null}
         <ChatInbox items={slots.get(-1)} />
-        {msgs.map((m, i) => (
-          <React.Fragment key={m.id}>
-            <Bubble m={m} showAvatar={m.role === 'grava' && msgs[i - 1]?.role !== 'grava'} onLongPress={() => openActions(m)} />
-            <ChatInbox items={slots.get(i)} />
-          </React.Fragment>
-        ))}
+        <ChatTasks cards={placed.below.get(-1)} onRevise={reviseCard} />
+        {msgs.map((m, i) => {
+          const above = placed.above.get(i);
+          return (
+            <React.Fragment key={m.id}>
+              <View onLayout={(e) => { ys.current[m.id] = e.nativeEvent.layout.y; }}>
+                <Bubble m={m} showAvatar={m.role === 'grava' && msgs[i - 1]?.role !== 'grava'} onLongPress={() => openActions(m)}
+                  before={above?.length ? above.map((c) => <HandoffChip key={c.id} card={c} />) : undefined}
+                  from={m.role === 'auto' ? incoming.find((h) => h.relayId === m.id) : undefined} highlight={flash === m.id} />
+              </View>
+              <ChatTasks cards={placed.below.get(i)} onRevise={reviseCard} />
+              <ChatInbox items={slots.get(i)} />
+            </React.Fragment>
+          );
+        })}
         {busy ? (
-          <View style={{ flexDirection: 'row', gap: space.sm, alignItems: partial ? 'flex-start' : 'center' }}>
+          <View style={{ flexDirection: 'row', gap: space.sm, alignItems: partial || liveHandoffs.length ? 'flex-start' : 'center' }}>
             <LensAvatar size={28} config={avatar} />
-            {partial ? <View style={{ flex: 1 }}><Markdown text={partial} /></View> : <T v="callout" color={t.ink3}>{L(`发给 ${agentName()} 了，等回复…`, `Sent to ${agentName()}, waiting for a reply…`)}</T>}
+            <View style={{ flex: 1, gap: 8 }}>
+              {/* 这次回复里正在转给 Agent 的：先问，问完它再接着写 */}
+              {liveHandoffs.map((c) => <HandoffChip key={c.id} card={c} />)}
+              {partial ? <Markdown text={partial} />
+                : liveHandoffs.length ? null : <T v="callout" color={t.ink3}>{L(`发给 ${agentName()} 了，等回复…`, `Sent to ${agentName()}, waiting for a reply…`)}</T>}
+            </View>
           </View>
         ) : null}
+        {busy ? <ChatTasks cards={liveTasks} onRevise={reviseCard} /> : null}
       </ScrollView>
       <View style={[styles.composerWrap, { borderTopColor: t.line, backgroundColor: t.bg }]}>
         {quote ? (
           <View style={{ paddingHorizontal: space.md, paddingTop: space.sm }}>
             <View style={[styles.quote, { backgroundColor: t.goldSoft }]}>
-              <Inbox size={14} color={t.gold} />
-              <T v="callout" numberOfLines={1} style={{ flex: 1, fontSize: 13 }}>{L(`回复：${quote.title}`, `Re: ${quote.title}`)}</T>
+              {quote.taskId ? <Pencil size={14} color={t.gold} /> : <Inbox size={14} color={t.gold} />}
+              <T v="callout" numberOfLines={1} style={{ flex: 1, fontSize: 13 }}>
+                {quote.taskId
+                  ? L(`改「${quote.title}」· 直接发给做它的 ${modelLabel(quote.model)}`, `Revise "${quote.title}" · goes straight to ${modelLabel(quote.model)}`)
+                  : L(`回复：${quote.title}`, `Re: ${quote.title}`)}
+              </T>
               <Pressable onPress={() => setQuote(null)} hitSlop={10} accessibilityRole="button" accessibilityLabel={L('不带这条引用', 'Remove the quote')}>
                 <X size={14} color={t.ink3} />
               </Pressable>

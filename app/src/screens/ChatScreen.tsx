@@ -203,6 +203,8 @@ export function ChatScreen() {
   const [open, setOpen] = useState(() => Platform.OS === 'web' && typeof window !== 'undefined' && new URLSearchParams(window.location.search).get('drawer') === '1');
   // 从收件箱「去对话里说」过来：带着那件事的引用（只给跳转过来的那个对话）
   const quote = wanted && wantedAt > sel.at && active === wanted ? (route.params?.quote as ChatQuote | undefined) : undefined;
+  // 点转交卡 / 「主对话转来」过来：滚到那一条闪一下
+  const focus = wanted && wantedAt > sel.at && active === wanted ? (route.params?.focus as string | undefined) : undefined;
   const side = sideChats.find((c) => c.id === active);
   const running = tasks.filter((x) => x.status === '进行中').length;
   // 这个对话在屏幕上：不为它弹小窗，新消息直接算已读
@@ -230,7 +232,7 @@ export function ChatScreen() {
         </Pressable>
         <ModelSwitch value={threadModel[active] ?? threadModel.main} onChange={(id) => setThreadModel(active, id)} />
       </View>
-      <ChatView key={active} threadId={active} quote={quote} quoteAt={quote ? wantedAt : 0} placeholder={side ? L(`跟「${side.title}」说点什么`, `Message "${side.title}"`) : L(`跟 ${agentName()} 说点什么`, `Message ${agentName()}`)}
+      <ChatView key={active} threadId={active} quote={quote} quoteAt={quote ? wantedAt : 0} focus={focus} focusAt={focus ? wantedAt : 0} placeholder={side ? L(`跟「${side.title}」说点什么`, `Message "${side.title}"`) : L(`跟 ${agentName()} 说点什么`, `Message ${agentName()}`)}
         empty={side ? (side.purpose ? L(`这个空间只管：${side.purpose}`, `This side chat is only for: ${side.purpose}`) : L('新空间，说点什么开始吧。', 'New side chat. Say something to start.')) : L('主对话和 Telegram 共用同一个会话，这里还没有 app 发出的消息。', 'The main chat shares one session with Telegram. No messages from the app here yet.')} />
       {open ? <Drawer active={active} onPick={setActive} onClose={() => setOpen(false)} /> : null}
     </Screen>
