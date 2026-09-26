@@ -50,6 +50,9 @@ from unread import router as unread_router  # noqa: E402
 from schedule import router as schedule_router  # noqa: E402
 from boards import router as boards_router  # noqa: E402
 from projects import router as projects_router  # noqa: E402 — 顺带把 kind=project 的收件箱钩子挂上
+import alerts  # noqa: E402
+from alerts import router as alerts_router  # noqa: E402
+from packs import router as packs_router  # noqa: E402
 
 DIST = settings.dist
 settings.db.parent.mkdir(parents=True, exist_ok=True)  # 新实例第一次启动：数据目录还不存在
@@ -82,6 +85,7 @@ def xunji_name() -> str:
 @asynccontextmanager
 async def lifespan(_app: FastAPI):
     cards.start()  # 盯 OpenClaw 的任务台账：后台任务做完了静默推一条
+    alerts.start()  # Agent 的提醒：到点查表，有东西就推
     yield
 
 
@@ -96,6 +100,8 @@ app.include_router(study_router)
 app.include_router(inbox_router)
 app.include_router(unread_router)
 app.include_router(schedule_router)  # 含 /cal/<令牌>.ics（在网页版的静态文件之前注册）
+app.include_router(alerts_router)  # 在 boards 之前：/api/alerts/… 和看板的路由互不相干，放前面只是好找
+app.include_router(packs_router)
 app.include_router(boards_router)
 app.include_router(projects_router)
 app.add_exception_handler(sources.NoSource, sources.no_source_handler)

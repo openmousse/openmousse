@@ -19,7 +19,7 @@ import re
 import sqlite3
 import uuid
 from datetime import date, datetime, timedelta
-from typing import Any
+from typing import Any, Awaitable, Callable
 
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
@@ -27,6 +27,7 @@ from pydantic import BaseModel
 import data
 import inbox
 from chat import TZ, _lock, db, log_activity, now_iso
+from config import settings
 from i18n import L, lang
 
 router = APIRouter()
@@ -53,23 +54,45 @@ ANCHORS = {
     "apply": ("apply.list",),
     "masters": ("masters.list",),
 }
+# 内置小节本身也是看板上的一块（type builtin，id 就是上面的名字）：用户能挪、能藏，不能删、不能改内容（内容是 app 画的）。
+# 配置里写成 {"id": "diet.week", "type": "builtin", "hidden": true}，它们之间的先后就是小节的顺序；没写到的按默认位置补上。
+# 挂在某一节后面的积木（after）跟着那一节走。标题只给改动记录、「藏起来的」和 board_ctl show 用，app 画小节用它自己的。
+SECTION_TITLES = {
+    "fitness.now": ("现在", "Now"), "fitness.body": ("身体状态", "Body"), "fitness.week": ("这周", "This week"), "fitness.long": ("长期", "Long term"),
+    "diet.today": ("今天到哪了", "Today so far"), "diet.next": ("下一餐", "Next meal"), "diet.eaten": ("今天吃了", "Eaten today"),
+    "diet.week": ("这周", "This week"), "diet.shopping": ("要买", "To buy"),
+    "health.sleep": ("昨晚睡得怎么样", "How you slept"), "health.recovery": ("恢复与睡眠", "Recovery and sleep"),
+    "apply.list": ("求职申请", "Job applications"), "masters.list": ("申请学校", "School applications"),
+}
 CURRENCY = {"GBP": "£", "USD": "$", "EUR": "€", "CNY": "¥", "JPY": "¥", "HKD": "HK$"}
+
+
+SCHEMA = """
+    CREATE TABLE IF NOT EXISTS collections (agent TEXT NOT NULL, name TEXT NOT NULL, title TEXT NOT NULL, fields TEXT NOT NULL,
+        status TEXT NOT NULL DEFAULT 'active', created_at TEXT NOT NULL, updated_at TEXT NOT NULL, PRIMARY KEY(agent, name));
+    CREATE TABLE IF NOT EXISTS records (id TEXT PRIMARY KEY, agent TEXT NOT NULL, collection TEXT NOT NULL, data TEXT NOT NULL,
+        source TEXT NOT NULL DEFAULT 'agent', created_at TEXT NOT NULL, updated_at TEXT NOT NULL, deleted_at TEXT);
+    CREATE INDEX IF NOT EXISTS records_coll ON records(agent, collection, deleted_at);
+    CREATE TABLE IF NOT EXISTS boards (agent TEXT NOT NULL, version INTEGER NOT NULL, blocks TEXT NOT NULL, status TEXT NOT NULL,
+        note TEXT NOT NULL DEFAULT '', by TEXT NOT NULL DEFAULT 'agent', inbox_id TEXT, based_on INTEGER, created_at TEXT NOT NULL,
+        acked_at TEXT, PRIMARY KEY(agent, version));
+    CREATE INDEX IF NOT EXISTS boards_inbox ON boards(inbox_id);
+"""
 
 
 def bdb() -> sqlite3.Connection:
     conn = db()
-    conn.executescript("""
-        CREATE TABLE IF NOT EXISTS collections (agent TEXT NOT NULL, name TEXT NOT NULL, title TEXT NOT NULL, fields TEXT NOT NULL,
-            status TEXT NOT NULL DEFAULT 'active', created_at TEXT NOT NULL, updated_at TEXT NOT NULL, PRIMARY KEY(agent, name));
-        CREATE TABLE IF NOT EXISTS records (id TEXT PRIMARY KEY, agent TEXT NOT NULL, collection TEXT NOT NULL, data TEXT NOT NULL,
-            source TEXT NOT NULL DEFAULT 'agent', created_at TEXT NOT NULL, updated_at TEXT NOT NULL, deleted_at TEXT);
-        CREATE INDEX IF NOT EXISTS records_coll ON records(agent, collection, deleted_at);
-        CREATE TABLE IF NOT EXISTS boards (agent TEXT NOT NULL, version INTEGER NOT NULL, blocks TEXT NOT NULL, status TEXT NOT NULL,
-            note TEXT NOT NULL DEFAULT '', by TEXT NOT NULL DEFAULT 'agent', inbox_id TEXT, based_on INTEGER, created_at TEXT NOT NULL,
-            acked_at TEXT, PRIMARY KEY(agent, version));
-        CREATE INDEX IF NOT EXISTS boards_inbox ON boards(inbox_id);
-    """)
+    conn.executescript(SCHEMA)
+    conn.execute("CREATE TABLE IF NOT EXISTS board_plans (inbox_id TEXT PRIMARY KEY, plan TEXT NOT NULL, created_at TEXT NOT NULL)")
+    global _migrated
+    if not _migrated:  # 第三批加的 meta 列（提案带着的功能包安装信息）：早先建的表补上，只查一次
+        if "meta" not in {r[1] for r in conn.execute("PRAGMA table_info(boards)")}:
+            conn.execute("ALTER TABLE boards ADD COLUMN meta TEXT")
+        _migrated = True
     return conn
+
+
+_migrated = False
 
 
 def bad(zh: str, en: str, code: int = 400) -> HTTPException:
@@ -88,6 +111,47 @@ def group_row(agent: str) -> sqlite3.Row:
 
 def anchors_of(dashboard: str | None) -> tuple[str, ...]:
     return ("top", *ANCHORS.get(dashboard or "", ()))
+
+
+def section_title(sid: str) -> str:
+    zh, en = SECTION_TITLES.get(sid, (sid, sid))
+    return L(zh, en)
+
+
+def is_builtin(b: Any) -> bool:
+    return isinstance(b, dict) and b.get("type") == "builtin"
+
+
+def sections_of(blocks: list[dict], dashboard: str | None) -> list[dict]:
+    """内置小节按显示顺序：配置里写了的按写的先后，没写到的插回默认位置（跟在默认顺序里它前面那一节后面）。"""
+    default = list(ANCHORS.get(dashboard or "", ()))
+    stored = [b for b in blocks if is_builtin(b) and b.get("id") in default]
+    order: list[str] = []
+    for b in stored:
+        if b["id"] not in order:
+            order.append(b["id"])
+    hidden = {b["id"] for b in stored if b.get("hidden")}
+    for i, sid in enumerate(default):
+        if sid in order:
+            continue
+        before = [x for x in default[:i] if x in order]
+        order.insert(order.index(before[-1]) + 1 if before else 0, sid)
+    return [{"id": sid, "title": section_title(sid), "hidden": sid in hidden} for sid in order]
+
+
+def custom_blocks(blocks: list[dict]) -> list[dict]:
+    return [b for b in blocks if not is_builtin(b)]
+
+
+def with_sections(conn: sqlite3.Connection, agent: str, blocks: list, sections: list | None) -> list:
+    """交上来的配置里内置小节怎么排：给了 sections（[{id, hidden}]）就按它；blocks 里自己带了 builtin 就用那些；都没有（Agent 只管自己的积木、
+    老版本 app）就沿用现在这一版的，免得 Agent 加一块就把用户挪过、藏过的小节冲回默认。"""
+    if sections is not None:
+        return [b for b in blocks if not is_builtin(b)] + [
+            {"id": str(s.get("id")), "type": "builtin", **({"hidden": True} if s.get("hidden") else {})} for s in sections if isinstance(s, dict)]
+    if any(is_builtin(b) for b in blocks):
+        return blocks
+    return blocks + [b for b in blocks_of(live_row(conn, agent)) if is_builtin(b)]
 
 
 def coll_json(r: sqlite3.Row, count: int | None = None) -> dict:
@@ -131,7 +195,7 @@ def virtual(conn: sqlite3.Connection, name: str) -> tuple[dict, str, list] | Non
             r = None
         if not r:
             raise bad(f"Apple 健康里没有「{metric}」这个指标的数据", f'No Apple Health data for "{metric}"', 404)
-        unit = r["unit"] or None
+        unit = r["unit"] if r["unit"] and r["unit"] != "count" else None  # 步数这类「count」不当单位写出来
         fields = [date_f] + [{"key": k, "label": lab, "type": "number", **({"unit": unit} if unit and k != "count" else {})}
                              for k, lab in (("sum", L("合计", "Total")), ("avg", L("平均", "Average")), ("min", L("最低", "Min")),
                                             ("max", L("最高", "Max")), ("count", L("次数", "Count")))]
@@ -420,6 +484,12 @@ def where_sql(coll: dict, where: Any) -> tuple[str, list]:
         elif op == "contains":
             parts.append(f"instr(lower({expr}), lower(?)) > 0")
             params.append(str(v))
+        elif isinstance(v, dict) and v.get("field"):  # 和同一行的另一个字段比：["qty", "<=", {"field": "min_qty", "default": 0}]
+            rexpr, rf = field_of(coll, str(v["field"]))
+            if v.get("default") is not None:
+                rexpr = f"COALESCE({rexpr}, ?)"
+                params.append(cmp_value(rf, v["default"]))
+            parts.append(f"{expr} {'!=' if op == '!=' else op} {rexpr}")
         else:
             cv = cmp_value(f, v)
             if f["type"] == "datetime" and isinstance(cv, str) and len(cv) == 10:
@@ -604,6 +674,11 @@ def clean_block(conn: sqlite3.Connection, agent: str, raw: Any, anchors: tuple[s
     if not isinstance(raw, dict):
         raise bad("每一块写成 {id, type, title, …}", "Each block is {id, type, title, …}")
     bid, typ = str(raw.get("id") or "").strip(), str(raw.get("type") or "").strip()
+    if typ == "builtin":
+        if bid not in anchors or bid == "top":
+            raise bad(f"内置小节「{bid}」在这个看板上没有；有的是 {', '.join(a for a in anchors if a != 'top') or '（没有）'}",
+                      f'There is no built-in section "{bid}" on this board; there are {", ".join(a for a in anchors if a != "top") or "none"}')
+        return {"id": bid, "type": "builtin", **({"hidden": True} if raw.get("hidden") else {})}
     if not BLOCK_ID.match(bid):
         raise bad(f"积木 id「{bid}」不行：小写字母或数字开头，只用 a-z 0-9 _ -", f'Bad block id "{bid}": a-z 0-9 _ - only')
     if typ not in TYPES:
@@ -614,6 +689,8 @@ def clean_block(conn: sqlite3.Connection, agent: str, raw: Any, anchors: tuple[s
             b[k] = str(raw[k]).strip()[:120]
     if raw.get("hidden"):
         b["hidden"] = True
+    if raw.get("pack") and KEY.match(str(raw["pack"])):
+        b["pack"] = str(raw["pack"])  # 哪个功能包装的（重装、卸载认它）
     if typ == "stat":
         items = raw.get("items") or []
         if not isinstance(items, list) or not 1 <= len(items) <= 4:
@@ -663,6 +740,8 @@ def clean_block(conn: sqlite3.Connection, agent: str, raw: Any, anchors: tuple[s
             raw = {**raw, "edit": False}
         for badge in b["row"]["badge"]:
             field_of(coll, badge["field"])
+            if isinstance(badge.get("value"), dict) and badge["value"].get("field"):
+                field_of(coll, str(badge["value"]["field"]))
         if raw.get("limit"):
             b["limit"] = max(1, min(int(raw["limit"]), 20))
         if raw.get("group"):
@@ -730,9 +809,15 @@ def clean_blocks(conn: sqlite3.Connection, agent: str, raw: Any, dashboard: str 
     blocks = raw.get("blocks") if isinstance(raw, dict) else raw
     if not isinstance(blocks, list):
         raise bad("看板写成 {\"blocks\": [ … ]}", 'A board is {"blocks": [ … ]}')
+    anchors = anchors_of(dashboard)
+    sections, seen = [], set()
+    for b in blocks:  # 内置小节：这个看板没有的（换过看板种类、旧配置）直接丢掉，重复的留第一个
+        if is_builtin(b) and b.get("id") in anchors and b.get("id") != "top" and b["id"] not in seen:
+            seen.add(b["id"])
+            sections.append(clean_block(conn, agent, b, anchors))
+    blocks = [b for b in blocks if not is_builtin(b)]
     if len(blocks) > MAX_BLOCKS:
         raise bad(f"一个看板最多 {MAX_BLOCKS} 块", f"At most {MAX_BLOCKS} blocks per board")
-    anchors = anchors_of(dashboard)
     out = [clean_block(conn, agent, b, anchors) for b in blocks]
     ids = [b["id"] for b in out]
     if len(set(ids)) != len(ids):
@@ -744,7 +829,7 @@ def clean_blocks(conn: sqlite3.Connection, agent: str, raw: Any, dashboard: str 
                       f'"{b["id"]}": after "{after}" doesn\'t exist; use one of {", ".join(anchors)} or another block id')
         if after == b["id"]:
             raise bad("after 不能写自己", "after can't point to the block itself")
-    return out
+    return out + sections
 
 
 def match(op: str, have: Any, want: Any) -> bool:
@@ -770,6 +855,10 @@ def badge_of(row: dict, rules: list[dict], fields: dict[str, dict]) -> dict | No
     for r in rules:
         f = fields.get(r["field"]) or {"type": SYSTEM.get(r["field"], "text")}
         want = r.get("value")
+        if isinstance(want, dict) and want.get("field"):  # 和同一行的另一个字段比
+            want = row.get(str(want["field"]), want.get("default"))
+            if want is None:
+                continue
         if f["type"] in ("date", "datetime") and want is not None and r["op"] not in ("empty", "not_empty"):
             want = rel_date(want)
             have = str(row.get(r["field"]) or "")[:10] or None
@@ -956,7 +1045,9 @@ def merge(base: list[dict], mine: list[dict], theirs: list[dict]) -> list[dict]:
 
 
 def board_json(conn: sqlite3.Connection, agent: str, r: sqlite3.Row | None, dashboard: str | None) -> dict:
-    blocks = blocks_of(r)
+    """blocks 只有 Agent 的积木（老版本 app 按 after 插进小节之间）；内置小节的顺序和藏没藏在 sections（新版 app 按它排）。"""
+    stored = blocks_of(r)
+    blocks = custom_blocks(stored)
     out_blocks = [{**b, "data": resolve(conn, agent, b)} for b in blocks]
     colls = []
     for c in conn.execute("SELECT * FROM collections WHERE agent=? AND status IN ('active','draft') ORDER BY created_at", (agent,)).fetchall():
@@ -964,10 +1055,11 @@ def board_json(conn: sqlite3.Connection, agent: str, r: sqlite3.Row | None, dash
         colls.append(coll_json(c, n))
     out: dict[str, Any] = {"agent": agent, "dashboard": dashboard or "none", "anchors": list(anchors_of(dashboard)), "version": r["version"] if r else 0,
                            "status": r["status"] if r else "live", "by": r["by"] if r else None, "note": r["note"] if r else "",
-                           "updatedAt": r["created_at"] if r else None, "blocks": out_blocks, "collections": colls, "strip": None}
+                           "updatedAt": r["created_at"] if r else None, "blocks": out_blocks, "sections": sections_of(stored, dashboard),
+                           "collections": colls, "strip": None}
     if r and r["status"] == "live" and r["by"] != "user" and not r["acked_at"]:
         prev = conn.execute("SELECT blocks FROM boards WHERE agent=? AND version=?", (agent, r["based_on"])).fetchone() if r["based_on"] else None
-        before = {b["id"] for b in (json.loads(prev["blocks"]) if prev else [])}
+        before = {b["id"] for b in custom_blocks(json.loads(prev["blocks"]) if prev else [])}
         out["strip"] = {"version": r["version"], "note": r["note"], "by": r["by"], "added": [b["id"] for b in blocks if b["id"] not in before],
                         "undoTo": r["based_on"] or 0}
     return out
@@ -998,14 +1090,98 @@ def proposal(iid: str):
     with _lock, bdb() as conn:
         out = board_json(conn, r["agent"], r, g["dashboard"])
         base = conn.execute("SELECT blocks FROM boards WHERE agent=? AND version=?", (r["agent"], r["based_on"])).fetchone() if r["based_on"] else None
-    before = {b["id"]: b for b in (json.loads(base["blocks"]) if base else [])}
-    out["changed"] = [b["id"] for b in out["blocks"] if before.get(b["id"]) != {k: v for k, v in b.items() if k != "data"}]
+    def same(b: dict) -> dict:  # 比内容：算好的数据和「哪个功能包的」标记不算改动
+        return {k: v for k, v in b.items() if k not in ("data", "pack")}
+    before = {b["id"]: same(b) for b in custom_blocks(json.loads(base["blocks"]) if base else [])}
+    out["changed"] = [b["id"] for b in out["blocks"] if before.get(b["id"]) != same(b)]
     out["removed"] = [bid for bid in before if bid not in {b["id"] for b in out["blocks"]}]
     return {"ok": True, **out}
 
 
+# —— 还没建的 Agent：建 Agent 的方案卡里的看板预览 ——————————————————————————————————
+
+PLAN_AGENT = "plan"
+PLAN_ROWS = 20  # 方案里每张表最多带几行示例（只给预览用，不存）
+
+
+def plan_conn() -> sqlite3.Connection:
+    """内存里一套空表：方案里的表和示例行只放这里，算完就扔。health: 来源读真库（只读挂上来）。"""
+    conn = sqlite3.connect("file::memory:", uri=True, check_same_thread=False)
+    conn.row_factory = sqlite3.Row
+    conn.executescript(SCHEMA)
+    try:
+        conn.execute("ATTACH DATABASE ? AS real", (f"file:{settings.db}?mode=ro",))
+    except sqlite3.Error:
+        pass
+    return conn
+
+
+def plan_board(plan: Any) -> dict:
+    """方案 {tables: [{name, title, fields, rows?}], blocks: [...]} → 看板画出来的样子（和 GET /api/boards 同一个格式）。写错了照常 400。
+    rows 是示例行（可以不给）：给了预览才有内容，不给就是每块的空状态。"""
+    if not isinstance(plan, dict):
+        raise bad('方案写成 {"tables": [...], "blocks": [...]}', 'A plan is {"tables": [...], "blocks": [...]}')
+    tables = plan.get("tables") or []
+    if not isinstance(tables, list) or len(tables) > MAX_COLLECTIONS:
+        raise bad(f"tables 要是一个列表，最多 {MAX_COLLECTIONS} 张", f"tables must be a list of at most {MAX_COLLECTIONS}")
+    conn = plan_conn()
+    ts = now_iso()
+    try:
+        for t in tables:
+            name = str((t or {}).get("name") or "").strip() if isinstance(t, dict) else ""
+            if not KEY.match(name):
+                raise bad(f"表名「{name}」不行：小写字母开头，只用 a-z 0-9 _", f'Bad table name "{name}": lowercase letter first, a-z 0-9 _ only')
+            fields = clean_fields(t.get("fields"))
+            conn.execute("INSERT OR REPLACE INTO collections(agent, name, title, fields, status, created_at, updated_at) VALUES(?,?,?,?,'active',?,?)",
+                         (PLAN_AGENT, name, str(t.get("title") or name).strip()[:40], json.dumps(fields, ensure_ascii=False), ts, ts))
+            coll = get_coll(conn, PLAN_AGENT, name)
+            for i, row in enumerate((t.get("rows") or [])[:PLAN_ROWS]):
+                d = clean_row(coll, row)
+                conn.execute("INSERT INTO records(id, agent, collection, data, source, created_at, updated_at) VALUES(?,?,?,?,'agent',?,?)",
+                             (f"p-{name}-{i}", PLAN_AGENT, name, json.dumps({k: v for k, v in d.items() if v is not None}, ensure_ascii=False), ts, ts))
+        blocks = clean_blocks(conn, PLAN_AGENT, {"blocks": plan.get("blocks") or []}, None)
+        fake = {"version": 0, "status": "draft", "by": "agent", "note": str(plan.get("note") or "")[:200], "created_at": ts,
+                "blocks": json.dumps(blocks, ensure_ascii=False), "acked_at": None, "based_on": None}
+        out = board_json(conn, PLAN_AGENT, fake, None)  # type: ignore[arg-type]
+    finally:
+        conn.close()
+    out["plan"] = True
+    out["sample"] = any(isinstance(t, dict) and t.get("rows") for t in tables)
+    return out
+
+
+class PlanIn(BaseModel):
+    plan: dict
+
+
+@router.post("/api/boards/plan")
+def check_plan(body: PlanIn):
+    """建 Agent 的方案：校验一遍、看看画出来什么样（board_ctl.py check --plan）。不存。"""
+    return {"ok": True, **plan_board(body.plan)}
+
+
+@router.put("/api/boards/plan/{iid}")
+def save_plan(iid: str, body: PlanIn):
+    """把方案挂到收件箱的一张卡上（建 Agent 的提案，kind agent；inbox_ctl.py add --board-file）：卡片里就能看预览。校验不过 400，不存。"""
+    inbox.item(iid)
+    plan_board(body.plan)
+    with _lock, bdb() as conn:
+        conn.execute("INSERT OR REPLACE INTO board_plans(inbox_id, plan, created_at) VALUES(?,?,?)", (iid, json.dumps(body.plan, ensure_ascii=False), now_iso()))
+    return {"ok": True}
+
+
+@router.get("/api/boards/plan/{iid}")
+def get_plan(iid: str):
+    with _lock, bdb() as conn:
+        r = conn.execute("SELECT plan FROM board_plans WHERE inbox_id=?", (iid,)).fetchone()
+    if not r:
+        raise bad("这张卡没有看板方案", "This card has no board plan", 404)
+    return {"ok": True, **plan_board(json.loads(r["plan"]))}
+
+
 class BoardIn(BaseModel):
     blocks: list[dict]
+    sections: list[dict] | None = None  # 内置小节的顺序和藏没藏：[{id, hidden}]；不给（blocks 里也没有 builtin）就沿用现在这一版的
     note: str = ""                 # 这一版改了什么（一句话，撤回条和改动记录里显示）
     mode: str = "apply"            # apply 直接生效 / propose 交收件箱等你点头
     by: str = "agent"              # agent / user（app 里你自己挪、藏、删）
@@ -1025,7 +1201,7 @@ async def put_board(agent: str, body: BoardIn):
     by = "user" if body.by == "user" else "agent"
     note = body.note.strip()[:200]
     with _lock, bdb() as conn:
-        blocks = clean_blocks(conn, agent, {"blocks": body.blocks}, g["dashboard"])
+        blocks = clean_blocks(conn, agent, {"blocks": with_sections(conn, agent, body.blocks, body.sections)}, g["dashboard"])
         if body.dryRun:
             fake = {"version": 0, "status": "draft", "by": by, "note": note, "created_at": now_iso(), "blocks": json.dumps(blocks, ensure_ascii=False),
                     "acked_at": None, "based_on": None}
@@ -1038,15 +1214,22 @@ async def put_board(agent: str, body: BoardIn):
         return {"ok": True, "version": v}
     if not body.title.strip():
         raise bad("propose 要写 title（收件箱卡的标题，比如「在饮食看板加一块『快过期』」）", "propose needs a title (the inbox card's title)")
+    return await propose(agent, g, blocks, note=note, title=body.title, why=body.why, changes=body.changes, dedupe=body.dedupe)
+
+
+async def propose(agent: str, g: sqlite3.Row, blocks: list[dict], *, note: str, title: str, why: str = "", changes: list[str] | None = None,
+                  dedupe: str = "", approve: str = "", meta: dict | None = None):
+    """存一版草稿、交一张收件箱卡（kind block）。meta：点了之后要接着做的（装功能包：表转正、记下装了，见 packs.py）。
+    30 天内被拒过的同一件事：草稿作废，把收件箱的 409 原样还给调用的人。"""
     with _lock, bdb() as conn:
         cur = live_row(conn, agent)
         v = next_version(conn, agent)
-        conn.execute("INSERT INTO boards(agent, version, blocks, status, note, by, based_on, created_at) VALUES(?,?,?,?,?,?,?,?)",
-                     (agent, v, json.dumps(blocks, ensure_ascii=False), "draft", note or body.title.strip()[:200], "proposal",
-                      cur["version"] if cur else None, now_iso()))
-    res = await inbox.add(inbox.ItemIn(kind="block", title=body.title.strip(), source=agent, why=body.why, changes=body.changes,
-                                       approveLabel=L("加上", "Add it"), dedupe=body.dedupe or f"board:{agent}:v{v}"))
-    if not isinstance(res, dict):  # 30 天内被拒过的同一件事（inbox 回的 409）：草稿作废，原样告诉调用的人
+        conn.execute("INSERT INTO boards(agent, version, blocks, status, note, by, based_on, created_at, meta) VALUES(?,?,?,?,?,?,?,?,?)",
+                     (agent, v, json.dumps(blocks, ensure_ascii=False), "draft", note or title.strip()[:200], "proposal",
+                      cur["version"] if cur else None, now_iso(), json.dumps(meta, ensure_ascii=False) if meta else None))
+    res = await inbox.add(inbox.ItemIn(kind="block", title=title.strip(), source=agent, why=why, changes=changes or [],
+                                       approveLabel=approve or L("加上", "Add it"), dedupe=dedupe or f"board:{agent}:v{v}"))
+    if not isinstance(res, dict):
         with _lock, bdb() as conn:
             conn.execute("UPDATE boards SET status='rejected' WHERE agent=? AND version=?", (agent, v))
         return res
@@ -1057,6 +1240,12 @@ async def put_board(agent: str, body: BoardIn):
     return {"ok": True, "version": v, "inboxId": iid, **({"updated": True} if res.get("updated") else {})}
 
 
+# 提案被点了之后接着做的事。DECIDED 在同一个事务里（conn, agent, meta, action）；AFTER_DECIDED 在事务之后、可以 await（比如再出几张卡）。
+# packs.py 注册「装功能包」的收尾。
+DECIDED: list[Callable[[sqlite3.Connection, str, dict, str], None]] = []
+AFTER_DECIDED: list[Callable[[str, dict, str], Awaitable[None]]] = []
+
+
 async def on_block_decided(it: dict, action: str) -> dict | None:
     """收件箱里 kind=block 的卡被点了：同意 → 草稿并进现在的看板、上线，卡片直接标做完；拒绝 / 撤回 → 草稿作废，草稿里新建的表归档。"""
     iid = it["id"]
@@ -1065,6 +1254,9 @@ async def on_block_decided(it: dict, action: str) -> dict | None:
         if not d:
             return None
         agent = d["agent"]
+        meta = json.loads(d["meta"]) if d["meta"] else {}
+        for fn in DECIDED:
+            fn(conn, agent, meta, action)
         if action == "approve":
             cur = live_row(conn, agent)
             mine = blocks_of(d)
@@ -1073,7 +1265,11 @@ async def on_block_decided(it: dict, action: str) -> dict | None:
                 mine = merge(json.loads(base_r["blocks"]) if base_r else [], mine, blocks_of(cur))
             conn.execute("UPDATE boards SET status='approved' WHERE agent=? AND version=?", (agent, d["version"]))  # 草稿本身不进改动记录，上线的是它的副本
             v = put_live(conn, agent, mine, d["note"], "proposal", iid)
-            return {"result": L(f"看板换成了第 {v} 版", f"The board is now version {v}"), "version": v}
+    if action == "approve":
+        for after in AFTER_DECIDED:
+            await after(agent, meta, action)
+        return {"result": L(f"看板换成了第 {v} 版", f"The board is now version {v}"), "version": v}
+    with _lock, bdb() as conn:
         conn.execute("UPDATE boards SET status='rejected' WHERE agent=? AND version=?", (agent, d["version"]))
         used = {n for b in blocks_of(d) for q in queries_of(b) for n in froms(q)}
         live_used = {n for b in blocks_of(live_row(conn, agent)) for q in queries_of(b) for n in froms(q)}
@@ -1128,7 +1324,9 @@ def history(agent: str, limit: int = 30):
                             (agent, max(1, min(limit, 100)))).fetchall()
     return {"ok": True, "versions": [{"version": r["version"], "status": r["status"], "note": r["note"], "by": r["by"], "inboxId": r["inbox_id"],
                                       "basedOn": r["based_on"], "createdAt": r["created_at"],
-                                      "blocks": [{"id": b["id"], "type": b["type"], "title": b.get("title", "")} for b in blocks_of(r)]} for r in rows]}
+                                      "blocks": [{"id": b["id"], "type": b["type"], "title": b.get("title", "")} for b in custom_blocks(blocks_of(r))],
+                                      "hiddenSections": [section_title(b["id"]) for b in blocks_of(r) if is_builtin(b) and b.get("hidden")]}
+                                     for r in rows]}
 
 
 class QueryIn(BaseModel):

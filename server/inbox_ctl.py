@@ -117,6 +117,9 @@ def content_args(p: argparse.ArgumentParser, required: bool) -> None:
     p.add_argument("--approve-label", help=L("同意按钮上的字，比如「写进训记」", 'text on the approve button, e.g. "Log it"'))
     p.add_argument("--level", choices=("ring", "quiet", "none"), help=L("推送档位，不给按 kind", "notification level; defaults by kind"))
     p.add_argument("--expires", help=L("过了这个时间还没点头就作废（ISO，比如 2026-09-30T18:00）", "expires if not answered by then (ISO time)"))
+    p.add_argument("--board-file", help=L('建 Agent 的方案卡（kind agent）：起步看板文件 {"tables": [...], "blocks": [...]}，卡片里画出预览；表可以带 rows 示例行',
+                                          'for a new-Agent card (kind agent): the starter board file {"tables": [...], "blocks": [...]}; the card shows a preview; '
+                                          'tables may carry sample rows'))
 
 
 def content_body(a: argparse.Namespace) -> dict:
@@ -128,6 +131,19 @@ def content_body(a: argparse.Namespace) -> dict:
 def show(items: list[dict]) -> None:
     for it in items:
         print(f"{it['id']}\t{it['status']}\t{it['kind']}\t{it.get('sourceName') or it.get('source')}\t{it['title']}")
+
+
+def board_plan(path: str) -> dict:
+    """读起步看板文件，先让服务端校验一遍（写错了不交卡，照着报错改）。"""
+    try:
+        text = sys.stdin.read() if path == "-" else Path(path).expanduser().read_text(encoding="utf8")
+        plan = json.loads(text)
+    except (OSError, ValueError) as e:
+        sys.exit(L(f"--board-file 读不了：{e}", f"Can't read --board-file: {e}"))
+    if not isinstance(plan, dict):
+        sys.exit(L('--board-file 写成 {"tables": [...], "blocks": [...]}', '--board-file must be {"tables": [...], "blocks": [...]}'))
+    call("POST", "/api/boards/plan", {"plan": plan})
+    return plan
 
 
 def main() -> None:
@@ -155,6 +171,7 @@ def main() -> None:
     gt.add_argument("id")
     a = ap.parse_args()
 
+    plan = board_plan(a.board_file) if getattr(a, "board_file", None) else None
     if a.cmd == "add":
         body = {"kind": a.kind, "source": a.source or guess_source(), "dedupe": a.dedupe, **content_body(a)}
         if a.thread:
@@ -162,9 +179,16 @@ def main() -> None:
         r = call("POST", "/api/inbox", body)
         if r.get("updated"):
             print(L("（原地更新了还在等的同一件事）", "(updated the pending item with the same dedupe key)"), file=sys.stderr)
+        if plan is not None:
+            call("PUT", f"/api/boards/plan/{urllib.parse.quote(r['id'], safe='')}", {"plan": plan})
         print(r["id"])
     elif a.cmd == "update":
         body = content_body(a)
+        if plan is not None:
+            call("PUT", f"/api/boards/plan/{urllib.parse.quote(a.id, safe='')}", {"plan": plan})
+            if not body:
+                print(a.id)
+                return
         if not body:
             sys.exit(L("没有要改的内容", "Nothing to change"))
         it = call("PATCH", item_path(a.id), body)["item"]
