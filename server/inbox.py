@@ -20,6 +20,7 @@ import time
 import uuid
 from datetime import datetime, timedelta
 from pathlib import Path
+from typing import Awaitable, Callable
 
 from fastapi import APIRouter, HTTPException
 from fastapi.responses import JSONResponse
@@ -42,6 +43,9 @@ RECENT_DAYS, RECENT_MAX = 7, 50
 REJECTED_DAYS = 30  # 拒绝过的同一件事（dedupe 键）多久内不许再提
 WAIT_BUSY_S = 15 * 60  # 同意 / 改一下时那个线程正在回复：最多等多久再把消息发进去
 _tasks: set[asyncio.Task] = set()  # 后台等待中的任务（留个引用，免得被回收）
+# kind → 点了同意 / 拒绝 / 撤回之后服务端自己先做的事。返回 {"result": …} = 已经做完了（条目直接标 done，Agent 只收到一句知会）；
+# None = 照常让 Agent 去做。boards.py 注册 block：同意就把提案那一版看板换上去，拒绝就把草稿作废。
+HOOKS: dict[str, Callable[[dict, str], Awaitable[dict | None]]] = {}
 
 
 def idb() -> sqlite3.Connection:
@@ -239,6 +243,16 @@ def approve_text(it: dict, note: str) -> str:
     return MARK + LS(f'已同意「{t}」（{i}）。{zh_note}现在去做；做完运行 `python3 {CTL} done {i} --result "一句话结果"`，做不成用 fail。',
                      f'Approved "{t}" ({i}). {en_note}Do it now; when it is done run `python3 {CTL} done {i} --result "one-line result"`, '
                      "or use fail if it can't be done.")
+
+
+def done_text(it: dict, note: str, result: str) -> str:
+    """同意之后服务端已经替它做完了（HOOKS）：只告诉 Agent 一声，不用再 done；有要接着做的（补数据）现在做。"""
+    t, i = it["title"], it["id"]
+    zh_note = f"补充：{note.rstrip('。.')}。" if note else ""
+    en_note = f"Note from the user: {note}. " if note else ""
+    return MARK + LS(f"已同意「{t}」（{i}），{result.rstrip('。.')}，已经生效，不用再报 done。{zh_note}有要接着做的（比如补数据）现在做，没有就简短回一句。",
+                     f'Approved "{t}" ({i}): {result.rstrip(".")}. It has taken effect; no need to report done. {en_note}'
+                     "If something follows from it (e.g. filling in data), do it now; otherwise reply briefly.")
 
 
 def revise_text(it: dict, note: str) -> str:
@@ -456,8 +470,16 @@ async def act(iid: str, body: ActIn):
                      (status, (note or r["note"]) if action == "approve" else note, ts, None if action == "revise" else ts, iid))
     it = item(iid)
     who, title = it["sourceName"], it["title"]
+    hook = HOOKS.get(it["kind"]) if action != "revise" else None
+    done = await hook(it, action) if hook else None
     out: dict = {"ok": True, "item": it}
-    if action == "approve":
+    if action == "approve" and done and done.get("result"):
+        log_activity(L(f"同意了{who}的「{title}」", f'Approved "{title}" from {who}'), "approved")
+        with _lock, idb() as conn:
+            conn.execute("UPDATE inbox SET status='done', result=?, updated_at=? WHERE id=?", (done["result"], now_iso(), iid))
+        out["item"] = it = item(iid)
+        out["run"] = kick(it["thread"], done_text(it, note, done["result"]))
+    elif action == "approve":
         log_activity(L(f"同意了{who}的「{title}」", f'Approved "{title}" from {who}'), "approved")
         out["run"] = kick(it["thread"], approve_text(it, note))
     elif action == "reject":
@@ -562,5 +584,8 @@ async def withdraw(iid: str):
             raise HTTPException(409, L(f"这一条已经定了（{r['status']}），不能撤回", f"This item is already settled ({r['status']}) and can't be withdrawn"))
         conn.execute("UPDATE inbox SET status='withdrawn', updated_at=? WHERE id=?", (now_iso(), iid))
     it = item(iid)
+    hook = HOOKS.get(it["kind"])
+    if hook:
+        await hook(it, "withdraw")
     log_activity(L(f"撤回了「{it['title']}」", f'Withdrew "{it["title"]}"'), "inbox", actor=data.agent_label(it["source"]))
     return {"ok": True, "item": it}
