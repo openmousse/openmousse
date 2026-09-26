@@ -15,8 +15,9 @@ import { openTarget } from './navigation';
 import type {
   Application, JournalEntry, PendingFile,
   ActivityEntry, AgentColor, AvatarConfig, ChatCard, FeedItem, Goal, Group, GroupIcon, GroupPatch, InboxAction, InboxItem, MemoryItem, Message, ModelsInfo, ProfileItem, PushTarget, Receipt,
-  SecurityInfo, SideChat, Task, TaskQuota, ThreadCards, UnreadSummary, UpcomingTask,
+  ScheduleChangeCard, ScheduleEntry, SecurityInfo, SideChat, Task, TaskQuota, ThreadCards, UnreadSummary, UpcomingTask,
 } from './data/types';
+import * as sched from './api/schedule';
 
 // 2026-09-23 起：界面上的每一项都来自服务器上的真实来源，没有示例数据。连不上服务器时各页显示"未连接"，不冒充。
 
@@ -65,6 +66,13 @@ interface State {
   /** 正显示在屏幕上的对话（app 在前台时）。不为它弹小窗，新消息直接算已读。 */
   activeThread: string | null;
   feed: FeedItem[];
+  /** 今天和明天的日程（课表 + 自己的 + 到期那天的截止，见 server/schedule.py）；editable = 服务器支持改 */
+  schedule: ScheduleEntry[];
+  scheduleErrors: Record<string, string>;
+  scheduleEditable: boolean;
+  /** 要记得的（作业、邮件里的事、求职和申请的截止），按 group 分好 */
+  remember: ScheduleEntry[];
+  rememberErrors: Record<string, string>;
   upcoming: UpcomingTask[];
   goals: Goal[];
   journal: JournalEntry[];
@@ -84,7 +92,7 @@ interface State {
   dataErrors: Partial<Record<DataKey, string>>;
 }
 
-export type DataKey = 'groups' | 'sideChats' | 'tasks' | 'inbox' | 'inboxRecent' | 'unread' | 'feed' | 'upcoming' | 'goals' | 'journal' | 'applications' | 'memories' | 'activity' | 'profile' | 'models' | 'security' | 'avatar' | 'wake';
+export type DataKey = 'groups' | 'sideChats' | 'tasks' | 'inbox' | 'inboxRecent' | 'unread' | 'feed' | 'schedule' | 'remember' | 'upcoming' | 'goals' | 'journal' | 'applications' | 'memories' | 'activity' | 'profile' | 'models' | 'security' | 'avatar' | 'wake';
 
 interface Actions {
   /** 重新探测服务器，读回全部数据和对话记录。 */
@@ -96,7 +104,7 @@ interface Actions {
   /** 点了「我起来了」：告诉服务器，马上出起床报告。 */
   imUp(): Promise<void>;
   /** inboxId：这条是对收件箱里某件事的修改意见（从「今天」的「去对话里说」带过来），那件事在本地先标成「改一下」。 */
-  send(threadId: string, text: string, files?: PendingFile[], opts?: { inboxId?: string }): void;
+  send(threadId: string, text: string, files?: PendingFile[], opts?: { inboxId?: string; ref?: string }): void;
   deleteJournal(id: string): Promise<void>;
   /** 下拉刷新看板：只重读看板数据（训记 / 健康 / 派生指标）和建议、日志、申请，不重连、不重读全部。 */
   refreshBoards(): Promise<void>;
@@ -135,6 +143,8 @@ interface Actions {
   cancelTask(id: string): Promise<void>;
   /** 修改意见发给做这件事的同一个子会话。 */
   reviseTask(id: string, note: string): Promise<void>;
+  /** 对话里日程卡的「撤销」（撤销过的再点 = 做回来）。 */
+  undoScheduleCard(card: ScheduleChangeCard): Promise<void>;
 }
 
 const Ctx = createContext<(State & Actions) | null>(null);
@@ -203,6 +213,8 @@ const LOADERS: Record<DataKey, () => Promise<Partial<State>>> = {
   inboxRecent: async () => ({ inboxRecent: await dataApi.inbox('recent') }),
   unread: async () => { const u = await dataApi.unread(); return u ? { unread: u } : {}; },
   feed: async () => ({ feed: await dataApi.feed() }),
+  schedule: async () => { const r = await sched.timeline(todayIso(), 2); return { schedule: r.events, scheduleErrors: r.errors, scheduleEditable: r.editable }; },
+  remember: async () => { const r = await sched.remember(); return { remember: r.items, rememberErrors: r.errors }; },
   upcoming: async () => ({ upcoming: await dataApi.upcoming() }),
   goals: async () => ({ goals: await dataApi.goals() }),
   journal: async () => ({ journal: await dataApi.journal() }),
@@ -226,7 +238,7 @@ const POLL_MS = 45_000;
 /** 看着的对话里有还在问的转交、还在做的任务：隔多久重读一次卡片（回复进行中不用，流里会来） */
 const CARD_POLL_MS = 6_000;
 /** 这张卡还在变（在问、在做、在改）。 */
-const cardBusy = (c: ChatCard) => (c.kind === 'handoff' ? c.status === 'running' : c.status === '进行中' || c.roundStatus === 'running');
+const cardBusy = (c: ChatCard) => (c.kind === 'handoff' ? c.status === 'running' : c.kind === 'task' ? c.status === '进行中' || c.roundStatus === 'running' : false);
 
 export function StoreProvider({ children }: { children: React.ReactNode }) {
   const api = useRef<GravaApi>(new OfflineApi());
@@ -259,6 +271,11 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
     unread: EMPTY_UNREAD,
     activeThread: null,
     feed: [],
+    schedule: [],
+    scheduleErrors: {},
+    scheduleEditable: false,
+    remember: [],
+    rememberErrors: {},
     upcoming: [],
     goals: [],
     journal: [],
@@ -353,7 +370,8 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
   /** 流里来了一张卡：进行中的回复里转给了某个 Agent、派了一个任务，或者它们的状态变了。 */
   const onLiveCard = useCallback((threadId: string) => (card: ChatCard) => {
     setS((st) => ({ ...st, liveCards: { ...st.liveCards, [threadId]: { ...(st.liveCards[threadId] ?? {}), [card.id]: card } } }));
-  }, []);
+    if (card.kind === 'schedule') reload('schedule', 'remember').catch(() => {});  // Agent 在回复里改了日程：「今天」页跟着变
+  }, [reload]);
 
   /** 读回所有线程的对话记录；服务端还在回的线程接回去。 */
   const loadThreads = useCallback(async (fresh?: Partial<State>) => {
@@ -751,7 +769,7 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
     return () => clearInterval(h);
   }, [s.connected, s.activeThread, activeCardsBusy, loadThreadCards]);
 
-  const send = useCallback((threadId: string, text: string, files?: PendingFile[], opts?: { inboxId?: string }) => {
+  const send = useCallback((threadId: string, text: string, files?: PendingFile[], opts?: { inboxId?: string; ref?: string }) => {
     const pending = files?.map((f, i) => ({ id: `local${i}`, name: f.name, mime: f.mime, size: f.size, kind: kindOf(f.name, f.mime), url: f.uri }));
     // '（见附件）' 是占位标记，和服务端 chat.py 一致，ChatView 按原文比较后隐藏：不翻译。
     const mine: Message = { id: id('u'), role: 'user', time: timeNow(), body: { type: 'text', text: text || '（见附件）', attachments: pending } };
@@ -765,10 +783,10 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
     });
     const swapId = (userId: string) => setS((st) => ({ ...st, threads: { ...st.threads, [threadId]: (st.threads[threadId] ?? []).map((m) => (m.id === mine.id ? { ...m, id: userId } : m)) } }));
     api.current.send(threadId, text, modelId, (partial) => setS((st) => ({ ...st, streaming: { ...st.streaming, [threadId]: partial } })), swapId, files,
-      { ...(opts?.inboxId ? { inboxId: opts.inboxId } : {}), onCard: onLiveCard(threadId) })
+      { ...(opts?.inboxId ? { inboxId: opts.inboxId } : {}), ...(opts?.ref ? { ref: opts.ref } : {}), onCard: onLiveCard(threadId) })
       .catch((e: unknown): Message => ({ id: id('r'), role: 'grava', time: timeNow(), modelId, body: { type: 'text', text: L('（这条没发出去。）', "(This message wasn't sent.)") }, error: errText(e) }))
       // 可能刚写了一张建议卡、提了一件要你点头的事、转给了某个 Agent、派了任务
-      .then((reply) => { reload('feed'); loadThreadInbox(threadId).catch(() => {}); loadThreadCards(threadId, true).catch(() => {}); return reply; })
+      .then((reply) => { reload('feed', 'schedule', 'remember'); loadThreadInbox(threadId).catch(() => {}); loadThreadCards(threadId, true).catch(() => {}); return reply; })
       .then((reply) => setS((st) => {
         const streaming = { ...st.streaming }; delete streaming[threadId];
         return {
@@ -916,6 +934,18 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
       const where = cardThread(tid);  // 对话里那张任务卡变成下一轮
       if (where) loadThreadCards(where).catch(() => {});
       await reload('tasks', 'activity');
+    },
+    undoScheduleCard: async (card) => {
+      const r = await sched.undo(card.logId, card.status === 'undone');
+      const swap = (c: ChatCard) => (c.id === card.id ? { ...c, status: r.card.status } as ChatCard : c);
+      setS((st) => {
+        const cardsByThread = { ...st.cardsByThread };
+        for (const [tid, c] of Object.entries(cardsByThread)) if (c.cards.some((x) => x.id === card.id)) cardsByThread[tid] = { ...c, cards: c.cards.map(swap) };
+        const liveCards = { ...st.liveCards };
+        for (const [tid, m] of Object.entries(liveCards)) if (m[card.id]) liveCards[tid] = { ...m, [card.id]: swap(m[card.id]) };
+        return { ...st, cardsByThread, liveCards };
+      });
+      await reload('schedule', 'remember');
     },
   }), [refreshLive, reload, syncHealthNow, send, refreshThread, decide, markFeedSeen, markRead, setActiveThread, loadThreadCards]);
 

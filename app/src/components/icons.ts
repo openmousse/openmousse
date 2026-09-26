@@ -86,3 +86,4 @@ export { default as GraduationCap } from 'lucide-react-native/icons/graduation-c
 export { default as Trophy } from 'lucide-react-native/icons/trophy';
 export { default as Pill } from 'lucide-react-native/icons/pill';
 export { default as ChevronUp } from 'lucide-react-native/icons/chevron-up';
+export { default as List } from 'lucide-react-native/icons/list';

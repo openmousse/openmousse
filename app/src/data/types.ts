@@ -211,7 +211,26 @@ export interface TaskCardInfo {
   dailyLimit?: number | null;
 }
 
-export type ChatCard = HandoffCard | TaskCardInfo;
+/**
+ * 对话里的日程卡：Agent 在这次回复里改了日程或「要记得的」（server/schedule.py）。status：done 改了 / undone 撤销了。
+ * area：schedule 日程 / remember 要记得的（打勾、改邮件条目）。logId 给撤销用。
+ */
+export interface ScheduleChangeCard {
+  kind: 'schedule';
+  id: string;
+  logId: number;
+  thread: string | null;
+  messageId: number | null;
+  createdAt: string;
+  status: 'done' | 'undone';
+  action: string;
+  actor: string;
+  area: 'schedule' | 'remember';
+  title: string;
+  summary: string;
+}
+
+export type ChatCard = HandoffCard | TaskCardInfo | ScheduleChangeCard;
 /** 一个对话里的卡片（GET /api/chat/cards）：它自己转出去、派出去的，加上别的对话转给它的（incoming）。 */
 export interface ThreadCards { cards: ChatCard[]; incoming: HandoffCard[] }
 
@@ -364,3 +383,58 @@ export interface SecurityInfo {
 export interface DayInfo { day: string; count: number; first: string; lastTs: string }
 /** 关键词搜索命中：对话 / 建议卡 / 日志。 */
 export interface SearchHit { kind: 'message' | 'card' | 'journal'; id: string; thread: string | null; role: 'user' | 'grava' | 'auto'; day: string; ts: string; time: string; snippet: string }
+
+/** 「要记得的」的分组：可疑的安全提醒置顶 / 过了的 / 明天 / 一周内 / 以后 / 没定日子的要办 / 邮件动态（没日子的钱和状态）。 */
+export type RememberGroup = 'security' | 'overdue' | 'tomorrow' | 'week' | 'later' | 'nodate' | 'news';
+
+/**
+ * 日程和「要记得的」里的一行（GET /api/schedule、/api/remember）。
+ * kind：class 课 / event 一段安排 / deadline 截止 / todo 要办 / money 钱 / status 状态 / security 安全提醒；
+ * origin：calendar 课表 / own 自己的（你或 Agent 加的）/ canvas 课程作业 / mail 邮件 / apply 求职和申请。
+ * id 就是改它用的 ref：item:… / ics:… / canvas:… / mail:… / app:…。
+ */
+export interface ScheduleEntry {
+  id: string;
+  kind: 'class' | 'event' | 'deadline' | 'todo' | 'money' | 'status' | 'security';
+  origin: 'calendar' | 'own' | 'canvas' | 'mail' | 'apply';
+  title: string;
+  detail: string;
+  location: string;
+  note: string;
+  /** YYYY-MM-DD；没日子的（邮件里的待办、动态）是 null */
+  date: string | null;
+  weekday?: string;
+  start: string;
+  end: string;
+  allDay: boolean;
+  /** 来源小标：课程缩写 / 邮箱 / Agent 名；你自己加的是空 */
+  badge: string;
+  /** 自己的日程是谁加的（leo / main / Agent id）；求职和申请是哪个 Agent */
+  by: string | null;
+  /** 原文（邮件那封、作业页面） */
+  link: string | null;
+  done: boolean;
+  /** 课：不去；series = 是「每周这节都不去」管着的 */
+  skip: boolean;
+  series: boolean;
+  /** 过去的：去了 / 做了（true）、没去（false）、没记（null） */
+  attended: boolean | null;
+  actualStart: string;
+  actualEnd: string;
+  /** 实际时间是从哪来的（workouts = 训练记录） */
+  actualFrom?: string;
+  past: boolean;
+  tentative: boolean;
+  free: boolean;
+  /** 和哪些撞了 */
+  clash: string[];
+  editable: boolean;
+  group: RememberGroup | null;
+  urgent: boolean;
+  key?: string | null;
+  locationChanged?: boolean;
+  sourceLocation?: string;
+}
+
+/** iPhone 日历订阅：链接路径（接在服务器地址后面）和四类开关。 */
+export interface ScheduleFeed { path: string; include: { classes: boolean; mine: boolean; deadlines: boolean; mail: boolean }; name: string }

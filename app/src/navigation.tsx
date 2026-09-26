@@ -13,6 +13,7 @@ import { ActivityScreen, AvatarScreen, IdentityScreen, JournalScreen, MemoryScre
 import { NewGroupScreen } from './screens/NewGroupScreen';
 import { EditGroupScreen } from './screens/EditGroupScreen';
 import { TaskScreen, TasksScreen } from './screens/TasksScreen';
+import { ScheduleFeedScreen } from './screens/ScheduleFeedScreen';
 import { TodayScreen } from './screens/TodayScreen';
 import { HistoryDayScreen, HistoryScreen } from './screens/HistoryScreen';
 import { ConnectScreen } from './screens/ConnectScreen';
@@ -76,7 +77,7 @@ export const navigationRef = createNavigationContainerRef<any>();
  * 输入框上面的引用：从收件箱「去对话里说」带过来的（inboxId：显示「回复：标题」，发出去时带上），
  * 或者任务卡上点了「改一下」（taskId：显示「改：标题」，发出去的话直接交给做这件事的子会话，不进这个对话）。
  */
-export interface ChatQuote { inboxId?: string; taskId?: string; title: string; model?: string | null }
+export interface ChatQuote { inboxId?: string; taskId?: string; title: string; model?: string | null; /** 日程或「要记得的」里的一条（schedule.py 的 id）：发出去时带上，模型知道说的是哪一条 */ ref?: string }
 
 // 冷启动时点通知，那一下可能比导航器准备好还早（RootNavigator 要等本机配置读完才渲染）：先记下来，onReady 时补上。
 let queued: { target: PushTarget; isGroup: boolean; quote?: ChatQuote; focus?: string } | null = null;
@@ -140,6 +141,7 @@ export function RootNavigator() {
         <Stack.Screen name="Models" component={ModelsScreen} />
         <Stack.Screen name="Avatar" component={AvatarScreen} />
         <Stack.Screen name="Tasks" component={TasksScreen} />
+        <Stack.Screen name="ScheduleFeed" component={ScheduleFeedScreen} />
         <Stack.Screen name="Task" component={TaskScreen} />
       </Stack.Navigator>
     </NavigationContainer>

@@ -2,14 +2,15 @@ import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { agentName } from '../brand';
 import { Alert, Animated, AppState, Platform, Pressable, ScrollView, StyleSheet, Switch, Text, View, type LayoutChangeEvent } from 'react-native';
 import { useIsFocused, useNavigation, useRoute } from '@react-navigation/native';
-import { ChevronLeft, ChevronRight, LoaderCircle, MapPin, X } from '../components/icons';
+import { ChevronLeft, ChevronRight, LoaderCircle, X } from '../components/icons';
 import { InboxCard } from '../components/InboxCard';
 import { SourcePill } from '../components/SourceBadge';
 import { modelName, originName } from '../components/TaskCard';
 import { Card, LargeHeader, ListRow, Pill, PullRefresh, Screen, SectionLabel, T } from '../components/ui';
-import type { FeedItem, InboxItem, JournalEntry, UpcomingTask } from '../data/types';
+import type { FeedItem, InboxItem, JournalEntry, ScheduleEntry, UpcomingTask } from '../data/types';
 import { dataApi } from '../api/data';
-import { loadEventsOn, type LiveEvent } from '../api/live';
+import * as sched from '../api/schedule';
+import { AddScheduleButton, RememberCard, ScheduleCard } from '../components/Schedule';
 import { L } from '../i18n';
 import { receiptItems, useStore, type DataKey } from '../store';
 import { radius, space, useTheme } from '../theme';
@@ -63,31 +64,9 @@ function subOf(offset: number): string {
   return `${s} · ${offset > 0 ? L(`${offset} 天后`, `in ${offset} days`) : L(`${-offset} 天前`, `${-offset} days ago`)}`;
 }
 
-/** 日程列表（今天和别的日子共用）。 */
-function EventList({ events, empty }: { events: LiveEvent[]; empty: string }) {
-  const t = useTheme();
-  return (
-    <Card style={{ paddingVertical: space.xs }}>
-      {events.length ? events.map((e, i) => (
-        <View key={`${e.start}-${e.title}-${i}`} style={[styles.ev, i < events.length - 1 && { borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: t.line }, e.past && { opacity: 0.45 }]}>
-          <View style={{ width: 52 }}>
-            <T v="callout" style={{ fontVariant: ['tabular-nums'], fontWeight: '600' }}>{e.start}</T>
-            {e.end ? <T v="caption" color={t.ink3} style={{ fontVariant: ['tabular-nums'] }}>{e.end}</T> : null}
-          </View>
-          <View style={{ flex: 1, gap: 3 }}>
-            <T v="body" numberOfLines={2}>{e.title}{e.tentative ? L('（暂定）', ' (tentative)') : ''}</T>
-            {e.location ? (
-              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
-                <MapPin size={12} color={t.ink3} />
-                <T v="caption" color={t.ink3} numberOfLines={1} style={{ flex: 1 }}>{e.location}</T>
-              </View>
-            ) : null}
-          </View>
-        </View>
-      )) : <View style={styles.ev}><T v="callout" color={t.ink2}>{empty}</T></View>}
-    </Card>
-  );
-}
+/** 「今天要记得的」「邮件里要记得的」两张卡 9/26 起合进「要记得的」（Schedule.tsx）：旧卡不再显示。 */
+const RETIRED = new Set(['reminder', 'mail_digest']);
+const shownCards = (feed: FeedItem[]) => feed.filter((f) => !RETIRED.has(f.kind ?? ''));
 
 /** 一张建议卡。别的日子不给划掉。isNew：还没看过，时间后面标一个青色的「新」。 */
 function FeedCard({ f, onDismiss, isNew }: { f: FeedItem; onDismiss?: () => void; isNew?: boolean }) {
@@ -144,33 +123,41 @@ function yOf(l: Layout, key: string): number | null {
   return it ? l.pad + (key.startsWith('card:') ? l.feed : l.inbox) + it.y : null;
 }
 
-type DayData = { events: LiveEvent[]; feed: FeedItem[]; errors: string[] };
+type DayData = { events: ScheduleEntry[]; editable: boolean; feed: FeedItem[]; errors: string[] };
 
-/** 翻到别的日子：那天的日程、Grava 的建议卡、日志。审批 / 后台任务 / 定时任务只跟"现在"有关，只在今天显示。 */
+/** 翻到别的日子：那天的日程（过去的记实际发生的）、Grava 的建议卡、日志。审批 / 后台任务 / 定时任务只跟"现在"有关，只在今天显示。 */
 function DayView({ iso, offset, refreshKey }: { iso: string; offset: number; refreshKey: number }) {
   const t = useTheme();
-  const { journal, connected } = useStore();
-  // 按日期缓存，翻回来不用重读；下拉刷新（refreshKey 变）时重读当前这天。
+  const { journal, connected, reload } = useStore();
+  // 按日期缓存，翻回来不用重读；下拉刷新（refreshKey 变）或在这一页改了日程（edits 变）时重读当前这天。
   const [days, setDays] = useState<Record<string, DayData>>({});
+  const [edits, setEdits] = useState(0);
   const day = days[iso] ?? null;
   useEffect(() => {
     if (!connected) return undefined;
     let alive = true;
     const errors: string[] = [];
     Promise.all([
-      loadEventsOn(iso).catch((e) => { const m = e instanceof Error ? e.message : String(e); errors.push(L(`日程：${m}`, `Schedule: ${m}`)); return [] as LiveEvent[]; }),
+      sched.timeline(iso, 1).catch((e): sched.Timeline => { const m = e instanceof Error ? e.message : String(e); errors.push(L(`日程：${m}`, `Schedule: ${m}`)); return { events: [], errors: {}, editable: false }; }),
       dataApi.feedOn(iso).catch((e) => { const m = e instanceof Error ? e.message : String(e); errors.push(L(`建议：${m}`, `Suggestions: ${m}`)); return [] as FeedItem[]; }),
-    ]).then(([events, feed]) => { if (alive) setDays((m) => ({ ...m, [iso]: { events, feed, errors } })); });
+    ]).then(([tl, feed]) => { if (alive) setDays((m) => ({ ...m, [iso]: { events: tl.events, editable: tl.editable, feed: shownCards(feed), errors } })); });
     return () => { alive = false; };
-  }, [iso, connected, refreshKey]);
+  }, [iso, connected, refreshKey, edits]);
+  // 改了别的日子：这一天重读；今天和明天的在「今天」页上，也跟着重读
+  const changed = () => { setEdits((n) => n + 1); reload('schedule', 'remember').catch(() => {}); };
+  const today = isoOf(0);
   const entries = journal.filter((e) => e.date === iso);
   if (!connected) return <Card style={{ marginTop: space.md }}><T v="callout" color={t.ink2}>{L('没连上服务器，翻不了别的日子。', "Not connected to the server, so other days can't be loaded.")}</T></Card>;
   if (!day) return <Card style={{ marginTop: space.md }}><T v="callout" color={t.ink2}>{L(`正在读${titleOf(offset)}的…`, 'Loading…')}</T></Card>;
   return (
     <>
       {day.errors.length ? <Card style={{ marginTop: space.md }}><T v="callout" color={t.bad}>{day.errors.join(L('；', '; '))}</T></Card> : null}
-      <SectionLabel right={<Pill label={L('日历', 'Calendar')} tone="good" />}>{offset < 0 ? L('那天的日程', "That day's schedule") : L('日程', 'Schedule')}</SectionLabel>
-      <EventList events={day.events} empty={L(`${titleOf(offset)}日历上没有安排。`, 'Nothing on the calendar.')} />
+      <SectionLabel right={day.editable ? <AddScheduleButton day={iso} past={offset < 0} onChanged={changed} /> : <Pill label={L('日历', 'Calendar')} tone="good" />}>
+        {offset < 0 ? L('那天的日程', "That day's schedule") : L('日程', 'Schedule')}
+      </SectionLabel>
+      <ScheduleCard events={day.events} day={iso} today={today} editable={day.editable} onChanged={changed}
+        empty={offset < 0 ? L('那天没有安排。', 'Nothing scheduled that day.') : L(`${titleOf(offset)}还没有安排。`, 'Nothing scheduled yet.')} />
+      {offset < 0 && day.editable ? <T v="caption" color={t.ink3} style={{ marginTop: space.sm, paddingHorizontal: space.xs }}>{L('过去的日子记实际发生的：去没去、做没做、几点。日结和复盘用这个。', 'Past days record what actually happened. The daily wrap-up and reviews use it.')}</T> : null}
 
       <SectionLabel>{L(`${agentName()} 的建议`, `Suggestions from ${agentName()}`)}</SectionLabel>
       {day.feed.length ? <View style={{ gap: space.md }}>{day.feed.map((f) => <FeedCard key={f.id} f={f} />)}</View>
@@ -202,15 +189,16 @@ export function TodayScreen() {
   const nav = useNavigation<any>();
   const route = useRoute<any>();
   const focused = useIsFocused();
-  const { inbox, inboxRecent, receipts, feed, upcoming, groups, sideChats, dismissFeed, markFeedSeen, live, tasks, connected, booting, reload, refreshLive, loading, dataErrors } = useStore();
+  const { inbox, inboxRecent, receipts, feed: allFeed, schedule, scheduleEditable, remember, rememberErrors, upcoming, groups, sideChats, dismissFeed, markFeedSeen, tasks, connected, booting, reload, refreshLive, loading, dataErrors } = useStore();
+  const feed = shownCards(allFeed);
   const [showOff, setShowOff] = useState(false);
   const [offset, setOffset] = useState(0);
   const [dayRefresh, setDayRefresh] = useState(0);
   const bg = tasks.filter((x) => x.status === '进行中').slice(0, 3);
   const iso = isoOf(0);
   const dayIso = isoOf(offset);
-  const todays = (live?.events ?? []).filter((e) => e.date === iso);
-  const tomorrows = (live?.events ?? []).filter((e) => e.date > iso);
+  const tomorrows = schedule.filter((e) => e.date != null && e.date > iso && (e.kind === 'class' || e.kind === 'event') && !e.skip);
+  const scheduleChanged = () => { reload('schedule', 'remember').catch(() => {}); };
   const on = upcoming.filter((u) => u.enabled);
   const off = upcoming.filter((u) => !u.enabled);
   // 等你点头的 + 这次点过头的回执（今天的），新的在上面。回执和原来的卡同一个位置，点完原地收成一行。
@@ -293,7 +281,7 @@ export function TodayScreen() {
   }, [hlAt]);
   const flashFor = (key: string) => (flash?.key === key ? flash.token : 0);
 
-  const refreshKeys: DataKey[] = ['inbox', 'unread', 'upcoming', 'tasks', 'feed', 'journal', 'wake', ...(done.length ? ['inboxRecent' as const] : [])];
+  const refreshKeys: DataKey[] = ['inbox', 'unread', 'upcoming', 'tasks', 'feed', 'schedule', 'remember', 'journal', 'wake', ...(done.length ? ['inboxRecent' as const] : [])];
   return (
     <Screen>
       <ScrollView ref={scroller} contentContainerStyle={{ paddingBottom: space.xxl }} scrollEventThrottle={100}
@@ -358,10 +346,12 @@ export function TodayScreen() {
             </>
           ) : null}
 
-          {live ? (
+          {connected ? (
             <>
-              <SectionLabel right={<Pill label={L('日历', 'Calendar')} tone="good" />}>{L('今天的日程', "Today's schedule")}</SectionLabel>
-              <EventList events={todays} empty={live?.sources.calendar === false ? L('还没接日历。', 'No calendar connected yet.') : L('今天日历上没有安排。', 'Nothing on the calendar today.')} />
+              <SectionLabel right={scheduleEditable ? <AddScheduleButton day={iso} past={false} onChanged={scheduleChanged} /> : <Pill label={L('日历', 'Calendar')} tone="good" />}>{L('日程', 'Schedule')}</SectionLabel>
+              {dataErrors.schedule ? <Card style={{ marginBottom: space.sm }}><T v="callout" color={t.bad}>{L(`读不到日程：${dataErrors.schedule}`, `Couldn't load the schedule: ${dataErrors.schedule}`)}</T></Card> : null}
+              <ScheduleCard events={schedule} day={iso} today={iso} editable={scheduleEditable} onChanged={scheduleChanged}
+                empty={loading.schedule && !schedule.length ? L('正在读…', 'Loading…') : L('今天还没有安排。', 'Nothing scheduled today.')} />
               {tomorrows.length ? (
                 <Pressable onPress={() => setOffset(1)} accessibilityRole="button" style={{ marginTop: space.sm, paddingHorizontal: space.xs }}>
                   <T v="callout" color={t.ink3}>{L(
@@ -369,6 +359,14 @@ export function TodayScreen() {
                     `Tomorrow: ${tomorrows.length} event${tomorrows.length === 1 ? '' : 's'}, first at ${tomorrows[0].start}. `,
                   )}<T v="callout" color={t.gold}>{L('看明天', 'See tomorrow')}</T></T>
                 </Pressable>
+              ) : null}
+
+              {scheduleEditable || remember.length ? (
+                <>
+                  <SectionLabel>{L('要记得的', 'To remember')}</SectionLabel>
+                  {dataErrors.remember ? <Card style={{ marginBottom: space.sm }}><T v="callout" color={t.bad}>{L(`读不到：${dataErrors.remember}`, `Couldn't load: ${dataErrors.remember}`)}</T></Card> : null}
+                  <RememberCard items={remember} errors={rememberErrors} today={iso} />
+                </>
               ) : null}
             </>
           ) : null}

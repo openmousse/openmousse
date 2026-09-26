@@ -7,7 +7,7 @@ import * as Haptics from 'expo-haptics';
 import * as DocumentPicker from 'expo-document-picker';
 import * as ImagePicker from 'expo-image-picker';
 import { AudioModule, RecordingPresets, setAudioModeAsync, useAudioRecorder, useAudioRecorderState } from 'expo-audio';
-import { ArrowUp, Camera, Copy, FileAudio, FileText, Film, ImageIcon, Inbox, Mic, Paperclip, Pencil, Square, Trash2, Undo2, X } from './icons';
+import { ArrowUp, Camera, Copy, FileAudio, FileText, Film, ImageIcon, Inbox, ListChecks, Mic, Paperclip, Pencil, Square, Trash2, Undo2, X } from './icons';
 import type { Attachment, ChatCard, HandoffCard, InboxItem, Message, PendingFile, TaskCardInfo } from '../data/types';
 import { L } from '../i18n';
 import type { ChatQuote } from '../navigation';
@@ -20,7 +20,7 @@ import { useSheet } from './Sheet';
 import { PullRefresh, T } from './ui';
 import { Markdown } from './Markdown';
 import { InboxCard } from './InboxCard';
-import { HandoffChip, HandoffFrom, TaskCardView, modelLabel } from './ChatCards';
+import { HandoffChip, HandoffFrom, ScheduleChip, TaskCardView, modelLabel } from './ChatCards';
 
 // 没发出去的草稿按线程记着：切到看板、换线程、离开页面再回来还在（只在内存里，退出 app 就没了）。
 const drafts = new Map<string, string>();
@@ -71,7 +71,7 @@ function ChatInbox({ items }: { items?: InboxItem[] }) {
 function placeCards(cards: ChatCard[], msgs: Message[], busy: boolean) {
   const index = new Map(msgs.map((m, i) => [m.id, i]));
   const above = new Map<number, HandoffCard[]>();
-  const below = new Map<number, TaskCardInfo[]>();
+  const below = new Map<number, ChatCard[]>();  // 任务卡、日程卡（和按时间排进来的转交卡）
   const live: ChatCard[] = [];
   const start = logicalDayStart();
   const lastUser = [...msgs].reverse().find((m) => m.role === 'user');
@@ -84,7 +84,7 @@ function placeCards(cards: ChatCard[], msgs: Message[], busy: boolean) {
     if (busy && (!lastUser || !/^\d{1,2}:\d{2}$/.test(lastUser.time) || minute >= dayMinute(lastUser.time))) { live.push(c); continue; }
     let slot = -1;
     msgs.forEach((m, i) => { if (/^\d{1,2}:\d{2}$/.test(m.time) && minute >= 0 && dayMinute(m.time) <= minute) slot = i; });
-    add(below, slot, c as TaskCardInfo);
+    add(below, slot, c);
   }
   return { above, below, live };
 }
@@ -92,7 +92,7 @@ function placeCards(cards: ChatCard[], msgs: Message[], busy: boolean) {
 /** 回复下面的任务卡（和转交卡一样让出头像那一列；转交卡如果按时间排到这里，也走这里）。 */
 function ChatTasks({ cards, onRevise }: { cards?: ChatCard[]; onRevise: (c: TaskCardInfo) => void }) {
   if (!cards?.length) return null;
-  return <>{cards.map((c) => <View key={c.id} style={{ paddingLeft: 36 }}>{c.kind === 'task' ? <TaskCardView card={c} onRevise={onRevise} /> : <HandoffChip card={c} />}</View>)}</>;
+  return <>{cards.map((c) => <View key={c.id} style={{ paddingLeft: 36 }}>{c.kind === 'task' ? <TaskCardView card={c} onRevise={onRevise} /> : c.kind === 'schedule' ? <ScheduleChip card={c} /> : <HandoffChip card={c} />}</View>)}</>;
 }
 
 // 上限对齐主流 LLM 产品（服务端 files.py 同样的数）：一条消息 10 个附件，每个 30 MB，类型不限。
@@ -309,7 +309,7 @@ export function ChatView({ threadId, placeholder, empty, quote: quoteProp, quote
   const busy = !!typing[threadId];
   const placed = placeCards(allCards, msgs, busy);
   const liveHandoffs = placed.live.filter((c): c is HandoffCard => c.kind === 'handoff');
-  const liveTasks = placed.live.filter((c): c is TaskCardInfo => c.kind === 'task');
+  const liveTasks = placed.live.filter((c) => c.kind !== 'handoff');  // 任务卡、日程卡
   // 每条消息在列表里的位置（定位到某一条用）；从转交卡点过来的那一条闪一下
   const ys = useRef<Record<string, number>>({});
   const [flash, setFlash] = useState<string | null>(null);
@@ -402,7 +402,7 @@ export function ChatView({ threadId, placeholder, empty, quote: quoteProp, quote
     }
     if ((!text && !pending.length) || busy || transcribing) return;
     // 带着引用：这条是对收件箱里那件事的修改意见（服务器收到 inboxId 会把它退回去改）
-    send(threadId, text, pending.length ? pending : undefined, quote?.inboxId ? { inboxId: quote.inboxId } : undefined);
+    send(threadId, text, pending.length ? pending : undefined, quote?.inboxId ? { inboxId: quote.inboxId } : quote?.ref ? { ref: quote.ref } : undefined);
     setDraft('');
     setPending([]);
     setQuote(null);
@@ -529,11 +529,11 @@ export function ChatView({ threadId, placeholder, empty, quote: quoteProp, quote
         {quote ? (
           <View style={{ paddingHorizontal: space.md, paddingTop: space.sm }}>
             <View style={[styles.quote, { backgroundColor: t.goldSoft }]}>
-              {quote.taskId ? <Pencil size={14} color={t.gold} /> : <Inbox size={14} color={t.gold} />}
+              {quote.taskId ? <Pencil size={14} color={t.gold} /> : quote.ref ? <ListChecks size={14} color={t.gold} /> : <Inbox size={14} color={t.gold} />}
               <T v="callout" numberOfLines={1} style={{ flex: 1, fontSize: 13 }}>
                 {quote.taskId
                   ? L(`改「${quote.title}」· 直接发给做它的 ${modelLabel(quote.model)}`, `Revise "${quote.title}" · goes straight to ${modelLabel(quote.model)}`)
-                  : L(`回复：${quote.title}`, `Re: ${quote.title}`)}
+                  : quote.ref ? L(`说的是：${quote.title}`, `About: ${quote.title}`) : L(`回复：${quote.title}`, `Re: ${quote.title}`)}
               </T>
               <Pressable onPress={() => setQuote(null)} hitSlop={10} accessibilityRole="button" accessibilityLabel={L('不带这条引用', 'Remove the quote')}>
                 <X size={14} color={t.ink3} />

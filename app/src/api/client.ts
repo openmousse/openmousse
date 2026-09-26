@@ -10,6 +10,7 @@ export interface GravaApi {
   readonly connected: boolean;
   /** 发一条消息，拿回 Grava 的回复。threadId 为 'main'、groupId 或独立空间 id。onDelta 在流式输出时逐段回调。
    *  extra.inboxId：这条是对收件箱里某件事的修改意见（从「去对话里说」带过来的引用），老服务器不认、忽略。
+   *  extra.ref：说的是日程或「要记得的」里的哪一条（「不对？跟它说」带过来的），模型另外看到是哪一条。
    *  extra.onCard：回复进行中出的转交卡、任务卡（SSE 的 card 事件；同一张卡状态变了会再来一次）。 */
   send(threadId: string, text: string, modelId: string, onDelta?: (partial: string) => void, onStart?: (userId: string) => void, files?: PendingFile[], extra?: SendExtra): Promise<Message>;
   /** 语音输入：录音传上去，拿回文字。 */
@@ -26,7 +27,7 @@ export interface GravaApi {
   rewind(threadId: string, msgId: string): Promise<string>;
 }
 
-export interface SendExtra { inboxId?: string; onCard?: (card: ChatCard) => void }
+export interface SendExtra { inboxId?: string; ref?: string; onCard?: (card: ChatCard) => void }
 
 const now = () => {
   const d = new Date();
@@ -79,7 +80,7 @@ async function consume(r: Response, onDelta?: (partial: string) => void, onStart
     if (event === 'start') onStart?.(data.userId);
     else if (event === 'delta') { partial += data.text; onDelta?.(partial); }
     else if (event === 'done') done = data;
-    else if (event === 'card' && data && (data.kind === 'handoff' || data.kind === 'task')) onCard?.(data as ChatCard);
+    else if (event === 'card' && data && (data.kind === 'handoff' || data.kind === 'task' || data.kind === 'schedule')) onCard?.(data as ChatCard);
   });
   if (!done) throw new Error(L('流中断', 'Reply stream cut off'));
   return { id: done.id, role: 'grava', time: done.time, modelId: done.modelId, fallbackFrom: done.fallbackFrom ?? undefined, body: { type: 'text', text: done.text }, error: done.status === 'error' ? done.error : undefined };
@@ -128,7 +129,7 @@ export class HttpApi implements GravaApi {
     const attachments = files?.length ? (await uploadFiles(threadId, files)).map((a) => a.id) : [];
     const r = await expoFetch(`${getBase()}/api/chat/send`, {
       method: 'POST', headers: { 'Content-Type': 'application/json', Accept: 'text/event-stream', ...authHeaders() },
-      body: JSON.stringify({ thread: threadId, text, model: modelId, attachments, ...(extra?.inboxId ? { inboxId: extra.inboxId } : {}) }),
+      body: JSON.stringify({ thread: threadId, text, model: modelId, attachments, ...(extra?.inboxId ? { inboxId: extra.inboxId } : {}), ...(extra?.ref ? { ref: extra.ref } : {}) }),
     });
     if (!r.ok) {
       const j = await r.json().catch(() => ({}));

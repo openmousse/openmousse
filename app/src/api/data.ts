@@ -68,6 +68,10 @@ function normalizeCard(raw: any): ChatCard | null {
       tools: num(raw.tools) ?? 0, round: num(raw.round) ?? 1, deliverable: Array.isArray(raw.deliverable) ? raw.deliverable.map(String) : [],
       status: ['进行中', '完成', '失败', '已取消'].includes(raw.status) ? raw.status : '完成', timedOut: !!raw.timedOut } as ChatCard;
   }
+  if (raw.kind === 'schedule' && typeof raw.logId === 'number') {  // Agent 在回复里改了日程（server/schedule.py）
+    return { ...raw, messageId: msgNum(raw.messageId), title: str(raw.title), summary: str(raw.summary), action: str(raw.action), actor: str(raw.actor),
+      area: raw.area === 'remember' ? 'remember' : 'schedule', status: raw.status === 'undone' ? 'undone' : 'done', createdAt: str(raw.createdAt) } as ChatCard;
+  }
   return null;
 }
 export const cardOf = normalizeCard;

@@ -7,6 +7,7 @@ const KEY_SERVER = 'mousse.server';
 const KEY_TOKEN = 'mousse.token';
 const KEY_NAME = 'mousse.name';
 const KEY_LANG = 'mousse.lang';
+const KEY_AGENTS_VIEW = 'mousse.agentsView';
 let base = '';
 let token = '';
 let loaded = false;
@@ -67,6 +68,9 @@ export const persistAgentName = (n: string) => writeItem(KEY_NAME, n);
 /** 界面语言：'zh' / 'en'，空 = 跟随系统。 */
 export const loadLangPref = () => readItem(KEY_LANG);
 export const saveLangPref = (v: string) => writeItem(KEY_LANG, v);
+/** Agents 页竖排（list）还是横排（grid，两列卡片）。 */
+export const loadAgentsView = () => readItem(KEY_AGENTS_VIEW);
+export const saveAgentsView = (v: string) => writeItem(KEY_AGENTS_VIEW, v);
 
 export function normalizeBase(v: string): string {
   let s = (v || '').trim().replace(/\/+$/, '');

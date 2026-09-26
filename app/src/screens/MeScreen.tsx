@@ -2,7 +2,7 @@ import React from 'react';
 import { agentName } from '../brand';
 import { Pressable, ScrollView, View } from 'react-native';
 import { useNavigation } from '@react-navigation/native';
-import { Activity, BookOpen, Brain, ClipboardList, Cpu, IdCard, Palette, Server, ShieldCheck } from '../components/icons';
+import { Activity, BookOpen, Brain, CalendarDays, ClipboardList, Cpu, IdCard, Palette, Server, ShieldCheck } from '../components/icons';
 import { LensAvatar } from '../components/LensAvatar';
 import { Card, LargeHeader, ListRow, Pill, PullRefresh, Screen, SectionLabel, Segmented, T } from '../components/ui';
 import { L, useLang, type LangPref } from '../i18n';
@@ -51,6 +51,7 @@ export function MeScreen() {
           <SectionLabel>{L('设置', 'Settings')}</SectionLabel>
           <Card style={{ paddingVertical: space.xs }}>
             <ListRow icon={<Server size={20} color={connected ? t.cyan : t.warn} />} title={L('服务器', 'Server')} sub={connected ? L(`已连接 · ${appName}`, `Connected · ${appName}`) : authFailed ? L('令牌不对，点这里改', 'Wrong token, tap to fix') : L('地址和接入令牌', 'Address and access token')} onPress={() => nav.navigate('Connect')} />
+            <ListRow icon={<CalendarDays size={20} color={t.cyan} />} title={L('日程', 'Schedule')} sub={L('在 iPhone 日历里看（订阅链接）', 'See it in your iPhone calendar (subscription)')} onPress={() => nav.navigate('ScheduleFeed')} />
             <ListRow icon={<Cpu size={20} color={expired.length ? t.warn : t.cyan} />} title={L('模型与计费', 'Models & billing')} sub={expired.length ? L(`${expired.map((p) => p.name).join('、')} 订阅登录已过期`, `Subscription login expired: ${expired.map((p) => p.name).join(', ')}`) : L('订阅、API、回退顺序', 'Subscriptions, API, fallback order')} onPress={() => nav.navigate('Models')} />
             <ListRow icon={<Palette size={20} color={t.cyan} />} title={L('形象', 'Look')} sub={L('光环样式和颜色', 'Halo style and color')} onPress={() => nav.navigate('Avatar')} last />
           </Card>

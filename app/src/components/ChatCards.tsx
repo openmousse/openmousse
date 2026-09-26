@@ -3,15 +3,16 @@
 //   挂在发起转交的那条回复上面；点一下到那个 Agent 的对话里那个问题。Agent 那边那一条（「主对话转来」）点一下回来。
 // - 任务卡：这条回复派出去的后台任务。进行中显示在做哪一步；做完显示结果开头几行，「改一下」把意见直接发给做它的那个子会话，
 //   卡片变成第 2 轮；「看全文」「看过程」到任务详情。
+// - 日程卡（服务器 schedule.py）：Agent 在这次回复里改了日程或「要记得的」（挪时间、课不去、打勾、改邮件条目），一行写改了什么，能撤销。
 import React, { useEffect, useState } from 'react';
 import { ActivityIndicator, Alert, Animated, Easing, Platform, Pressable, StyleSheet, Text, View } from 'react-native';
 import { useNavigation } from '@react-navigation/native';
-import type { HandoffCard, TaskCardInfo } from '../data/types';
+import type { HandoffCard, ScheduleChangeCard, TaskCardInfo } from '../data/types';
 import { L } from '../i18n';
 import { openThread } from '../navigation';
 import { useStore } from '../store';
 import { radius, space, type, useTheme } from '../theme';
-import { Check, ChevronRight, CircleAlert, Clock, CornerDownLeft, FileText, LoaderCircle, Pencil, Send, Square, X } from './icons';
+import { CalendarDays, Check, ChevronRight, CircleAlert, Clock, CornerDownLeft, FileText, ListChecks, LoaderCircle, Pencil, Send, Square, X } from './icons';
 import { Markdown } from './Markdown';
 import { SourceBadge } from './SourceBadge';
 import { modelOf } from './ModelPicker';
@@ -316,7 +317,43 @@ export function TaskCardView({ card, onRevise }: { card: TaskCardInfo; onRevise:
   );
 }
 
+// —— 日程卡 ——————————————————————————————————————————————————————
+
+/** Agent 改了日程 / 要记得的：一行「训练 · Push A　17:30 → 18:00」，右边「撤销」（撤销过的是「恢复」）。 */
+export function ScheduleChip({ card }: { card: ScheduleChangeCard }) {
+  const t = useTheme();
+  const { undoScheduleCard } = useStore();
+  const [busy, setBusy] = useState(false);
+  const undone = card.status === 'undone';
+  const remember = card.area === 'remember';
+  const Icon = remember ? ListChecks : CalendarDays;
+  const press = () => {
+    setBusy(true);
+    undoScheduleCard(card).catch((e) => showError(undone ? L('没恢复成', "Couldn't redo") : L('没撤销成', "Couldn't undo"), e)).finally(() => setBusy(false));
+  };
+  const what = remember ? L('要记得的', 'To remember') : L('日程', 'Schedule');
+  return (
+    <View accessible={false} style={[styles.chip, { backgroundColor: t.surface, borderColor: t.line, opacity: undone ? 0.65 : 1 }]}>
+      <View style={[styles.circle, { width: 30, height: 30, borderRadius: 9, backgroundColor: remember ? t.goldSoft : t.cyanSoft }]}>
+        <Icon size={16} color={remember ? t.gold : t.cyan} />
+      </View>
+      <View style={{ flex: 1, minWidth: 0, gap: 2 }}>
+        <T v="headline" numberOfLines={1} style={{ fontSize: 14, fontWeight: '700' }}>{card.title}</T>
+        <T v="callout" numberOfLines={2} color={t.ink2} style={{ fontSize: 13, lineHeight: 18 }}>
+          {undone ? L(`${what} · 已撤销`, `${what} · undone`) : `${what} · ${card.summary}`}
+        </T>
+      </View>
+      <Pressable onPress={press} disabled={busy} accessibilityRole="button" hitSlop={6}
+        accessibilityLabel={undone ? L(`恢复：${card.title}`, `Redo: ${card.title}`) : L(`撤销：${card.title}`, `Undo: ${card.title}`)}
+        style={({ pressed }) => [styles.undo, { backgroundColor: t.surface2, opacity: pressed || busy ? 0.6 : 1 }]}>
+        <T v="callout" style={{ fontSize: 13, fontWeight: '600' }}>{undone ? L('恢复', 'Redo') : L('撤销', 'Undo')}</T>
+      </Pressable>
+    </View>
+  );
+}
+
 const styles = StyleSheet.create({
+  undo: { height: 30, paddingHorizontal: 10, borderRadius: 9, alignItems: 'center', justifyContent: 'center' },
   chip: { flexDirection: 'row', alignItems: 'center', gap: 10, borderRadius: 14, borderWidth: StyleSheet.hairlineWidth, paddingVertical: 9, paddingLeft: 9, paddingRight: 10 },
   from: { alignSelf: 'center', maxWidth: '92%', minWidth: '70%', gap: 4, borderRadius: 14, borderWidth: 1.5, paddingVertical: 10, paddingHorizontal: 14 },
   card: { borderRadius: 16, borderWidth: StyleSheet.hairlineWidth, padding: 14, gap: 10 },
