@@ -3,6 +3,7 @@
 | 页面 | 真源 |
 |---|---|
 | Groups、独立空间、目标、建议、形象设置、app 侧活动 | grava.db（记忆规范的 L4） |
+| 编辑 Agent（`PATCH /api/groups/{id}`：名字 / 图标 / 颜色 / 职责 / 模型） | grava.db `groups`（color：NULL = 默认色）+ `threads.model`；名字、职责同时换掉 Agent 工作区 IDENTITY.md 里 `<!-- mousse:role -->` 那一段，模型同时写 openclaw.json 的 `agents.entries.<id>.model`（见 agents.py） |
 | 等你点头（收件箱） | grava.db `inbox`（各 Agent 经 `server/inbox_ctl.py` 写：要你同意才做的事、它们自己的提议；见 inbox.py）+ OpenClaw 执行审批队列（`openclaw approvals pending / resolve`，旧的 /api/approvals 仍在） |
 | 未读、「今天」页的新卡片、app 角标 | grava.db `read_marks` + `messages.origin` + `feed_items.seen_at`（见 unread.py） |
 | 推送 | Expo Push，三档 ring / quiet / none + server.json 的 `push.quiet_hours`（见 push.py） |
@@ -59,7 +60,7 @@ def ddb():
     conn = db()
     conn.executescript("""
         CREATE TABLE IF NOT EXISTS groups (id TEXT PRIMARY KEY, name TEXT NOT NULL, icon TEXT NOT NULL, purpose TEXT,
-            dashboard TEXT NOT NULL DEFAULT 'none', position INTEGER NOT NULL DEFAULT 99, created_at TEXT NOT NULL);
+            dashboard TEXT NOT NULL DEFAULT 'none', position INTEGER NOT NULL DEFAULT 99, created_at TEXT NOT NULL, color TEXT);
         CREATE TABLE IF NOT EXISTS side_chats (id TEXT PRIMARY KEY, title TEXT NOT NULL, purpose TEXT,
             archived INTEGER NOT NULL DEFAULT 0, created_at TEXT NOT NULL, updated_at TEXT NOT NULL);
         CREATE TABLE IF NOT EXISTS goals (id TEXT PRIMARY KEY, category TEXT NOT NULL, title TEXT NOT NULL, detail TEXT,
@@ -74,8 +75,9 @@ def ddb():
             status TEXT NOT NULL DEFAULT 'planned', progress INTEGER NOT NULL DEFAULT 0, next_step TEXT, notes TEXT, link TEXT, materials TEXT,
             created_at TEXT NOT NULL, updated_at TEXT NOT NULL);
     """)
-    global _feed_migrated
-    if not _feed_migrated:  # 老库的 feed_items 没有 kind / data（结构化建议卡要用）/ seen_at（「新」卡片）：补上列，只查一次
+    global _migrated
+    if not _migrated:  # 老库缺的列补上，只查一次
+        # feed_items 没有 kind / data（结构化建议卡要用）/ seen_at（「新」卡片）
         have = {r[1] for r in conn.execute("PRAGMA table_info(feed_items)")}
         for col in ("kind", "data"):
             if col not in have:
@@ -83,11 +85,14 @@ def ddb():
         if "seen_at" not in have:  # 看过的时间；NULL = 新卡。补列时已有的卡都算看过，不会一下子全亮
             conn.execute("ALTER TABLE feed_items ADD COLUMN seen_at TEXT")
             conn.execute("UPDATE feed_items SET seen_at=created_at")
-        _feed_migrated = True
+        # groups 没有 color（Agent 的颜色；NULL = 默认色，老 Agent 都是默认）
+        if "color" not in {r[1] for r in conn.execute("PRAGMA table_info(groups)")}:
+            conn.execute("ALTER TABLE groups ADD COLUMN color TEXT")
+        _migrated = True
     return conn
 
 
-_feed_migrated = False
+_migrated = False
 
 
 _cache: dict[str, tuple[float, Any]] = {}
@@ -189,40 +194,168 @@ def short(text: str, n: int = 60) -> str:
 
 # —— Groups 与独立空间 ————————————————————————————————————————————
 
+ICON_KEY = re.compile(r"[a-z-]{1,24}")  # app 的图标键（moon、dumbbell、graduation…）；不在 agents.ICON_EMOJI 里的也收，app 自己决定怎么画
+MODEL_REF = re.compile(r"[A-Za-z0-9][\w.-]*/\S{1,200}")  # provider/model；认不认得这个模型由 openclaw config validate 说了算
+GROUP_SELECT = "SELECT g.*, t.model FROM groups g LEFT JOIN threads t ON t.id = g.id"
+
+
+def agent_name(raw: str, gid: str | None = None) -> str:
+    """Agent 的名字：首尾空白去掉，换行和连续空白并成一个空格。不能空（400），不能和别的 Agent 重名、不分大小写（409）。"""
+    name = re.sub(r"\s+", " ", raw or "").strip()
+    if not name:
+        raise HTTPException(400, L("Agent 要有名字", "The agent needs a name"))
+    with _lock, ddb() as conn:
+        taken = {r["name"].casefold() for r in conn.execute("SELECT id, name FROM groups") if r["id"] != gid}
+    if name.casefold() in taken:
+        raise HTTPException(409, L(f"已经有叫「{name}」的 Agent 了，换个名字", f'There is already an agent called "{name}". Pick another name.'))
+    return name
+
+
+def icon_key(raw: str) -> str:
+    icon = (raw or "").strip()
+    if not ICON_KEY.fullmatch(icon):
+        raise HTTPException(400, L("icon 要写成图标名：小写字母和连字符，最多 24 个字符，比如 moon",
+                                   "icon must be an icon key: lowercase letters and hyphens, at most 24 characters, e.g. moon"))
+    return icon
+
+
+def color_key(raw: str | None) -> str | None:
+    """Agent 的颜色：agents.COLORS 里的一个；null 或空 = 默认色（存 NULL）。"""
+    color = (raw or "").strip()
+    if not color:
+        return None
+    if color not in agents.COLORS:
+        names = " / ".join(agents.COLORS)
+        raise HTTPException(400, L(f"color 只能是 {names}，或者 null（默认色）", f"color must be one of {names}, or null for the default"))
+    return color
+
+
+def model_ref(raw: str) -> str:
+    model = (raw or "").strip()
+    if not MODEL_REF.fullmatch(model):
+        raise HTTPException(400, L("model 要写成 provider/model，比如 anthropic/claude-opus-5-5", "model must look like provider/model, e.g. anthropic/claude-opus-5-5"))
+    return model
+
+
+def group_out(r, last: str) -> dict:
+    """GET /api/groups 的一项；PATCH 返回同样的形状。color 没设是 null（app 用默认色）。"""
+    return {"id": r["id"], "name": r["name"], "icon": r["icon"], "color": r["color"], "purpose": r["purpose"] or "", "modelId": r["model"],
+            "dashboard": r["dashboard"], "lastLine": short(last)}
+
+
 class GroupIn(BaseModel):
     name: str
     purpose: str = ""
     icon: str = "moon"
+    color: str | None = None  # agents.COLORS 里的一个；不给 = 默认色
     model: str
     skills: list[str] | None = None  # 不给就用 server.json 的 agent_default_skills
+
+
+class GroupPatch(BaseModel):
+    """只带要改的字段；给 null 等于没给，只有 color 例外：null 或 "" = 换回默认色。"""
+    name: str | None = None
+    icon: str | None = None
+    color: str | None = None
+    purpose: str | None = None
+    model: str | None = None
 
 
 @router.get("/api/groups")
 def groups():
     last = last_lines()
     with _lock, ddb() as conn:
-        rows = conn.execute("SELECT g.*, t.model FROM groups g LEFT JOIN threads t ON t.id = g.id ORDER BY position, created_at").fetchall()
-    return {"ok": True, "groups": [{"id": r["id"], "name": r["name"], "icon": r["icon"], "purpose": r["purpose"] or "", "modelId": r["model"],
-                                    "dashboard": r["dashboard"], "lastLine": short(last.get(r["id"], ("", ""))[0])} for r in rows]}
+        rows = conn.execute(GROUP_SELECT + " ORDER BY position, created_at").fetchall()
+    return {"ok": True, "groups": [group_out(r, last.get(r["id"], ("", ""))[0]) for r in rows]}
 
 
 @router.post("/api/groups")
 def create_group(body: GroupIn):
     """新建 Agent = 建一个独立的 OpenClaw agent（workspace、记忆、skills）+ groups 表一行。失败就什么都不留。"""
-    name = body.name.strip()
-    if not name:
-        raise HTTPException(400, L("Agent 要有名字", "The agent needs a name"))
+    name, icon, color = agent_name(body.name), icon_key(body.icon), color_key(body.color)
     gid = f"g-{uuid.uuid4().hex[:8]}"
     ts = now_iso()
     try:
-        agents.provision(gid, name, body.purpose.strip(), body.icon, skills=body.skills)
+        agents.provision(gid, name, body.purpose.strip(), icon, skills=body.skills)
     except agents.ProvisionError as e:
         raise HTTPException(502, str(e)) from e
     with _lock, ddb() as conn:
-        conn.execute("INSERT INTO groups(id, name, icon, purpose, created_at) VALUES(?,?,?,?,?)", (gid, name, body.icon, body.purpose.strip(), ts))
+        conn.execute("INSERT INTO groups(id, name, icon, color, purpose, created_at) VALUES(?,?,?,?,?,?)", (gid, name, icon, color, body.purpose.strip(), ts))
         conn.execute("INSERT INTO threads(id, model, updated_at) VALUES(?,?,?) ON CONFLICT(id) DO UPDATE SET model=excluded.model", (gid, body.model, ts))
     log_activity(L(f"新建 Agent「{name}」", f'Created agent "{name}"'), "edit")
     return {"ok": True, "id": gid}
+
+
+@router.patch("/api/groups/{gid}")
+def patch_group(gid: str, body: GroupPatch):
+    """编辑 Agent，只改给了的、而且真变了的字段：
+    - 图标、颜色：只动 groups 表。
+    - 名字或职责：Agent 得知道 → 它工作区 IDENTITY.md 里 <!-- mousse:role --> 那一段换成新的（先备份；没有这段就追加在末尾），
+      段外手写的、agent 自己写的一个字节都不动（agents.write_role）。借用 main 的旧 Group 没有自己的工作区，只改表。
+    - 模型：openclaw.json 的 agents.entries.<id>.model，和新建 Agent 同一套备份 → 写 → openclaw config validate → 不过就恢复（agents.set_model）；
+      app 里这个线程的模型也换成它。没有自己条目的 id（main、借用 main 的旧 Group）→ 400。
+    先全部校验再动文件；模型写失败就把 IDENTITY.md 放回原样，数据库不改。
+    整个编辑拿着 agents.edit_lock 排队（读现状 → 校验 → 写文件 → 写库）：同时来两个编辑，文件和数据库也对得上。"""
+    if gid == "main":
+        raise HTTPException(400, L("main 是主对话，不是 Agent，这里改不了；它的默认模型在 openclaw.json 的 agents.defaults.model",
+                                   "main is the main chat, not an Agent, so it can't be edited here; its default model is agents.defaults.model in openclaw.json"))
+    with agents.edit_lock:
+        return edit_group(gid, body)
+
+
+def edit_group(gid: str, body: GroupPatch) -> dict:
+    """patch_group 的本体，调用方拿着 agents.edit_lock。"""
+    with _lock, ddb() as conn:
+        r = conn.execute(GROUP_SELECT + " WHERE g.id=?", (gid,)).fetchone()
+    if not r:
+        raise HTTPException(404, L("没有这个 Agent", "No such agent"))
+    new: dict[str, str | None] = {}
+    if body.name is not None and (name := agent_name(body.name, gid)) != r["name"]:
+        new["name"] = name
+    if body.icon is not None and (icon := icon_key(body.icon)) != r["icon"]:
+        new["icon"] = icon
+    if "color" in body.model_fields_set and (color := color_key(body.color)) != r["color"]:
+        new["color"] = color
+    if body.purpose is not None and (purpose := body.purpose.strip()) != (r["purpose"] or ""):
+        new["purpose"] = purpose
+    if body.model is not None and (model := model_ref(body.model)) != (r["model"] or cfg.default_model):
+        new["model"] = model
+    if not new:
+        with _lock, ddb() as conn:
+            last = conn.execute("SELECT text FROM messages WHERE thread=? ORDER BY id DESC LIMIT 1", (gid,)).fetchone()
+        return {"ok": True, "group": group_out(r, last["text"] if last else "")}
+    try:
+        if "model" in new and agents.entry_of(gid) is None:
+            raise HTTPException(400, L(f"「{r['name']}」没有自己的 OpenClaw 配置（openclaw.json 里没有 agents.entries.{gid}），默认模型改不了",
+                                       f'"{r["name"]}" has no OpenClaw entry of its own (no agents.entries.{gid} in openclaw.json), so its default model cannot be changed'))
+        ws = cfg.agent_workspaces.get(gid)
+        undo = (agents.write_role(gid, ws, new.get("name") or r["name"], new["purpose"] if "purpose" in new else r["purpose"] or "")
+                if ws and ("name" in new or "purpose" in new) else (lambda: None))
+        try:
+            if "model" in new:
+                agents.set_model(gid, new["model"])
+        except agents.ProvisionError:
+            undo()
+            raise
+    except agents.NoEntry as e:
+        raise HTTPException(400, str(e)) from e
+    except agents.ProvisionError as e:
+        raise HTTPException(502, str(e)) from e
+    cols = [k for k in new if k != "model"]
+    with _lock, ddb() as conn:
+        if cols:
+            conn.execute(f"UPDATE groups SET {', '.join(f'{k}=?' for k in cols)} WHERE id=?", (*(new[k] for k in cols), gid))
+        if "model" in new:
+            conn.execute("INSERT INTO threads(id, model, updated_at) VALUES(?,?,?) ON CONFLICT(id) DO UPDATE SET model=excluded.model", (gid, new["model"], now_iso()))
+        row = conn.execute(GROUP_SELECT + " WHERE g.id=?", (gid,)).fetchone()
+        last = conn.execute("SELECT text FROM messages WHERE thread=? ORDER BY id DESC LIMIT 1", (gid,)).fetchone()
+    what_zh = {"name": "名字", "icon": "图标", "color": "颜色", "purpose": "职责", "model": f"模型（{new.get('model')}）"}
+    what_en = {"name": "name", "icon": "icon", "color": "color", "purpose": "role", "model": f"model ({new.get('model')})"}
+    zh, en = "、".join(what_zh[k] for k in new), ", ".join(what_en[k] for k in new)
+    renamed = new.get("name")
+    log_activity(L(f"改了 Agent「{r['name']}」的{zh}" + (f"，现在叫「{renamed}」" if renamed else ""),
+                   f'Edited agent "{r["name"]}": {en}' + (f' (now "{renamed}")' if renamed else "")), "edit")
+    return {"ok": True, "group": group_out(row, last["text"] if last else "")}
 
 
 @router.delete("/api/groups/{gid}")

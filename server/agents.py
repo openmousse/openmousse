@@ -1,10 +1,14 @@
-"""Agent 的创建与删除。一个 Agent = OpenClaw 的一个独立 agent（自己的 workspace、MEMORY.md、skills 允许列表）+ app 里 groups 表的一行。
+"""Agent 的创建、修改与删除。一个 Agent = OpenClaw 的一个独立 agent（自己的 workspace、MEMORY.md、skills 允许列表）+ app 里 groups 表的一行。
 
 新建（provision）做四件事，任何一步失败就回滚前面的：
-  1. 建 workspace：<openclaw_home>/workspace-<id>/，AGENTS.md（职责 + 通用规则）、IDENTITY.md、MEMORY.md、memory/；
+  1. 建 workspace：<openclaw_home>/workspace-<id>/，AGENTS.md（职责 + 通用规则）、IDENTITY.md（带 app 管的职责段，见 role_block）、MEMORY.md、memory/；
      SOUL.md / USER.md 从主 workspace 复制（同一个人格、同一个用户）；skills 软链到主 workspace 的 skills。
   2. 备份 openclaw.json，直接写 agents.entries.<id>，再 `openclaw config validate`（不过就恢复备份）。Gateway 监视这个文件，agents.* 热加载，不用重启。
   3. server.json 的 agent_workspaces 加一项（对话路由、记忆页靠它）。
+修改（app 里编辑 Agent，PATCH /api/groups/{id}）：
+  - 名字 / 职责 → IDENTITY.md 里 <!-- mousse:role --> … <!-- /mousse:role --> 这一段整段换掉（write_role），段外的字一个字节都不动：
+    手写的 IDENTITY.md、agent 自己写进去的内容都留着。先备份到 backup_dir。
+  - 模型 → openclaw.json 的 agents.entries.<id>.model（set_model），和第 2 步同一套备份 + 校验 + 失败恢复。
 删除（remove）反过来：条目去掉、agent_workspaces 去掉、workspace 整个移到 <openclaw_home>/archive/（记忆永远不删）。
 """
 from __future__ import annotations
@@ -13,18 +17,34 @@ import json
 import os
 import shutil
 import subprocess
+import threading
 import time
 from datetime import datetime
 from pathlib import Path
+from typing import Callable
 
 from config import settings
 from i18n import L
 
-ICON_EMOJI = {"dumbbell": "🏋️", "utensils": "🥗", "book": "📚", "wallet": "💷", "moon": "🌙", "briefcase": "💼", "heart": "❤️‍🩹", "plane": "✈️"}
+# 图标键 → 新 Agent 的 IDENTITY.md 里的 emoji。app 认得的图标就是这些；服务端只要求是小写字母和连字符（data.py），不认得的 emoji 用 ✨
+ICON_EMOJI = {"moon": "🌙", "dumbbell": "🏋️", "utensils": "🥗", "book": "📚", "wallet": "💷", "briefcase": "💼", "heart": "❤️‍🩹", "plane": "✈️",
+              "coffee": "☕", "music": "🎵", "camera": "📷", "code": "💻", "cart": "🛒", "home": "🏠", "car": "🚗", "paw": "🐾",
+              "leaf": "🌿", "gamepad": "🎮", "palette": "🎨", "globe": "🌍", "graduation": "🎓", "lightbulb": "💡", "trophy": "🏆", "pill": "💊"}
+# Agent 的颜色（groups.color）。NULL = app 的默认色
+COLORS = ("cyan", "gold", "green", "purple", "pink", "orange")
+# IDENTITY.md 里归 app 管的那一段的首尾标记
+ROLE_START, ROLE_END = "<!-- mousse:role -->", "<!-- /mousse:role -->"
+# 读改写 openclaw.json / IDENTITY.md 的都排队：两个请求同时读改写，后写的会冲掉先写的。
+# RLock：编辑 Agent 时 data.py 拿着它走完「写 IDENTITY.md → 写模型 → 失败就撤销」，里面的函数还能再拿
+edit_lock = threading.RLock()
 
 
 class ProvisionError(Exception):
     pass
+
+
+class NoEntry(ProvisionError):
+    """openclaw.json 里没有 agents.entries.<id>：这个 id 没有自己的 OpenClaw 配置（比如 main，或借用 main 的旧 Group）。"""
 
 
 def openclaw_bin() -> str:
@@ -45,42 +65,111 @@ def validate_config() -> None:
         raise ProvisionError(L(f"openclaw config validate 不通过：{clean_output(p)}", f"openclaw config validate failed: {clean_output(p)}"))
 
 
-def write_entry(agent_id: str, entry: dict | None, tag: str) -> None:
-    """改 openclaw.json 的 agents.entries.<id>（None = 删）：先备份，原子写入，再 openclaw config validate；不通过就恢复备份。
+def edit_openclaw_json(change: Callable[[dict], bool], tag: str) -> bool:
+    """改 openclaw.json 的唯一入口：读 → change(data) 就地改（返回 False = 没东西要改，什么都不写）→ 备份 → 原子写入 →
+    `openclaw config validate`，不通过就恢复备份。返回是否写了。
+    整份按 JSON 重写：缩进 2、不转义中文、结尾换行跟原文件走，和 OpenClaw 自己写出来的格式一样，所以 change 没碰的地方不变。
     不用 `openclaw config patch`：它的 dry-run 会对整份配置做模型引用解析，环境稍有不顺就整个拒绝。Gateway 会自己热加载这个文件。"""
+    path = settings.openclaw_json
+    with edit_lock:
+        try:
+            text = path.read_text(encoding="utf8")
+            data = json.loads(text)
+        except (OSError, ValueError) as e:
+            raise ProvisionError(L(f"读不了 {path}：{e}", f"Couldn't read {path}: {e}")) from e
+        if not change(data):
+            return False
+        backup = backup_openclaw_json(tag)
+        tmp = path.with_suffix(".json.tmp")
+        tmp.write_text(json.dumps(data, ensure_ascii=False, indent=2) + ("\n" if text.endswith("\n") else ""), encoding="utf8")
+        shutil.copymode(path, tmp)
+        tmp.replace(path)
+        try:
+            validate_config()
+        except ProvisionError:
+            if backup:
+                shutil.copy2(backup, path)
+            raise
+        return True
+
+
+def write_entry(agent_id: str, entry: dict | None, tag: str) -> None:
+    """整条写 openclaw.json 的 agents.entries.<id>（None = 删），走 edit_openclaw_json。"""
+    def change(data: dict) -> bool:
+        entries = data.setdefault("agents", {}).setdefault("entries", {})
+        if entry is None:
+            if agent_id not in entries:
+                return False
+            del entries[agent_id]
+        else:
+            entries[agent_id] = entry
+        return True
+    edit_openclaw_json(change, tag)
+
+
+def entry_of(agent_id: str) -> dict | None:
+    """openclaw.json 里这个 agent 的条目（agents.entries.<id>）；没有 = None，文件读不了 → ProvisionError。"""
     path = settings.openclaw_json
     try:
         data = json.loads(path.read_text(encoding="utf8"))
     except (OSError, ValueError) as e:
         raise ProvisionError(L(f"读不了 {path}：{e}", f"Couldn't read {path}: {e}")) from e
-    entries = data.setdefault("agents", {}).setdefault("entries", {})
-    if entry is None:
-        if agent_id not in entries:
-            return
-        del entries[agent_id]
-    else:
-        entries[agent_id] = entry
-    backup = backup_openclaw_json(tag)
-    tmp = path.with_suffix(".json.tmp")
-    tmp.write_text(json.dumps(data, ensure_ascii=False, indent=2) + "\n", encoding="utf8")
-    shutil.copymode(path, tmp)
-    tmp.replace(path)
-    try:
-        validate_config()
-    except ProvisionError:
-        if backup:
-            shutil.copy2(backup, path)
-        raise
+    entry = ((data.get("agents") or {}).get("entries") or {}).get(agent_id)
+    return entry if isinstance(entry, dict) else None
+
+
+def set_model(agent_id: str, model: str) -> bool:
+    """Agent 的默认模型：只改 agents.entries.<id>.model，openclaw.json 别的地方一概不动；备份、校验、不过就恢复（edit_openclaw_json）。
+    - 已经是对象 {primary, fallbacks…}：只换 primary，回退链原样留着（OpenClaw 自己改模型也是这样）。
+    - 是字符串（严格模式，不回退）：换成新的字符串，还是严格模式。
+    - 没写（跟着 agents.defaults.model 走）：写 {primary, fallbacks}，fallbacks 抄一份 defaults 的回退链。
+      只写 primary 的话，OpenClaw 会把这个 agent 当成严格模式、主模型出错就不再回退。
+    新模型就是它现在实际在用的 → 不写，返回 False。没有这个条目 → NoEntry。"""
+    def change(data: dict) -> bool:
+        ag = data.get("agents") or {}
+        entry = (ag.get("entries") or {}).get(agent_id)
+        if not isinstance(entry, dict):
+            raise NoEntry(L(f"openclaw.json 里没有 agents.entries.{agent_id}：它没有自己的 OpenClaw 配置，默认模型改不了",
+                            f"openclaw.json has no agents.entries.{agent_id}: it has no OpenClaw entry of its own, so its default model can't be set"))
+        cur = entry.get("model")
+        if isinstance(cur, dict):
+            if cur.get("primary") == model:
+                return False
+            cur["primary"] = model
+        elif isinstance(cur, str) and cur:
+            if cur == model:
+                return False
+            entry["model"] = model
+        else:
+            dflt = (ag.get("defaults") or {}).get("model")
+            primary = dflt.get("primary") if isinstance(dflt, dict) else dflt if isinstance(dflt, str) else None
+            if primary == model:
+                return False
+            new: dict = {"primary": model}
+            if isinstance(dflt, dict) and isinstance(dflt.get("fallbacks"), list):
+                new["fallbacks"] = [m for m in dflt["fallbacks"] if m != model]
+            entry["model"] = new
+        return True
+    return edit_openclaw_json(change, f"model-{agent_id}")
+
+
+def backup_copy(src: Path, name: str) -> Path:
+    """src 复制到 backup_dir/<name>-<时间>；同一秒里再备份就加 -2、-3，不覆盖更早的那份。"""
+    settings.backup_dir.mkdir(parents=True, exist_ok=True)
+    first = settings.backup_dir / f"{name}-{datetime.now().strftime('%Y%m%d-%H%M%S')}"
+    dst, n = first, 1
+    while dst.exists():
+        n += 1
+        dst = first.with_name(f"{first.name}-{n}")
+    shutil.copy2(src, dst)
+    return dst
 
 
 def backup_openclaw_json(tag: str) -> Path | None:
     src = settings.openclaw_json
     if not src.is_file():
         return None
-    settings.backup_dir.mkdir(parents=True, exist_ok=True)
-    dst = settings.backup_dir / f"openclaw.json.pre-{tag}-{datetime.now().strftime('%Y%m%d-%H%M%S')}"
-    shutil.copy2(src, dst)
-    return dst
+    return backup_copy(src, f"openclaw.json.pre-{tag}")
 
 
 def agents_md(agent_id: str, name: str, purpose: str) -> str:
@@ -94,6 +183,8 @@ def agents_md(agent_id: str, name: str, purpose: str) -> str:
 ## 职责
 
 {purpose or '（还没写。第一次对话时问清楚这一块要管什么，然后把结论写进 MEMORY.md。）'}
+
+用户在 app 里改过名字或职责的话，新的写在 IDENTITY.md 的「职责」一节；和这里不一致时，以那里为准。
 
 不归你管的事：一句话告诉用户去主对话或对应的 Agent 说。
 
@@ -128,6 +219,8 @@ def agents_md(agent_id: str, name: str, purpose: str) -> str:
 
 {purpose or '(Not written yet. In your first conversation, find out what this area should cover, then write the answer into MEMORY.md.)'}
 
+If the user changes your name or role in the app, the new version goes into the Role section of IDENTITY.md; where the two differ, that section wins.
+
 For anything outside your area, tell the user in one sentence to take it to the main chat or the right Agent.
 
 ## Every session
@@ -156,7 +249,8 @@ A message that starts with "【自动触发】" (automatic trigger) isn't the us
 """)
 
 
-def identity_md(name: str, icon: str) -> str:
+def identity_md(name: str, icon: str, purpose: str = "") -> str:
+    """新 Agent 的 IDENTITY.md：身份几行 + 末尾 app 管的职责段（以后在 app 里改名字 / 职责只换那一段）。"""
     app = settings.app_name
     return L(f"""# IDENTITY.md - Who Am I?
 
@@ -172,7 +266,74 @@ def identity_md(name: str, icon: str) -> str:
 - **Vibe:** Plain-spoken, no filler, direct.
 - **Emoji:** {ICON_EMOJI.get(icon, '✨')}
 - **Avatar:** Same as the main {app}.
-""")
+""") + "\n" + role_block(name, purpose) + "\n"
+
+
+def role_block(name: str, purpose: str) -> str:
+    """IDENTITY.md 里归 app 管的一段：Agent 在 app 里的名字和职责，首尾是 ROLE_START / ROLE_END，每次整段替换。
+    OpenClaw 逐行按「标签: 值」解析 IDENTITY.md（Name / Emoji / Vibe / Theme…，后出现的算数），所以这一段不写「Name:」这类行，
+    职责每行前面加「> 」：用户写的「Theme: …」这种行不会被当成身份字段。名字和职责里出现的标记本身去掉，免得下次找错段。"""
+    def clean(s: str) -> str:
+        return s.replace(ROLE_START, "").replace(ROLE_END, "")
+    name = clean(name)
+    quoted = "\n".join(f"> {ln}" if ln else ">" for ln in (x.rstrip() for x in clean(purpose).strip().splitlines()))
+    return L(f"""{ROLE_START}
+## 职责（在 app 里改的，以这里为准）
+
+在 app 里叫「{name}」。名字和职责是用户在 app 里定的：和上面或 AGENTS.md 冲突时按这里的来，不冲突的细节照旧。
+
+{quoted or '（还没写。第一次对话时问清楚这一块要管什么。）'}
+{ROLE_END}""", f"""{ROLE_START}
+## Role (set in the app; this wins)
+
+In the app this Agent is called "{name}". The user set this name and role in the app. Where they conflict with the lines above or with AGENTS.md, this section wins; details that don't conflict still apply.
+
+{quoted or '(Not written yet. In your first conversation, find out what this area should cover.)'}
+{ROLE_END}""")
+
+
+def write_role(agent_id: str, ws: Path, name: str, purpose: str) -> Callable[[], None]:
+    """把 ws/IDENTITY.md 的职责段换成新的名字和职责，返回一个撤销函数（后面的步骤失败时把文件放回原样）。
+    有 ROLE_START … ROLE_END 就只换这一段（多于一段时换最后一段）；没有就追加在文件末尾，前面空一行；文件不存在就新建。
+    按字节读写、不动换行符：段外的内容（手写的、agent 自己写的）逐字节不变。改之前备份到 backup_dir/IDENTITY.md.pre-edit-<id>-<时间>。"""
+    path = ws / "IDENTITY.md"
+    if path.is_symlink():
+        path = path.resolve()
+    block = role_block(name, purpose)
+    with edit_lock:
+        try:
+            old = path.read_bytes().decode("utf8") if path.exists() else None
+        except (OSError, UnicodeDecodeError) as e:
+            raise ProvisionError(L(f"读不了 {path}：{e}", f"Couldn't read {path}: {e}")) from e
+        if old is None:
+            new = block + "\n"
+        else:
+            start = old.rfind(ROLE_START)
+            end = old.find(ROLE_END, start) if start >= 0 else -1
+            if end >= 0:
+                new = old[:start] + block + old[end + len(ROLE_END):]
+            else:
+                new = old + ("\n" if old.endswith("\n") else "\n\n" if old else "") + block + "\n"
+        if new == old:
+            return lambda: None
+        tmp = path.with_name(path.name + ".tmp")
+        try:
+            backup = backup_copy(path, f"IDENTITY.md.pre-edit-{agent_id}") if old is not None else None
+            tmp.write_bytes(new.encode("utf8"))
+            if old is not None:
+                shutil.copymode(path, tmp)
+            tmp.replace(path)
+        except OSError as e:
+            tmp.unlink(missing_ok=True)  # 别在 agent 的工作区里留半个临时文件
+            raise ProvisionError(L(f"写不了 {path}：{e}", f"Couldn't write {path}: {e}")) from e
+
+    def undo() -> None:
+        with edit_lock:
+            if backup:
+                shutil.copy2(backup, path)
+            else:
+                path.unlink(missing_ok=True)
+    return undo
 
 
 def memory_md(name: str) -> str:
@@ -219,7 +380,7 @@ def build_workspace(agent_id: str, name: str, purpose: str, icon: str) -> Path:
         raise ProvisionError(L(f"{ws} 已经存在且不为空", f"{ws} already exists and isn't empty"))
     ws.mkdir(parents=True, exist_ok=True)
     (ws / "AGENTS.md").write_text(agents_md(agent_id, name, purpose), encoding="utf8")
-    (ws / "IDENTITY.md").write_text(identity_md(name, icon), encoding="utf8")
+    (ws / "IDENTITY.md").write_text(identity_md(name, icon, purpose), encoding="utf8")
     (ws / "MEMORY.md").write_text(memory_md(name), encoding="utf8")
     (ws / "memory").mkdir(exist_ok=True)
     for fn in ("SOUL.md", "USER.md"):

@@ -33,11 +33,28 @@ Every field of `server.json` is documented at the top of [`config.py`](config.py
 
 ```bash
 python3 agent_ctl.py list
-python3 agent_ctl.py create --name Sleep --purpose "Interpret last night's sleep every morning." --icon moon
+python3 agent_ctl.py create --name Sleep --purpose "Interpret last night's sleep every morning." --icon moon --color purple
+python3 agent_ctl.py update g-xxxxxxxx --name "Sleep & recovery" --color default   # only the fields you give change
 python3 agent_ctl.py delete g-xxxxxxxx      # workspace archived to ~/.openclaw/archive/, never deleted
 ```
 
 With `packs/core/skills/agent-builder` installed on the main agent (the installer does this) you can create Agents from chat.
+
+| Endpoint | What it does |
+|---|---|
+| `GET /api/groups` | Every Agent: `{id, name, icon, color, purpose, modelId, dashboard, lastLine}`. `color` is null when unset (the app's default color) |
+| `POST /api/groups` | `{name, purpose?, icon?, color?, model, skills?}` → `{ok, id}`: builds the OpenClaw agent, then the row; if a step fails nothing is left behind |
+| `PATCH /api/groups/{id}` | `{name?, icon?, color?, purpose?, model?}` → `{ok, group}` (`group` has the same shape as in GET). Only fields you send that actually differ change; `color: null` = back to the default |
+| `DELETE /api/groups/{id}` | Removes the OpenClaw entry and the routing; the workspace moves to `archive/` |
+
+POST and PATCH check the same things: the name can't be empty (400) or the same as another Agent's, ignoring case (409); `icon` is an icon key, lowercase letters and hyphens, at most 24 characters (the app ships moon, dumbbell, utensils, book, wallet, briefcase, heart, plane, coffee, music, camera, code, cart, home, car, paw, leaf, gamepad, palette, globe, graduation, lightbulb, trophy, pill); `color` is one of cyan, gold, green, purple, pink, orange (400 otherwise).
+
+What a PATCH touches besides the database:
+
+- **icon, color**: nothing else.
+- **name or purpose**: the Agent's `IDENTITY.md`, so the agent knows. Only the block between `<!-- mousse:role -->` and `<!-- /mousse:role -->` is replaced: a "Role (set in the app; this wins)" section with the name and the purpose. Everything outside the markers, hand-written or written by the agent, stays byte-for-byte as it was. No block yet → it's appended at the end (the file is created if missing); new Agents get it from the start. The old file is copied to `backup_dir` first.
+- **model**: the Agent's default model in `openclaw.json` (`agents.entries.<id>.model`, nothing else in the file), with the same steps as creating an Agent: back up, write, `openclaw config validate`, restore on failure. An existing `{primary, fallbacks}` keeps its fallbacks; an Agent that followed the default model gets the default fallback chain copied, so it keeps falling back. An id without its own entry (such as main) → 400. The app's thread for this Agent switches to the new model too.
+- Everything is checked before anything is written. If the model can't be written (502), `IDENTITY.md` is put back and the database is unchanged.
 
 ## Needs your OK (the inbox)
 
