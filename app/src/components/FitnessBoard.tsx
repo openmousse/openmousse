@@ -14,6 +14,7 @@ import { bandColor, bandTone, Caption, HealthCaption, hhmm, localDate, NoRecover
 import { Markdown } from './Markdown';
 import { decisionTone, isTrainingPlan } from './Records';
 import { Btn, Card, Disclosure, Pill, SectionLabel, T } from './ui';
+import { Slot } from './blocks/BoardContext';
 
 const newest = (a: FeedItem, b: FeedItem) => (b.createdAt ?? '').localeCompare(a.createdAt ?? '');
 /** 卡片是几点出的（createdAt 是服务器的本地时间）。 */
@@ -348,7 +349,9 @@ export function FitnessBoard({ groupId, onAsk }: { groupId: string; onAsk: () =>
   return (
     <View>
       <NowSection groupId={groupId} onAsk={onAsk} />
+      <Slot at="fitness.now" />
       <BodySection />
+      <Slot at="fitness.body" />
       {live.week ? <WeekSection week={live.week} loadedAt={live.loadedAt} /> : (
         <View>
           <SectionLabel>{L('这周', 'This week')}</SectionLabel>
@@ -356,7 +359,9 @@ export function FitnessBoard({ groupId, onAsk }: { groupId: string; onAsk: () =>
             : <Card><T v="callout" color={t.bad}>{L(`训练数据没读到${liveErrors.week ? `：${liveErrors.week}` : ''}`, `Couldn't load workout data${liveErrors.week ? `: ${liveErrors.week}` : ''}`)}</T></Card>}
         </View>
       )}
+      <Slot at="fitness.week" />
       {live.trend ? <TrendSection trend={live.trend} /> : null}
+      <Slot at="fitness.long" />
     </View>
   );
 }

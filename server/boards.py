@@ -213,7 +213,8 @@ def fmt_money(x: float | None, currency: str = "GBP") -> str:
         return "—"
     sym = CURRENCY.get(currency, currency + " ")
     sign = "−" if x < 0 else ""
-    return f"{sign}{sym}{abs(x):,.2f}"
+    v = round(abs(x), 2)
+    return f"{sign}{sym}{v:,.0f}" if v.is_integer() else f"{sign}{sym}{v:,.2f}"  # £900、£23.40
 
 
 def fmt_date(s: str | None) -> str:
@@ -773,7 +774,22 @@ def resolve(conn: sqlite3.Connection, agent: str, b: dict) -> dict:
             for p in pts:
                 p["text"] = fmt_stat(p["value"], fmt, unit, cur) if p["value"] is not None else ""
             vals = [p["value"] for p in pts if p["value"] is not None]
-            return {"points": pts, "by": b["series"].get("by", "day"),
+            by = b["series"].get("by", "day")
+            agg = b["series"].get("agg", "count")
+            summary = b.get("summary") or ""
+            if not summary and vals:
+                if agg in ("sum", "count"):  # 流量（花了多少、练了几次）：平均每段多少
+                    avg = fmt_stat(sum(vals) / len(pts), fmt, unit, cur)
+                    summary = {"day": L(f"平均每天 {avg}", f"Avg {avg} a day"), "week": L(f"平均每周 {avg}", f"Avg {avg} a week"),
+                               "month": L(f"平均每月 {avg}", f"Avg {avg} a month")}[by]
+                elif len(vals) > 1:  # 水平（体重、分数）：最近是多少、这段时间里升降了多少
+                    d = vals[-1] - vals[0]
+                    sign = "+" if d > 0 else ("−" if d < 0 else "±")
+                    summary = L(f"最近 {fmt_stat(vals[-1], fmt, unit, cur)}，这段时间 {sign}{fmt_stat(abs(d), fmt, unit, cur)}",
+                                f"Latest {fmt_stat(vals[-1], fmt, unit, cur)}, {sign}{fmt_stat(abs(d), fmt, unit, cur)} over this period")
+                else:
+                    summary = L(f"最近 {fmt_stat(vals[-1], fmt, unit, cur)}", f"Latest {fmt_stat(vals[-1], fmt, unit, cur)}")
+            return {"points": pts, "by": by, "level": agg not in ("sum", "count"), "summary": summary,
                     "avgText": fmt_stat(sum(vals) / len(vals), fmt, unit, cur) if vals else None,
                     "maxText": fmt_stat(max(vals), fmt, unit, cur) if vals else None}
         if typ in ("list", "checklist"):

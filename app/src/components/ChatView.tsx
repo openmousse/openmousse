@@ -4,8 +4,6 @@ import { useNavigation } from '@react-navigation/native';
 import { Alert, Image, Linking, Platform, Pressable, ScrollView, StyleSheet, TextInput, View, type LayoutChangeEvent, type NativeScrollEvent, type NativeSyntheticEvent, type TextInputKeyPressEventData } from 'react-native';
 import * as Clipboard from 'expo-clipboard';
 import * as Haptics from 'expo-haptics';
-import * as DocumentPicker from 'expo-document-picker';
-import * as ImagePicker from 'expo-image-picker';
 import { AudioModule, RecordingPresets, setAudioModeAsync, useAudioRecorder, useAudioRecorderState } from 'expo-audio';
 import { ArrowUp, Camera, Copy, FileAudio, FileText, Film, ImageIcon, Inbox, ListChecks, Mic, Paperclip, Pencil, Square, Trash2, Undo2, X } from './icons';
 import type { Attachment, ChatCard, HandoffCard, InboxItem, Message, PendingFile, TaskCardInfo } from '../data/types';
@@ -21,9 +19,9 @@ import { PullRefresh, T } from './ui';
 import { Markdown } from './Markdown';
 import { InboxCard } from './InboxCard';
 import { HandoffChip, HandoffFrom, ScheduleChip, TaskCardView, modelLabel } from './ChatCards';
+import { drafts, MAX_FILES, pickDocuments, pickMedia } from './chatInput';
 
-// 没发出去的草稿按线程记着：切到看板、换线程、离开页面再回来还在（只在内存里，退出 app 就没了）。
-const drafts = new Map<string, string>();
+// 没发出去的草稿按线程记着（drafts 在 chatInput.ts）：切到看板、换线程、离开页面再回来还在（只在内存里，退出 app 就没了）。
 // 从「今天」的「去对话里说」带过来、还没发出去的引用，也按线程记着。
 const quotes = new Map<string, ChatQuote>();
 
@@ -96,7 +94,6 @@ function ChatTasks({ cards, onRevise }: { cards?: ChatCard[]; onRevise: (c: Task
 }
 
 // 上限对齐主流 LLM 产品（服务端 files.py 同样的数）：一条消息 10 个附件，每个 30 MB，类型不限。
-const MAX_FILES = 10;
 const MAX_BYTES = 30 * 1024 * 1024;
 const PLACEHOLDER_TEXT = '（见附件）';  // 只发附件时服务端（chat.py）和 store 记的占位文字；按原文比较后隐藏，不翻译
 // 语音输入只要听清人声：16 kHz 单声道 32 kbps 的 AAC，比默认的 44.1 kHz 立体声 128 kbps 小 6 倍，上传快得多，转写质量不受影响。
@@ -232,28 +229,6 @@ function Action({ icon: Icon, label, note, danger, onPress }: { icon: typeof Cop
       </View>
     </Pressable>
   );
-}
-
-// —— 选文件 ——
-
-async function pickDocuments(): Promise<PendingFile[]> {
-  const res = await DocumentPicker.getDocumentAsync({ type: '*/*', multiple: true, copyToCacheDirectory: true });
-  if (res.canceled) return [];
-  return res.assets.map((a) => ({ uri: a.uri, name: a.name, mime: a.mimeType ?? '', size: a.size ?? 0, file: (a as { file?: File }).file }));
-}
-
-async function pickMedia(camera: boolean): Promise<PendingFile[]> {
-  const perm = camera ? await ImagePicker.requestCameraPermissionsAsync() : await ImagePicker.requestMediaLibraryPermissionsAsync();
-  if (!perm.granted) throw new Error(camera ? L('没有相机权限，去系统设置里打开。', 'No camera access. Turn it on in Settings.') : L('没有相册权限，去系统设置里打开。', 'No photo library access. Turn it on in Settings.'));
-  const res = camera
-    ? await ImagePicker.launchCameraAsync({ mediaTypes: ['images', 'videos'], quality: 0.9 })
-    : await ImagePicker.launchImageLibraryAsync({ mediaTypes: ['images', 'videos'], allowsMultipleSelection: true, selectionLimit: MAX_FILES, quality: 0.9 });
-  if (res.canceled) return [];
-  return res.assets.map((a, i) => {
-    const ext = a.uri.split('?')[0].split('.').pop()?.toLowerCase() || (a.type === 'video' ? 'mov' : 'jpg');
-    return { uri: a.uri, name: a.fileName ?? `${a.type === 'video' ? 'video' : 'photo'}-${Date.now()}-${i}.${ext}`,
-      mime: a.mimeType ?? (a.type === 'video' ? 'video/quicktime' : 'image/jpeg'), size: a.fileSize ?? 0, file: (a as { file?: File }).file };
-  });
 }
 
 export function ChatView({ threadId, placeholder, empty, quote: quoteProp, quoteAt = 0, focus, focusAt = 0 }: {

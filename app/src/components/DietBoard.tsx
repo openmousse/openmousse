@@ -13,6 +13,7 @@ import { Bar } from './charts';
 import { Check, Flame, Sparkles } from './icons';
 import { Caption, DeficitBars, kcal, localDate, mealLabel } from './LiveBoards';
 import { Btn, Card, Disclosure, SectionLabel, T } from './ui';
+import { Slot } from './blocks/BoardContext';
 
 const MINUS = '−';
 const n0 = (x: number | string | null | undefined) => (x == null || x === '' ? null : Math.round(Number(x)));
@@ -186,6 +187,7 @@ export function DietBoard({ diet, energy, energyError, groupId, onAsk }: { diet:
     <View>
       <SectionLabel right={<Caption>{`${source} · ${live?.loadedAt ?? ''}`}</Caption>}>{L('今天到哪了', 'Today so far')}</SectionLabel>
       <TodayCard diet={diet} energy={energy} energyError={energyError} />
+      <Slot at="diet.today" />
 
       <SectionLabel right={card ? <Caption>{L(`${card.createdAt?.slice(11, 16) ?? ''} 排的`, `Planned ${card.createdAt?.slice(11, 16) ?? ''}`)}</Caption> : undefined}>{L('下一餐', 'Next meal')}</SectionLabel>
       {plan && upcoming.length ? (
@@ -202,12 +204,15 @@ export function DietBoard({ diet, energy, energyError, groupId, onAsk }: { diet:
         </Card>
       )}
 
+      <Slot at="diet.next" />
+
       <SectionLabel right={diet.meals.length ? <Caption>{L(`${diet.meals.length} 餐`, `${diet.meals.length} meal${diet.meals.length === 1 ? '' : 's'}`)}</Caption> : undefined}>{L('今天吃了', 'Eaten today')}</SectionLabel>
       {diet.meals.length ? (
         <Card style={{ paddingVertical: space.xs }}>
           {diet.meals.map((m, i) => <MealRow key={`${m.label}-${i}`} first={i === 0} label={m.label} kcalN={m.kcal} protein={m.protein} items={eatenMealItems(m)} />)}
         </Card>
       ) : <Card><T v="callout" color={t.ink2}>{L('今天还没有饮食记录。', 'No meals logged today.')}</T></Card>}
+      <Slot at="diet.eaten" />
 
       <SectionLabel right={<Caption>{`${L('Apple 健康', 'Apple Health')} + ${source}`}</Caption>}>{L('这周', 'This week')}</SectionLabel>
       {energy && s ? (
@@ -223,6 +228,8 @@ export function DietBoard({ diet, energy, energyError, groupId, onAsk }: { diet:
         <Card><T v="callout" color={t.ink2}>{energyError ? L(`消耗数据没读到：${energyError}`, `Couldn't read calories burned: ${energyError}`) : L('Apple 健康还没同步，算不了消耗。在 iPhone 上打开健身看板同步一次。', "Apple Health hasn't synced yet, so calories burned can't be worked out. Open the fitness dashboard on your iPhone once to sync.")}</T></Card>
       )}
 
+      <Slot at="diet.week" />
+
       {shopping.length ? (
         <>
           <SectionLabel>{L('要买', 'To buy')}</SectionLabel>
@@ -235,6 +242,7 @@ export function DietBoard({ diet, energy, energyError, groupId, onAsk }: { diet:
           </View>
         </>
       ) : null}
+      <Slot at="diet.shopping" />
     </View>
   );
 }
