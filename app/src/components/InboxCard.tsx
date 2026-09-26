@@ -13,7 +13,7 @@ import { Check, ChevronRight, CircleAlert, Flag, LoaderCircle, Pencil, Pin, Targ
 import { Markdown } from './Markdown';
 import { SourceBadge, useSourceName } from './SourceBadge';
 import { Pill, T, showError } from './ui';
-import { BoardPreview } from './blocks/BoardPreview';
+import { AlertPreview, BoardPreview } from './blocks/BoardPreview';
 
 // —— 文字（都是函数：L() 要在用的时候按当前语言取） ——
 
@@ -172,7 +172,9 @@ function PendingCard({ item, chat }: { item: InboxItem; chat: boolean }) {
       </View>
       <T v="headline" style={chat ? styles.chatTitle : styles.title}>{item.title}</T>
       {item.why ? <T v="callout" color={t.ink2}>{item.why}</T> : null}
-      {item.kind === 'block' ? <BoardPreview inboxId={item.id} /> : null}
+      {item.kind === 'block' ? <BoardPreview inboxId={item.id} />
+        : item.kind === 'agent' ? <BoardPreview inboxId={item.id} plan />
+          : item.kind === 'push' ? <AlertPreview inboxId={item.id} source={name} /> : null}
       {item.kind === 'project' && item.project?.action === 'open' ? <ProjectPreview info={item.project} /> : null}
       {item.detail && !(item.kind === 'project' && item.project?.action === 'open') ? (
         <>

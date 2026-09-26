@@ -96,6 +96,7 @@ export type PushTarget =
   | { type: 'thread'; thread: string }
   | { type: 'card'; id: string; thread?: string }
   | { type: 'inbox'; id: string; thread?: string }
+  | { type: 'board'; agent: string; thread?: string }   // 某个 Agent 的看板（Agent 的提醒点开到这里）
   | { type: 'today' };
 
 /** 对话附件。url 是服务器地址（/api/files/id），还没上传完的用本地 uri。 */

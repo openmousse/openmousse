@@ -1,11 +1,12 @@
 // 一个 Agent 的积木看板：读数据、按 after 排好每块放在哪（内置看板的某一节后面、另一块后面，或者最后），顶上的撤回条。
-// 内置看板（健身、饮食……）在小节之间放 <Slot at="diet.next" />；没有内置看板的 Agent 整页是 <AllBlocks />。
+// 内置看板（健身、饮食……）的每一节也是看板上的一块（Sections.tsx 按 board.sections 排、能挪能藏），每节后面是 <Slot at="diet.next" />；
+// 没有内置看板的 Agent 整页是 <AllBlocks />。
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Pressable, StyleSheet, View } from 'react-native';
-import { boardsApi, type Block, type Board } from '../../api/boards';
+import { ActivityIndicator, Pressable, StyleSheet, View } from 'react-native';
+import { boardsApi, type Block, type Board, type BoardAlert, type BoardSection, type Pack } from '../../api/boards';
 import { L } from '../../i18n';
 import { radius, space, useTheme } from '../../theme';
-import { ArrowUp, ChevronRight, Clock, Eye, EyeOff, MessageCircle, Sparkles, Trash2 } from '../icons';
+import { ArrowUp, Bell, BellOff, ChevronRight, Clock, Eye, EyeOff, MessageCircle, PackagePlus, Sparkles, Trash2 } from '../icons';
 import { setChatDraft } from '../chatInput';
 import { useSheet } from '../Sheet';
 import { showError, T } from '../ui';
@@ -59,14 +60,22 @@ export function useAgentBoard(agent: string, active: boolean) {
   return { board, error, reload: fetchBoard };
 }
 
-/** 按显示顺序分好的几段（最前面 / 每个内置小节后面 / 最后）。没有内置看板的只有一段。 */
-function slotsOf(board: Board): { keys: string[]; lists: Map<string, Block[]> } {
+/** 内置小节按显示顺序（服务器给的 sections；老服务器没有就按 anchors 的默认顺序、都不藏）。 */
+export function sectionsOf(board: Board | null): BoardSection[] {
+  const ids = (board?.anchors ?? []).filter((a) => a !== 'top');
+  const got = (board?.sections ?? []).filter((s) => ids.includes(s.id));
+  return [...got, ...ids.filter((id) => !got.some((s) => s.id === id)).map((id) => ({ id, title: '', hidden: false }))];
+}
+
+/** 按显示顺序分好的几段（最前面 / 每个内置小节后面 / 最后）。没有内置看板的只有一段。hidden：藏起来的小节（跨段挪的时候跳过它们）。 */
+function slotsOf(board: Board): { keys: string[]; lists: Map<string, Block[]>; hidden: Set<string> } {
   const layout = layoutOf(board.blocks, board.anchors);
   if (board.dashboard === 'none' || !board.anchors.some((a) => a !== 'top')) {
-    return { keys: [''], lists: new Map([['', [...(layout.get('top') ?? []), ...[...layout.entries()].filter(([k]) => k !== 'top').flatMap(([, v]) => v)]]]) };
+    return { keys: [''], lists: new Map([['', [...(layout.get('top') ?? []), ...[...layout.entries()].filter(([k]) => k !== 'top').flatMap(([, v]) => v)]]]), hidden: new Set() };
   }
-  const keys = ['top', ...board.anchors.filter((a) => a !== 'top'), ''];
-  return { keys, lists: new Map(keys.map((k) => [k, [...(layout.get(k) ?? [])]])) };
+  const secs = sectionsOf(board);
+  const keys = ['top', ...secs.map((x) => x.id), ''];
+  return { keys, lists: new Map(keys.map((k) => [k, [...(layout.get(k) ?? [])]])), hidden: new Set(secs.filter((x) => x.hidden).map((x) => x.id)) };
 }
 
 /** 段 → 配置：每块的 after 就写它所在的段（「接在另一块后面」这种链条摊平），藏起来的原样留在最后。 */
@@ -77,7 +86,7 @@ function blocksFrom(board: Board, keys: string[], lists: Map<string, Block[]>): 
 
 /** 挪一格：段里换位置；已经在段头 / 段尾就跨过一个内置小节，挪到上一段末尾 / 下一段开头。 */
 export function moved(board: Board, id: string, dir: -1 | 1): Block[] | null {
-  const { keys, lists } = slotsOf(board);
+  const { keys, lists, hidden } = slotsOf(board);
   const si = keys.findIndex((k) => (lists.get(k) ?? []).some((b) => b.id === id));
   if (si < 0) return null;
   const list = lists.get(keys[si]) as Block[];
@@ -86,7 +95,8 @@ export function moved(board: Board, id: string, dir: -1 | 1): Block[] | null {
   if (j >= 0 && j < list.length) {
     [list[i], list[j]] = [list[j], list[i]];
   } else {
-    const ti = si + dir;
+    let ti = si + dir;
+    while (ti >= 0 && ti < keys.length && hidden.has(keys[ti])) ti += dir;  // 藏起来的小节看不见：跳过它那一段
     if (ti < 0 || ti >= keys.length) return null;
     const [b] = list.splice(i, 1);
     const target = lists.get(keys[ti]) as Block[];
@@ -94,6 +104,22 @@ export function moved(board: Board, id: string, dir: -1 | 1): Block[] | null {
   }
   return blocksFrom(board, keys, lists);
 }
+
+/** 挪一节：和上面 / 下面最近的一个没藏的小节换位置（挂在它后面的积木跟着走）。 */
+export function movedSection(board: Board, id: string, dir: -1 | 1): BoardSection[] | null {
+  const secs = sectionsOf(board);
+  const i = secs.findIndex((x) => x.id === id);
+  if (i < 0) return null;
+  let j = i + dir;
+  while (j >= 0 && j < secs.length && secs[j].hidden) j += dir;
+  if (j < 0 || j >= secs.length) return null;
+  const out = secs.filter((x) => x.id !== id);
+  const at = out.findIndex((x) => x.id === secs[j].id);
+  out.splice(dir < 0 ? at : at + 1, 0, secs[i]);
+  return out;
+}
+
+export const sectionTitle = (board: Board | null, id: string) => sectionsOf(board).find((x) => x.id === id)?.title || id;
 
 export function BoardProvider({ agent, board, error, reload, onChat, readOnly = false, children }: {
   agent: string; board: Board | null; error?: string | null; reload: () => Promise<void>; onChat: () => void; readOnly?: boolean; children: React.ReactNode;
@@ -114,7 +140,20 @@ export function BoardProvider({ agent, board, error, reload, onChat, readOnly = 
         onAsk={() => { setChatDraft(agent, L(`看板上「${name}」这一块：`, `About the "${name}" block on the board: `)); close(); onChat(); }} />,
     });
   }, [agent, board, readOnly, reload, sheet, onChat]);
-  const value = useMemo(() => ({ agent, board, error: error ?? null, reload, layout, fresh, readOnly, onChat, openMenu }), [agent, board, error, reload, layout, fresh, readOnly, onChat, openMenu]);
+  const openSectionMenu = useCallback((id: string) => {
+    if (!board || readOnly) return;
+    const name = sectionTitle(board, id);
+    const save = (secs: BoardSection[] | null, note: string) => {
+      if (!secs) return;
+      boardsApi.put(agent, board.blocks, note, secs).then(() => reload()).catch((e) => showError(L('没改成', "Couldn't change the board"), e));
+    };
+    sheet.open({
+      title: name,
+      content: (close) => <SectionMenu board={board} id={id} name={name} close={close} onSave={(x, note) => { close(); save(x, note); }} />,
+    });
+  }, [agent, board, readOnly, reload, sheet]);
+  const value = useMemo(() => ({ agent, board, error: error ?? null, reload, layout, fresh, readOnly, onChat, openMenu, openSectionMenu }),
+    [agent, board, error, reload, layout, fresh, readOnly, onChat, openMenu, openSectionMenu]);
   return <Ctx.Provider value={value}>{children}</Ctx.Provider>;
 }
 
@@ -143,6 +182,25 @@ function BlockMenu({ board, block, close, onSave, onAsk }: { board: Board; block
   );
 }
 
+/** 长按内置看板的一节：挪上挪下、藏起来。内容是 app 画的，不能删、不能让它改。 */
+function SectionMenu({ board, id, name, close, onSave }: { board: Board; id: string; name: string; close: () => void; onSave: (secs: BoardSection[] | null, note: string) => void }) {
+  const t = useTheme();
+  const up = movedSection(board, id, -1);
+  const down = movedSection(board, id, 1);
+  return (
+    <View style={{ gap: space.sm }}>
+      <MenuRow icon={<ArrowUp size={20} color={t.ink2} />} label={L('挪到上面', 'Move up')} disabled={!up} onPress={() => onSave(up, L(`把「${name}」往上挪了`, `Moved "${name}" up`))} />
+      <MenuRow icon={<View style={{ transform: [{ rotate: '180deg' }] }}><ArrowUp size={20} color={t.ink2} /></View>} label={L('挪到下面', 'Move down')} disabled={!down}
+        onPress={() => onSave(down, L(`把「${name}」往下挪了`, `Moved "${name}" down`))} />
+      <MenuRow icon={<EyeOff size={20} color={t.ink2} />} label={L('先藏起来', 'Hide for now')} sub={L('看板最底下「藏起来的」里能放回来', 'Bring it back from "Hidden" at the bottom of the board')}
+        onPress={() => onSave(sectionsOf(board).map((x) => (x.id === id ? { ...x, hidden: true } : x)), L(`藏起了「${name}」`, `Hid "${name}"`))} />
+      <Pressable onPress={close} accessibilityRole="button" style={({ pressed }) => [styles.menuRow, { justifyContent: 'center', opacity: pressed ? 0.6 : 1 }]}>
+        <T v="headline" color={t.ink2}>{L('取消', 'Cancel')}</T>
+      </Pressable>
+    </View>
+  );
+}
+
 function MenuRow({ icon, label, sub, color, onPress, disabled }: { icon: React.ReactNode; label: string; sub?: string; color?: string; onPress: () => void; disabled?: boolean }) {
   const t = useTheme();
   return (
@@ -156,28 +214,96 @@ function MenuRow({ icon, label, sub, color, onPress, disabled }: { icon: React.R
   );
 }
 
-/** 看板最底下：藏起来的块（能放回来）、改动记录。 */
+/** 看板最底下：它的提醒（能暂停、删）、藏起来的块和小节（能放回来）、功能包、改动记录。 */
 export function BoardFooter({ onHistory }: { onHistory: () => void }) {
   const t = useTheme();
   const ctx = useBoard();
   const sheet = useSheet();
+  const agent = ctx?.agent ?? '';
+  const [alerts, setAlerts] = useState<BoardAlert[]>([]);
+  const [packs, setPacks] = useState<Pack[] | null>(null);
+  const version = ctx?.board?.version;
+  // 看板换了一版（装了包、同意了提案）就重读提醒和功能包；老服务器没有这两个接口：当作没有
+  const loadExtras = useCallback(() => {
+    if (!agent) return;
+    boardsApi.alerts(agent).then((r) => setAlerts(r.alerts), () => setAlerts([]));
+    boardsApi.packs().then((r) => setPacks(r.packs), () => setPacks(null));
+  }, [agent]);
+  useEffect(() => { loadExtras(); }, [loadExtras, version]);
   if (!ctx?.board || ctx.readOnly) return null;
-  const { board, agent, reload } = ctx;
+  const { board, reload } = ctx;
   const hidden = board.blocks.filter((b) => b.hidden);
-  const hasAny = board.blocks.length > 0 || board.version > 0;
+  const hiddenSecs = sectionsOf(board).filter((x) => x.hidden);
+  const nHidden = hidden.length + hiddenSecs.length;
+  // 功能包：装在这里的，或者适合这种看板的（没有内置看板的 Agent 什么包都能装）
+  const fit = (packs ?? []).filter((p) => p.installedOn.includes(agent) || board.dashboard === 'none' || p.for.includes(board.dashboard) || p.for.includes(agent));
+  const hasAny = board.blocks.length > 0 || board.version > 0 || alerts.length > 0 || fit.length > 0;
   if (!hasAny) return null;
+  const fail = (e: unknown) => showError(L('没改成', "Couldn't change the board"), e);
   const restore = (id: string, close: () => void) => {
     close();
-    boardsApi.put(agent, board.blocks.map((b) => (b.id === id ? { ...b, hidden: false } : b)), L('放回了一块', 'Brought a block back'))
-      .then(() => reload()).catch((e) => showError(L('没改成', "Couldn't change the board"), e));
+    boardsApi.put(agent, board.blocks.map((b) => (b.id === id ? { ...b, hidden: false } : b)), L('放回了一块', 'Brought a block back')).then(() => reload()).catch(fail);
   };
+  const restoreSection = (id: string, close: () => void) => {
+    close();
+    boardsApi.put(agent, board.blocks, L(`放回了「${sectionTitle(board, id)}」`, `Brought "${sectionTitle(board, id)}" back`),
+      sectionsOf(board).map((x) => (x.id === id ? { ...x, hidden: false } : x))).then(() => reload()).catch(fail);
+  };
+  const setAlert = (a: BoardAlert, status: 'live' | 'paused' | 'deleted', close: () => void) => {
+    close();
+    boardsApi.setAlert(a.id, status).then(loadExtras).catch(fail);
+  };
+  const openAlert = (a: BoardAlert) => sheet.open({
+    title: a.title,
+    content: (close) => (
+      <View style={{ gap: space.sm }}>
+        <View style={[styles.note, { backgroundColor: t.surface }]}>
+          <T v="callout" color={t.ink2}>{`${a.when} · ${a.levelText}`}</T>
+          <T v="callout" color={a.preview ? t.ink : t.ink3}>{a.preview ? L(`按现在的数据会推：${a.preview}`, `With today's data: ${a.preview}`) : L('按现在的数据查出来是空的，到点不会推。', "Nothing matches today, so it won't send anything.")}</T>
+          {a.lastSent ? <T v="caption" color={t.ink3} style={{ fontWeight: '400' }}>{L(`上次推：${a.lastSent.slice(5, 16).replace('T', ' ')}`, `Last sent ${a.lastSent.slice(5, 16).replace('T', ' ')}`)}</T> : null}
+        </View>
+        {a.status === 'paused'
+          ? <MenuRow icon={<Bell size={20} color={t.gold} />} label={L('恢复', 'Resume')} onPress={() => setAlert(a, 'live', close)} />
+          : <MenuRow icon={<BellOff size={20} color={t.ink2} />} label={L('先暂停', 'Pause')} sub={L('不推了，规则留着，随时恢复', 'Stops sending; the rule stays and can be resumed')} onPress={() => setAlert(a, 'paused', close)} />}
+        <MenuRow icon={<Trash2 size={20} color={t.bad} />} color={t.bad} label={L('删掉这个提醒', 'Delete this reminder')} sub={L('要再开得让它重新提、你再点头', 'To bring it back it has to ask again')}
+          onPress={() => setAlert(a, 'deleted', close)} />
+        <Pressable onPress={close} accessibilityRole="button" style={({ pressed }) => [styles.menuRow, { justifyContent: 'center', opacity: pressed ? 0.6 : 1 }]}>
+          <T v="headline" color={t.ink2}>{L('取消', 'Cancel')}</T>
+        </Pressable>
+      </View>
+    ),
+  });
+  const openPacks = () => sheet.open({
+    title: L('功能包', 'Feature packs'),
+    content: (close) => <PackList packs={fit} agent={agent} close={close} onDone={() => { loadExtras(); reload(); }} />,
+  });
   return (
     <View style={{ marginTop: space.xl, gap: space.sm }}>
-      {hidden.length ? (
+      {alerts.length ? (
+        <View style={{ gap: space.sm }}>
+          {alerts.map((a) => (
+            <Pressable key={a.id} accessibilityRole="button" onPress={() => openAlert(a)} style={({ pressed }) => [styles.footRow, styles.tall, { backgroundColor: t.surface, opacity: pressed ? 0.7 : 1 }]}>
+              {a.status === 'paused' ? <BellOff size={18} color={t.ink3} /> : <Bell size={18} color={t.gold} />}
+              <View style={{ flex: 1 }}>
+                <T v="callout" numberOfLines={1}>{a.title}</T>
+                <T v="caption" color={t.ink3} numberOfLines={1} style={{ fontWeight: '400' }}>{a.status === 'paused' ? L(`暂停中 · ${a.when}`, `Paused · ${a.when}`) : a.when}</T>
+              </View>
+              <ChevronRight size={16} color={t.ink3} />
+            </Pressable>
+          ))}
+        </View>
+      ) : null}
+      {nHidden ? (
         <Pressable accessibilityRole="button" onPress={() => sheet.open({
           title: L('藏起来的', 'Hidden'),
           content: (close) => (
             <View style={{ gap: space.sm }}>
+              {hiddenSecs.map((x) => (
+                <Pressable key={x.id} onPress={() => restoreSection(x.id, close)} accessibilityRole="button" style={({ pressed }) => [styles.menuRow, { backgroundColor: t.surface, opacity: pressed ? 0.7 : 1 }]}>
+                  <View style={{ flex: 1 }}><T v="headline">{x.title || x.id}</T></View>
+                  <T v="callout" color={t.gold} style={{ fontWeight: '700' }}>{L('放回来', 'Show again')}</T>
+                </Pressable>
+              ))}
               {hidden.map((b) => (
                 <Pressable key={b.id} onPress={() => restore(b.id, close)} accessibilityRole="button" style={({ pressed }) => [styles.menuRow, { backgroundColor: t.surface, opacity: pressed ? 0.7 : 1 }]}>
                   <View style={{ flex: 1 }}><T v="headline">{b.title || b.id}</T></View>
@@ -188,7 +314,15 @@ export function BoardFooter({ onHistory }: { onHistory: () => void }) {
           ),
         })} style={({ pressed }) => [styles.footRow, { backgroundColor: t.surface, opacity: pressed ? 0.7 : 1 }]}>
           <Eye size={18} color={t.ink2} />
-          <T v="callout" style={{ flex: 1 }}>{L(`藏起来的 ${hidden.length} 块`, `${hidden.length} hidden block${hidden.length === 1 ? '' : 's'}`)}</T>
+          <T v="callout" style={{ flex: 1 }}>{L(`藏起来的 ${nHidden} 块`, `${nHidden} hidden block${nHidden === 1 ? '' : 's'}`)}</T>
+          <ChevronRight size={16} color={t.ink3} />
+        </Pressable>
+      ) : null}
+      {fit.length ? (
+        <Pressable accessibilityRole="button" onPress={openPacks} style={({ pressed }) => [styles.footRow, { backgroundColor: t.surface, opacity: pressed ? 0.7 : 1 }]}>
+          <PackagePlus size={18} color={t.ink2} />
+          <T v="callout" style={{ flex: 1 }} numberOfLines={1}>{L('功能包', 'Feature packs')}</T>
+          <T v="caption" color={t.ink3} style={{ fontWeight: '400' }} numberOfLines={1}>{fit.filter((p) => p.installedOn.includes(agent)).map((p) => p.title).join(L('、', ', '))}</T>
           <ChevronRight size={16} color={t.ink3} />
         </Pressable>
       ) : null}
@@ -198,6 +332,57 @@ export function BoardFooter({ onHistory }: { onHistory: () => void }) {
         <ChevronRight size={16} color={t.ink3} />
       </Pressable>
       <T v="caption" color={t.ink3} style={{ fontWeight: '400', textAlign: 'center', marginTop: 2 }}>{L('长按任意一块：挪位置、藏起来、让它改、删掉', 'Long-press a block to move, hide, change or delete it')}</T>
+    </View>
+  );
+}
+
+/** 功能包列表：装在这里的标「已装」；没装的点「装上」直接装（表和积木；包里的提醒另外出卡等你点头）。 */
+function PackList({ packs, agent, close, onDone }: { packs: Pack[]; agent: string; close: () => void; onDone: () => void }) {
+  const t = useTheme();
+  const [busy, setBusy] = useState<string | null>(null);
+  const [done, setDone] = useState<{ name: string; lines: string[] } | null>(null);
+  const install = (p: Pack) => {
+    if (busy) return;
+    setBusy(p.name);
+    boardsApi.installPack(p.name, agent).then((r) => {
+      const lines = [...r.changes];
+      setDone({ name: p.title, lines });
+      onDone();
+    }).catch((e) => showError(L('没装上', "Couldn't install it"), e)).finally(() => setBusy(null));
+  };
+  if (done) {
+    return (
+      <View style={{ gap: space.md }}>
+        <T v="headline">{L(`装好了「${done.name}」`, `Installed "${done.name}"`)}</T>
+        {done.lines.map((x, i) => <T key={`${i}-${x}`} v="callout" color={t.ink2}>{`· ${x}`}</T>)}
+        <Pressable onPress={close} accessibilityRole="button" style={({ pressed }) => [styles.menuRow, { justifyContent: 'center', backgroundColor: t.surface, opacity: pressed ? 0.6 : 1 }]}>
+          <T v="headline" color={t.gold}>{L('好', 'OK')}</T>
+        </Pressable>
+      </View>
+    );
+  }
+  return (
+    <View style={{ gap: space.sm }}>
+      {packs.map((p) => {
+        const on = p.installedOn.includes(agent);
+        return (
+          <View key={p.name} style={[styles.note, { backgroundColor: t.surface }]}>
+            <View style={{ flexDirection: 'row', alignItems: 'center', gap: space.sm }}>
+              <T v="headline" style={{ flex: 1 }}>{p.title}</T>
+              {on ? <T v="caption" color={t.ink3}>{L('已装', 'Installed')}</T> : (
+                <Pressable onPress={() => install(p)} disabled={!!busy} accessibilityRole="button" hitSlop={8} style={({ pressed }) => ({ opacity: busy ? 0.5 : pressed ? 0.6 : 1 })}>
+                  {busy === p.name ? <ActivityIndicator size="small" color={t.gold} /> : <T v="callout" color={t.gold} style={{ fontWeight: '700' }}>{L('装上', 'Install')}</T>}
+                </Pressable>
+              )}
+            </View>
+            {p.summary ? <T v="callout" color={t.ink2}>{p.summary}</T> : null}
+            <T v="caption" color={t.ink3} style={{ fontWeight: '400' }}>{[
+              p.blocks.map((b) => b.title).filter(Boolean).join(L('、', ', ')),
+              p.alerts.length ? L(`${p.alerts.length} 个提醒（装了以后另外问你）`, `${p.alerts.length} reminder${p.alerts.length === 1 ? '' : 's'} (asked separately)`) : '',
+            ].filter(Boolean).join(' · ')}</T>
+          </View>
+        );
+      })}
     </View>
   );
 }
@@ -274,4 +459,6 @@ const styles = StyleSheet.create({
   menuRow: { flexDirection: 'row', alignItems: 'center', gap: space.md, borderRadius: radius.md, paddingHorizontal: space.lg, paddingVertical: 12, minHeight: 52 },
   footRow: { flexDirection: 'row', alignItems: 'center', gap: space.md, borderRadius: radius.md, paddingHorizontal: space.lg, height: 48 },
   strip: { borderRadius: radius.md + 2, paddingVertical: 12, paddingHorizontal: 14, flexDirection: 'row', alignItems: 'center', gap: 10, marginTop: space.md },
+  note: { borderRadius: radius.md, paddingHorizontal: space.lg, paddingVertical: 12, gap: 4 },
+  tall: { height: undefined, minHeight: 56, paddingVertical: 8 },
 });

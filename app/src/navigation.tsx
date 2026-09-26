@@ -102,6 +102,9 @@ export function openTarget(target: PushTarget, isGroup = false, quote?: ChatQuot
     case 'inbox':
       tab('今天', { highlight: { kind: target.type, id: target.id }, at });
       return;
+    case 'board':
+      navigationRef.navigate('Group', { id: target.agent, tab: 'board', at });
+      return;
     default:
       tab('今天', { at });
   }

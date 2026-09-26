@@ -31,22 +31,40 @@ export interface BlockData {
 }
 
 export interface Block {
-  id: string; type: BlockType | string; title: string; after?: string; hidden?: boolean; caption?: string; empty?: string;
+  id: string; type: BlockType | string; title: string; after?: string; hidden?: boolean; caption?: string; empty?: string; pack?: string;
   limit?: number; group?: string; style?: string; label?: string; edit?: boolean; check?: string; chart?: 'bar' | 'line';
   rowActions?: { label: string; set: Record<string, unknown> }[]; actions?: BoardAction[];
   data: BlockData;
 }
 
 export interface BoardStrip { version: number; note: string; by: string; added: string[]; undoTo: number }
+/** 内置看板的一节（健身的「现在」、饮食的「下一餐」……）：按服务器给的顺序排，能挪、能藏，内容是 app 自己画的。 */
+export interface BoardSection { id: string; title: string; hidden: boolean }
 export interface Board {
   agent: string; dashboard: string; anchors: string[]; version: number; status: string; by: string | null; note: string; updatedAt: string | null;
   blocks: Block[]; collections: Collection[]; strip: BoardStrip | null;
+  sections?: BoardSection[];               // 老服务器没有：按默认顺序、都不藏
   changed?: string[]; removed?: string[];   // 提案预览：相对它照着写的那一版，哪些块是新的或改过的、哪些去掉了
+  plan?: boolean; sample?: boolean;         // 建 Agent 的方案预览（Agent 还没建）：sample = 按示例行画的
+}
+
+/** Agent 的提醒：到点查表，有东西就推一条（新推送，同意了才开）。 */
+export interface BoardAlert {
+  id: string; key: string; agent: string; title: string; status: 'draft' | 'live' | 'paused' | 'rejected' | 'deleted' | 'superseded';
+  when: string; level: 'quiet' | 'ring'; levelText: string; preview: string | null; count: number; pack: string | null;
+  lastSent: string | null; lastBody: string | null; inboxId: string | null;
+}
+
+/** 功能包：几张表 + 一组积木 + 用法，装到一个 Agent 上。 */
+export interface Pack {
+  name: string; version: number; title: string; summary: string; for: string[]; installedOn: string[];
+  tables: { name: string; title: string }[]; blocks: { id: string; type: string; title: string }[]; alerts: { id: string; title: string }[];
 }
 
 export interface BoardVersion {
   version: number; status: 'live' | 'old' | 'draft' | 'rejected'; note: string; by: string; inboxId: string | null; basedOn: number | null; createdAt: string;
   blocks: { id: string; type: string; title: string }[];
+  hiddenSections?: string[];   // 这一版藏着的内置小节（名字）
 }
 export interface TableRow { id: string; data: Record<string, unknown>; display: Record<string, string>; createdAt: string; deletedAt: string | null }
 
@@ -59,9 +77,20 @@ export const boardsApi = {
   proposal: (inboxId: string) => request<Board & { ok: true }>(`/api/boards/proposal/${enc(inboxId)}`),
   revert: (agent: string, version: number) => request<{ ok: true; version: number }>(`/api/boards/${enc(agent)}/revert`, { method: 'POST', body: { version } }),
   ack: (agent: string) => request<{ ok: true }>(`/api/boards/${enc(agent)}/ack`, { method: 'POST', body: {} }),
-  /** 你自己在 app 里挪、藏、删：整份配置换成这一版（by user，不出撤回条）。 */
-  put: (agent: string, blocks: Block[], note: string) =>
-    request<{ ok: true; version: number }>(`/api/boards/${enc(agent)}`, { method: 'PUT', body: { blocks: configOf(blocks), note, mode: 'apply', by: 'user' } }),
+  /** 你自己在 app 里挪、藏、删：整份配置换成这一版（by user，不出撤回条）。sections 不给 = 内置小节照现在的。 */
+  put: (agent: string, blocks: Block[], note: string, sections?: { id: string; hidden?: boolean }[]) =>
+    request<{ ok: true; version: number }>(`/api/boards/${enc(agent)}`, {
+      method: 'PUT', body: { blocks: configOf(blocks), note, mode: 'apply', by: 'user', ...(sections ? { sections: sections.map((x) => ({ id: x.id, hidden: !!x.hidden })) } : {}) },
+    }),
+  /** 建 Agent 的方案卡（Agent 还没建）：按方案画出来的看板。 */
+  plan: (inboxId: string) => request<Board & { ok: true }>(`/api/boards/plan/${enc(inboxId)}`),
+  alerts: (agent: string) => request<{ ok: true; alerts: BoardAlert[] }>(`/api/alerts/${enc(agent)}`),
+  alertProposal: (inboxId: string) => request<BoardAlert & { ok: true }>(`/api/alerts/proposal/${enc(inboxId)}`),
+  setAlert: (id: string, status: 'live' | 'paused' | 'deleted') => request<{ ok: true }>(`/api/alerts/item/${enc(id)}`, { method: 'POST', body: { status } }),
+  packs: () => request<{ ok: true; packs: Pack[] }>('/api/packs'),
+  /** 你在 app 里点「装上」：直接装（表、积木；包里的提醒另外出卡）。 */
+  installPack: (name: string, agent: string) =>
+    request<{ ok: true; version: number | null; changes: string[]; alertCards?: string[] }>(`/api/packs/${enc(name)}/install`, { method: 'POST', body: { agent, mode: 'apply' } }),
   history: (agent: string) => request<{ ok: true; versions: BoardVersion[] }>(`/api/boards/${enc(agent)}/history`),
   collections: (agent: string) => request<{ ok: true; collections: Collection[] }>(`/api/collections/${enc(agent)}`),
   rows: (agent: string, name: string, deleted = false) =>

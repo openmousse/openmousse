@@ -3,7 +3,8 @@ import { Pressable, ScrollView, View } from 'react-native';
 import { CalendarDays, Sparkles } from '../components/icons';
 import { useNavigation, useRoute } from '@react-navigation/native';
 import { AgentMemory } from '../components/AgentMemory';
-import { AllBlocks, BoardFooter, BoardProvider, hasBlocks, Slot, UndoStrip, useAgentBoard } from '../components/blocks/BoardContext';
+import { AllBlocks, BoardFooter, BoardProvider, hasBlocks, UndoStrip, useAgentBoard } from '../components/blocks/BoardContext';
+import { SectionedBoard } from '../components/blocks/Sections';
 import { ChatView } from '../components/ChatView';
 import { DietBoard } from '../components/DietBoard';
 import { FitnessBoard } from '../components/FitnessBoard';
@@ -57,7 +58,6 @@ export function GroupScreen() {
           {tab === 'board' ? (
             <BoardProvider agent={g.id} board={blocks.board} error={blocks.error} reload={blocks.reload} onChat={toChat}>
               <UndoStrip />
-              <Slot at="top" />
               {g.dashboard === 'none' || !g.dashboard ? (
                 hasBlocks(blocks.board) ? <AllBlocks /> : (
                   <Card style={{ marginTop: space.md, gap: space.md }}>
@@ -77,20 +77,12 @@ export function GroupScreen() {
                 live.diet ? <DietBoard diet={live.diet} energy={live.energy} energyError={liveErrors.energy} groupId={g.id} onAsk={toChat} />
                   : <><View style={{ marginTop: space.md }}>{live.sources.meals === false ? <NoSourceCard kind={L('饮食', 'meal')} /> : <Card><T v="callout" color={t.bad}>{L(`饮食数据没读到${liveErrors.diet ? `：${liveErrors.diet}` : ''}`, `Couldn't load meal data${liveErrors.diet ? `: ${liveErrors.diet}` : ''}`)}</T></Card>}</View><AllBlocks /></>
               ) : g.dashboard === 'health' ? (
-                <>
-                  <SleepReportSection groupId={g.id} onAsk={toChat} />
-                  <Slot at="health.sleep" />
-                  <LiveRecoveryCard />
-                  <Slot at="health.recovery" />
-                </>
+                <SectionedBoard els={{ 'health.sleep': <SleepReportSection groupId={g.id} onAsk={toChat} />, 'health.recovery': <LiveRecoveryCard /> }} />
               ) : g.dashboard === 'apply' || g.dashboard === 'masters' ? (
-                <>
-                  <View style={{ marginTop: space.md }}><ApplicationsBoard apps={applications.filter((a) => (a.kind === 'masters') === (g.dashboard === 'masters'))} school={g.dashboard === 'masters'} /></View>
-                  <Slot at={`${g.dashboard}.list`} />
-                </>
+                <SectionedBoard els={{
+                  [`${g.dashboard}.list`]: <View style={{ marginTop: space.md }}><ApplicationsBoard apps={applications.filter((a) => (a.kind === 'masters') === (g.dashboard === 'masters'))} school={g.dashboard === 'masters'} /></View>,
+                }} />
               ) : <AllBlocks />}
-              {/* 内置看板画出来了：没指定位置的积木放在最后（没画出来的时候上面已经用 AllBlocks 全放了） */}
-              {live && (['fitness', 'health', 'apply', 'masters'].includes(g.dashboard) || (g.dashboard === 'diet' && !!live.diet)) ? <Slot at="" /> : null}
               <BoardFooter onHistory={() => nav.navigate('BoardHistory', { id: g.id })} />
               {blocks.error ? <Card style={{ marginTop: space.md }}><T v="callout" color={t.bad}>{L(`看板里的积木没读到：${blocks.error}`, `Couldn't load the dashboard blocks: ${blocks.error}`)}</T></Card> : null}
             </BoardProvider>

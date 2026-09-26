@@ -63,7 +63,7 @@ export function BoardHistoryScreen() {
                         {live ? <Pill label={L('现在', 'Now')} tone="cyan" /> : null}
                       </View>
                       <T v="body" style={{ fontSize: 15, fontWeight: '600' }}>{v.note || (v.blocks.length ? v.blocks.map((b) => b.title || b.id).join(L('、', ', ')) : L('没有积木', 'No blocks'))}</T>
-                      <T v="caption" color={t.ink3} style={{ fontWeight: '400', fontSize: 13 }}>{byLabel(v.by)}</T>
+                      <T v="caption" color={t.ink3} style={{ fontWeight: '400', fontSize: 13 }}>{byLabel(v.by)}{v.hiddenSections?.length ? L(` · 藏着：${v.hiddenSections.join('、')}`, ` · hidden: ${v.hiddenSections.join(', ')}`) : ''}</T>
                       {!live ? (
                         <Pressable onPress={() => revert(v.version)} disabled={busy != null} hitSlop={6} accessibilityRole="button" style={{ alignSelf: 'flex-start', paddingTop: 4 }}>
                           <T v="callout" color={t.gold} style={{ fontWeight: '700' }}>{busy === v.version ? L('正在回去…', 'Going back…') : L('回到这一版', 'Go back to this')}</T>

@@ -12,6 +12,7 @@ export interface BoardCtx {
   readOnly: boolean;              // 提案预览：只看，不能点
   onChat: () => void;             // 发了消息之后切到对话
   openMenu?: (block: Block) => void;  // 长按一块：挪、藏、让它改、删
+  openSectionMenu?: (id: string) => void;  // 长按内置看板的一节：挪、藏
 }
 
 export const Ctx = createContext<BoardCtx | null>(null);
