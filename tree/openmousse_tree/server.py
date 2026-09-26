@@ -8,11 +8,15 @@
   /health
 
 给模型看的说明、工具描述、参数说明、工具回话按 config.json 的 language 出中文或英文（C.L）。
+storage = "markdown" 时服务每 5 秒看一眼笔记文件夹：在 Obsidian / 手机上改了笔记，就重建索引、重新导出 TREE.md；
+格式坏的笔记跳过，管理页顶部提示。
 """
 # 这里故意不用 from __future__ import annotations：工具参数的 Annotated[..., Field(description=C.L(...))]
 # 要在 platform_server() 里定义函数时当场求值（那时已读到配置的语言），不能拖成字符串以后再解析。
+import asyncio
 import contextlib
 import secrets
+import sys
 from importlib import resources
 from typing import Annotated
 
@@ -26,6 +30,8 @@ from starlette.routing import Mount, Route
 
 from . import config as C
 from . import store as S
+
+POLL_SECONDS = 5
 
 
 def owner(cfg: dict) -> str:
@@ -161,7 +167,13 @@ async def api_list(req: Request):
     S.sync_profile(conn)
     q = req.query_params
     rows = S.list_all(conn, status=q.get("status") or None, source=q.get("source") or None)
-    return JSONResponse({"items": rows, "stats": S.stats(conn), "require_confirm": bool(C.load().get("require_confirm"))})
+    cfg = C.load()
+    extra = {}
+    if C.markdown(cfg):
+        from . import notes
+        extra = {"notes_dir": str(C.notes_dir(cfg)), "issues": notes.issues(conn)}
+    return JSONResponse({"items": rows, "stats": S.stats(conn), "require_confirm": bool(cfg.get("require_confirm")),
+                         "storage": cfg.get("storage", "sqlite"), **extra})
 
 
 async def api_action(req: Request):
@@ -195,7 +207,24 @@ async def api_profile(req: Request):
 async def health(_: Request):
     conn = S.connect()
     n = conn.execute("SELECT COUNT(*) FROM tree WHERE status IN ('active','pending')").fetchone()[0]
-    return JSONResponse({"ok": True, "memories": n, "platforms": sorted(set(C.load().get("tokens", {}).values()))})
+    out = {"ok": True, "memories": n, "platforms": sorted(set(C.load().get("tokens", {}).values()))}
+    if C.markdown():
+        out["note_issues"] = conn.execute("SELECT COUNT(*) FROM issue").fetchone()[0]
+    return JSONResponse(out)
+
+
+def _look() -> None:
+    """markdown 存储：看一眼笔记文件夹（connect 里会同步档案、有变化就重建索引和 TREE.md）。"""
+    S.connect().close()
+
+
+async def watch_notes() -> None:
+    while True:
+        try:
+            await asyncio.to_thread(_look)
+        except Exception as e:  # noqa: BLE001  看文件夹出错不能把服务带挂
+            print(f"mousse-tree: notes folder check failed: {e!r}", file=sys.stderr, flush=True)
+        await asyncio.sleep(POLL_SECONDS)
 
 
 def build_app() -> Starlette:
@@ -236,7 +265,12 @@ def build_app() -> Starlette:
         async with contextlib.AsyncExitStack() as stack:
             for srv in servers.values():
                 await stack.enter_async_context(srv.session_manager.run())
-            yield
+            task = asyncio.create_task(watch_notes()) if C.markdown(cfg) else None
+            try:
+                yield
+            finally:
+                if task:
+                    task.cancel()
 
     return Starlette(routes=routes, lifespan=lifespan)
 

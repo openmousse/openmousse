@@ -2,6 +2,8 @@
 
 默认路径按 OpenClaw 单 agent 安装猜：档案 ~/.openclaw/workspace/USER.md，导出 ~/.openclaw/shared/tree/TREE.md。
 多 agent 或自定义布局在 config.json 里改 profile_path / export_path。
+存储二选一（storage）：sqlite = 记忆存在 tree.db；markdown = 一条一篇笔记放在 notes_dir（比如 Obsidian 库里的一个文件夹），
+index.db 只当检索索引和操作记录（见 notes.py）。换存储用 mousse-tree migrate。
 """
 from __future__ import annotations
 
@@ -15,6 +17,8 @@ from zoneinfo import ZoneInfo
 HOME = Path(os.environ.get("MOUSSE_TREE_HOME", Path.home() / ".mousse-tree"))
 CONFIG = HOME / "config.json"
 DB = HOME / "tree.db"
+INDEX = HOME / "index.db"                # markdown 存储的检索索引 + 操作记录（笔记才是真身，删了会重建索引）
+LOCK = HOME / "tree.lock"
 PLATFORMS = ("claude", "chatgpt", "gemini", "notion", "claude-code")
 
 DEFAULTS = {
@@ -28,6 +32,10 @@ DEFAULTS = {
     "owner_name": "",                    # 你的称呼，写进给模型看的说明里
     "tokens": {},                        # token -> 平台名
     "ui_token": "",                      # 管理页 /ui 的接口令牌；空的话 init / serve 时自动生成，链接见 mousse-tree urls
+    "storage": "sqlite",                 # "sqlite" | "markdown"（一条一篇笔记，可以放进 Obsidian 库）；换存储用 mousse-tree migrate
+    "notes_dir": "",                     # markdown：笔记文件夹；空 = ~/.mousse-tree/notes
+    "archive_dir": "",                   # markdown：被取代 / 遗忘的笔记放的子文件夹名；空 = 按 language「归档」/ "Archive"
+    "profile_note": "",                  # markdown：在笔记文件夹里放一份档案（如 "Profile.md"），和 profile_path 双向同步；空 = 不放
 }
 
 
@@ -69,6 +77,19 @@ def ensure_ui_token(cfg: dict) -> bool:
         return False
     cfg["ui_token"] = secrets.token_urlsafe(24)
     return True
+
+
+def markdown(cfg: dict | None = None) -> bool:
+    return (cfg or load()).get("storage") == "markdown"
+
+
+def notes_dir(cfg: dict | None = None) -> Path:
+    return Path((cfg or load()).get("notes_dir") or HOME / "notes").expanduser()
+
+
+def archive_name(cfg: dict | None = None) -> str:
+    c = cfg or load()
+    return c.get("archive_dir") or ("归档" if lang(c) == "zh" else "Archive")
 
 
 def lang(cfg: dict | None = None) -> str:

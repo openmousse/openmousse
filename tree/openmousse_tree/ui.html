@@ -22,6 +22,8 @@
   .add { display:flex; gap:6px; flex-wrap:wrap; margin:8px 0 16px; } .add input[type=text] { flex:1; min-width:200px; }
   .stats { font-size:12px; color:var(--muted); margin-bottom:8px; }
   .hidden { display:none; }
+  .issues { border:1px solid var(--warn); border-radius:6px; padding:8px 10px; margin-bottom:12px; font-size:13px; }
+  .issues b { color:var(--warn); } .issues code { font-size:12px; }
 </style>
 </head>
 <body>
@@ -44,6 +46,7 @@ $("main").innerHTML = `
   </nav>
 
   <section id="tab-tree">
+    <div class="issues hidden" id="issues"></div>
     <div class="stats" id="stats"></div>
     <div class="add">
       <input type="text" id="addText" placeholder="${L("手动加一条：一句话、第三人称，比如「X 周末习惯去公园跑步」", "Add one by hand: one third-person sentence, e.g. &quot;X likes running in the park on weekends&quot;")}">
@@ -107,7 +110,14 @@ async function load() {
   const d = await api("list" + (source ? "?source=" + encodeURIComponent(source) : ""));
   const pend = d.items.filter(i => i.status === "pending");
   $("#npending").textContent = pend.length ? `(${pend.length})` : "";
-  $("#stats").textContent = d.stats.filter(s => s.source !== "profile").map(s => `${s.source} ${s.status} ${s.n}`).join(" · ") + (d.require_confirm ? L(" · 写入需确认：开", " · Confirm writes: on") : L(" · 写入需确认：关", " · Confirm writes: off"));
+  $("#stats").textContent = d.stats.filter(s => s.source !== "profile").map(s => `${s.source} ${s.status} ${s.n}`).join(" · ") + (d.require_confirm ? L(" · 写入需确认：开", " · Confirm writes: on") : L(" · 写入需确认：关", " · Confirm writes: off"))
+    + (d.storage === "markdown" ? L(` · 笔记：${d.notes_dir}`, ` · notes: ${d.notes_dir}`) : "");
+  // markdown 存储：格式坏的笔记被跳过了（或按默认值算），在这里提示，改好后下一次刷新就消失
+  const iss = d.issues || [];
+  $("#issues").classList.toggle("hidden", !iss.length);
+  $("#issues").innerHTML = iss.length ? `<b>${L(`${iss.length} 处笔记格式问题`, `${iss.length} note format problem(s)`)}</b>
+    ${L("（跳过了或按默认值算，别的记忆照常检索；在笔记里改好就行）", "(skipped or defaulted; everything else is still searchable. Fix the note and it clears)")}
+    ${iss.map(i => `<div><code>${esc(i.path)}</code> ${esc(i.problem)}</div>`).join("")}` : "";
   const srcs = [...new Set(d.stats.map(s => s.source).filter(s => s !== "profile"))];
   $("#sources").innerHTML = [""].concat(srcs).map(s => `<button class="${s === source ? "on" : ""}" onclick="source='${s}';load()">${s || L("全部", "All")}</button>`).join("");
   render($("#list"), d.items, false);

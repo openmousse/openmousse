@@ -3,6 +3,9 @@
 一条记忆 = 一句话 + kind + tags + source（哪个平台写的）+ observed_at（事情发生的日期）+ status。
 状态：active / pending（等主人确认）/ superseded（被新条目取代）/ retracted（已遗忘，正文清空只留骨架）。
 主人的档案（USER.md 的要点行）只读进树，source=profile，不在这里改。
+
+storage = "markdown" 时记忆的真身是笔记文件夹（notes.py），这里的 connect() 返回的是它的索引（index.db，表结构同上、多一列 path），
+读的函数（recall / recent / list_all / stats / export）两种存储共用；写的函数转给 notes.py。
 """
 from __future__ import annotations
 
@@ -55,6 +58,10 @@ def today() -> str:
 
 
 def connect() -> sqlite3.Connection:
+    """markdown 存储：返回索引库的连接，并先看一眼笔记文件夹（有变化就重建索引）。"""
+    if C.markdown():
+        from . import notes
+        return notes.connect()
     C.HOME.mkdir(parents=True, exist_ok=True)
     conn = sqlite3.connect(C.DB, timeout=5)
     conn.row_factory = sqlite3.Row
@@ -70,6 +77,9 @@ def log(conn: sqlite3.Connection, actor: str, text: str) -> None:
 
 def add(conn: sqlite3.Connection, *, text: str, source: str, kind: str = "fact", tags: str = "",
         observed_at: str | None = None, status: str = "active", supersedes: str | None = None) -> dict:
+    if C.markdown():
+        from . import notes
+        return notes.add(conn, text=text, source=source, kind=kind, tags=tags, observed_at=observed_at, status=status, supersedes=supersedes)
     text = " ".join(text.split())
     if not text:
         raise ValueError("empty text")
@@ -92,6 +102,9 @@ def add(conn: sqlite3.Connection, *, text: str, source: str, kind: str = "fact",
 
 
 def set_status(conn: sqlite3.Connection, mid: str, status: str, actor: str) -> bool:
+    if C.markdown():
+        from . import notes
+        return notes.set_status(conn, mid, status, actor)
     row = conn.execute("SELECT id, source FROM tree WHERE id=?", (mid,)).fetchone()
     if not row or row["source"] == "profile" or status not in STATUSES:
         return False
@@ -107,6 +120,9 @@ def set_status(conn: sqlite3.Connection, mid: str, status: str, actor: str) -> b
 
 
 def edit(conn: sqlite3.Connection, mid: str, text: str, actor: str) -> bool:
+    if C.markdown():
+        from . import notes
+        return notes.edit(conn, mid, text, actor)
     text = " ".join(text.split())
     row = conn.execute("SELECT id, source FROM tree WHERE id=?", (mid,)).fetchone()
     if not row or row["source"] == "profile" or not text:
@@ -124,6 +140,11 @@ def profile_path() -> Path:
 
 
 def profile_text() -> str:
+    if C.markdown():
+        from . import notes
+        text = notes.profile_text()
+        if text is not None:
+            return text
     try:
         return profile_path().read_text(encoding="utf8")
     except OSError:
@@ -131,13 +152,20 @@ def profile_text() -> str:
 
 
 def save_profile(text: str) -> None:
+    if C.markdown():
+        from . import notes
+        return notes.save_profile(text)
     p = profile_path()
     p.parent.mkdir(parents=True, exist_ok=True)
     p.write_text(text, encoding="utf8")
 
 
 def sync_profile(conn: sqlite3.Connection) -> int:
-    """把档案里 `- ` 开头的要点行按 `## ` 小节读进树。文件没变就不动。"""
+    """把档案里 `- ` 开头的要点行按 `## ` 小节读进树。文件没变就不动。markdown 存储：重建索引，返回档案要点条数。"""
+    if C.markdown():
+        from . import notes
+        notes.refresh(conn, force=True)
+        return conn.execute("SELECT COUNT(*) FROM tree WHERE source='profile'").fetchone()[0]
     raw = profile_text()
     digest = hashlib.sha1(raw.encode()).hexdigest()
     old = conn.execute("SELECT v FROM meta WHERE k='profile_digest'").fetchone()
@@ -248,8 +276,14 @@ def export(conn: sqlite3.Connection) -> Path:
     rows = conn.execute(
         "SELECT * FROM tree WHERE source != 'profile' AND status = 'active' ORDER BY observed_at DESC, created_at DESC"
     ).fetchall()
-    path.parent.mkdir(parents=True, exist_ok=True)
     zh = C.lang() == "zh"  # 这份导出给 OpenClaw 的 agent 检索着读，跟配置的语言
+    # 内容没变就不重写：OpenClaw 会为每次改动重建它的检索（导出时间那行不算内容）
+    digest = hashlib.sha1(repr([(r["kind"], r["text"], r["tags"], r["source"], r["observed_at"], r["status"]) for r in rows]).encode()
+                          + str((zh, str(path))).encode()).hexdigest()
+    old = conn.execute("SELECT v FROM meta WHERE k='export_digest'").fetchone()
+    if old and old["v"] == digest and path.exists():
+        return path
+    path.parent.mkdir(parents=True, exist_ok=True)
     if zh:
         out = ["# 世界树 TREE.md（mousse-tree 自动导出，勿手改）", "",
                f"> 各 AI 平台共享的记忆，{len(rows)} 条（只含已确认的），导出于 {now_iso()}。来源标在方括号里。",
@@ -271,4 +305,6 @@ def export(conn: sqlite3.Connection) -> Path:
                 out.append(f"- {r['text']}{tags} [{r['source']} {r['observed_at']}]{flag}")
             out.append("")
     path.write_text("\n".join(out), encoding="utf8")
+    conn.execute("INSERT OR REPLACE INTO meta(k, v) VALUES ('export_digest', ?)", (digest,))
+    conn.commit()
     return path

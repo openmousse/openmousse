@@ -9,10 +9,14 @@
   mousse-tree recall --q 关键词 | recent [--days 7] | stats | export
   mousse-tree confirm <id> | forget <id>
   mousse-tree rotate <平台> | revoke <平台>                               给某个平台换令牌 / 删令牌（令牌泄露时用）
+  mousse-tree migrate markdown --notes DIR [--profile-note 档案.md]      换成 Markdown 存储：记忆导成一条一篇笔记（可以放进 Obsidian 库）
+  mousse-tree migrate sqlite                                            换回 SQLite 存储（笔记写回 tree.db）
+  mousse-tree check | rebuild                                           Markdown 存储：格式有问题的笔记 / 从笔记重建索引
 """
 from __future__ import annotations
 
 import argparse
+import contextlib
 import json
 import secrets
 import shutil
@@ -35,6 +39,9 @@ USAGE_EN = """mousse-tree command line.
   mousse-tree recall --q keyword | recent [--days 7] | stats | export
   mousse-tree confirm <id> | forget <id>
   mousse-tree rotate <platform> | revoke <platform>                    issue a new token for a platform / delete its token (if one leaked)
+  mousse-tree migrate markdown --notes DIR [--profile-note Profile.md]  switch to Markdown storage: one note per memory (can live in an Obsidian vault)
+  mousse-tree migrate sqlite                                            switch back to SQLite storage (notes are written back to tree.db)
+  mousse-tree check | rebuild                                           Markdown storage: notes with format problems / rebuild the index from the notes
 """
 
 SERVICE = """[Unit]
@@ -70,6 +77,13 @@ def cmd_init(a: argparse.Namespace) -> None:
         cfg.setdefault("public_hosts", [])
         if a.host not in cfg["public_hosts"]:
             cfg["public_hosts"].append(a.host)
+    if a.storage == "markdown" and not C.markdown(cfg):
+        if _sqlite_has_memories():
+            sys.exit(C.L("tree.db 里已经有记忆：用 mousse-tree migrate markdown --notes DIR 把它们导成笔记",
+                         "tree.db already has memories: use mousse-tree migrate markdown --notes DIR to turn them into notes"))
+        _set_markdown(cfg, a.notes, a.profile_note)
+    elif a.storage == "sqlite" and C.markdown(cfg):
+        sys.exit(C.L("换回 SQLite 用 mousse-tree migrate sqlite", "To switch back to SQLite, use mousse-tree migrate sqlite"))
     C.save(cfg)
     conn = S.connect()
     n = S.sync_profile(conn)
@@ -81,6 +95,82 @@ def cmd_init(a: argparse.Namespace) -> None:
         print(C.L("提示：档案文件不存在。`mousse-tree serve` 后用 `mousse-tree urls` 打印的管理页链接打开「档案」页写一份，或用 --profile 指到你的 USER.md。",
                   "Note: the profile file doesn't exist yet. After `mousse-tree serve`, open the admin link printed by `mousse-tree urls` "
                   "and write one on the Profile tab, or point --profile at your USER.md."))
+
+
+def _sqlite_has_memories() -> bool:
+    if not C.DB.exists():
+        return False
+    import sqlite3
+    with contextlib.closing(sqlite3.connect(f"file:{C.DB}?mode=ro", uri=True)) as c:
+        try:
+            return bool(c.execute("SELECT 1 FROM tree WHERE source != 'profile' LIMIT 1").fetchone())
+        except sqlite3.Error:
+            return False
+
+
+def _set_markdown(cfg: dict, notes_dir: str | None, profile_note: str | None) -> None:
+    cfg["storage"] = "markdown"
+    if notes_dir:
+        cfg["notes_dir"] = str(Path(notes_dir).expanduser())
+    cfg["archive_dir"] = cfg.get("archive_dir") or C.archive_name(cfg)  # 定下来，以后换语言不会变
+    if profile_note is not None:
+        cfg["profile_note"] = profile_note
+    base = C.notes_dir(cfg)
+    if not base.parent.is_dir():
+        sys.exit(C.L(f"{base.parent} 不存在", f"{base.parent} does not exist"))
+    base.mkdir(mode=0o700, exist_ok=True)
+
+
+def cmd_migrate(a: argparse.Namespace) -> None:
+    cfg = C.load()
+    if a.to == "markdown":
+        if C.markdown(cfg) and not a.notes:
+            sys.exit(C.L("已经是 Markdown 存储", "Already using Markdown storage"))
+        if not a.notes and not cfg.get("notes_dir"):
+            sys.exit(C.L("要给 --notes 笔记文件夹，比如 --notes ~/vault/世界树", "Pass the notes folder with --notes, e.g. --notes ~/vault/Memory"))
+        _set_markdown(cfg, a.notes, a.profile_note)
+        base = C.notes_dir(cfg)
+        C.save(cfg)
+        from . import notes
+        if C.DB.exists():
+            n, bad = notes.from_sqlite()
+        else:
+            notes.connect().close()
+            n, bad = 0, []
+        print(C.L(f"已换成 Markdown 存储：{base}，写了 {n} 篇笔记，核对不一致 {len(bad)} 处。tree.db 原样留着（换回用 mousse-tree migrate sqlite）。",
+                  f"Switched to Markdown storage: {base}; wrote {n} notes; {len(bad)} mismatches. tree.db is kept as it was (mousse-tree migrate sqlite switches back)."))
+        for b in bad:
+            print("  " + b)
+    else:
+        if not C.markdown(cfg):
+            sys.exit(C.L("已经是 SQLite 存储", "Already using SQLite storage"))
+        from . import notes
+        n = notes.to_sqlite()
+        cfg["storage"] = "sqlite"
+        C.save(cfg)
+        S.sync_profile(S.connect())
+        print(C.L(f"已换回 SQLite 存储：{n} 条写回 tree.db。笔记文件夹原样留着。", f"Switched back to SQLite storage: wrote {n} memories to tree.db. The notes folder is left as it is."))
+    print(C.L("重启服务生效：systemctl --user restart mousse-tree", "Restart the service to apply: systemctl --user restart mousse-tree"))
+
+
+def cmd_check(_: argparse.Namespace) -> None:
+    if not C.markdown():
+        sys.exit(C.L("只有 Markdown 存储才有笔记格式问题", "Only Markdown storage has note format problems"))
+    from . import notes
+    rows = notes.issues(S.connect())
+    for r in rows:
+        print(f"{r['path']}: {r['problem']}")
+    print(C.L(f"{len(rows)} 处问题", f"{len(rows)} problem(s)") if rows else C.L("笔记格式都没问题", "All notes are fine"))
+
+
+def cmd_rebuild(_: argparse.Namespace) -> None:
+    if not C.markdown():
+        sys.exit(C.L("只有 Markdown 存储才有索引要重建", "Only Markdown storage has an index to rebuild"))
+    from . import notes
+    conn = notes.connect(sync=False)
+    notes.refresh(conn, force=True, actor=None)
+    n = conn.execute("SELECT COUNT(*) FROM tree").fetchone()[0]
+    print(C.L(f"索引已重建：{n} 条（含档案要点）", f"Index rebuilt: {n} entries (including profile points)"))
 
 
 def cmd_serve(_: argparse.Namespace) -> None:
@@ -178,8 +268,12 @@ def cmd_export(_: argparse.Namespace) -> None:
 
 
 def cmd_stats(_: argparse.Namespace) -> None:
-    for r in S.stats(S.connect()):
+    conn = S.connect()
+    for r in S.stats(conn):
         print(f"{r['source']:12} {r['status']:10} {r['n']}")
+    if C.markdown():
+        k = conn.execute("SELECT COUNT(*) FROM issue").fetchone()[0]
+        print(C.L(f"\n笔记 {C.notes_dir()} · 格式问题 {k} 处", f"\nnotes {C.notes_dir()} · {k} format problem(s)"))
 
 
 def cmd_token(action: str):
@@ -207,7 +301,12 @@ def main() -> None:
     p = argparse.ArgumentParser(prog="mousse-tree", description=C.L(__doc__, USAGE_EN), formatter_class=argparse.RawDescriptionHelpFormatter)
     sp = p.add_subparsers(dest="cmd", required=True)
     q = sp.add_parser("init"); q.add_argument("--name"); q.add_argument("--profile"); q.add_argument("--tz"); q.add_argument("--host")
-    q.add_argument("--lang", choices=("zh", "en")); q.set_defaults(fn=cmd_init)
+    q.add_argument("--lang", choices=("zh", "en")); q.add_argument("--storage", choices=("sqlite", "markdown"))
+    q.add_argument("--notes"); q.add_argument("--profile-note"); q.set_defaults(fn=cmd_init)
+    q = sp.add_parser("migrate"); q.add_argument("to", choices=("markdown", "sqlite")); q.add_argument("--notes"); q.add_argument("--profile-note")
+    q.set_defaults(fn=cmd_migrate)
+    sp.add_parser("check").set_defaults(fn=cmd_check)
+    sp.add_parser("rebuild").set_defaults(fn=cmd_rebuild)
     sp.add_parser("serve").set_defaults(fn=cmd_serve)
     q = sp.add_parser("urls"); q.add_argument("--base"); q.set_defaults(fn=cmd_urls)
     sp.add_parser("install-openclaw").set_defaults(fn=cmd_install_openclaw)

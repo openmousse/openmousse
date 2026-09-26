@@ -4,7 +4,7 @@
 
 **一份自托管的个人记忆，你所有的 AI 都接到同一棵树上。**
 
-你在 ChatGPT 里说"我早餐改吃燕麦了"，晚上问 Claude 明天吃什么，它已经知道。你的 OpenClaw、Notion AI、Claude Code 也一样。记忆存在你自己的服务器上，一个 SQLite 文件；各平台通过 MCP 读写，来源和日期都留痕。
+你在 ChatGPT 里说"我早餐改吃燕麦了"，晚上问 Claude 明天吃什么，它已经知道。你的 OpenClaw、Notion AI、Claude Code 也一样。记忆存在你自己的服务器上：一个 SQLite 文件，或者一个 Markdown 笔记文件夹（比如放进 Obsidian 库，手机上也能看、能改）；各平台通过 MCP 读写，来源和日期都留痕。
 
 没有 LLM 调用，不产生模型费用；模型费用是你各平台自己的订阅。
 
@@ -30,6 +30,24 @@ systemctl --user restart openclaw-gateway
 ```
 
 档案：`mousse-tree init --profile ~/.openclaw/workspace/USER.md` 指到你已有的 USER.md，或打开管理页写一份。档案里 `## 小节` 下的 `- 要点` 行会进入检索。
+
+## 存储：SQLite 或 Markdown 文件夹
+
+默认记忆存在 `~/.mousse-tree/tree.db`。也可以一条记忆一篇 Markdown 笔记，比如放进 Obsidian 库里的一个文件夹：
+
+```bash
+mousse-tree migrate markdown --notes ~/vault/世界树 --profile-note 档案.md   # 已有的记忆导成笔记，tree.db 原样留着
+systemctl --user restart mousse-tree
+```
+
+新装直接用：`mousse-tree init --storage markdown --notes ~/vault/世界树`。
+
+- 笔记属性（front matter）放 `id`、`kind`、`source`、`observed_at`、`status`、`tags`、`supersedes`、`created_at`、`updated_at`，正文就是那句话。文件名是日期加那句话的开头。
+- 文件夹根下只放当前有效的记忆。被取代的挪进 `归档/`（英文是 `Archive/`），你自己挪进去的也不再算数。遗忘 = 笔记改成空壳（只剩属性，文件名换成 id）放进 `归档/`、删索引、记一条不含内容的操作记录。如果文件夹由同步服务（Obsidian Sync、iCloud、git……）带着，它的版本历史里可能还留着旧版本一段时间。
+- 笔记是真身，SQLite（`index.db`）只当检索索引和操作记录，文件夹一变就从笔记重建；服务每 5 秒看一眼，手机上改了笔记，下一次 recall 就能看到。手动重建：`mousse-tree rebuild`。
+- 自己新建的、没有属性的笔记也收（id 按路径算，source 是 `owner`）。属性写坏的笔记会跳过，别的照常检索，管理页顶部会提示（`mousse-tree check` 也能看）。软链和隐藏文件不收，MCP 工具碰不到文件夹以外的东西。
+- `--profile-note 档案.md` 在文件夹里放一份档案，和 `profile_path` 双向同步：改哪边都行；两边同时改以笔记为准，另一版存进 `~/.mousse-tree/profile-conflicts.md`。故意不用软链：OpenClaw 的记忆检索会跳过软链文件。
+- 换回：`mousse-tree migrate sqlite`，笔记写回 `tree.db`。
 
 ## 暴露到公网
 
@@ -85,12 +103,15 @@ mousse-tree recall --q 早餐
 mousse-tree recent --days 7
 mousse-tree add --source myclaw --kind decision --text "……"    # 自己的 agent 也能往树上写
 mousse-tree stats
+mousse-tree check      # Markdown 存储：格式有问题的笔记
+mousse-tree rebuild    # Markdown 存储：从笔记重建索引
 ```
 
 ## 设计
 
 - 一条记忆 = 一句话 + kind + tags + source + observed_at + status。改了就 `supersedes` 旧条目，不追加矛盾。
 - 忘记 = 清正文、留骨架，可审计。
+- 存储是一个 SQLite 文件或一个 Markdown 笔记文件夹（见「存储」），工具、导出和管理页两种都一样。
 - 档案（USER.md）只读进树，在管理页或文件里改。
 - 树的导出 `TREE.md` 给不走 MCP 的 agent（如 OpenClaw 的 memory_search）用。
 - 还没有的：语义召回（embedding）、冲突检测、多用户。欢迎 PR。
