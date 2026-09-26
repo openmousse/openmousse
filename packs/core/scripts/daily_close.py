@@ -2,7 +2,7 @@
 """日结：每天 03:45（用户时区）给今天有过对话的线程发「【自动触发】日结」，让各 agent 在 04:00 会话重置前把结论写进记忆。
 
 - 线程：main + 现在所有的 Agent（服务的 /api/groups）。当天（逻辑日 04:00 起）没有消息的线程跳过。
-- 走服务端 /api/chat/trigger（origin=auto）。上一条还没回完（409）→ 等 60 秒再试一次。
+- 走服务端 /api/chat/trigger（origin=auto，level=none：回完不推送）。上一条还没回完（409）→ 等 60 秒再试一次。
 - 日志：~/.openmousse/data/daily_close.log
 用法：daily_close.py [--dry-run] [--thread <id>]
 """
@@ -53,8 +53,8 @@ def active_today(thread: str, since_iso: str) -> int:
 
 
 def trigger(thread: str) -> str:
-    try:
-        api("/api/chat/trigger", {"thread": thread, "text": trigger_text(), "origin": "auto"}, timeout=20)
+    try:  # 日结是给 agent 的，回完不推送（level none；notify false 给还不认识 level 的旧服务）
+        api("/api/chat/trigger", {"thread": thread, "text": trigger_text(), "origin": "auto", "level": "none", "notify": False}, timeout=20)
         return "ok"
     except urllib.error.HTTPError as exc:
         return "busy" if exc.code == 409 else f"error {exc.code}"

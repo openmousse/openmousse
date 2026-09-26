@@ -54,7 +54,11 @@ class Run:
     requested: str | None = None
     t0: float = field(default_factory=time.time)
     queues: list[asyncio.Queue] = field(default_factory=list)
-    notify: bool = True  # 回完要不要推送（主对话转来的问题不推：用户就在主对话里等）
+    notify: bool = True  # 旧开关：False = 回完不推（= level none；学习台、主对话转来的问题用它）
+    origin: str = "user"  # user：用户发的；auto：定时器 / 收件箱之类系统触发；relay：主对话转来。存进回复那一行的 origin
+    level: str | None = None  # 推送档位 ring / quiet / none；None = 按 origin 定（见 push.run_level）
+    feed_mark: int = 0  # 开跑时 feed_items 的最大 rowid：回完看这之后这个线程有没有写新卡，有就推卡片
+    inbox_mark: int = 0  # 开跑时 inbox 的最大 rowid：回完把这之后这个线程新交的收件箱条目挂到这条回复下（created_at 只到秒，不够准）
 
     def publish(self, item: tuple[str, dict]) -> None:
         for q in list(self.queues):
@@ -104,6 +108,8 @@ def db() -> sqlite3.Connection:
     if "attachments" not in cols:
         conn.execute("ALTER TABLE messages ADD COLUMN attachments TEXT")  # 给 app 显示的附件摘要 JSON（files.py）
         conn.execute("ALTER TABLE messages ADD COLUMN gw_text TEXT")  # 实际发给 Gateway 的文字（含附件抽出的内容），撤回时用它找记录
+    if "origin" not in cols:
+        conn.execute("ALTER TABLE messages ADD COLUMN origin TEXT")  # 回复是被什么引出来的（user / auto / relay），未读里的「给你的」按它算
     conn.execute("""CREATE TABLE IF NOT EXISTS activity_log (
         id INTEGER PRIMARY KEY AUTOINCREMENT, ts TEXT NOT NULL, actor TEXT NOT NULL, text TEXT NOT NULL, kind TEXT NOT NULL)""")
     return conn
@@ -247,7 +253,9 @@ class SendBody(BaseModel):
     model: str | None = None
     attachments: list[str] = []  # 先经 /api/chat/upload 拿到的附件 id
     origin: str = "user"         # user：用户发的；auto：定时器之类系统触发的，app 里显示成一行灰字
-    notify: bool = True          # 回完要不要推送（起床报告由 watcher 合并成一条，这里关掉）
+    notify: bool | None = None   # 旧开关（/api/chat/trigger）：false = 回完不推，等于 level none
+    level: str | None = None     # 推送档位（/api/chat/trigger）：ring 响铃 / quiet 静默进通知中心 / none 不推；都不给 = quiet
+    inboxId: str | None = None   # （/api/chat/send）引用收件箱里的一条回复 = 「改一下」：还没定下来的那条改成 revising，给模型带上前情
 
 
 def sse(event: str, data: dict) -> bytes:
@@ -293,14 +301,18 @@ async def run_gateway(run: Run, text: str | list, token: str) -> None:
         run.model = await actual_model(run.key or session_key(run.thread)) or run.model
     run.finished = now_iso()
     with _lock, db() as conn:
-        cur = conn.execute("INSERT INTO messages(thread, role, text, model, requested, ts, status) VALUES(?,?,?,?,?,?,?)",
-                           (run.thread, "grava", run.text, run.model, run.requested, run.finished, run.status))
+        cur = conn.execute("INSERT INTO messages(thread, role, text, model, requested, ts, status, origin) VALUES(?,?,?,?,?,?,?,?)",
+                           (run.thread, "grava", run.text, run.model, run.requested, run.finished, run.status, run.origin))
         run.reply_id = cur.lastrowid
+    try:  # 这次回复里交到收件箱的条目挂到这条回复下面（app 在对话里把卡片显示在它下面）；在「done」之前，app 一刷新就看得到
+        import inbox as inbox_mod  # 延迟导入：inbox.py 依赖本模块
+        inbox_mod.link_message(run.thread, run.inbox_mark, run.reply_id)
+    except Exception:  # noqa: BLE001 — 挂不上只是对话里少一张卡，回复照常结束
+        pass
     run.done = True
     run.publish(("done", done_payload(run)))
     import push as push_mod  # 延迟导入：push.py 依赖本模块
-    if run.notify:
-        await push_mod.notify_reply(run.thread, run.text, run.status)
+    await push_mod.notify_run(run)  # 按档位推：这次写了卡就推卡，否则推回复（level none 不推；推送失败不影响回复）
 
     def _forget() -> None:
         if RUNS.get(run.thread) is run:
@@ -359,11 +371,25 @@ def with_context(context: str, content: str | list) -> str | list:
     return [{**first, "text": f"{context}\n\n{first.get('text', '')}"}, *rest]
 
 
+def max_rowid(table: str) -> int:
+    """表现在的最大 rowid（表还没有 = 0）。回复结束时拿它判断这次回复里新写了哪些行（建议卡、收件箱条目）。"""
+    try:
+        with _lock, db() as conn:
+            return conn.execute(f"SELECT IFNULL(MAX(rowid), 0) FROM {table}").fetchone()[0]
+    except sqlite3.Error:
+        return 0
+
+
+def feed_mark() -> int:
+    return max_rowid("feed_items")
+
+
 def start_run(thread: str, text: str, model: str | None, key: str | None = None, attachment_ids: list[str] | None = None, origin: str = "user",
-              context: str | None = None) -> Run:
+              context: str | None = None, level: str | None = None) -> Run:
     """记下用户这一条，在后台开跑。thread 决定记录存在哪；key 不给就按 thread 推 session key。
     有附件时：图片随消息给模型，文档 / 音频抽出的文字拼进消息，其它只给路径（见 files.py）。
-    context：只给模型看的前情（学习台的课件全文之类），拼在消息前面；对话记录里只显示 text。"""
+    context：只给模型看的前情（学习台的课件全文之类），拼在消息前面；对话记录里只显示 text。
+    level：回完推送的档位（ring / quiet / none），不给按 origin 定：user 响铃、relay 不推、auto 静默（见 push.run_level）。"""
     if (cur := RUNS.get(thread)) and not cur.done:
         raise HTTPException(409, L("上一条还没回完，等它结束或先接回去看。", "The last reply isn't finished yet. Wait for it, or reconnect to see it."))
     token = gateway_token()
@@ -386,7 +412,8 @@ def start_run(thread: str, text: str, model: str | None, key: str | None = None,
             conn.execute("UPDATE messages SET attachments=? WHERE id=?", (json.dumps(shown, ensure_ascii=False), user_id))
         log_activity(L(f"发了 {len(rows)} 个附件给 {settings.app_name}（{'、'.join(r['name'] for r in rows)[:80]}）",
                        f"Sent {len(rows)} attachment{'' if len(rows) == 1 else 's'} to {settings.app_name} ({', '.join(r['name'] for r in rows)[:80]})"), "upload")
-    run = Run(thread=thread, model=model, user_id=user_id, started=ts, key=key)
+    run = Run(thread=thread, model=model, user_id=user_id, started=ts, key=key, origin=origin, level=level, feed_mark=feed_mark(),
+              inbox_mark=max_rowid("inbox"))
     RUNS[thread] = run
     asyncio.create_task(run_gateway(run, content, token))
     return run
@@ -399,19 +426,31 @@ async def send(body: SendBody):
         raise HTTPException(400, L("空消息", "Empty message"))
     if not text:
         text = "（见附件）"  # 不翻译：app 按这串原文隐藏占位（ChatView PLACEHOLDER_TEXT）；给模型的那份在 files.build_content 按语言换
-    run = start_run(body.thread, text, body.model, attachment_ids=body.attachments, origin=body.origin)
+    reply_to = None
+    if body.inboxId:  # 引用收件箱的卡回复：对话记录里只有用户的话，模型另外看到「这是在回复哪一条、改好怎么交」
+        import inbox as inbox_mod  # 延迟导入：inbox.py 依赖本模块
+        reply_to = inbox_mod.reply_context(body.inboxId)
+    run = start_run(body.thread, text, body.model, attachment_ids=body.attachments, origin=body.origin, context=reply_to[1] if reply_to else None)
+    if reply_to:
+        inbox_mod.mark_revising(reply_to[0], text)
     return StreamingResponse(attach(run), media_type="text/event-stream", headers={"Cache-Control": "no-store", "X-Accel-Buffering": "no"})
+
+
+LEVELS = ("ring", "quiet", "none")  # 推送档位：响铃 / 静默（进通知中心不出声）/ 不推
 
 
 @router.post("/api/chat/trigger")
 async def trigger(body: SendBody):
-    """系统触发（suggestion_watcher 等）：记一条 auto 消息、后台开跑，立刻返回，不流式。"""
+    """系统触发（suggestion_watcher 等）：记一条 auto 消息、后台开跑，立刻返回，不流式。
+    回完的推送按 level：ring / quiet / none；只给了 notify=false 等于 none；都没给 = quiet（半夜的日结不再响铃）。"""
     text = body.text.strip()
     if not text:
         raise HTTPException(400, L("空消息", "Empty message"))
-    run = start_run(body.thread, text, body.model, origin="auto")
-    run.notify = body.notify
-    return {"ok": True, "thread": body.thread, "userId": f"db{run.user_id}", "modelId": run.model}
+    if body.level is not None and body.level not in LEVELS:
+        raise HTTPException(400, L("level 只能是 ring / quiet / none", "level must be ring, quiet or none"))
+    level = body.level or ("none" if body.notify is False else "quiet")
+    run = start_run(body.thread, text, body.model, origin="auto", level=level)
+    return {"ok": True, "thread": body.thread, "userId": f"db{run.user_id}", "modelId": run.model, "level": level}
 
 
 class RelayBody(BaseModel):
@@ -427,8 +466,7 @@ async def relay(body: RelayBody):
     text = body.text.strip()
     if not text:
         raise HTTPException(400, L("空消息", "Empty message"))
-    run = start_run(body.thread, PREFIX_RELAY + text, None, origin="relay")
-    run.notify = False
+    run = start_run(body.thread, PREFIX_RELAY + text, None, origin="relay", level="none")
     deadline = time.time() + min(max(body.timeout, 10), 600)
     while not run.done and time.time() < deadline:
         await asyncio.sleep(0.5)

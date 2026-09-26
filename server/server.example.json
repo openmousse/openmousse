@@ -17,6 +17,7 @@
     "trust_loopback": false
   },
   "nutrition_targets": null,
+  "push": {"quiet_hours": ["23:00", "07:30"]},
   "study": {
     "materials": "~/study/materials",
     "pages": "~/study/pages",

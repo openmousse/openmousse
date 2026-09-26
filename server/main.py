@@ -5,7 +5,9 @@
 - app 其余页面（Groups、独立空间、目标、审批、定时任务、任务、活动、档案、记忆、模型、安全）：见 data.py，全部是真实来源。
 - Apple 健康：原生 app 读 HealthKit 后按天推上来，存 grava.db 的 health_daily（见 health.py）。
 - 附件：/api/chat/upload 存盘 + 抽文字 / 转写，/api/chat/send 带附件 id，/api/files/{id} 回放，/api/chat/transcribe 语音输入（见 files.py）。
-- 推送：/api/push/register 存 Expo push token；回复完成后 push.notify_reply 推一条（见 push.py）。
+- 推送：/api/push/register 存 Expo push token；回复完成后 push.notify_run 按档位（ring / quiet / none）推回复或这次写的卡（见 push.py）。
+- 收件箱「等你点头」：/api/inbox，Agent 经 inbox_ctl.py 提交要你同意的事，OpenClaw 执行审批也合在里面（见 inbox.py）。
+- 未读：/api/unread，各线程的未读回复、新卡片、角标（见 unread.py）。
 - 训记数据不落库：训记是真源，这里只有短时缓存（由 xunji.py / calendar_ics.py 管）。
 - 学习台：/study 网页 + /api/study/*，课件和学习页按课程 / 模块浏览，问答走同一条对话通道（见 study.py）。
 - 数据源可选（sources.py）：workspace 的 scripts/ 里没有对应脚本时，相关接口回 ok=false + missing_source，其它照常。
@@ -36,6 +38,8 @@ from data import router as data_router  # noqa: E402
 from files import router as files_router  # noqa: E402
 from push import router as push_router  # noqa: E402
 from study import router as study_router  # noqa: E402
+from inbox import router as inbox_router  # noqa: E402
+from unread import router as unread_router  # noqa: E402
 
 DIST = settings.dist
 settings.db.parent.mkdir(parents=True, exist_ok=True)  # 新实例第一次启动：数据目录还不存在
@@ -72,6 +76,8 @@ app.include_router(data_router)
 app.include_router(files_router)
 app.include_router(push_router)
 app.include_router(study_router)
+app.include_router(inbox_router)
+app.include_router(unread_router)
 app.add_exception_handler(sources.NoSource, sources.no_source_handler)
 _whois: dict[str, tuple[float, str | None]] = {}
 _lock = threading.Lock()

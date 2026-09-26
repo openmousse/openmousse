@@ -34,3 +34,8 @@ def lang() -> str:
 
 def L(zh: str, en: str) -> str:
     return zh if lang() == "zh" else en
+
+
+def LS(zh: str, en: str) -> str:
+    """按 server.json 的 language，不看请求头：发给 agent 看的消息（比如收件箱点了同意之后发进线程的那句）用它，不跟着手机的语言变。"""
+    return zh if settings.language == "zh" else en

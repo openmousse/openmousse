@@ -3,7 +3,9 @@
 | 页面 | 真源 |
 |---|---|
 | Groups、独立空间、目标、建议、形象设置、app 侧活动 | grava.db（记忆规范的 L4） |
-| 等你点头 | OpenClaw 审批队列（`openclaw approvals pending / resolve`） |
+| 等你点头（收件箱） | grava.db `inbox`（各 Agent 经 `server/inbox_ctl.py` 写：要你同意才做的事、它们自己的提议；见 inbox.py）+ OpenClaw 执行审批队列（`openclaw approvals pending / resolve`，旧的 /api/approvals 仍在） |
+| 未读、「今天」页的新卡片、app 角标 | grava.db `read_marks` + `messages.origin` + `feed_items.seen_at`（见 unread.py） |
+| 推送 | Expo Push，三档 ring / quiet / none + server.json 的 `push.quiet_hours`（见 push.py） |
 | 接下来会自动做的事 | OpenClaw cron（`cron.list / cron.update`）+ systemd user timer（只读） |
 | 任务 | OpenClaw 子会话（`tasks.list`；详情读子会话的 `chat.history`） |
 | 活动记录 | app 的 activity_log + Gateway 审计（`audit.activity.list`，只有元数据）+ 定时任务的运行记录 |
@@ -64,7 +66,7 @@ def ddb():
             metric TEXT, unit TEXT, target_low REAL, target_high REAL, due TEXT, group_id TEXT, source TEXT,
             status TEXT NOT NULL DEFAULT 'active', position INTEGER NOT NULL DEFAULT 99, created_at TEXT NOT NULL);
         CREATE TABLE IF NOT EXISTS feed_items (id TEXT PRIMARY KEY, group_id TEXT, title TEXT NOT NULL, body TEXT, cta TEXT,
-            created_at TEXT NOT NULL, dismissed INTEGER NOT NULL DEFAULT 0, kind TEXT, data TEXT);
+            created_at TEXT NOT NULL, dismissed INTEGER NOT NULL DEFAULT 0, kind TEXT, data TEXT, seen_at TEXT);
         CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT NOT NULL);
         CREATE TABLE IF NOT EXISTS journal (id TEXT PRIMARY KEY, ts TEXT NOT NULL, group_id TEXT, kind TEXT NOT NULL, text TEXT NOT NULL,
             tags TEXT, context TEXT, source TEXT NOT NULL DEFAULT 'chat', status TEXT NOT NULL DEFAULT 'active');
@@ -73,11 +75,14 @@ def ddb():
             created_at TEXT NOT NULL, updated_at TEXT NOT NULL);
     """)
     global _feed_migrated
-    if not _feed_migrated:  # 老库的 feed_items 没有 kind / data（结构化建议卡要用）：补上列，只查一次
+    if not _feed_migrated:  # 老库的 feed_items 没有 kind / data（结构化建议卡要用）/ seen_at（「新」卡片）：补上列，只查一次
         have = {r[1] for r in conn.execute("PRAGMA table_info(feed_items)")}
         for col in ("kind", "data"):
             if col not in have:
                 conn.execute(f"ALTER TABLE feed_items ADD COLUMN {col} TEXT")
+        if "seen_at" not in have:  # 看过的时间；NULL = 新卡。补列时已有的卡都算看过，不会一下子全亮
+            conn.execute("ALTER TABLE feed_items ADD COLUMN seen_at TEXT")
+            conn.execute("UPDATE feed_items SET seen_at=created_at")
         _feed_migrated = True
     return conn
 
@@ -105,7 +110,10 @@ def forget_cache(*prefixes: str) -> None:
 
 async def openclaw_cli(*args: str, timeout: float = 30) -> Any:
     exe = shutil.which(cfg.openclaw_bin) or cfg.openclaw_bin
-    proc = await asyncio.create_subprocess_exec(exe, *args, "--json", stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE)
+    try:
+        proc = await asyncio.create_subprocess_exec(exe, *args, "--json", stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE)
+    except OSError as e:  # 这台机器上没有 openclaw（空白实例、CI）：当成 502，别变成 500
+        raise HTTPException(502, L(f"跑不了 openclaw：{e}", f"Couldn't run openclaw: {e}")) from e
     out, err = await asyncio.wait_for(proc.communicate(), timeout)
     if proc.returncode != 0:
         cmd, tail = " ".join(args[:2]), (err or out).decode("utf8", "replace")[-300:]
@@ -408,7 +416,7 @@ def feed(date: str | None = None):
         else:
             rows = conn.execute("SELECT * FROM feed_items WHERE dismissed=0 ORDER BY created_at DESC LIMIT 20").fetchall()
     return {"ok": True, "feed": [{"id": r["id"], "groupId": r["group_id"], "title": r["title"], "body": r["body"] or "", "cta": r["cta"] or "", "kind": r["kind"] if "kind" in r.keys() else None, "data": json.loads(r["data"]) if "data" in r.keys() and r["data"] else None, "createdAt": r["created_at"],
-                                  "time": when(datetime.fromisoformat(r["created_at"]))} for r in rows]}
+                                  "time": when(datetime.fromisoformat(r["created_at"])), "seen": bool(r["seen_at"])} for r in rows]}
 
 
 @router.post("/api/feed/{fid}/dismiss")
@@ -416,6 +424,21 @@ def dismiss_feed(fid: str):
     with _lock, ddb() as conn:
         conn.execute("UPDATE feed_items SET dismissed=1 WHERE id=?", (fid,))
     return {"ok": True}
+
+
+class SeenBody(BaseModel):
+    ids: list[str]
+
+
+@router.post("/api/feed/seen")
+def feed_seen(body: SeenBody):
+    """这几张卡用户看到了（「今天」页滑到过）：seen_at 记上时间，不再算新卡。已经看过的不改。"""
+    ids = [i for i in body.ids if i][:200]
+    if not ids:
+        return {"ok": True, "seen": 0}
+    with _lock, ddb() as conn:
+        n = conn.execute(f"UPDATE feed_items SET seen_at=? WHERE seen_at IS NULL AND id IN ({','.join('?' * len(ids))})", (now_iso(), *ids)).rowcount
+    return {"ok": True, "seen": n}
 
 
 # —— 接下来会自动做的事：OpenClaw cron + systemd timer ——————————————————
@@ -574,22 +597,29 @@ async def toggle_job(job_id: str, body: Toggle):
     return {"ok": True}
 
 
-# —— 等你点头：OpenClaw 审批队列 ——————————————————————————————————
+# —— 等你点头：OpenClaw 审批队列（收件箱 inbox.py 把它和 Agent 的请求合在一起；这两个旧接口给老版本 app） ——————————
+
+def exec_approval(a: dict) -> dict:
+    """`openclaw approvals pending` 的一条 → 统一的字段：id、kind、命令、理由、字段表、agent、创建时间（毫秒或原样）。"""
+    req = a.get("request") or a
+    command = req.get("command") or req.get("commandText") or req.get("summary") or a.get("title") or ""
+    agent = req.get("agentId") or a.get("agentId")
+    # 字段名在 app 里是一列 52pt 宽的标签，英文用短词
+    fields = [{"k": k, "v": str(v)} for k, v in ((L("命令", "Cmd"), command), (L("目录", "Dir"), req.get("cwd")),
+                                                 (L("agent", "Agent"), agent), (L("主机", "Host"), req.get("host"))) if v]
+    return {"id": a.get("id"), "kind": a.get("kind") or "exec", "command": command, "reason": a.get("reason") or req.get("reason") or "",
+            "fields": fields, "agent": agent, "created": a.get("createdAtMs") or a.get("createdAt")}
+
 
 @router.get("/api/approvals")
 async def approvals():
     data = await cached("approvals", 5, lambda: openclaw_cli("approvals", "pending", timeout=20))
     out = []
     for a in data.get("approvals", []):
-        req = a.get("request") or a
-        command = req.get("command") or req.get("commandText") or req.get("summary") or a.get("title") or ""
-        # 字段名在 app 里是一列 52pt 宽的标签，英文用短词
-        fields = [{"k": k, "v": str(v)} for k, v in ((L("命令", "Cmd"), command), (L("目录", "Dir"), req.get("cwd")),
-                                                     (L("agent", "Agent"), req.get("agentId") or a.get("agentId")),
-                                                     (L("主机", "Host"), req.get("host"))) if v]
-        created = a.get("createdAtMs") or a.get("createdAt")
-        out.append({"id": a.get("id"), "kind": a.get("kind") or "exec", "action": short(command or a.get("kind") or L("一个待审批的动作", "An action awaiting approval"), 80),
-                    "detail": a.get("reason") or req.get("reason") or "", "fields": fields, "groupId": None,
+        e = exec_approval(a)
+        created = e["created"]
+        out.append({"id": e["id"], "kind": e["kind"], "action": short(e["command"] or a.get("kind") or L("一个待审批的动作", "An action awaiting approval"), 80),
+                    "detail": e["reason"], "fields": e["fields"], "groupId": None,
                     "requestedAt": when(london(created)) if isinstance(created, (int, float)) else ""})
     return {"ok": True, "approvals": out}
 
@@ -598,12 +628,17 @@ class Decision(BaseModel):
     allow: bool
 
 
+async def resolve_exec(aid: str, allow: bool) -> None:
+    """批准一次（allow-once）或拒绝一个 OpenClaw 执行审批，记一行活动。失败抛 502。"""
+    await openclaw_cli("approvals", "resolve", aid, "allow-once" if allow else "deny", timeout=20)
+    forget_cache("approvals")  # 连带收件箱和未读的缓存（approvals:*）
+    log_activity(L(f"{'批准' if allow else '拒绝'}了一个待审批的动作", f"{'Approved' if allow else 'Denied'} an action awaiting approval"),
+                 "approved" if allow else "denied")
+
+
 @router.post("/api/approvals/{aid}")
 async def decide(aid: str, body: Decision):
-    await openclaw_cli("approvals", "resolve", aid, "allow-once" if body.allow else "deny", timeout=20)
-    forget_cache("approvals")
-    log_activity(L(f"{'批准' if body.allow else '拒绝'}了一个待审批的动作", f"{'Approved' if body.allow else 'Denied'} an action awaiting approval"),
-                 "approved" if body.allow else "denied")
+    await resolve_exec(aid, body.allow)
     return {"ok": True}
 
 

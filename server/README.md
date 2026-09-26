@@ -39,6 +39,51 @@ python3 agent_ctl.py delete g-xxxxxxxx      # workspace archived to ~/.openclaw/
 
 With `packs/core/skills/agent-builder` installed on the main agent (the installer does this) you can create Agents from chat.
 
+## Needs your OK (the inbox)
+
+Anything an Agent needs your OK for (mostly: its own ideas, things that reach other people or can't be undone, new scheduled jobs and notifications, code and config changes) goes into the inbox, listed under "Needs your OK" on the app's Today page. OpenClaw's exec approvals (`openclaw approvals pending`) are merged in, with ids of the form `exec:<approval id>`. See [`inbox.py`](inbox.py); Agents follow the rules in `packs/core/skills/inbox`.
+
+```bash
+python3 inbox_ctl.py add --kind send --source apply --title "Reply to HR to confirm Wednesday's interview" --why "HR asked Wed or Thu" --change "Email hr@…" --dedupe apply:hr:0926
+python3 inbox_ctl.py done ib-xxxxxxxx --result "Sent"
+python3 inbox_ctl.py list [--status recent]
+```
+
+| Endpoint | What it does |
+|---|---|
+| `GET /api/inbox?status=pending` | Items waiting for you (anything past its `expiresAt` is marked expired first) plus OpenClaw exec approvals, newest first |
+| `GET /api/inbox?status=recent` | Items decided or finished in the last 7 days, at most 50 |
+| `GET /api/inbox?thread=<thread>` | That thread's items (waiting for you + decided or finished in the last 7 days), oldest first: the chat shows them as cards in its timeline, under the reply given by `messageId` |
+| `GET /api/inbox/{id}` | One item |
+| `POST /api/inbox` | An Agent submits `{kind, title, source?, thread?, why?, changes?, detail?, approveLabel?, level?, dedupe?, expiresAt?}` → `{ok, id}`. Same `dedupe` as a pending item → updated in place (`updated: true`, pushed again); rejected in the last 30 days → 409 `{ok: false, error: "rejected_before", rejectedAt, note}` |
+| `POST /api/inbox/{id}` | Your decision: `{action: approve / reject / revise, note?}`. Approve → a "【收件箱】Approved …" message goes to the item's thread so the Agent does it (if that thread is mid-reply, it waits until the reply is done); for `exec:` items approve = allow-once, reject = deny |
+| `PATCH /api/inbox/{id}` | The Agent resubmits a revised item: back to pending, pushed again |
+| `POST /api/inbox/{id}/result` | The Agent reports `{status: done / failed, result}`; a quiet notification follows |
+| `POST /api/inbox/{id}/withdraw` | The Agent withdraws an undecided item |
+
+Asking for changes: reply to the Agent in its chat with the card quoted; `/api/chat/send` carries `inboxId`, the item becomes revising with your words as its note, and the model also sees which item you're replying to and how to resubmit (the chat history shows only your words).
+
+Item: `{id, kind, source, sourceName, thread, title, why, changes: [], detail, approveLabel, fields?, status, note, result, level, createdAt, updatedAt, decidedAt, expiresAt, messageId}`. `messageId`: an item an Agent submits during a reply is attached to that reply (`messages.id`) when the reply finishes; items submitted outside a reply have null. kind: task / write / send / spend / schedule / push / skill / agent / block / code / calendar / other (exec only comes from OpenClaw and carries `fields`); status: pending / approved / rejected / revising / done / failed / withdrawn / expired. The old `/api/approvals` endpoints still work for older app builds.
+
+## Notifications
+
+Three levels: **ring** (sound, interruptionLevel active), **quiet** (no sound, goes to Notification Center, passive), **none** (not sent). During `push.quiet_hours` in `server.json` (default `["23:00", "07:30"]`, in `timezone`; `[]` turns it off) ring is downgraded to quiet.
+
+| When | Level |
+|---|---|
+| A reply to something you sent | ring |
+| The main chat handing a question to an Agent (relay), the study desk | none |
+| System triggers (`/api/chat/trigger`) | the request's `level`; only `notify: false` = none; neither = quiet |
+| A new (or resubmitted) inbox item | the item's level (task / write / send / spend / calendar default to ring, the rest to quiet) |
+| An inbox item done / failed | quiet |
+| `/api/push/send` (wake-up report, deadline reminders, …) | the request's `level`, default ring |
+
+If the reply wrote a card (a new `feed_items` row whose group_id is this thread; for main, cards without an Agent), the card is pushed (subtitle = the card type, body = "card title · first point"); otherwise the start of the reply (Markdown stripped, cut at a sentence boundary). `data` carries `thread` (all older app builds read), `target` (`{type: thread | card | inbox | today, …}`), `level` (the level actually used after quiet hours) and `kind` (reply / card / inbox / done / report). The badge is inbox items waiting for you plus unread replies to your own messages. `/api/push/send` takes `{title, body, thread?, thread_id?, subtitle?, level?, category?, collapse?, target?}`.
+
+## Unread
+
+`GET /api/unread` → `{threads: {<thread>: {n, mine, last: {id, text, ts, origin}}}, feedNew: [card ids], inbox, badge}`. Only threads with something unread are listed (main, every Agent, side chats that aren't archived); n = assistant replies after the read mark, mine = those answering something you sent (`messages.origin = user`; timer- and inbox-triggered ones don't count); inbox = items waiting for you (exec approvals included); badge = inbox + the sum of mine. `POST /api/unread/read {thread, upto?}` moves the read mark forward (never back) and returns the same summary. New cards on the Today page: every item of `GET /api/feed` has `seen`; `POST /api/feed/seen {ids}` marks them seen.
+
 ## Study desk
 
 `/study` is a wide-screen page for a computer: courses and modules on the left, study notes / slides (PDF) / flashcards / quiz in the middle, and a chat on the right that answers from this session's materials. Configure it with `study` in `server.json` (see [`study.py`](study.py)):

@@ -4,9 +4,9 @@
 把一台已经装好 OpenClaw 的机器配成能跑 OpenMousse：
   1. ~/.openmousse/repo → 仓库（skills 里的命令都走这个固定路径）
   2. ~/.openmousse/server.json：名字、时区、语言、监听地址、OpenClaw 的位置、令牌（phone 给手机，local 给本机脚本）
-  3. 主 agent 工作区的 skills/ 里软链 packs/core 的四个 skill（handoff / agent-builder / journal / memory-tree）；AGENTS.md 末尾追加 OpenMousse 的规则（按所选语言写）
+  3. 主 agent 工作区的 skills/ 里软链 packs/core 的五个 skill（handoff / agent-builder / journal / memory-tree / inbox）；AGENTS.md 末尾追加 OpenMousse 的规则（按所选语言写）
   4. openclaw.json（先备份，改完 openclaw config validate，不过就恢复）：
-     - agents.defaults.skills 是列表的话追加四个 skill（没有这个键 = 不限制，不动）
+     - agents.defaults.skills 是列表的话追加这五个 skill（没有这个键 = 不限制，不动）
      - gateway.http.endpoints.chatCompletions.enabled = true（app 的对话走它）
      - session.reset = daily 04:00（对话页按天，日结在 03:45）
      - tools.deny 加 ask_user（app 通道没人能回答工具里的提问，会卡死）
@@ -34,7 +34,7 @@ from pathlib import Path
 HERE = Path(__file__).resolve().parent
 MOUSSE_HOME = Path("~/.openmousse").expanduser()
 SERVER_JSON = MOUSSE_HOME / "server.json"
-SKILLS = ("handoff", "agent-builder", "journal", "memory-tree")
+SKILLS = ("handoff", "agent-builder", "journal", "memory-tree", "inbox")
 AGENTS_MARK = "## OpenMousse"
 AGENTS_RULES_ZH = """
 
@@ -47,6 +47,7 @@ AGENTS_RULES_ZH = """
 - **Agent**：用户在 app 里可以建多个 Agent，每个是独立的 OpenClaw agent（自己的工作区、记忆、skills），app 里叫「Agent」。用户说"帮我做个 XX agent"用 `skills/agent-builder/` 直接建；属于某个 Agent 那一块的事（要建议、要计划、要记录）用 `skills/handoff/` 转给它，把答案带回来并标明来源。各 Agent 的日结在 `{digest_root}/<agent id>/`，`memory_search` 可查。
 - **要问用户的问题写在回复里，不要用 ask_user 之类等待输入的工具**：app 的通道没人能回答工具里的提问，会一直卡住。
 - **日志**：用户说的感受、想法、决定用 `skills/journal/` 记进日志，只回一句确认。关于用户本人的新事实、偏好、决定、近况写进世界树（`skills/memory-tree/`）。
+- **先问再做**：用户明确让你做、能撤回的直接做，说清怎么撤回；只读的事直接做。你自己的主意（新技能、新 Agent、他没开口的补记录）、会发给别人或撤不回的（发送、花钱、超出后台额度）、新的定时任务或推送、改代码 / 配置 / 凭证，先用 `skills/inbox/` 交到 app 的「等你点头」，用户同意了再做。消息以「【收件箱】」开头、或用户引用收件箱的卡回复时，按那个 skill 接着做。
 - app 发来的附件：图片随消息直接可见；PDF / Word / 表格 / 代码抽出的文字和录音转写的文字就在消息里的 `[附件 N]` 块中，不用让用户再发一遍。
 """
 AGENTS_RULES_EN = """
@@ -60,6 +61,7 @@ AGENTS_RULES_EN = """
 - **Agents**: in the app the user can create several Agents. Each one is a separate OpenClaw agent (its own workspace, memory and skills), called an "Agent" in the app. When the user says "make me an XX agent", create it right away with `skills/agent-builder/`. Anything that belongs to an Agent's area (advice, plans, records) goes to that Agent through `skills/handoff/`; bring its answer back and say where it came from. Each Agent's daily digests are in `{digest_root}/<agent id>/`, searchable with `memory_search`.
 - **Put questions for the user in your reply; don't use ask_user or any other tool that waits for input**: nobody can answer a tool's prompt through the app channel, so the session would hang.
 - **Journal**: feelings, thoughts and decisions the user mentions go into the journal with `skills/journal/`; reply with a single line of confirmation. New facts, preferences, decisions and life updates about the user go into the memory tree (`skills/memory-tree/`).
+- **Ask before you act**: things the user explicitly asked for that can be undone, just do, and say how to undo them; read-only work, just do. Your own ideas (a new skill, a new Agent, filling in a record they didn't ask about), anything that reaches other people or can't be undone (sending, spending money, going over the background budget), new scheduled jobs or notifications, and code / config / credential changes go to the app's "Needs your OK" first with `skills/inbox/`; do them only once the user approves. A message that starts with "【收件箱】", or a reply that quotes an inbox card, continues from there, per that skill.
 - Attachments from the app: images come with the message and you can see them directly; text extracted from PDF / Word / spreadsheets / code, and voice transcripts, are right in the message in `[Attachment N]` blocks, so don't ask the user to send them again.
 """
 
@@ -169,7 +171,7 @@ def write_server_json(a: argparse.Namespace, oc: dict, home: Path, workspace: Pa
     dm = default_model(oc)
     if dm:
         setdefault("default_model", dm)
-    setdefault("agent_default_skills", ["journal", "memory-tree"])
+    setdefault("agent_default_skills", ["journal", "memory-tree", "inbox"])
     shared_profile = home / "shared/profile/USER.md"
     if not cfg.get("profile") and not shared_profile.exists() and (workspace / "USER.md").exists():
         cfg["profile"] = str(workspace / "USER.md")
