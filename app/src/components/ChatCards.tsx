@@ -211,7 +211,7 @@ export function TaskCardView({ card, onRevise }: { card: TaskCardInfo; onRevise:
   ].filter(Boolean);
   const result = card.round > 1 && card.roundResult ? card.roundResult : card.result;
   const preview = !running && result ? head(result) : null;
-  const seq = card.seq ? L(`今天第 ${card.seq} 个${card.dailyLimit ? `，上限 ${card.dailyLimit}` : ''}`, `#${card.seq} today${card.dailyLimit ? ` of ${card.dailyLimit}` : ''}`) : '';
+  const seq = card.seq ? L(`今天第 ${card.seq}${card.dailyLimit ? `/${card.dailyLimit}` : ''} 个`, `#${card.seq}${card.dailyLimit ? ` of ${card.dailyLimit}` : ''} today`) : '';
   const stop = () => {
     const go = () => { setStopping(true); cancelTask(card.id).catch((e) => showError(L('没停掉', "Couldn't stop it"), e)).finally(() => setStopping(false)); };
     if (!native) { go(); return; }

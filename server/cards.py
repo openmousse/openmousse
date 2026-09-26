@@ -221,31 +221,34 @@ def deliverable(task: str) -> list[str]:
 
 # —— 「正在做哪一步」：读子会话记录 ————————————————————————————————————————
 
-STEP = {"read": ("在读", "Reading"), "pdf": ("在读", "Reading"), "image": ("在看图", "Looking at"), "write": ("在写", "Writing"),
-        "edit": ("在改", "Editing"), "apply_patch": ("在改文件", "Editing files"), "exec": ("在跑命令", "Running a command"),
-        "process": ("在跑命令", "Running a command"), "web_search": ("在搜", "Searching"), "web_fetch": ("在看网页", "Reading a page"),
-        "browser": ("在用浏览器", "Using the browser"), "memory_search": ("在查记忆", "Searching memory"),
-        "memory_get": ("在查记忆", "Reading memory"), "sessions_spawn": ("在派子任务", "Delegating"),
-        "sessions_yield": ("在等子任务", "Waiting for a sub-task")}
+# 工具 → (没有参数时的说法, 有参数时的前缀)，中英各一份
+STEP = {"read": ("在读文件", "Reading a file", "在读", "Reading"), "pdf": ("在读 PDF", "Reading a PDF", "在读", "Reading"),
+        "image": ("在看图", "Looking at an image", "在看", "Looking at"), "write": ("在写文件", "Writing a file", "在写", "Writing"),
+        "edit": ("在改文件", "Editing a file", "在改", "Editing"), "apply_patch": ("在改文件", "Editing files", "", ""),
+        "exec": ("在跑命令", "Running a command", "", ""), "process": ("在跑命令", "Running a command", "", ""),
+        "web_search": ("在搜网页", "Searching the web", "在搜", "Searching"), "web_fetch": ("在看网页", "Reading a page", "在看", "Reading"),
+        "browser": ("在用浏览器", "Using the browser", "", ""), "memory_search": ("在查记忆", "Searching memory", "", ""),
+        "memory_get": ("在查记忆", "Reading memory", "", ""), "sessions_spawn": ("在派子任务", "Delegating", "", ""),
+        "sessions_yield": ("在等子任务", "Waiting for a sub-task", "", "")}
 FILE_TOOLS = ("read", "pdf", "image", "write", "edit")
 
 
 def human_step(name: str | None, label: str = "") -> str:
-    """一步的人话：read + 路径 → 「在读 L2.pdf」；web_search + 词 → 「在搜「…」」；web_fetch + 网址 → 「在看 域名」；
+    """一步的人话：read + 路径 → 「在读 L2.pdf」，没有路径 → 「在读文件」；web_search + 词 → 「在搜「…」」；web_fetch + 网址 → 「在看 域名」；
     命令行不给人看，只说「在跑命令」；不认识的工具 → 「在用 X」。"""
     if not name:
         return ""
-    zh, en = STEP.get(name, (f"在用 {name}", f"Using {name}"))
+    zh, en, zh_pre, en_pre = STEP.get(name, (f"在用 {name}", f"Using {name}", "", ""))
     label = (label or "").strip()
     if label and name in FILE_TOOLS:
         target = Path(label.split("\n")[0]).name or label
-        return L(f"{zh} {push.clip(target, 36)}", f"{en} {push.clip(target, 40)}")
+        return L(f"{zh_pre} {push.clip(target, 36)}", f"{en_pre} {push.clip(target, 40)}")
     if label and name == "web_search":
-        return L(f"{zh}「{push.clip(label, 24)}」", f'{en} "{push.clip(label, 32)}"')
+        return L(f"{zh_pre}「{push.clip(label, 24)}」", f'{en_pre} "{push.clip(label, 32)}"')
     if label and name == "web_fetch":
         m = re.match(r"https?://([^/\s]+)", label)
         if m:
-            return L(f"在看 {m.group(1)}", f"Reading {m.group(1)}")
+            return L(f"{zh_pre} {m.group(1)}", f"{en_pre} {m.group(1)}")
     return L(zh, en)
 
 
