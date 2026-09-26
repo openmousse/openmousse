@@ -1096,14 +1096,17 @@ def revert(agent: str, body: RevertIn):
     with _lock, bdb() as conn:
         if body.version == 0:
             blocks: list[dict] = []
+            note = L("回到没有积木的样子", "Back to no blocks")
         else:
             r = conn.execute("SELECT * FROM boards WHERE agent=? AND version=? AND status IN ('live','old')", (agent, body.version)).fetchone()
             if not r:
                 raise bad("没有这一版（提案里没被采纳的版本回不去）", "No such version (drafts that were never approved can't be restored)", 404)
             blocks = blocks_of(r)
+            was = (r["note"] or "").strip()
+            note = L(f"回到「{was[:30]}」那一版", f'Back to "{was[:40]}"') if was else L(f"回到 {r['created_at'][5:16].replace('T', ' ')} 那一版", f"Back to the version of {r['created_at'][5:16].replace('T', ' ')}")
         # 旧版本里可能引用了之后被归档的表：跑一遍校验，坏了直接说
         blocks = clean_blocks(conn, agent, {"blocks": blocks}, g["dashboard"])
-        v = put_live(conn, agent, blocks, L(f"回到第 {body.version} 版", f"Back to version {body.version}"), "user")
+        v = put_live(conn, agent, blocks, note, "user")
     log_activity(L(f"{g['name']}的看板回到第 {body.version} 版", f"{g['name']}'s board went back to version {body.version}"), "board")
     return {"ok": True, "version": v}
 
