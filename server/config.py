@@ -32,6 +32,8 @@
   tasks             后台任务：{"daily_limit": 10, "max_minutes": 30, "notify_done": true}：每天几个、单个最长几分钟（给 Agent 看的额度，
                     tasks_ctl.py quota）、做完了要不要静默推一条（见 cards.py；每次读文件，不用重启）
   study             学习台：{materials, pages, courses, deadlines_cmd, video_cmd, readings, recordings}（见 study.py；每次读文件，不用重启）
+  wake              起床信号：{"notify_cmd": [...], "notify_hours": ["05:30", "13:00"]}：早上收到信号（快捷指令、app 回到前台、「我起来了」）
+                    时跑一下这个命令，比如立刻跑一次出起床报告的定时脚本（见 health.py；每次读文件，不用重启）
 
 agent_workspaces 由「新建 Agent」自动维护（agents.py），每次读文件，不用重启。
 """
