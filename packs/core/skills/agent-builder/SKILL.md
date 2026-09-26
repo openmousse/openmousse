@@ -19,6 +19,7 @@ python3 $A delete g-xxxxxxxx
 ## 怎么做
 
 1. **先把职责写清楚再建**：一两句话，说清这一块管什么、不管什么。用户只说了个名字就先问一句它该管什么；他说"你看着办"就按名字合理地写。
+   要记数据的 Agent（花费、读书、体重、库存……）建的时候就带一个起步看板：按 `skills/board` 写好 `{"tables": [...], "blocks": [...]}` 存成文件，`create … --board-file 文件`，表和看板一起建好（app 里它的看板页顶上能撤回）。只聊天、不记数据的不用。
 2. 建好后告诉用户：Agent 的名字、id、它管什么，以及"app 的 Agents 页能看到，之后属于这一块的事我会转给它"。**不要**自己替它答第一个问题——让用户去它的页面说，或者用 handoff 转过去。
 3. 删除要用户明确说。删了之后工作区和记忆归档在 OpenClaw 目录的 `archive/`，对话记录留着。
 4. 建好的 Agent 从此归 handoff 管：`ask_agent.py --list` 会带上它。
@@ -28,6 +29,6 @@ python3 $A delete g-xxxxxxxx
 用户在 app 的新建页点了「还没想好？先聊聊」，会开一个独立空间，第一条消息说他想建一个 Agent、还没想好它管什么。这时：
 
 1. 陪他想清楚，一次问一两件：它管什么、不管什么；要记哪些数据、从哪里来；看板上放什么；和哪些 Agent 联动；要不要定时提醒（新推送要他另外点头）。
-2. 想清楚后**不要直接建**，用 inbox skill 出一张卡：`--kind agent --title "新建 Agent「名字」" --why "为什么值得单独一个 Agent" --change "负责：…" --change "记这些数据：…" --change "看板：…" --change "图标 moon · 颜色 purple" --approve-label 建好它 --dedupe agent-<名字>`。
-3. 收到【收件箱】已同意的消息后，用 `create --name … --purpose … --icon … --color …` 建好，再 `inbox_ctl.py done <id> --result "建好了：名字（id）"`。
+2. 想清楚后**不要直接建**，用 inbox skill 出一张卡：`--kind agent --title "新建 Agent「名字」" --why "为什么值得单独一个 Agent" --change "负责：…" --change "记这些数据：…" --change "看板：本月预算进度、按类别的花费、每周趋势、订阅列表、记一笔按钮" --change "图标 moon · 颜色 purple" --approve-label 建好它 --dedupe agent-<名字>`。看板那一行用大白话列出每一块；同时把表和积木写成 board 文件（见上面第 1 步）存好，文件路径记在卡片的 detail 里。
+3. 收到【收件箱】已同意的消息后，用 `create --name … --purpose … --icon … --color … --board-file 那个文件` 建好，再 `inbox_ctl.py done <id> --result "建好了：名字（id），看板 N 块"`。
 4. 用户在新建页直接填好点「创建」的，不走这里。

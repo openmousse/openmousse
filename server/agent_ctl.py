@@ -2,7 +2,7 @@
 """从命令行（或让主 Agent 在对话里）建 / 改 / 删 / 列 Agent。走服务的 HTTP 接口，和 app 里「新建 Agent」「编辑 Agent」完全一样。
 
   python3 agent_ctl.py list
-  python3 agent_ctl.py create --name 睡眠 --purpose "每天早上解读昨晚睡眠…" [--icon moon] [--color purple] [--model anthropic/claude-opus-5-5] [--skills a,b]
+  python3 agent_ctl.py create --name 睡眠 --purpose "每天早上解读昨晚睡眠…" [--icon moon] [--color purple] [--model anthropic/claude-opus-5-5] [--skills a,b] [--board-file 看板.json]
   python3 agent_ctl.py update <id> [--name 睡眠] [--purpose "…"] [--icon moon] [--color purple] [--model anthropic/claude-opus-5-5]
   python3 agent_ctl.py delete <id>
 
@@ -10,6 +10,7 @@
       coffee 咖啡 / music 音乐 / camera 摄影 / code 编程 / cart 购物 / home 家务 / car 开车 / paw 宠物 / leaf 植物 /
       gamepad 游戏 / palette 创作 / globe 语言 / graduation 升学 / lightbulb 点子 / trophy 目标 / pill 用药。
 颜色：cyan 青 / gold 金 / green 绿 / purple 紫 / pink 粉 / orange 橙；不给 = 默认色（update 时 --color default 换回默认）。
+--board-file：建好后顺手建它的表、换上起步看板（{"tables": [{name, title, fields}], "blocks": [积木…]}，写法见 skills/board）。
 update 只改给了的字段：改名字或职责会写进这个 Agent 的 IDENTITY.md（只换 app 管的那一段），改模型会改 openclaw.json 里它的默认模型。
 """
 from __future__ import annotations
@@ -18,6 +19,7 @@ import argparse
 import json
 import sys
 import urllib.error
+import urllib.parse
 import urllib.request
 
 from agents import COLORS
@@ -76,6 +78,7 @@ def main() -> None:
     c.add_argument("--color", choices=COLORS, default=None, help=L("不给 = 默认色", "leave out for the default color"))
     c.add_argument("--model", default=settings.default_model)
     c.add_argument("--skills", default=None, help=L("逗号分隔；不给用 server.json 的 agent_default_skills", "comma-separated; defaults to agent_default_skills in server.json"))
+    c.add_argument("--board-file", default=None, help=L('建好后建表、换上起步看板：{"tables": [...], "blocks": [...]}', 'after creating: its tables and a starter board, {"tables": [...], "blocks": [...]}'))
     u = sub.add_parser("update")
     u.add_argument("id")
     u.add_argument("--name")
@@ -95,8 +98,24 @@ def main() -> None:
             body["color"] = a.color
         if a.skills is not None:
             body["skills"] = [s.strip() for s in a.skills.split(",") if s.strip()]
+        plan = None
+        if a.board_file:  # 先读好、校验个大概再建 Agent，免得建了一半才发现文件坏了
+            try:
+                plan = json.loads(open(a.board_file, encoding="utf8").read())
+            except (OSError, ValueError) as e:
+                sys.exit(L(f"--board-file 读不了：{e}", f"Can't read --board-file: {e}"))
+            if not isinstance(plan, dict) or not isinstance(plan.get("blocks", []), list) or not isinstance(plan.get("tables", []), list):
+                sys.exit(L('--board-file 写成 {"tables": [...], "blocks": [...]}', '--board-file must be {"tables": [...], "blocks": [...]}'))
         r = call("POST", "/api/groups", body)
-        print(json.dumps({"ok": True, "id": r["id"], "name": a.name}, ensure_ascii=False))
+        out = {"ok": True, "id": r["id"], "name": a.name}
+        if plan:
+            gid = urllib.parse.quote(r["id"], safe="")
+            for tb in plan.get("tables", []):
+                call("POST", f"/api/collections/{gid}", {"name": tb.get("name"), "title": tb.get("title") or tb.get("name"), "fields": tb.get("fields") or []})
+            if plan.get("blocks"):
+                v = call("PUT", f"/api/boards/{gid}", {"blocks": plan["blocks"], "mode": "apply", "note": plan.get("note") or L("按方案建好的看板", "The board from the plan")})
+                out["board"] = v.get("version")
+        print(json.dumps(out, ensure_ascii=False))
     elif a.cmd == "update":
         body = {k: getattr(a, k) for k in ("name", "purpose", "icon", "model") if getattr(a, k) is not None}
         if a.color is not None:
