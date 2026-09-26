@@ -1,16 +1,16 @@
 // 对话输入框的两样东西，单独放一个文件（看板上的「拍小票」「问它」也要用，放在 ChatView 里会绕成循环引用）：
-// 按线程记着的草稿，和选照片 / 文件。
+// 往某个对话的输入框里预填一句（草稿本身存在 drafts.ts），和选照片 / 文件。
 import * as DocumentPicker from 'expo-document-picker';
 import * as ImagePicker from 'expo-image-picker';
 import type { PendingFile } from '../data/types';
+import { saveDraft } from '../drafts';
 import { L } from '../i18n';
 
 export const MAX_FILES = 10;
 
-/** 没发出去的草稿，按线程。 */
-export const drafts = new Map<string, string>();
-/** 预先放一句话在某个对话的输入框里（看板上点「问它」：切到对话时输入框里已经写好「关于「鸡胸肉」：」）。 */
-export const setChatDraft = (threadId: string, text: string) => { drafts.set(threadId, text); };
+/** 预先放一句话在某个对话的输入框里（看板上点「问它」：切到对话时输入框里已经写好「关于「鸡胸肉」：」）。
+ * 写进本机的草稿（drafts.ts），打开那个对话时输入框从那里读。 */
+export const setChatDraft = (threadId: string, text: string) => { saveDraft(threadId, text); };
 
 export async function pickDocuments(): Promise<PendingFile[]> {
   const res = await DocumentPicker.getDocumentAsync({ type: '*/*', multiple: true, copyToCacheDirectory: true });

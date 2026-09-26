@@ -59,6 +59,7 @@ What this is: the iOS / Android / Web client of OpenMousse — a shell for a per
 - **Dashboards** are ordered by the question you want answered (now → today → this week → long term). Where the data comes from is a small caption on the right of the `SectionLabel` (`Caption` / `HealthCaption` in `LiveBoards.tsx`), not a header; long lists are one row each that expands in place (`Disclosure`).
 - **Agents tab**: one row per Agent or a two-column grid, switched at the top right and remembered on the device (`loadAgentsView` / `saveAgentsView` in `src/api/base.ts`). Grid tiles show one line of state from the boards (this week's workouts, today's kcal, recovery, next deadline) and fall back to the last line / purpose.
 - **Assistant name is never hard-coded**: `src/brand.ts` `agentName()` comes from the server's `/api/health` (`app_name`), remembered between launches. Do not write a product name into UI strings.
+- **Unsent drafts** persist per thread through `src/drafts.ts` (`loadDraft` / `saveDraft`): iOS uses React Native's built-in `Settings` (NSUserDefaults, linked in every RN build, so no new native module), web uses localStorage. Don't put drafts in the keychain (`expo-secure-store` may reject values over ~2 KB).
 - Data loading is centralized in `src/store.tsx` (`LOADERS`), API calls in `src/api/`. Server routes and the source of truth for every page are documented at the top of `../server/data.py`.
 
 ### Server contract (see `../server/`)

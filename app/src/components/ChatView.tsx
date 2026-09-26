@@ -19,9 +19,9 @@ import { PullRefresh, T } from './ui';
 import { Markdown } from './Markdown';
 import { InboxCard } from './InboxCard';
 import { HandoffChip, HandoffFrom, ProjectChip, ScheduleChip, TaskCardView, modelLabel } from './ChatCards';
-import { drafts, MAX_FILES, pickDocuments, pickMedia } from './chatInput';
+import { MAX_FILES, pickDocuments, pickMedia } from './chatInput';
+import { loadDraft, saveDraft } from '../drafts';
 
-// 没发出去的草稿按线程记着（drafts 在 chatInput.ts）：切到看板、换线程、离开页面再回来还在（只在内存里，退出 app 就没了）。
 // 从「今天」的「去对话里说」带过来、还没发出去的引用，也按线程记着。
 const quotes = new Map<string, ChatQuote>();
 
@@ -277,7 +277,13 @@ export function ChatView({ threadId, placeholder, empty, quote: quoteProp, quote
     return () => clearTimeout(h);
   }, [quoteAt, quoteProp]);
   const partial = streaming[threadId];
-  const [draft, setDraft] = useState(() => drafts.get(threadId) ?? '');
+  const [draft, setDraft] = useState(() => loadDraft(threadId));  // 没发出去的草稿存在本机（drafts.ts），退出 app 也还在
+  // 同一个 ChatView 换了线程（Agent 页没按线程重建）：换成那个线程的草稿，别把这边的带过去
+  const [draftOf, setDraftOf] = useState(threadId);
+  if (draftOf !== threadId) {
+    setDraftOf(threadId);
+    setDraft(loadDraft(threadId));
+  }
   const [pending, setPending] = useState<PendingFile[]>([]);
   const [transcribing, setTranscribing] = useState(false);
   const scroller = useRef<ScrollView>(null);
@@ -318,10 +324,7 @@ export function ChatView({ threadId, placeholder, empty, quote: quoteProp, quote
     return () => { clearTimeout(go); clearTimeout(off); };
   }, [focus, focusAt, msgs.length]);
 
-  useEffect(() => {
-    if (draft) drafts.set(threadId, draft);
-    else drafts.delete(threadId);
-  }, [threadId, draft]);
+  useEffect(() => { saveDraft(threadId, draft); }, [threadId, draft]);
 
   const track = (e: NativeSyntheticEvent<NativeScrollEvent>) => {
     list.current.y = e.nativeEvent.contentOffset.y;
