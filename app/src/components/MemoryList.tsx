@@ -9,7 +9,8 @@ import { space, useTheme } from '../theme';
 import { useSheet } from './Sheet';
 import { Btn, Card, SectionLabel, T } from './ui';
 
-function ForgetSheet({ m, close }: { m: MemoryItem; close: () => void }) {
+/** 让它忘记一条长期记忆：原文 + 说明 + 留着 / 忘记。记忆页和 Agent 的记忆 tab 共用。 */
+export function ForgetSheet({ m, close }: { m: MemoryItem; close: () => void }) {
   const t = useTheme();
   const { forget } = useStore();
   const [busy, setBusy] = useState(false);

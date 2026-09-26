@@ -1,5 +1,13 @@
 import React, { createContext, useContext, useEffect, useMemo, useState } from 'react';
 import { Platform, useColorScheme } from 'react-native';
+import type { AgentColor } from './data/types';
+
+/**
+ * Agent 的颜色：浅底（soft）+ 前景（fg，图标和字），另有色板上的圆点（swatch）。
+ * 深浅两套都校验过：fg 在 soft 上的对比度 ≥ 4.5:1（浅色 4.7–5.4，深色 6.8–7.7），fg 在卡片底色上也 ≥ 4.5:1。
+ * 浅色的青、金、绿、橙比全局的 cyan / gold / good 深一点，就是为了在自己的浅底上过 4.5。
+ */
+type Tint = { soft: string; fg: string; swatch: string };
 
 // Grava 的视觉身份来自头像：引力透镜。墨黑力场、金色光环、青色数据流。
 // 金 = Grava 自己（头像、发送、当前选中）；青 = 数据与进度；语义色只表示状态。
@@ -28,6 +36,14 @@ const light = {
   bad: '#B83A30',
   badSoft: '#FBE3E0',
   lensField: '#101216',
+  tints: {
+    cyan: { soft: '#DAF0F5', fg: '#0C6F86', swatch: '#0F7A93' },
+    gold: { soft: '#F5EAD3', fg: '#8A5F12', swatch: '#B07D22' },
+    green: { soft: '#DDF1E7', fg: '#20744B', swatch: '#22794F' },
+    purple: { soft: '#ECE6F7', fg: '#6A4BA8', swatch: '#6A4BA8' },
+    pink: { soft: '#F8E3EC', fg: '#A83A6B', swatch: '#A83A6B' },
+    orange: { soft: '#FBE6D6', fg: '#A04F18', swatch: '#A5521A' },
+  } as Record<AgentColor, Tint>,
 };
 
 const dark: typeof light = {
@@ -55,9 +71,21 @@ const dark: typeof light = {
   bad: '#EC7A70',
   badSoft: '#3A1815',
   lensField: '#050607',
+  tints: {
+    cyan: { soft: '#10303A', fg: '#5CCFE6', swatch: '#5CCFE6' },
+    gold: { soft: '#30271A', fg: '#DDB56A', swatch: '#DDB56A' },
+    green: { soft: '#12301F', fg: '#55C795', swatch: '#55C795' },
+    purple: { soft: '#29213F', fg: '#B9A4F4', swatch: '#B9A4F4' },
+    pink: { soft: '#3A1A2A', fg: '#F291BC', swatch: '#F291BC' },
+    orange: { soft: '#3A2416', fg: '#F2A56E', swatch: '#F2A56E' },
+  },
 };
 
 export type Theme = typeof light;
+
+/** Agent 的颜色（服务器给 null 或不认识的值 = 青）。 */
+export const agentTint = (t: Theme, color?: AgentColor | string | null): Tint =>
+  (color && Object.prototype.hasOwnProperty.call(t.tints, color) ? t.tints[color as AgentColor] : t.tints.cyan);
 export type Appearance = 'system' | 'light' | 'dark';
 
 const Ctx = createContext<{ t: Theme; appearance: Appearance; setAppearance: (a: Appearance) => void }>({

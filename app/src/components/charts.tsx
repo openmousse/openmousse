@@ -1,5 +1,5 @@
-import React, { useState } from 'react';
-import { Pressable, StyleSheet, Text, View } from 'react-native';
+import React from 'react';
+import { StyleSheet, Text, View } from 'react-native';
 import Svg, { Circle } from 'react-native-svg';
 import { L } from '../i18n';
 import { type, useTheme } from '../theme';
@@ -28,56 +28,37 @@ export function Ring({ size = 64, stroke = 7, value, target, color, children }: 
   );
 }
 
-/** 横向进度条：值 / 目标，数值用文字色，不用系列色。 */
-export function Meter({ label, value, target, unit }: { label: string; value: number; target?: number; unit: string }) {
+/** 横向进度条（数据色）。value / target 超过 1 就画满。 */
+export function Bar({ value, target, height = 8 }: { value: number; target: number; height?: number }) {
   const t = useTheme();
-  const p = target ? Math.max(0, Math.min(1, value / target)) : 0;
+  const p = target > 0 ? Math.max(0, Math.min(1, value / target)) : 0;
   return (
-    <View style={{ gap: 6 }} accessibilityLabel={target ? `${label} ${value} / ${target} ${unit}` : `${label} ${value} ${unit}`}>
-      <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'baseline' }}>
-        <Text style={[type.callout, { color: t.ink2 }]}>{label}</Text>
-        <Text style={[type.callout, { color: t.ink, fontVariant: ['tabular-nums'] }]}>
-          {value}<Text style={{ color: t.ink3 }}>{target ? ` / ${target} ${unit}` : ` ${unit}`}</Text>
-        </Text>
-      </View>
-      {target ? (
-        <View style={{ height: 6, borderRadius: 3, backgroundColor: t.track, overflow: 'hidden' }}>
-          <View style={{ width: `${p * 100}%`, height: 6, borderRadius: 3, backgroundColor: t.chartA }} />
-        </View>
-      ) : null}
+    <View style={{ height, borderRadius: height / 2, backgroundColor: t.track, overflow: 'hidden' }}>
+      <View style={{ width: `${p * 100}%`, height, borderRadius: height / 2, backgroundColor: t.chartA }} />
     </View>
   );
 }
 
-/** 一周柱状图，单系列。点一根柱子显示它的数值（手机上的 hover 替代）。 */
-export function WeekBars({ days, unit, todayIndex }: { days: { d: string; minutes: number; label: string }[]; unit: string; todayIndex: number }) {
+/** 一周每天练了多久：一天一根柱子，今天的深一点，没练的画一小段灰。只看形状，数字在下面的列表里。 */
+export function DayBars({ days, todayIndex, unit }: { days: { d: string; date: string; minutes: number; label: string }[]; todayIndex: number; unit: string }) {
   const t = useTheme();
-  const [sel, setSel] = useState<number>(todayIndex);
   const max = Math.max(60, ...days.map((x) => x.minutes));
-  const H = 96;
-  const cur = days[sel];
+  const H = 52;
   return (
-    <View>
-      <Text style={[type.callout, { color: t.ink2, marginBottom: 10, fontVariant: ['tabular-nums'] }]}>
-        {weekdayName(cur.d)} · {cur.label}{cur.minutes > 0 ? ` · ${cur.minutes} ${unit}` : sel > todayIndex ? L(' · 未开始', ' · Not yet') : ' · 0'}
-      </Text>
-      <View style={{ flexDirection: 'row', alignItems: 'flex-end', height: H, borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: t.line }}>
-        {days.map((x, i) => {
-          const h = Math.round((x.minutes / max) * (H - 4));
-          const on = i === sel;
-          return (
-            <Pressable key={x.d} onPress={() => setSel(i)} style={{ flex: 1, height: H, alignItems: 'center', justifyContent: 'flex-end' }}
-              accessibilityRole="button" accessibilityLabel={`${weekdayName(x.d)} ${x.label} ${x.minutes} ${unit}`}>
-              <View style={{ width: 14, height: Math.max(h, x.minutes > 0 ? 4 : 0), backgroundColor: t.chartA, opacity: on ? 1 : 0.55, borderTopLeftRadius: 4, borderTopRightRadius: 4 }} />
-            </Pressable>
-          );
-        })}
-      </View>
-      <View style={{ flexDirection: 'row', marginTop: 6 }}>
-        {days.map((x, i) => (
-          <Text key={x.d} style={[type.caption, { flex: 1, textAlign: 'center', color: i === sel ? t.ink : t.ink3, fontWeight: i === todayIndex ? '700' : '500' }]}>{weekdayShort(x.d)}</Text>
-        ))}
-      </View>
+    <View style={{ flexDirection: 'row', alignItems: 'flex-end' }}>
+      {days.map((x, i) => {
+        const today = i === todayIndex;
+        const h = x.minutes > 0 ? Math.max(4, Math.round((x.minutes / max) * H)) : 2;
+        return (
+          <View key={x.date} style={{ flex: 1, alignItems: 'center', gap: 4 }} accessible
+            accessibilityLabel={`${weekdayName(x.d)}${x.minutes > 0 ? ` ${x.label} ${x.minutes} ${unit}` : L(' 没练', ' rest')}`}>
+            <View style={{ height: H, justifyContent: 'flex-end' }}>
+              <View style={{ width: 14, height: h, borderRadius: x.minutes > 0 ? 4 : 1, backgroundColor: x.minutes > 0 ? (today ? t.cyan : t.chartA) : t.track }} />
+            </View>
+            <Text style={[type.caption, { fontSize: 11, color: today ? t.ink : t.ink3, fontWeight: today ? '700' : '500' }]}>{weekdayShort(x.d)}</Text>
+          </View>
+        );
+      })}
     </View>
   );
 }

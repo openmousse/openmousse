@@ -1,6 +1,6 @@
 // app 其余页面的数据接口（server/data.py）。每一项的真源写在 data.py 顶部的表格里。
 import type {
-  ActivityEntry, DayInfo, SearchHit, Application, Approval, AvatarConfig, FeedItem, Goal, Group, GroupIcon, InboxAction, InboxItem, InboxStatus, JournalEntry, MemoryItem, ModelsInfo, ProfileItem, SecurityInfo, SideChat, Task, UnreadSummary, UpcomingTask,
+  ActivityEntry, AgentColor, DayInfo, SearchHit, Application, Approval, AvatarConfig, FeedItem, Goal, Group, GroupIcon, InboxAction, InboxItem, InboxStatus, JournalEntry, MemoryItem, ModelsInfo, ProfileItem, SecurityInfo, SideChat, Task, UnreadSummary, UpcomingTask,
 } from '../data/types';
 import { L } from '../lang';
 import { httpStatus, request } from './base';
@@ -72,7 +72,10 @@ function normalizeUnread(j: Partial<UnreadSummary> | null | undefined): UnreadSu
 
 export const dataApi = {
   groups: () => request<{ groups: Group[] }>('/api/groups').then((j) => j.groups),
-  createGroup: (g: { name: string; purpose: string; icon: GroupIcon; model: string }) => request<{ id: string }>('/api/groups', { method: 'POST', body: g }).then((j) => j.id),
+  createGroup: (g: { name: string; purpose: string; icon: GroupIcon; color: AgentColor; model: string }) => request<{ id: string }>('/api/groups', { method: 'POST', body: g }).then((j) => j.id),
+  /** 改 Agent：只发改了的字段（model 是模型 id）。回来的是改完的那一条；老服务器没回就返回 null。 */
+  patchGroup: (id: string, p: { name?: string; icon?: GroupIcon; color?: AgentColor; purpose?: string; model?: string }) =>
+    request<{ ok: boolean; group?: Group }>(`/api/groups/${encodeURIComponent(id)}`, { method: 'PATCH', body: p }).then((j) => (j.group && j.group.id ? j.group : null)),
 
   sideChats: () => request<{ sideChats: SideChat[] }>('/api/sidechats').then((j) => j.sideChats),
   createSideChat: (c: { title: string; purpose: string; model: string }) => request<{ id: string }>('/api/sidechats', { method: 'POST', body: c }).then((j) => j.id),

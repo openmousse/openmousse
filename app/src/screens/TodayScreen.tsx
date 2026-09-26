@@ -4,6 +4,7 @@ import { Alert, Animated, AppState, Platform, Pressable, ScrollView, StyleSheet,
 import { useIsFocused, useNavigation, useRoute } from '@react-navigation/native';
 import { ChevronLeft, ChevronRight, LoaderCircle, MapPin, X } from '../components/icons';
 import { InboxCard } from '../components/InboxCard';
+import { SourcePill } from '../components/SourceBadge';
 import { modelName, originName } from '../components/TaskCard';
 import { Card, LargeHeader, ListRow, Pill, PullRefresh, Screen, SectionLabel, T } from '../components/ui';
 import type { FeedItem, InboxItem, JournalEntry, UpcomingTask } from '../data/types';
@@ -91,12 +92,10 @@ function EventList({ events, empty }: { events: LiveEvent[]; empty: string }) {
 function FeedCard({ f, onDismiss, isNew }: { f: FeedItem; onDismiss?: () => void; isNew?: boolean }) {
   const t = useTheme();
   const nav = useNavigation<any>();
-  const { groups } = useStore();
-  const gname = groups.find((g) => g.id === f.groupId)?.name ?? `${agentName()}`;
   return (
     <Card style={{ gap: space.sm }}>
       <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
-        <Pill label={gname} tone={f.groupId ? 'cyan' : 'gold'} />
+        <SourcePill source={f.groupId} />
         <T v="caption" color={t.ink3}>{onDismiss ? f.time : f.createdAt?.slice(11, 16) || f.time}</T>
         {isNew ? (
           <View style={[styles.newPill, { backgroundColor: t.cyan }]} accessible accessibilityLabel={L('新的', 'New')}>
@@ -149,7 +148,7 @@ type DayData = { events: LiveEvent[]; feed: FeedItem[]; errors: string[] };
 /** 翻到别的日子：那天的日程、Grava 的建议卡、日志。审批 / 后台任务 / 定时任务只跟"现在"有关，只在今天显示。 */
 function DayView({ iso, offset, refreshKey }: { iso: string; offset: number; refreshKey: number }) {
   const t = useTheme();
-  const { journal, groups, connected } = useStore();
+  const { journal, connected } = useStore();
   // 按日期缓存，翻回来不用重读；下拉刷新（refreshKey 变）时重读当前这天。
   const [days, setDays] = useState<Record<string, DayData>>({});
   const day = days[iso] ?? null;
@@ -164,7 +163,6 @@ function DayView({ iso, offset, refreshKey }: { iso: string; offset: number; ref
     return () => { alive = false; };
   }, [iso, connected, refreshKey]);
   const entries = journal.filter((e) => e.date === iso);
-  const gname = (id: string | null) => groups.find((g) => g.id === id)?.name ?? `${agentName()}`;
   if (!connected) return <Card style={{ marginTop: space.md }}><T v="callout" color={t.ink2}>{L('没连上服务器，翻不了别的日子。', "Not connected to the server, so other days can't be loaded.")}</T></Card>;
   if (!day) return <Card style={{ marginTop: space.md }}><T v="callout" color={t.ink2}>{L(`正在读${titleOf(offset)}的…`, 'Loading…')}</T></Card>;
   return (
@@ -185,7 +183,7 @@ function DayView({ iso, offset, refreshKey }: { iso: string; offset: number; ref
               <View key={e.id} style={[styles.ev, i < entries.length - 1 && { borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: t.line }]}>
                 <View style={{ width: 52 }}><T v="callout" color={t.ink3} style={{ fontVariant: ['tabular-nums'] }}>{e.time}</T></View>
                 <View style={{ flex: 1, gap: 4 }}>
-                  <View style={{ flexDirection: 'row', gap: 6 }}><Pill label={kindLabel(e.kind) ?? e.kind} /><Pill label={gname(e.groupId)} tone="cyan" /></View>
+                  <View style={{ flexDirection: 'row', gap: 6 }}><Pill label={kindLabel(e.kind) ?? e.kind} /><SourcePill source={e.groupId} /></View>
                   <T v="body">{e.text}</T>
                 </View>
               </View>

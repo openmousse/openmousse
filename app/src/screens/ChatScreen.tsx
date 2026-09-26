@@ -166,7 +166,7 @@ function Drawer({ active, onPick, onClose }: { active: string; onPick: (id: stri
           <DrawerSection title="Agents" count={groups.length}
             right={<Pressable onPress={() => { onClose(); nav.navigate('Tabs', { screen: 'Agents' }); }} hitSlop={8} accessibilityRole="button" accessibilityLabel={L('全部 Agents', 'All agents')}><LayoutGrid size={15} color={t.gold} /></Pressable>}>
             {groups.map((g) => (
-              <DrawerRow key={g.id} icon={<GroupBadge icon={g.icon} size={22} />} label={g.name} sub={g.lastLine} unread={n(g.id)} onPress={() => { onClose(); nav.navigate('Group', { id: g.id }); }} />
+              <DrawerRow key={g.id} icon={<GroupBadge icon={g.icon} color={g.color} size={22} />} label={g.name} sub={g.lastLine} unread={n(g.id)} onPress={() => { onClose(); nav.navigate('Group', { id: g.id }); }} />
             ))}
           </DrawerSection>
 

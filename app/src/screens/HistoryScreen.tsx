@@ -10,6 +10,7 @@ import { Bubble } from '../components/ChatView';
 import { InboxCard } from '../components/InboxCard';
 import { Search, X } from '../components/icons';
 import { Card, NavHeader, Pill, Screen, SectionLabel, T } from '../components/ui';
+import { SourcePill } from '../components/SourceBadge';
 import type { DayInfo, Message, SearchHit } from '../data/types';
 import { L } from '../i18n';
 import { useStore } from '../store';
@@ -116,7 +117,7 @@ export function HistoryScreen() {
                   <Pressable key={`${h.kind}-${h.id}`} onPress={() => openHit(h)} accessibilityRole="button"
                     style={({ pressed }) => [styles.hit, i < list.length - 1 && { borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: t.line }, { opacity: pressed ? 0.6 : 1 }]}>
                     <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, marginBottom: 4 }}>
-                      <Pill label={name(h.thread)} tone={h.thread && h.thread !== 'main' ? 'cyan' : 'gold'} />
+                      <SourcePill source={h.thread} label={name(h.thread)} />
                       <Pill label={h.kind === 'card' ? L('建议卡', 'Suggestion card') : h.kind === 'journal' ? L('日志', 'Journal') : h.role === 'user' ? L('你', 'You') : h.role === 'auto' ? L('自动', 'Auto') : `${agentName()}`} />
                       <T v="caption" color={t.ink3}>{h.time}</T>
                     </View>

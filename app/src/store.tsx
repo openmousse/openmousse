@@ -14,7 +14,7 @@ import { L } from './i18n';
 import { openTarget } from './navigation';
 import type {
   Application, JournalEntry, PendingFile,
-  ActivityEntry, AvatarConfig, FeedItem, Goal, Group, GroupIcon, InboxAction, InboxItem, MemoryItem, Message, ModelsInfo, ProfileItem, PushTarget, Receipt,
+  ActivityEntry, AgentColor, AvatarConfig, FeedItem, Goal, Group, GroupIcon, GroupPatch, InboxAction, InboxItem, MemoryItem, Message, ModelsInfo, ProfileItem, PushTarget, Receipt,
   SecurityInfo, SideChat, Task, UnreadSummary, UpcomingTask,
 } from './data/types';
 
@@ -112,7 +112,9 @@ interface Actions {
   forget(id: string): Promise<void>;
   /** 改档案（L0）的一条；text 为 null 就删掉这条。 */
   editProfile(id: string, text: string | null): Promise<void>;
-  addGroup(g: { name: string; purpose: string; icon: GroupIcon; modelId: string }): Promise<string>;
+  addGroup(g: { name: string; purpose: string; icon: GroupIcon; color: AgentColor; modelId: string }): Promise<string>;
+  /** 改 Agent 的名字 / 图标 / 颜色 / 职责 / 默认模型（只传改了的）。改名字或职责，服务器顺带改它自己的说明。 */
+  updateGroup(id: string, patch: GroupPatch): Promise<void>;
   setAvatar(a: Partial<AvatarConfig>): void;
   createSideChat(c: { title: string; purpose: string; modelId: string }): Promise<string>;
   renameSideChat(id: string, title: string): Promise<void>;
@@ -778,10 +780,26 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
       await reload('profile', 'activity');
     },
     addGroup: async (g) => {
-      const gid = await dataApi.createGroup({ name: g.name, purpose: g.purpose, icon: g.icon, model: g.modelId });
+      const gid = await dataApi.createGroup({ name: g.name, purpose: g.purpose, icon: g.icon, color: g.color, model: g.modelId });
       setS((st) => ({ ...st, threads: { ...st.threads, [gid]: [] }, threadModel: { ...st.threadModel, [gid]: g.modelId } }));
       await reload('groups', 'activity');
       return gid;
+    },
+    updateGroup: async (gid, p) => {
+      const body = {
+        ...(p.name !== undefined ? { name: p.name } : {}), ...(p.icon !== undefined ? { icon: p.icon } : {}), ...(p.color !== undefined ? { color: p.color } : {}),
+        ...(p.purpose !== undefined ? { purpose: p.purpose } : {}), ...(p.modelId !== undefined ? { model: p.modelId } : {}),
+      };
+      if (!Object.keys(body).length) return;
+      const fresh = await dataApi.patchGroup(gid, body);
+      // 服务器回了改完的那一条就用它；没回就按改的内容先改本地（列表里的 lastLine 这些留着）
+      const local: Partial<Group> = { ...(p.name !== undefined ? { name: p.name } : {}), ...(p.icon !== undefined ? { icon: p.icon } : {}), ...(p.color !== undefined ? { color: p.color } : {}), ...(p.purpose !== undefined ? { purpose: p.purpose } : {}), ...(p.modelId !== undefined ? { modelId: p.modelId } : {}) };
+      setS((st) => ({
+        ...st,
+        groups: st.groups.map((g) => (g.id === gid ? { ...g, ...local, ...(fresh ?? {}), lastLine: fresh?.lastLine ?? g.lastLine } : g)),
+        threadModel: p.modelId ? { ...st.threadModel, [gid]: p.modelId } : st.threadModel,
+      }));
+      reload('activity').catch(() => {});
     },
     setAvatar: (a) => {
       const next = { ...latest.current.avatar, ...a };

@@ -13,17 +13,28 @@ export interface ModelOption {
   featured: boolean;
 }
 
-export type GroupIcon = 'dumbbell' | 'utensils' | 'book' | 'wallet' | 'moon' | 'briefcase' | 'heart' | 'plane';
+/** Agent 的图标（服务器认的 24 个 key）。老数据里别的写法由 GroupIcon.tsx 换成这些，不认识的显示成默认图标。 */
+export type GroupIcon =
+  | 'moon' | 'dumbbell' | 'utensils' | 'book' | 'wallet' | 'briefcase' | 'heart' | 'plane'
+  | 'coffee' | 'music' | 'camera' | 'code' | 'cart' | 'home' | 'car' | 'paw'
+  | 'leaf' | 'gamepad' | 'palette' | 'globe' | 'graduation' | 'lightbulb' | 'trophy' | 'pill';
+
+/** Agent 的颜色。null（老服务器没有这一项）= 青。 */
+export type AgentColor = 'cyan' | 'gold' | 'green' | 'purple' | 'pink' | 'orange';
 
 export interface Group {
   id: string;
   name: string;
   icon: GroupIcon;
+  color?: AgentColor | null;
   purpose: string;
   modelId: string;
   dashboard: 'fitness' | 'diet' | 'apply' | 'masters' | 'health' | 'none';
   lastLine: string;
 }
+
+/** 改 Agent（PATCH /api/groups/{id}）：只带改了的。改名字或职责，服务器会顺带改它自己的说明。 */
+export interface GroupPatch { name?: string; icon?: GroupIcon; color?: AgentColor; purpose?: string; modelId?: string }
 
 /** 老服务器的审批队列（/api/approvals）。新服务器走收件箱（InboxItem），这个只在 /api/inbox 不存在时兜底用。 */
 export interface Approval {

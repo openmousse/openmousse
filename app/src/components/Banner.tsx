@@ -13,7 +13,7 @@ import { L } from '../i18n';
 import { openTarget } from '../navigation';
 import { useStore } from '../store';
 import { useTheme } from '../theme';
-import { SourceBadge, useSourceName } from './SourceBadge';
+import { SourceBadge, useSourceName, useSourceTint } from './SourceBadge';
 
 export interface BannerSpec {
   /** 不给就按「来源 + 去处」算：同一个来源、同一个去处的新一条替换旧的 */
@@ -90,6 +90,7 @@ export function BannerHost() {
   const { hide } = useBanner();
   const { groups, activeThread } = useStore();
   const nameOf = useSourceName();
+  const tintOf = useSourceTint();
   const { items, expanded, leaving } = state;
   const hiddenY = -(insets.top + 260);
   const [y] = useState(() => new Animated.Value(-500));
@@ -186,7 +187,7 @@ export function BannerHost() {
             <SourceBadge source={newest.source} size={42} />
             <View style={{ flex: 1, minWidth: 0, gap: 3 }}>
               <View style={styles.line1}>
-                <Text numberOfLines={1} style={[styles.name, { color: t.cyan }]}>{single ? nameOf(newest.source) : names}</Text>
+                <Text numberOfLines={1} style={[styles.name, { color: single ? tintOf(newest.source).fg : t.cyan }]}>{single ? nameOf(newest.source) : names}</Text>
                 {single && newest.subtitle ? <Text numberOfLines={1} style={[styles.meta, { color: t.ink3, flexShrink: 1 }]}>· {newest.subtitle}</Text> : null}
                 <View style={{ flex: 1 }} />
                 <Text style={[styles.meta, { color: t.ink3 }]}>{L('刚刚', 'now')}</Text>

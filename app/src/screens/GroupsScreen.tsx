@@ -53,7 +53,7 @@ export function GroupsScreen() {
             return (
               <Pressable key={g.id} onPress={() => nav.navigate('Group', { id: g.id })} accessibilityRole="button"
                 style={({ pressed }) => [styles.card, { backgroundColor: t.surface, opacity: pressed ? 0.75 : 1 }]}>
-                <GroupBadge icon={g.icon} />
+                <GroupBadge icon={g.icon} color={g.color} />
                 <View style={{ flex: 1, gap: 4 }}>
                   <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
                     <T v="headline" numberOfLines={1} style={{ flexShrink: 1 }}>{g.name}</T>

@@ -7,7 +7,8 @@ import { L } from '../i18n';
 import { useStore } from '../store';
 import { Markdown } from './Markdown';
 import { space, useTheme } from '../theme';
-import { Dumbbell, Sparkles, Trash2 } from './icons';
+import { Sparkles, Trash2 } from './icons';
+import { SourcePill } from './SourceBadge';
 import { Btn, Card, Pill, SectionLabel, T } from './ui';
 
 const KIND_LABEL = (): Record<JournalEntry['kind'], string> => ({ feeling: L('感受', 'Feeling'), thought: L('想法', 'Thought'), decision: L('决定', 'Decision'), note: L('记录', 'Note') });
@@ -33,7 +34,7 @@ export function JournalList({ entries, showGroup, empty }: { entries: JournalEnt
             <Card style={{ gap: 6 }}>
               <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
                 <Pill label={KIND_LABEL()[e.kind] ?? e.kind} tone={KIND_TONE[e.kind] ?? 'neutral'} />
-                {showGroup && gname(e.groupId) ? <Pill label={gname(e.groupId)!} tone="neutral" /> : null}
+                {showGroup && gname(e.groupId) ? <SourcePill source={e.groupId} /> : null}
                 <T v="caption" color={t.ink3} style={{ flex: 1 }}>{e.time}{e.context ? ` · ${e.context}` : ''}</T>
                 <Pressable onPress={() => remove(e)} hitSlop={10} accessibilityRole="button" accessibilityLabel={L('删除这条日志', 'Delete this journal entry')}><Trash2 size={15} color={t.ink3} /></Pressable>
               </View>
@@ -104,7 +105,7 @@ export function ApplicationsBoard({ apps, school }: { apps: Application[]; schoo
 }
 
 // decision 是 agent 按用户的语言写的：中文关键词照旧，英文另配一组（rest / deload、light / train）。
-const DECISION_TONE = (d: string): 'good' | 'warn' | 'bad' | 'neutral' => (d.includes('休息') || /\brest\b/i.test(d) ? 'bad'
+export const decisionTone = (d: string): 'good' | 'warn' | 'bad' | 'neutral' => (d.includes('休息') || /\brest\b/i.test(d) ? 'bad'
   : d.includes('减量') || d.includes('轻') || /deload|\blight|\beasy|\breduce/i.test(d) ? 'warn'
   : d.includes('练') || /\btrain|\bworkout|\blift|\bgo\b/i.test(d) ? 'good' : 'neutral');
 
@@ -114,7 +115,7 @@ export function TrainingPlanCard({ plan }: { plan: TrainingPlan }) {
   return (
     <View style={{ gap: space.sm }}>
       <View style={{ flexDirection: 'row', alignItems: 'center', gap: space.sm, flexWrap: 'wrap' }}>
-        <Pill label={plan.decision} tone={DECISION_TONE(plan.decision)} />
+        <Pill label={plan.decision} tone={decisionTone(plan.decision)} />
         {plan.session ? <T v="headline">{plan.session}</T> : null}
         {plan.time ? <T v="caption" color={t.ink3}>{plan.time}{plan.duration_min ? L(` · ${plan.duration_min} 分钟`, ` · ${plan.duration_min} min`) : ''}</T> : null}
       </View>
@@ -136,36 +137,6 @@ export function TrainingPlanCard({ plan }: { plan: TrainingPlan }) {
 
 const localDate = () => { const d = new Date(); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`; };
 export const isTrainingPlan = (f: FeedItem): f is FeedItem & { data: TrainingPlan } => f.kind === 'training_plan' && !!f.data && 'decision' in f.data;
-
-/** 健身看板顶部：今天的训练建议 + 一键让 Grava 出。 */
-export function TrainingPlanSection({ groupId, onAsk }: { groupId: string; onAsk: () => void }) {
-  const t = useTheme();
-  const { feed, send, typing } = useStore();
-  const today = localDate();
-  const plan = feed.find((f) => f.groupId === groupId && isTrainingPlan(f) && (f.createdAt ?? '').slice(0, 10) === today);
-  const busy = !!typing[groupId];
-  const ask = () => { send(groupId, L('出今天的训练建议', "Plan today's workout")); onAsk(); };
-  return (
-    <View style={{ marginBottom: space.lg }}>
-      <SectionLabel right={plan ? <T v="caption" color={t.ink3}>{plan.time}</T> : undefined}>{L('今天怎么练', "Today's workout")}</SectionLabel>
-      {plan && isTrainingPlan(plan) ? (
-        <Card style={{ gap: space.sm }}>
-          <View style={{ flexDirection: 'row', alignItems: 'center', gap: space.sm }}>
-            <Dumbbell size={16} color={t.ink2} />
-            <T v="headline" style={{ flex: 1 }}>{plan.title}</T>
-          </View>
-          <TrainingPlanCard plan={plan.data} />
-          <Btn label={busy ? L(`${agentName()} 正在出…`, `${agentName()} is on it…`) : L('重新出一份', 'Make a new one')} kind="quiet" onPress={ask} icon={<Sparkles size={14} color={t.ink} />} />
-        </Card>
-      ) : (
-        <Card style={{ gap: space.sm }}>
-          <T v="callout" color={t.ink2}>{L(`今天还没有训练建议。${agentName()} 会按昨晚睡眠、恢复分、PPL 轮到哪个、今天的课和你最近的感受来配。`, `No workout plan for today yet. ${agentName()} plans it around last night's sleep, your recovery score, where you are in your PPL split, today's classes and how you've been feeling.`)}</T>
-          <Btn label={busy ? L(`${agentName()} 正在出…`, `${agentName()} is on it…`) : L(`让 ${agentName()} 出今天的建议`, `Ask ${agentName()} for today's plan`)} kind="primary" onPress={ask} icon={<Sparkles size={14} color={t.onGold} />} />
-        </Card>
-      )}
-    </View>
-  );
-}
 
 const styles = StyleSheet.create({ row: { flexDirection: 'row', gap: 6, alignItems: 'flex-start' } });
 

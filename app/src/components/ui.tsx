@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import { Alert, Platform, Pressable, RefreshControl, StyleSheet, Text, TextProps, View, ViewProps, type RefreshControlProps } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { ChevronLeft, ChevronRight } from './icons';
+import { ChevronLeft, ChevronRight, ChevronUp, Pencil } from './icons';
 import { L } from '../i18n';
 import { radius, space, type, useTheme } from '../theme';
 
@@ -48,7 +48,8 @@ export function LargeHeader({ title, sub, right }: { title: string; sub?: string
   );
 }
 
-export function NavHeader({ title, sub, onBack, right }: { title: string; sub?: string; onBack: () => void; right?: React.ReactNode }) {
+/** 页头。onTitlePress：标题变成按钮，旁边一支小笔（Agent 页点名字进编辑）。 */
+export function NavHeader({ title, sub, onBack, right, onTitlePress, titleHint }: { title: string; sub?: string; onBack: () => void; right?: React.ReactNode; onTitlePress?: () => void; titleHint?: string }) {
   const t = useTheme();
   return (
     <View style={[styles.navHeader, sub ? { height: 56 } : null, { borderBottomColor: t.line }]}>
@@ -60,6 +61,12 @@ export function NavHeader({ title, sub, onBack, right }: { title: string; sub?: 
           <T v="headline" numberOfLines={1} style={{ textAlign: 'center' }}>{title}</T>
           <T v="caption" color={t.ink2} numberOfLines={1} style={{ textAlign: 'center', fontWeight: '400', marginTop: 1 }}>{sub}</T>
         </View>
+      ) : onTitlePress ? (
+        <Pressable onPress={onTitlePress} hitSlop={6} accessibilityRole="button" accessibilityLabel={titleHint ? `${title}${L('，', ', ')}${titleHint}` : title}
+          style={({ pressed }) => [styles.navTitleBtn, { opacity: pressed ? 0.6 : 1 }]}>
+          <T v="headline" numberOfLines={1} style={{ flexShrink: 1 }}>{title}</T>
+          <Pencil size={15} color={t.ink3} />
+        </Pressable>
       ) : <T v="headline" numberOfLines={1} style={{ flex: 1, textAlign: 'center' }}>{title}</T>}
       <View style={[styles.navSide, { alignItems: 'flex-end' }]}>{right}</View>
     </View>
@@ -71,23 +78,25 @@ export function Card({ children, style, ...rest }: ViewProps) {
   return <View style={[{ backgroundColor: t.surface, borderRadius: radius.lg, padding: space.lg }, style]} {...rest}>{children}</View>;
 }
 
-export function SectionLabel({ children, right }: { children: string; right?: React.ReactNode }) {
+/** 小标题。caps={false}：原样显示（小标题是用户自己的数据时，比如记忆的小节名，不改大小写）。 */
+export function SectionLabel({ children, right, caps = true }: { children: string; right?: React.ReactNode; caps?: boolean }) {
   const t = useTheme();
   return (
     <View style={styles.sectionLabel}>
-      <T v="label" color={t.ink3} style={{ textTransform: 'uppercase' }}>{children}</T>
+      <T v="label" color={t.ink3} style={caps ? { textTransform: 'uppercase' } : undefined}>{children}</T>
       {right}
     </View>
   );
 }
 
-export function Pill({ label, tone = 'neutral' }: { label: string; tone?: 'neutral' | 'gold' | 'cyan' | 'good' | 'warn' | 'bad' }) {
+/** 小标签。colors = [底色, 字色]，给 Agent 自己的颜色用；不给就按 tone。 */
+export function Pill({ label, tone = 'neutral', colors }: { label: string; tone?: 'neutral' | 'gold' | 'cyan' | 'good' | 'warn' | 'bad'; colors?: readonly [string, string] }) {
   const t = useTheme();
   const map = {
     neutral: [t.surface2, t.ink2], gold: [t.goldSoft, t.gold], cyan: [t.cyanSoft, t.cyan],
     good: [t.goodSoft, t.good], warn: [t.warnSoft, t.warn], bad: [t.badSoft, t.bad],
   } as const;
-  const [bg, fg] = map[tone];
+  const [bg, fg] = colors ?? map[tone];
   return (
     <View style={{ backgroundColor: bg, borderRadius: radius.pill, paddingHorizontal: 8, paddingVertical: 3 }}>
       <Text style={[type.caption, { color: fg }]}>{label}</Text>
@@ -106,6 +115,12 @@ export function CountPill({ n, small }: { n: number; small?: boolean }) {
       <Text style={{ color: t.surface, fontSize: small ? 11 : 13, fontWeight: '700' }}>{n > 99 ? '99+' : String(n)}</Text>
     </View>
   );
+}
+
+/** 点开 / 收起的箭头：收着朝右，展开朝上（看板的一行、记忆的一条都用它）。 */
+export function Disclosure({ open, size = 16 }: { open: boolean; size?: number }) {
+  const t = useTheme();
+  return open ? <ChevronUp size={size} color={t.ink3} /> : <ChevronRight size={size} color={t.ink3} />;
 }
 
 /** 出错提示。react-native-web 的 Alert 什么都不做，网页上改用浏览器自己的 alert，免得点了没反应。 */
@@ -167,6 +182,7 @@ const styles = StyleSheet.create({
   navHeader: { flexDirection: 'row', alignItems: 'center', height: 48, paddingHorizontal: space.sm, borderBottomWidth: StyleSheet.hairlineWidth },
   // 两侧至少 72 宽让标题大体居中；右侧放了日历按钮 + 模型选择这种宽内容时按内容撑开，不能挤出屏幕
   navSide: { minWidth: 72, flexShrink: 0, justifyContent: 'center' },
+  navTitleBtn: { flex: 1, minWidth: 0, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 6, paddingVertical: 6 },
   sectionLabel: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingHorizontal: space.xs, marginTop: space.xl, marginBottom: space.sm },
   btn: { flexDirection: 'row', gap: 6, alignItems: 'center', justifyContent: 'center', borderRadius: radius.md, paddingVertical: 11, paddingHorizontal: space.lg },
   row: { flexDirection: 'row', alignItems: 'center', gap: space.md, paddingVertical: 13 },
