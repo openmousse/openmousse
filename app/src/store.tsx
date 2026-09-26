@@ -5,7 +5,7 @@ import { loadAgentName, loadServerConfig, persistAgentName, serverConfigured } f
 import { agentName, setAgentName } from './brand';
 import { HttpApi, OfflineApi, timeNow, type GravaApi } from './api/client';
 import { dataApi, resetServerSupport, serverSupport } from './api/data';
-import { healthSupported, syncHealth } from './api/health';
+import { healthSupported, loadWake, postSignal, syncHealth, type WakeState } from './api/health';
 import { HEALTH_KEYS, loadHealthParts, loadLive, probe, type LiveData } from './api/live';
 import { onPushReceived, onPushResponse, registerCategories, registerPush, setAppBadge, type PushAction, type PushInfo } from './api/push';
 import { useBanner, type BannerSpec } from './components/Banner';
@@ -76,21 +76,25 @@ interface State {
   models: ModelsInfo | null;
   security: SecurityInfo | null;
   avatar: AvatarConfig;
+  /** 今天起没起（服务器判断；老服务器没有这个接口时是 null） */
+  wake: WakeState | null;
   /** 哪几块正在读 */
   loading: Partial<Record<DataKey, boolean>>;
   /** 哪几块读失败了，原因是什么 */
   dataErrors: Partial<Record<DataKey, string>>;
 }
 
-export type DataKey = 'groups' | 'sideChats' | 'tasks' | 'inbox' | 'inboxRecent' | 'unread' | 'feed' | 'upcoming' | 'goals' | 'journal' | 'applications' | 'memories' | 'activity' | 'profile' | 'models' | 'security' | 'avatar';
+export type DataKey = 'groups' | 'sideChats' | 'tasks' | 'inbox' | 'inboxRecent' | 'unread' | 'feed' | 'upcoming' | 'goals' | 'journal' | 'applications' | 'memories' | 'activity' | 'profile' | 'models' | 'security' | 'avatar' | 'wake';
 
 interface Actions {
   /** 重新探测服务器，读回全部数据和对话记录。 */
   refreshLive(): Promise<void>;
   /** 重新读某几块数据；不传就全读。 */
   reload(...keys: DataKey[]): Promise<Partial<State>>;
-  /** 读 HealthKit 推到服务器，再刷新看板（只在 iPhone 原生 app 里有效）。 */
-  syncHealthNow(): Promise<void>;
+  /** 读 HealthKit 推到服务器，再刷新看板（只在 iPhone 原生 app 里有效）。full：全部指标也推（不然一小时最多一次）。 */
+  syncHealthNow(full?: boolean): Promise<void>;
+  /** 点了「我起来了」：告诉服务器，马上出起床报告。 */
+  imUp(): Promise<void>;
   /** inboxId：这条是对收件箱里某件事的修改意见（从「今天」的「去对话里说」带过来），那件事在本地先标成「改一下」。 */
   send(threadId: string, text: string, files?: PendingFile[], opts?: { inboxId?: string }): void;
   deleteJournal(id: string): Promise<void>;
@@ -209,12 +213,15 @@ const LOADERS: Record<DataKey, () => Promise<Partial<State>>> = {
   models: async () => ({ models: await dataApi.models() }),
   security: async () => ({ security: await dataApi.security() }),
   avatar: async () => { const a = await dataApi.avatar(); return a ? { avatar: a } : {}; },
+  wake: async () => ({ wake: await loadWake() }),
 };
 const ALL_KEYS = Object.keys(LOADERS) as DataKey[];
 /** 连上时不跟大家一起读的：线程列表先读（对话记录要等它），未读等对话记录读完再读，「已处理」进那一页才读。 */
 const STARTUP_KEYS = ALL_KEYS.filter((k) => !['groups', 'sideChats', 'unread', 'inboxRecent'].includes(k));
 /** 后台轮询的：不亮「正在读」、读失败也不报错，没变化就不更新（不让整棵树白白重画）。 */
-const QUIET = new Set<DataKey>(['unread']);
+const QUIET = new Set<DataKey>(['unread', 'wake']);
+/** 回到前台时：离上次同步健康数据超过这么久才再同步一次（起床判断要看最新的睡眠分段） */
+const HEALTH_RESYNC_MS = 5 * 60_000;
 const POLL_MS = 45_000;
 /** 看着的对话里有还在问的转交、还在做的任务：隔多久重读一次卡片（回复进行中不用，流里会来） */
 const CARD_POLL_MS = 6_000;
@@ -263,6 +270,7 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
     models: null,
     security: null,
     avatar: { style: 'lens', ring: '#D9AE62', stream: '#5CCFE6' },
+    wake: null,
     loading: {},
     dataErrors: {},
   }));
@@ -311,9 +319,12 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
     return got;
   }, []);
 
-  const syncHealthNow = useCallback(async () => {
+  const healthAt = useRef(0);
+  const syncHealthNow = useCallback(async (full = false) => {
     try {
-      await syncHealth(14);
+      healthAt.current = Date.now();
+      await syncHealth(14, full);
+      reload('wake').catch(() => {});
       const { patch, errors } = await loadHealthParts();
       setS((st) => {
         const liveErrors = { ...st.liveErrors, ...errors };
@@ -693,8 +704,8 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
       const rest = reload(...STARTUP_KEYS);
       const live = loadLive().then(({ data, errors }) => setS((st) => ({ ...st, live: data, liveErrors: errors, liveLoading: false })));
       await Promise.all([lists, rest, live]);
-      // Apple 健康：每次连上都把最近两周重推一遍（服务端按天覆盖），推完刷新看板。
-      if (healthSupported()) syncHealthNow().catch(() => {});
+      // Apple 健康：每次连上都把最近两周重推一遍（服务端按天覆盖），推完刷新看板；然后告诉服务器手机有动静（起床判断用）。
+      (healthSupported() ? syncHealthNow(true) : Promise.resolve()).catch(() => {}).finally(() => { postSignal('foreground').catch(() => {}); });
       registerPush().catch(() => {});  // 推送 token 交给服务器（只在真机上）
     });
   }, [reload, loadThreads, syncHealthNow]);
@@ -710,10 +721,13 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
       if (away > 3000 && latest.current.connected) {
         loadThreads().catch(() => {});
         reload('feed', 'journal', 'inbox', 'unread', ...withRecent()).catch(() => {});
+        // 起床判断：先把新的睡眠分段传上去，再报「手机有动静」，服务器看到的就是最新的
+        const sync = healthSupported() && Date.now() - healthAt.current > HEALTH_RESYNC_MS ? syncHealthNow() : Promise.resolve();
+        sync.catch(() => {}).finally(() => { postSignal('foreground').then(() => reload('wake')).catch(() => {}); });
       }
     });
     return () => sub.remove();
-  }, [loadThreads, reload, withRecent]);
+  }, [loadThreads, reload, withRecent, syncHealthNow]);
 
   // 未读轮询：app 在前台（网页：页面可见）时每 45 秒一次。服务器没有这个接口就不轮询。
   useEffect(() => {
@@ -786,6 +800,10 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
     refreshLive,
     reload,
     syncHealthNow,
+    imUp: async () => {
+      if (!(await postSignal('up'))) throw new Error(L('没连上服务器', 'Not connected to the server'));
+      await reload('wake');
+    },
     send,
     transcribe: (file) => api.current.transcribe(file),
     refreshBoards: async () => {

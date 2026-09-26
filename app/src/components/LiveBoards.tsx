@@ -56,7 +56,7 @@ export function HealthCaption() {
       : at ? `${L('Apple 健康', 'Apple Health')} · ${syncedLabel(at)}` : L('Apple 健康 · 还没同步', 'Apple Health · not synced yet');
   const color = err && !busy ? t.bad : t.ink3;
   if (!canSync) return <Caption color={color}>{text}</Caption>;
-  const sync = () => { if (busy) return; setBusy(true); syncHealthNow().catch(() => {}).finally(() => setBusy(false)); };
+  const sync = () => { if (busy) return; setBusy(true); syncHealthNow(true).catch(() => {}).finally(() => setBusy(false)); };
   return (
     <Pressable onPress={sync} disabled={busy} hitSlop={10} accessibilityRole="button" accessibilityLabel={L(`${text}。点一下同步 Apple 健康`, `${text}. Tap to sync Apple Health`)}
       style={{ flexDirection: 'row', alignItems: 'center', gap: 4, flexShrink: 1 }}>

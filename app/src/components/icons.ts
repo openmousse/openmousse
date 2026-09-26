@@ -32,6 +32,7 @@ export { default as Plus } from 'lucide-react-native/icons/plus';
 export { default as Server } from 'lucide-react-native/icons/server';
 export { default as ShieldCheck } from 'lucide-react-native/icons/shield-check';
 export { default as Sparkles } from 'lucide-react-native/icons/sparkles';
+export { default as Sunrise } from 'lucide-react-native/icons/sunrise';
 export { default as Target } from 'lucide-react-native/icons/target';
 export { default as Trash2 } from 'lucide-react-native/icons/trash';
 export { default as User } from 'lucide-react-native/icons/user';

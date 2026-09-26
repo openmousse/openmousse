@@ -1,5 +1,6 @@
-// Apple 健康（第 4 步）：原生 app 读 HealthKit，按天汇总后推给 server/health.py。两层：
+// Apple 健康（第 4 步）：原生 app 读 HealthKit，按天汇总后推给 server/health.py。三层：
 // - health_daily：睡眠分期、夜间 HRV、静息心率等，给「恢复」卡用。一晚的睡眠归到醒来那天（前一天 18:00 到当天 14:00）。
+// - health_sleep：睡眠样本原样（一段一行），服务器拿它看早上几点醒、有没有睡回笼觉。
 // - health_metrics：全部类型按天汇总，一个指标一行：数值类累加型求和、其余取均值 / 最小 / 最大；
 //   类别类记次数和时长；外加体能训练和心情记录。不存原始样本。训练和饮食以你接的数据源为准。
 // "哪一天"都按手机当地时区。
@@ -27,10 +28,19 @@ export interface HealthDay {
   hrv_ms: number | null; rhr_bpm: number | null; resp_rate: number | null; wrist_temp_c: number | null;
 }
 
+/** 一段睡眠，HealthKit 原样：value 是 CategoryValueSleepAnalysis（0 在床上、1 睡着没分期、2 醒着、3 核心、4 深睡、5 REM）。 */
+export interface SleepSegment { uuid: string; value: number; start: string; end: string; source: string | null }
+
 export const healthSupported = () => Platform.OS === 'ios' && isHealthDataAvailable();
 
-const ymd = (d: Date) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
-const hm = (d: Date) => `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
+const pad2 = (n: number) => String(n).padStart(2, '0');
+const ymd = (d: Date) => `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}`;
+const hm = (d: Date) => `${pad2(d.getHours())}:${pad2(d.getMinutes())}`;
+/** 带手机当地时区的 ISO 时间（2026-09-27T07:05:00+01:00），服务器按它算几点醒。 */
+const isoLocal = (d: Date) => {
+  const off = -d.getTimezoneOffset();
+  return `${ymd(d)}T${hm(d)}:${pad2(d.getSeconds())}${off >= 0 ? '+' : '-'}${pad2(Math.floor(Math.abs(off) / 60))}:${pad2(Math.abs(off) % 60)}`;
+};
 const round = (x: number | null, k = 0) => (x == null ? null : Math.round(x * 10 ** k) / 10 ** k);
 const mean = (xs: number[]) => (xs.length ? xs.reduce((a, b) => a + b, 0) / xs.length : null);
 
@@ -75,8 +85,8 @@ export async function authorizeHealth(): Promise<boolean> {
   return ok;
 }
 
-/** 读最近 days 天，按天汇总。 */
-export async function readHealthDays(days = 14): Promise<HealthDay[]> {
+/** 读最近 days 天：按天汇总，外加这段时间的睡眠分段原样。 */
+export async function readHealthDays(days = 14): Promise<{ days: HealthDay[]; sleep: { segments: SleepSegment[]; start: string; end: string } }> {
   const end = new Date();
   const start = new Date(end); start.setDate(start.getDate() - days); start.setHours(18, 0, 0, 0);
   const filter = { date: { startDate: start, endDate: end } };
@@ -96,11 +106,10 @@ export async function readHealthDays(days = 14): Promise<HealthDay[]> {
     const night = sleep.filter((s) => s.endDate > from && s.endDate <= to);
     const span = (v: number[]) => night.filter((s) => v.includes(s.value)).map((s) => [+s.startDate, +s.endDate] as [number, number]);
     const staged = night.some((s) => [CategoryValueSleepAnalysis.asleepCore, CategoryValueSleepAnalysis.asleepDeep, CategoryValueSleepAnalysis.asleepREM].includes(s.value));
-    // 有分期（手表）就只用分期；没有才用"未分期的睡着"（手机或第三方）。
-    const asleepVals = staged
-      ? [CategoryValueSleepAnalysis.asleepCore, CategoryValueSleepAnalysis.asleepDeep, CategoryValueSleepAnalysis.asleepREM]
-      : [CategoryValueSleepAnalysis.asleepUnspecified];
-    const asleep = span(asleepVals);
+    // 分期的和没分期的都算睡着：关掉起床闹钟以后手表不再分期，回笼觉只能被自动识别成「睡着（没分期）」。
+    // 同一段时间两种都有（手表 + 别的 app）时合并区间，不会重复计。
+    const asleep = span([CategoryValueSleepAnalysis.asleepCore, CategoryValueSleepAnalysis.asleepDeep, CategoryValueSleepAnalysis.asleepREM,
+      CategoryValueSleepAnalysis.asleepUnspecified]);
     const sleepMin = asleep.length ? mergedMinutes(asleep) : null;
     const bedStart = asleep.length ? new Date(Math.min(...asleep.map((x) => x[0]))) : null;
     const bedEnd = asleep.length ? new Date(Math.max(...asleep.map((x) => x[1]))) : null;
@@ -122,7 +131,9 @@ export async function readHealthDays(days = 14): Promise<HealthDay[]> {
       wrist_temp_c: round(mean(temp.filter((s) => onDay(s.endDate)).map((s) => s.quantity)), 2),
     });
   }
-  return out;
+  const segments = sleep.map((s) => ({ uuid: s.uuid, value: Number(s.value), start: isoLocal(s.startDate), end: isoLocal(s.endDate),
+    source: s.sourceRevision?.source?.name ?? null }));
+  return { days: out, sleep: { segments, start: isoLocal(start), end: isoLocal(end) } };
 }
 
 export interface MetricRow {
@@ -225,15 +236,61 @@ async function post(path: string, body: object) {
   return r.json();
 }
 
-/** 读取并上传。恢复卡的 14 天每次都推；全部指标平时推最近 30 天，服务器上还没有的时候补一年。 */
-export async function syncHealth(days = 14): Promise<number> {
+let metricsAt = 0;
+
+/** 读取并上传。恢复卡的 14 天和睡眠分段每次都推；全部指标一小时最多推一次（full 不管这个），平时推最近 30 天，服务器上还没有的时候补一年。 */
+export async function syncHealth(days = 14, full = false): Promise<number> {
   await authorizeHealth();
-  const rows = await readHealthDays(days);
+  const { days: rows, sleep } = await readHealthDays(days);
   await post('/api/health/daily', { days: rows, source: 'healthkit' });
-  const status = await fetch(`${getBase()}/api/health/metrics/status`, { headers: authHeaders() }).then((x) => x.json()).catch(() => ({ rows: 1 }));
-  const metrics = await readAllMetrics(status.rows ? 30 : 365);
-  for (let i = 0; i < metrics.length; i += 2000) await post('/api/health/metrics', { rows: metrics.slice(i, i + 2000), source: 'healthkit' });
+  await post('/api/health/sleep', { ...sleep, source: 'healthkit' }).catch(() => {});  // 老服务器没有这个接口
+  if (full || Date.now() - metricsAt > 3600_000) {
+    const status = await fetch(`${getBase()}/api/health/metrics/status`, { headers: authHeaders() }).then((x) => x.json()).catch(() => ({ rows: 1 }));
+    const metrics = await readAllMetrics(status.rows ? 30 : 365);
+    for (let i = 0; i < metrics.length; i += 2000) await post('/api/health/metrics', { rows: metrics.slice(i, i + 2000), source: 'healthkit' });
+    metricsAt = Date.now();
+  }
   return rows.length;
+}
+
+// —— 起床判断（服务器 /api/health/wake，算法在服务器上） ——
+
+export interface WakeNight {
+  onset: string; first_wake: string; up_at: string; sleep_min: number; back_sleep_min: number;
+  back_sleeps: { from: string; to: string; min: number; stage: string; awake_before: number }[];
+  naps: { from: string; to: string; min: number; stage: string }[];
+  summary: string;
+}
+export interface WakeState {
+  date: string;
+  /** 服务器判断时的时刻（HH:MM，用户时区） */
+  now: string;
+  /** no_data 早上还什么都没有；maybe_awake 醒过、还没确认起床；up 起床了 */
+  state: 'no_data' | 'maybe_awake' | 'up';
+  /** 最后一次醒的时间（睡眠数据），没有睡眠数据时是第一个动静的时间 */
+  woke: string | null;
+  ref_from: 'sleep' | 'signal' | null;
+  up_at: string | null;
+  seen_at: string | null;
+  fresh: boolean;
+  night: WakeNight | null;
+  summary: string | null;
+}
+
+/** 服务器不支持（老版本、没接健康数据源）时是 null。 */
+export async function loadWake(): Promise<WakeState | null> {
+  const r = await fetch(`${getBase()}/api/health/wake`, { headers: { Accept: 'application/json', ...authHeaders() } });
+  if (!r.ok) return null;
+  const j = await r.json();
+  return j.ok ? (j as WakeState) : null;
+}
+
+/** 告诉服务器手机有动静：app 回到前台（foreground）、点了「我起来了」（up）。返回有没有记上。 */
+export async function postSignal(kind: 'foreground' | 'up'): Promise<boolean> {
+  const r = await fetch(`${getBase()}/api/health/signal`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json', ...authHeaders() }, body: JSON.stringify({ kind, source: Platform.OS }),
+  }).catch(() => null);
+  return !!r?.ok;
 }
 
 export async function loadHealthDays(days = 14): Promise<{ days: HealthDay[]; synced_at: string | null }> {

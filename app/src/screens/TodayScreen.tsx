@@ -16,6 +16,7 @@ import { radius, space, useTheme } from '../theme';
 import { MealPlanCard } from '../components/LiveBoards';
 import { Markdown } from '../components/Markdown';
 import { TrainingPlanCard, isTrainingPlan } from '../components/Records';
+import { WakeCard } from '../components/WakeCard';
 
 function UpcomingRow({ u, last }: { u: UpcomingTask; last: boolean }) {
   const t = useTheme();
@@ -292,7 +293,7 @@ export function TodayScreen() {
   }, [hlAt]);
   const flashFor = (key: string) => (flash?.key === key ? flash.token : 0);
 
-  const refreshKeys: DataKey[] = ['inbox', 'unread', 'upcoming', 'tasks', 'feed', 'journal', ...(done.length ? ['inboxRecent' as const] : [])];
+  const refreshKeys: DataKey[] = ['inbox', 'unread', 'upcoming', 'tasks', 'feed', 'journal', 'wake', ...(done.length ? ['inboxRecent' as const] : [])];
   return (
     <Screen>
       <ScrollView ref={scroller} contentContainerStyle={{ paddingBottom: space.xxl }} scrollEventThrottle={100}
@@ -318,6 +319,7 @@ export function TodayScreen() {
           ) : null}
           {offset !== 0 ? <DayView iso={dayIso} offset={offset} refreshKey={dayRefresh} /> : (<>
 
+          <WakeCard />
           <SectionLabel right={(
             <Pressable onPress={() => nav.navigate('Inbox')} hitSlop={8} accessibilityRole="button" accessibilityLabel={L('已处理', 'Handled')} style={styles.more}>
               <T v="callout" color={t.gold} style={{ fontWeight: '600' }}>{L('已处理', 'Handled')}</T>
