@@ -18,7 +18,7 @@ import { useSheet } from './Sheet';
 import { PullRefresh, T } from './ui';
 import { Markdown } from './Markdown';
 import { InboxCard } from './InboxCard';
-import { HandoffChip, HandoffFrom, ScheduleChip, TaskCardView, modelLabel } from './ChatCards';
+import { HandoffChip, HandoffFrom, ProjectChip, ScheduleChip, TaskCardView, modelLabel } from './ChatCards';
 import { drafts, MAX_FILES, pickDocuments, pickMedia } from './chatInput';
 
 // 没发出去的草稿按线程记着（drafts 在 chatInput.ts）：切到看板、换线程、离开页面再回来还在（只在内存里，退出 app 就没了）。
@@ -88,9 +88,13 @@ function placeCards(cards: ChatCard[], msgs: Message[], busy: boolean) {
 }
 
 /** 回复下面的任务卡（和转交卡一样让出头像那一列；转交卡如果按时间排到这里，也走这里）。 */
-function ChatTasks({ cards, onRevise }: { cards?: ChatCard[]; onRevise: (c: TaskCardInfo) => void }) {
+function ChatTasks({ cards, onRevise, thread }: { cards?: ChatCard[]; onRevise: (c: TaskCardInfo) => void; thread: string }) {
   if (!cards?.length) return null;
-  return <>{cards.map((c) => <View key={c.id} style={{ paddingLeft: 36 }}>{c.kind === 'task' ? <TaskCardView card={c} onRevise={onRevise} /> : c.kind === 'schedule' ? <ScheduleChip card={c} /> : <HandoffChip card={c} />}</View>)}</>;
+  return <>{cards.map((c) => (
+    <View key={c.id} style={{ paddingLeft: 36 }}>
+      {c.kind === 'task' ? <TaskCardView card={c} onRevise={onRevise} /> : c.kind === 'schedule' ? <ScheduleChip card={c} /> : c.kind === 'project' ? <ProjectChip card={c} here={thread} /> : <HandoffChip card={c} />}
+    </View>
+  ))}</>;
 }
 
 // 上限对齐主流 LLM 产品（服务端 files.py 同样的数）：一条消息 10 个附件，每个 30 MB，类型不限。
@@ -472,7 +476,7 @@ export function ChatView({ threadId, placeholder, empty, quote: quoteProp, quote
           </View>
         ) : null}
         <ChatInbox items={slots.get(-1)} />
-        <ChatTasks cards={placed.below.get(-1)} onRevise={reviseCard} />
+        <ChatTasks cards={placed.below.get(-1)} onRevise={reviseCard} thread={threadId} />
         {msgs.map((m, i) => {
           const above = placed.above.get(i);
           return (
@@ -482,7 +486,7 @@ export function ChatView({ threadId, placeholder, empty, quote: quoteProp, quote
                   before={above?.length ? above.map((c) => <HandoffChip key={c.id} card={c} />) : undefined}
                   from={m.role === 'auto' ? incoming.find((h) => h.relayId === m.id) : undefined} highlight={flash === m.id} />
               </View>
-              <ChatTasks cards={placed.below.get(i)} onRevise={reviseCard} />
+              <ChatTasks cards={placed.below.get(i)} onRevise={reviseCard} thread={threadId} />
               <ChatInbox items={slots.get(i)} />
             </React.Fragment>
           );
@@ -498,7 +502,7 @@ export function ChatView({ threadId, placeholder, empty, quote: quoteProp, quote
             </View>
           </View>
         ) : null}
-        {busy ? <ChatTasks cards={liveTasks} onRevise={reviseCard} /> : null}
+        {busy ? <ChatTasks cards={liveTasks} onRevise={reviseCard} thread={threadId} /> : null}
       </ScrollView>
       <View style={[styles.composerWrap, { borderTopColor: t.line, backgroundColor: t.bg }]}>
         {quote ? (

@@ -26,7 +26,7 @@ export interface BannerSpec {
   subtitle?: string;
   /** 第三行，最多两行 */
   body?: string;
-  /** 'main'、Agent id 或独立空间 id：左边的图标、第一行的名字 */
+  /** 'main'、Agent id 或项目 id：左边的图标、第一行的名字 */
   source?: string;
   /** 点开去哪；没有就只收起 */
   target?: PushTarget | null;

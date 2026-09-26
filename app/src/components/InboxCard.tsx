@@ -9,7 +9,7 @@ import { L } from '../i18n';
 import { openThread } from '../navigation';
 import { useStore } from '../store';
 import { radius, space, type, useTheme } from '../theme';
-import { Check, ChevronRight, CircleAlert, LoaderCircle, Pencil, X } from './icons';
+import { Check, ChevronRight, CircleAlert, Flag, LoaderCircle, Pencil, Pin, Target, X } from './icons';
 import { Markdown } from './Markdown';
 import { SourceBadge, useSourceName } from './SourceBadge';
 import { Pill, T, showError } from './ui';
@@ -20,7 +20,7 @@ import { BoardPreview } from './blocks/BoardPreview';
 export const kindLabel = (k: InboxKind | string): string => ({
   exec: L('执行命令', 'Run command'), task: L('派活', 'Task'), write: L('写入', 'Write'), send: L('发送', 'Send'), spend: L('花钱', 'Spend'),
   schedule: L('定时任务', 'Schedule'), push: L('推送', 'Notification'), skill: L('新 skill', 'New skill'), agent: L('新 Agent', 'New agent'),
-  block: L('看板功能块', 'Board block'), code: L('代码改动', 'Code change'), calendar: L('日程', 'Calendar'), other: L('其他', 'Other'),
+  block: L('看板功能块', 'Board block'), project: L('项目', 'Project'), code: L('代码改动', 'Code change'), calendar: L('日程', 'Calendar'), other: L('其他', 'Other'),
 } as Record<string, string>)[k] ?? L('其他', 'Other');
 
 /** 动到外面的（写、发、花钱、日程、派活）用警示色；提案类用金色（助手自己想做的）；执行命令中性。 */
@@ -173,7 +173,8 @@ function PendingCard({ item, chat }: { item: InboxItem; chat: boolean }) {
       <T v="headline" style={chat ? styles.chatTitle : styles.title}>{item.title}</T>
       {item.why ? <T v="callout" color={t.ink2}>{item.why}</T> : null}
       {item.kind === 'block' ? <BoardPreview inboxId={item.id} /> : null}
-      {item.detail ? (
+      {item.kind === 'project' && item.project?.action === 'open' ? <ProjectPreview info={item.project} /> : null}
+      {item.detail && !(item.kind === 'project' && item.project?.action === 'open') ? (
         <>
           {more ? <Markdown text={item.detail} color={t.ink2} compact /> : null}
           <Pressable onPress={() => setMore((v) => !v)} hitSlop={8} accessibilityRole="button" accessibilityState={{ expanded: more }} style={{ alignSelf: 'flex-start' }}>
@@ -225,20 +226,48 @@ function PendingCard({ item, chat }: { item: InboxItem; chat: boolean }) {
   );
 }
 
-/** 处理过的：一行回执（状态圆点 + 「已同意 · 标题」+ 说明 / 结果）。 */
+/** 处理过的：一行回执（状态圆点 + 「已同意 · 标题」+ 说明 / 结果）。开好了的项目右边是「去看看」。 */
 function InboxReceipt({ item, chat }: { item: InboxItem; chat: boolean }) {
   const t = useTheme();
   const nameOf = useSourceName();
   const name = item.sourceName || nameOf(item.source);
   const r = receiptText(item, name);
+  const project = item.kind === 'project' && item.project?.action === 'open' && item.status === 'done' ? item.project.project : undefined;
   return (
-    <View style={[styles.rcpt, chat && styles.chatRcpt, { backgroundColor: t.surface, borderColor: t.line }]} accessible accessibilityLabel={`${r.head}${L('，', ', ')}${r.sub}`}>
+    <View style={[styles.rcpt, chat && styles.chatRcpt, { backgroundColor: t.surface, borderColor: t.line }]} accessible={!project} accessibilityLabel={`${r.head}${L('，', ', ')}${r.sub}`}>
       <StatusCircle status={item.status} exec={item.kind === 'exec'} />
       <View style={{ flex: 1, gap: 2 }}>
         <T v="headline" numberOfLines={1} style={{ fontSize: 15 }}>{r.head}</T>
         {r.sub ? <T v="callout" color={t.ink2} numberOfLines={chat ? 3 : 2} style={{ fontSize: 13, lineHeight: 18 }}>{r.sub}</T> : null}
       </View>
-      <T v="caption" color={t.ink3}>{relTime(item.decidedAt)}</T>
+      {project ? (
+        <Pressable onPress={() => openThread(project.id, false)} hitSlop={8} accessibilityRole="button" accessibilityLabel={L(`去看看：${project.title}`, `Open ${project.title}`)}
+          style={({ pressed }) => [{ flexDirection: 'row', alignItems: 'center', gap: 2, opacity: pressed ? 0.6 : 1 }]}>
+          <T v="callout" color={t.gold} style={{ fontWeight: '600' }}>{L('去看看', 'Open')}</T>
+          <ChevronRight size={15} color={t.gold} />
+        </Pressable>
+      ) : <T v="caption" color={t.ink3}>{relTime(item.decidedAt)}</T>}
+    </View>
+  );
+}
+
+/** 开项目的提案：一张小项目卡——目标、截止、已定的、下一步。 */
+function ProjectPreview({ info }: { info: NonNullable<InboxItem['project']> }) {
+  const t = useTheme();
+  const rows: { key: string; icon: React.ReactNode; bg: string; text: string }[] = [];
+  if (info.goal) rows.push({ key: 'goal', icon: <Target size={14} color={t.ink2} />, bg: t.surface2, text: info.goal });
+  if (info.deadlines?.length) rows.push({ key: 'due', icon: <Flag size={14} color={t.warn} />, bg: t.warnSoft, text: info.deadlines.join('\n') });
+  if (info.decisions?.length) rows.push({ key: 'dec', icon: <Pin size={14} color={t.cyan} />, bg: t.cyanSoft, text: info.decisions.join('\n') });
+  if (info.steps?.length) rows.push({ key: 'step', icon: <Check size={14} color={t.ink2} />, bg: t.surface2, text: info.steps.join('\n') });
+  if (!rows.length) return null;
+  return (
+    <View style={[styles.box, { backgroundColor: t.bg, borderColor: t.line, paddingVertical: 4, gap: 0 }]}>
+      {rows.map((r, i) => (
+        <View key={r.key} style={[styles.prev, i > 0 && { borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: t.line }]}>
+          <View style={[styles.prevIcon, { backgroundColor: r.bg }]}>{r.icon}</View>
+          <T v="callout" style={{ flex: 1, lineHeight: 20 }}>{r.text}</T>
+        </View>
+      ))}
     </View>
   );
 }
@@ -261,4 +290,6 @@ const styles = StyleSheet.create({
   actions: { flexDirection: 'row', gap: space.sm, paddingTop: 2 },
   btn: { flexDirection: 'row', gap: 6, alignItems: 'center', justifyContent: 'center', borderRadius: radius.md, paddingHorizontal: space.lg, height: 44 },
   rcpt: { flexDirection: 'row', alignItems: 'center', gap: space.md, borderRadius: 14, paddingVertical: space.md, paddingHorizontal: 14 },
+  prev: { flexDirection: 'row', alignItems: 'flex-start', gap: 10, paddingVertical: 8 },
+  prevIcon: { width: 24, height: 24, borderRadius: 8, alignItems: 'center', justifyContent: 'center' },
 });

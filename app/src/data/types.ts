@@ -48,7 +48,7 @@ export interface Approval {
 }
 
 /** 收件箱：要你点头的事。exec = OpenClaw 的执行命令审批（id 是 exec:<审批 id>），其余是 Agent 自己交上来的提案。 */
-export type InboxKind = 'exec' | 'task' | 'write' | 'send' | 'spend' | 'schedule' | 'push' | 'skill' | 'agent' | 'block' | 'code' | 'calendar' | 'other';
+export type InboxKind = 'exec' | 'task' | 'write' | 'send' | 'spend' | 'schedule' | 'push' | 'skill' | 'agent' | 'block' | 'project' | 'code' | 'calendar' | 'other';
 export type InboxStatus = 'pending' | 'approved' | 'rejected' | 'revising' | 'done' | 'failed' | 'withdrawn' | 'expired';
 export type InboxAction = 'approve' | 'reject' | 'revise';
 export interface InboxItem {
@@ -71,6 +71,8 @@ export interface InboxItem {
   approveLabel: string;
   /** 只有 exec 有：命令、目录这类 */
   fields?: { k: string; v: string }[];
+  /** 只有 project 有（server/projects.py）：开项目的提案内容（预览），开好 / 要归档的那个项目（「去看看」） */
+  project?: InboxProjectInfo;
   status: InboxStatus;
   /** 「改一下」时写的意见 */
   note: string;
@@ -230,11 +232,94 @@ export interface ScheduleChangeCard {
   summary: string;
 }
 
-export type ChatCard = HandoffCard | TaskCardInfo | ScheduleChangeCard;
+export type ChatCard = HandoffCard | TaskCardInfo | ScheduleChangeCard | ProjectChangeCard;
 /** 一个对话里的卡片（GET /api/chat/cards）：它自己转出去、派出去的，加上别的对话转给它的（incoming）。 */
 export interface ThreadCards { cards: ChatCard[]; incoming: HandoffCard[] }
 
-/** 有生命周期的独立对话空间：比一段对话大，比 Group 小。 */
+/** 收件箱里 kind=project 的卡多带的：open 开项目（提案里的目标、截止、已定的、下一步）/ archive 归档；project = 开好的或要归档的那个。 */
+export interface InboxProjectInfo {
+  action: 'open' | 'archive';
+  goal?: string;
+  deadlines?: string[];
+  decisions?: string[];
+  steps?: string[];
+  project?: { id: string; title: string };
+}
+
+/**
+ * 对话里的项目小卡：Agent 在这次回复里改了项目卡（加了下一步、记了已定的、更新进度、开了项目、写了结论）。
+ * 截止的增删改和打勾是日程层的改动，出的是日程卡。undoable = 能撤销（开项目、写结论不能）。
+ */
+export interface ProjectChangeCard {
+  kind: 'project';
+  id: string;
+  logId: number;
+  thread: string | null;
+  messageId: number | null;
+  createdAt: string;
+  status: 'done' | 'undone';
+  action: string;
+  actor: string;
+  project: string;
+  projectTitle: string;
+  title: string;
+  summary: string;
+  undoable: boolean;
+}
+
+/** 项目卡上最近的一个截止（侧栏那一行、卡片收起时那一行）。left = 还剩几天（过了是负数）。 */
+export interface ProjectNext { id: string; title: string; date: string; start: string; left: number | null }
+
+/** 项目卡上的截止：自己的（own，进日程层，id 是 item:…）或挂上来的作业、邮件里的事、求职 ddl（id 是它原来的 id）。 */
+export interface ProjectDeadline {
+  id: string;
+  title: string;
+  date: string | null;
+  start: string;
+  allDay: boolean;
+  done: boolean;
+  past: boolean;
+  /** 来源小标（课程缩写、邮箱）；自己的不写 */
+  badge: string;
+  origin: ScheduleEntry['origin'];
+  /** 原文链接（作业页、邮件） */
+  link: string | null;
+  left: number | null;
+  own: boolean;
+  /** 源头没了（作业交了、邮件条目过期清掉）：按挂上时的快照显示 */
+  gone: boolean;
+  /** 挂上来的那条在项目卡上的 id（拿掉时用） */
+  linkId: string | null;
+}
+
+export interface ProjectItem { id: string; kind: 'step' | 'decision'; text: string; done: boolean; doneAt: string | null; by: string; createdAt: string }
+/** 结论：做成了、定过的、下次记得的、存到了哪。 */
+export interface ProjectSummary { done: string; decided: string[]; learned: string; saved: string }
+
+/** 一张项目卡（GET /api/projects/{id}）。 */
+export interface ProjectCard {
+  id: string;
+  title: string;
+  goal: string;
+  progress: string;
+  progressAt: string | null;
+  summary: ProjectSummary | null;
+  summaryAt: string | null;
+  archived: boolean;
+  archivedAt: string | null;
+  /** 归档了、它在写结论 */
+  closing: boolean;
+  rev: number;
+  createdAt: string;
+  deadlines: ProjectDeadline[];
+  steps: ProjectItem[];
+  decisions: ProjectItem[];
+  next: ProjectNext | null;
+  stepsLeft: number;
+  tasks?: { available: boolean; running: number; done: number; items: { id: string; title: string; status: string }[] };
+}
+
+/** 项目（以前叫独立空间）：持续几天到几周、有目标和截止的事，做完归档。线程 id 就是项目 id。 */
 export interface SideChat {
   id: string;
   title: string;
@@ -246,6 +331,13 @@ export interface SideChat {
   updatedAt: number;
   /** 归档：从侧栏隐藏，可以恢复。 */
   archived?: boolean;
+  /** 项目卡的摘要（老服务器没有）：目标、最近的截止、还剩几件下一步、有没有结论、在写结论 */
+  goal?: string;
+  next?: ProjectNext | null;
+  stepsLeft?: number;
+  hasSummary?: boolean;
+  archivedAt?: string | null;
+  closing?: boolean;
 }
 
 export interface Message {
@@ -434,6 +526,8 @@ export interface ScheduleEntry {
   key?: string | null;
   locationChanged?: boolean;
   sourceLocation?: string;
+  /** 属于哪个项目（server/projects.py）：点一下进那个项目 */
+  project?: { id: string; title: string };
 }
 
 /** iPhone 日历订阅：链接路径（接在服务器地址后面）和四类开关。 */

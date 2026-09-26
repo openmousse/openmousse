@@ -32,7 +32,7 @@ function Tabs() {
   const t = useTheme();
   const { inbox, unread, groups, sideChats } = useStore();
   const insets = useSafeAreaInsets();
-  // 未读（青色）：「对话」= 主对话 + 独立空间，「Agents」= 各个 Agent。「今天」（金色）= 等你点头的。
+  // 未读（青色）：「对话」= 主对话 + 项目，「Agents」= 各个 Agent。「今天」（金色）= 等你点头的。
   const n = (id: string) => unread.threads[id]?.n ?? 0;
   const chatUnread = n('main') + sideChats.reduce((sum, c) => sum + n(c.id), 0);
   const agentUnread = groups.reduce((sum, g) => sum + n(g.id), 0);
@@ -85,7 +85,7 @@ let queued: { target: PushTarget; isGroup: boolean; quote?: ChatQuote; focus?: s
 
 /**
  * 打开推送 / 小窗指向的地方：
- * 对话 → main / 独立空间在「对话」tab 里，Agent 有自己的页；卡片、收件箱 → 「今天」页，滚到那一张闪一下金边。
+ * 对话 → main / 项目在「对话」tab 里，Agent 有自己的页；卡片、收件箱 → 「今天」页，滚到那一张闪一下金边。
  * 去 tab 用 pop：从「已处理」「任务」这类叠在上面的页过去时退回到 tab，不再叠一层新的。
  */
 export function openTarget(target: PushTarget, isGroup = false, quote?: ChatQuote, focus?: string) {

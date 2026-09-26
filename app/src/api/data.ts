@@ -11,7 +11,8 @@ import { httpStatus, request } from './base';
  */
 export const serverSupport: { inbox: boolean | null; unread: boolean | null; cards: boolean | null } = { inbox: null, unread: null, cards: null };
 export const resetServerSupport = () => { serverSupport.inbox = null; serverSupport.unread = null; serverSupport.cards = null; };
-const missing = (e: unknown) => { const s = httpStatus(e); return s === 404 || s === 405; };
+/** 服务器没有这个接口（老版本）。 */
+export const missing = (e: unknown) => { const s = httpStatus(e); return s === 404 || s === 405; };
 
 /** 消息 id：数字，也认 "db123" 和 "123" 这种写法。 */
 const msgNum = (v: unknown): number | null => {
@@ -43,6 +44,7 @@ function normalizeInbox(raw: Partial<InboxItem> & { id: string }): InboxItem {
     createdAt: str(raw.createdAt),
     decidedAt: typeof raw.decidedAt === 'string' ? raw.decidedAt : null,
     whenText: raw.whenText,
+    project: raw.project && typeof raw.project === 'object' ? raw.project : undefined,
   };
 }
 
@@ -67,6 +69,11 @@ function normalizeCard(raw: any): ChatCard | null {
     return { ...raw, messageId: msgNum(raw.messageId), title: str(raw.title), step: str(raw.step), result: str(raw.result), minutes: num(raw.minutes) ?? 0,
       tools: num(raw.tools) ?? 0, round: num(raw.round) ?? 1, deliverable: Array.isArray(raw.deliverable) ? raw.deliverable.map(String) : [],
       status: ['进行中', '完成', '失败', '已取消'].includes(raw.status) ? raw.status : '完成', timedOut: !!raw.timedOut } as ChatCard;
+  }
+  if (raw.kind === 'project' && typeof raw.logId === 'number') {  // Agent 在回复里改了项目卡（server/projects.py）
+    return { ...raw, messageId: msgNum(raw.messageId), title: str(raw.title), summary: str(raw.summary), action: str(raw.action), actor: str(raw.actor),
+      project: str(raw.project), projectTitle: str(raw.projectTitle), undoable: raw.undoable !== false, status: raw.status === 'undone' ? 'undone' : 'done',
+      createdAt: str(raw.createdAt) } as ChatCard;
   }
   if (raw.kind === 'schedule' && typeof raw.logId === 'number') {  // Agent 在回复里改了日程（server/schedule.py）
     return { ...raw, messageId: msgNum(raw.messageId), title: str(raw.title), summary: str(raw.summary), action: str(raw.action), actor: str(raw.actor),

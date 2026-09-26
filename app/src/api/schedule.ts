@@ -20,6 +20,7 @@ function norm(raw: Partial<ScheduleEntry> & { id: string }): ScheduleEntry {
     tentative: !!raw.tentative, free: !!raw.free, clash: Array.isArray(raw.clash) ? raw.clash.map(String) : [], editable: !!raw.editable,
     group: raw.group ?? null, urgent: !!raw.urgent, key: raw.key ?? null, locationChanged: !!raw.locationChanged,
     sourceLocation: raw.sourceLocation,
+    project: raw.project && typeof raw.project.id === 'string' ? { id: raw.project.id, title: str(raw.project.title) } : undefined,
   };
 }
 

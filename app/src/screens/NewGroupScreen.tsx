@@ -55,7 +55,7 @@ function NewGroupForm() {
       .catch((e) => { setErr(errText(e)); setBusy(null); });
   };
 
-  // 还没想好：开一个独立空间，把想法发过去，跳到那个空间里接着聊
+  // 还没想好：开一个项目，把想法发过去，跳到那个项目里接着聊
   const talk = () => {
     if (busy) return;
     if (!connected) { setErr(L('没连上服务器，开不了', "Not connected to the server, can't open it"), 'talk'); return; }
@@ -98,10 +98,10 @@ function NewGroupForm() {
           style={({ pressed }) => [styles.talk, { backgroundColor: t.goldSoft, opacity: pressed || busy === 'talk' ? 0.7 : 1 }]}>
           <View style={[styles.talkIcon, { backgroundColor: t.surface }]}><MessageCircle size={18} color={t.gold} /></View>
           <View style={{ flex: 1, gap: 2 }}>
-            <T v="headline" style={{ fontSize: 15, fontWeight: '700' }}>{busy === 'talk' ? L('正在开一个空间…', 'Opening a side chat…') : L('还没想好？先聊聊', 'Not sure yet? Talk it through')}</T>
+            <T v="headline" style={{ fontSize: 15, fontWeight: '700' }}>{busy === 'talk' ? L('正在开一个项目…', 'Opening a project…') : L('还没想好？先聊聊', 'Not sure yet? Talk it through')}</T>
             <T v="callout" color={t.ink2} style={{ fontSize: 13, lineHeight: 19 }}>{L(
-              `开一个独立空间，和 ${agentName()} 一起想清楚它管什么、记什么、看板放什么。想好了它出方案，你点头就建好。`,
-              `Opens a side chat where you and ${agentName()} work out what it looks after, what it keeps track of and what goes on its dashboard. Then it drafts a plan, and the agent is built once you approve.`,
+              `开一个项目，和 ${agentName()} 一起想清楚它管什么、记什么、看板放什么。想好了它出方案，你点头就建好。`,
+              `Opens a project where you and ${agentName()} work out what it looks after, what it keeps track of and what goes on its dashboard. Then it drafts a plan, and the agent is built once you approve.`,
             )}</T>
           </View>
           <ChevronRight size={16} color={t.gold} />

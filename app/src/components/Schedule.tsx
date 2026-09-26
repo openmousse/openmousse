@@ -12,7 +12,7 @@ import { L } from '../i18n';
 import { openThread } from '../navigation';
 import { useStore } from '../store';
 import { agentTint, radius, space, type, useTheme } from '../theme';
-import { Check, ChevronLeft, ChevronRight, CircleAlert, MapPin, Plus } from './icons';
+import { Check, ChevronLeft, ChevronRight, CircleAlert, FolderKanban, MapPin, Plus } from './icons';
 import { useSheet } from './Sheet';
 import { Btn, Disclosure, Pill, Segmented, T, showError } from './ui';
 
@@ -41,15 +41,15 @@ export function dayWord(iso: string, today: string): string {
   return `${d.getMonth() + 1}/${d.getDate()}`;
 }
 /** 表单里的日子：9月28日 周一。 */
-const longDay = (iso: string) => {
+export const longDay = (iso: string) => {
   const d = parseIso(iso);
   return L(`${d.getMonth() + 1}月${d.getDate()}日 周${WD_ZH[d.getDay()]}`, `${WD_EN[d.getDay()]} ${d.getDate()}/${d.getMonth() + 1}`);
 };
 
 const TIME_RE = /^([01]?\d|2[0-3]):([0-5]\d)$/;
-const toMin = (s: string) => { const m = TIME_RE.exec(s.trim()); return m ? Number(m[1]) * 60 + Number(m[2]) : null; };
+export const toMin = (s: string) => { const m = TIME_RE.exec(s.trim()); return m ? Number(m[1]) * 60 + Number(m[2]) : null; };
 const fromMin = (n: number) => { const x = Math.max(0, Math.min(23 * 60 + 59, n)); return `${pad(Math.floor(x / 60))}:${pad(x % 60)}`; };
-const normTime = (s: string) => { const n = toMin(s); return n == null ? null : fromMin(n); };
+export const normTime = (s: string) => { const n = toMin(s); return n == null ? null : fromMin(n); };
 
 const isDeadline = (e: ScheduleEntry) => e.kind === 'deadline' || e.origin === 'canvas' || e.origin === 'apply';
 /** 能打勾的：截止、邮件里的事。课和一段安排不打勾（过去的记去没去）。 */
@@ -80,6 +80,18 @@ function WhoPill({ e }: { e: ScheduleEntry }) {
   }
   if (e.origin === 'canvas') return <Pill label={e.badge} tone="cyan" />;
   return <Pill label={e.badge} />;
+}
+
+/** 属于哪个项目：一行小字「□ CS 小组作业」，点一下进那个项目。 */
+function ProjectTag({ p }: { p: { id: string; title: string } }) {
+  const t = useTheme();
+  return (
+    <Pressable onPress={() => openThread(p.id, false)} hitSlop={6} accessibilityRole="button" accessibilityLabel={L(`打开项目：${p.title}`, `Open project: ${p.title}`)}
+      style={({ pressed }) => [{ flexDirection: 'row', alignItems: 'center', gap: 4, alignSelf: 'flex-start', opacity: pressed ? 0.6 : 1 }]}>
+      <FolderKanban size={12} color={t.cyan} />
+      <T v="caption" color={t.cyan} numberOfLines={1} style={{ fontSize: 13, fontWeight: '600' }}>{p.title}</T>
+    </Pressable>
+  );
 }
 
 function Chip({ label, tone, onPress, a11y }: { label: string; tone: 'good' | 'neutral'; onPress?: () => void; a11y?: string }) {
@@ -152,7 +164,7 @@ function EntryRow({ e, first, past, editable, onTick, onChanged }: {
   const timeTop = e.allDay || !e.start ? L('全天', 'All day') : e.start;
   const timeSub = deadline && e.start ? L('截止', 'due') : e.end;
   const sub: string[] = [];
-  if (tickable(e) && e.badge && e.origin !== 'own') sub.push(e.badge);
+  if (tickable(e) && e.badge && e.origin !== 'own' && e.badge !== e.project?.title) sub.push(e.badge);
   if (e.kind === 'class' && e.skip) sub.push(e.series ? L('每周这节都不去', 'Skipping every week') : L('你标了不去', 'Skipping this one'));
   else if (e.location) sub.push(e.location);
   // 已经过去的（翻到过去的日子，或者今天已经结束的）：有实际时间就写实际的
@@ -181,6 +193,7 @@ function EntryRow({ e, first, past, editable, onTick, onChanged }: {
           ) : null}
           {showActual ? <T v="caption" color={t.ink3} style={{ fontSize: 13 }}>{L(`原定 ${e.start}${e.end ? `–${e.end}` : ''}${trainingDone ? ' · 实际时间来自训练记录' : ''}`, `Planned ${e.start}${e.end ? `–${e.end}` : ''}`)}</T> : null}
           {e.note ? <T v="caption" color={t.ink2} numberOfLines={2} style={{ fontSize: 13 }}>{e.note}</T> : null}
+          {e.project ? <ProjectTag p={e.project} /> : null}
           {e.clash.length && !dim ? <T v="caption" color={t.warn} numberOfLines={1} style={{ fontSize: 13, fontWeight: '600' }}>{L(`和 ${e.clash[0]} 撞了`, `Clashes with ${e.clash[0]}`)}</T> : null}
           {past && editable && (e.kind === 'class' || e.kind === 'event') && e.attended === null && !e.skip ? (
             <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, marginTop: 4 }}>
@@ -197,7 +210,7 @@ function EntryRow({ e, first, past, editable, onTick, onChanged }: {
           <Chip label={e.attended === true ? (trainingDone ? L('练了', 'Done') : attendLabel[0]) : attendLabel[1]} tone={e.attended === true ? 'good' : 'neutral'}
             onPress={editable && !e.skip ? () => attend(!e.attended) : undefined} a11y={L('改成另一个', 'Switch')} />
         ) : e.skip ? <Pill label={L('不去', 'Skipping')} />
-          : e.origin === 'own' ? <WhoPill e={e} /> : null}
+          : e.origin === 'own' && !e.project ? <WhoPill e={e} /> : null}
     </View>
   );
 }
@@ -347,6 +360,7 @@ function RememberRow({ e, today, open, first, compact, onToggle, ticked, onTick 
             </View>
           ) : null}
         </Pressable>
+        {e.project && !done ? <View style={{ marginTop: 3 }}><ProjectTag p={e.project} /></View> : null}
         {done ? <T v="caption" color={t.ink3} style={{ fontSize: 13, marginTop: 3 }}>{L('勾掉了，推送和起床报告里也不提了。再点一下勾就撤销。', 'Ticked off. No more reminders about it. Tap the tick again to undo.')}</T> : null}
         {open && !done ? <Detail e={e} /> : null}
       </View>

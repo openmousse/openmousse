@@ -4,15 +4,16 @@
 // - 任务卡：这条回复派出去的后台任务。进行中显示在做哪一步；做完显示结果开头几行，「改一下」把意见直接发给做它的那个子会话，
 //   卡片变成第 2 轮；「看全文」「看过程」到任务详情。
 // - 日程卡（服务器 schedule.py）：Agent 在这次回复里改了日程或「要记得的」（挪时间、课不去、打勾、改邮件条目），一行写改了什么，能撤销。
+// - 项目小卡（服务器 projects.py）：Agent 在这次回复里改了项目卡（加了下一步、记了已定的、更新进度、开了项目、写了结论），能撤销；不在那个项目里就点一下过去。
 import React, { useEffect, useState } from 'react';
 import { ActivityIndicator, Alert, Animated, Easing, Platform, Pressable, StyleSheet, Text, View } from 'react-native';
 import { useNavigation } from '@react-navigation/native';
-import type { HandoffCard, ScheduleChangeCard, TaskCardInfo } from '../data/types';
+import type { HandoffCard, ProjectChangeCard, ScheduleChangeCard, TaskCardInfo } from '../data/types';
 import { L } from '../i18n';
 import { openThread } from '../navigation';
 import { useStore } from '../store';
 import { radius, space, type, useTheme } from '../theme';
-import { CalendarDays, Check, ChevronRight, CircleAlert, Clock, CornerDownLeft, FileText, ListChecks, LoaderCircle, Pencil, Send, Square, X } from './icons';
+import { CalendarDays, Check, ChevronRight, CircleAlert, Clock, CornerDownLeft, FileText, FolderKanban, ListChecks, LoaderCircle, Pencil, Send, Square, X } from './icons';
 import { Markdown } from './Markdown';
 import { SourceBadge } from './SourceBadge';
 import { modelOf } from './ModelPicker';
@@ -349,6 +350,45 @@ export function ScheduleChip({ card }: { card: ScheduleChangeCard }) {
         <T v="callout" style={{ fontSize: 13, fontWeight: '600' }}>{undone ? L('恢复', 'Redo') : L('撤销', 'Undo')}</T>
       </Pressable>
     </View>
+  );
+}
+
+// —— 项目小卡 ————————————————————————————————————————————————————————
+
+/** Agent 改了项目卡：一行「已定的 +1 · Leo 讲财务那段」，右边「撤销」；开了项目的是「去看看」。在别的对话里（主对话改了某个项目）点整张进那个项目。 */
+export function ProjectChip({ card, here }: { card: ProjectChangeCard; here: string }) {
+  const t = useTheme();
+  const { undoProjectCard } = useStore();
+  const [busy, setBusy] = useState(false);
+  const undone = card.status === 'undone';
+  const away = card.project !== here;
+  const go = () => openThread(card.project, false);
+  const press = () => {
+    if (card.action === 'create' || !card.undoable) { go(); return; }
+    setBusy(true);
+    undoProjectCard(card).catch((e) => showError(undone ? L('没恢复成', "Couldn't redo") : L('没撤销成', "Couldn't undo"), e)).finally(() => setBusy(false));
+  };
+  const what = away && card.projectTitle ? card.projectTitle : L('项目卡', 'Project card');
+  const btn = card.action === 'create' || !card.undoable ? L('去看看', 'Open') : undone ? L('恢复', 'Redo') : L('撤销', 'Undo');
+  return (
+    <Pressable onPress={away ? go : undefined} disabled={!away} accessibilityRole={away ? 'button' : undefined} accessibilityLabel={away ? L(`打开项目：${card.projectTitle}`, `Open project: ${card.projectTitle}`) : undefined}
+      style={({ pressed }) => [styles.chip, { backgroundColor: t.surface, borderColor: t.line, opacity: undone ? 0.65 : pressed ? 0.8 : 1 }]}>
+      <View style={[styles.circle, { width: 30, height: 30, borderRadius: 9, backgroundColor: t.cyanSoft }]}>
+        <FolderKanban size={16} color={t.cyan} />
+      </View>
+      <View style={{ flex: 1, minWidth: 0, gap: 2 }}>
+        <T v="headline" numberOfLines={1} style={{ fontSize: 14, fontWeight: '700' }}>{card.title}</T>
+        <T v="callout" numberOfLines={2} color={t.ink2} style={{ fontSize: 13, lineHeight: 18 }}>
+          {undone ? L(`${what} · 已撤销`, `${what} · undone`) : `${what} · ${card.summary}`}
+        </T>
+      </View>
+      {card.action === 'create' && !away ? null : (
+        <Pressable onPress={press} disabled={busy} accessibilityRole="button" hitSlop={6} accessibilityLabel={`${btn}：${card.title}`}
+          style={({ pressed }) => [styles.undo, { backgroundColor: t.surface2, opacity: pressed || busy ? 0.6 : 1 }]}>
+          <T v="callout" style={{ fontSize: 13, fontWeight: '600' }}>{btn}</T>
+        </Pressable>
+      )}
+    </Pressable>
   );
 }
 

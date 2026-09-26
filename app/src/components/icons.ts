@@ -88,3 +88,8 @@ export { default as Trophy } from 'lucide-react-native/icons/trophy';
 export { default as Pill } from 'lucide-react-native/icons/pill';
 export { default as ChevronUp } from 'lucide-react-native/icons/chevron-up';
 export { default as List } from 'lucide-react-native/icons/list';
+// 项目（2026-09-27）：项目的图标、截止、已定的、结论
+export { default as FolderKanban } from 'lucide-react-native/icons/folder-kanban';
+export { default as Flag } from 'lucide-react-native/icons/flag';
+export { default as Pin } from 'lucide-react-native/icons/pin';
+export { default as NotebookPen } from 'lucide-react-native/icons/notebook-pen';

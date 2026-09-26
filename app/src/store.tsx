@@ -4,7 +4,7 @@ import { useFocusEffect } from '@react-navigation/native';
 import { loadAgentName, loadServerConfig, persistAgentName, serverConfigured } from './api/base';
 import { agentName, setAgentName } from './brand';
 import { HttpApi, OfflineApi, timeNow, type GravaApi } from './api/client';
-import { dataApi, resetServerSupport, serverSupport } from './api/data';
+import { dataApi, missing, resetServerSupport, serverSupport } from './api/data';
 import { healthSupported, loadWake, postSignal, syncHealth, type WakeState } from './api/health';
 import { HEALTH_KEYS, loadHealthParts, loadLive, probe, type LiveData } from './api/live';
 import { onPushReceived, onPushResponse, registerCategories, registerPush, setAppBadge, type PushAction, type PushInfo } from './api/push';
@@ -15,9 +15,10 @@ import { openTarget } from './navigation';
 import type {
   Application, JournalEntry, PendingFile,
   ActivityEntry, AgentColor, AvatarConfig, ChatCard, FeedItem, Goal, Group, GroupIcon, GroupPatch, InboxAction, InboxItem, MemoryItem, Message, ModelsInfo, ProfileItem, PushTarget, Receipt,
-  ScheduleChangeCard, ScheduleEntry, SecurityInfo, SideChat, Task, TaskQuota, ThreadCards, UnreadSummary, UpcomingTask,
+  ProjectCard, ProjectChangeCard, ScheduleChangeCard, ScheduleEntry, SecurityInfo, SideChat, Task, TaskQuota, ThreadCards, UnreadSummary, UpcomingTask,
 } from './data/types';
 import * as sched from './api/schedule';
+import * as projectsApi from './api/projects';
 
 // 2026-09-23 起：界面上的每一项都来自服务器上的真实来源，没有示例数据。连不上服务器时各页显示"未连接"，不冒充。
 
@@ -41,6 +42,8 @@ interface State {
   liveErrors: Record<string, string>;
   groups: Group[];
   sideChats: SideChat[];
+  /** 项目卡（按项目 id）：打开那个项目时读，回复里改了、流里来了项目小卡时重读 */
+  projects: Record<string, ProjectCard>;
   threads: Record<string, Message[]>;
   threadModel: Record<string, string>;
   typing: Record<string, boolean>;
@@ -135,6 +138,20 @@ interface Actions {
   updateGroup(id: string, patch: GroupPatch): Promise<void>;
   setAvatar(a: Partial<AvatarConfig>): void;
   createSideChat(c: { title: string; purpose: string; modelId: string }): Promise<string>;
+  /** 开一个项目：名字、目标、模型，可以带第一个截止（交什么 + YYYY-MM-DD[ HH:MM]）。 */
+  createProject(p: { title: string; goal: string; modelId: string; deadline?: { title: string; due: string } }): Promise<string>;
+  /** 读一张项目卡（打开项目时、下拉刷新时）。 */
+  loadProject(id: string): Promise<void>;
+  patchProject(id: string, patch: { title?: string; goal?: string; progress?: string }): Promise<void>;
+  addProjectItem(id: string, item: { kind: 'step' | 'decision' | 'deadline'; text: string; due?: string }): Promise<void>;
+  /** 改项目卡上的一条：打勾、改文字、截止改日子。itemId：下一步 / 已定的 pi-…，截止是它的 id。 */
+  updateProjectItem(id: string, change: { id: string; text?: string; due?: string; done?: boolean }): Promise<void>;
+  deleteProjectItem(id: string, itemId: string): Promise<void>;
+  /** 归档：summarize = 先让它写结论（进记忆）。 */
+  archiveProject(id: string, summarize: boolean): Promise<void>;
+  restoreProject(id: string): Promise<void>;
+  /** 对话里项目小卡的「撤销」（撤销过的再点 = 做回来）。 */
+  undoProjectCard(card: ProjectChangeCard): Promise<void>;
   renameSideChat(id: string, title: string): Promise<void>;
   archiveSideChat(id: string, archived?: boolean): Promise<void>;
   deleteSideChat(id: string): Promise<void>;
@@ -256,6 +273,7 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
     liveErrors: {},
     groups: [],
     sideChats: [],
+    projects: {},
     threads: {},
     threadModel: { main: 'anthropic/claude-opus-5-5' },
     typing: {},
@@ -293,6 +311,8 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
   }));
 
   const latest = useRef(s);
+  /** 读项目卡（下面定义；流里的卡片回调比它先建，所以经 ref 调） */
+  const loadProjectRef = useRef<(pid: string) => Promise<void>>(async () => {});
   latest.current = s;
   const timers = useRef<ReturnType<typeof setTimeout>[]>([]);
   useEffect(() => () => timers.current.forEach(clearTimeout), []);
@@ -371,6 +391,7 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
   const onLiveCard = useCallback((threadId: string) => (card: ChatCard) => {
     setS((st) => ({ ...st, liveCards: { ...st.liveCards, [threadId]: { ...(st.liveCards[threadId] ?? {}), [card.id]: card } } }));
     if (card.kind === 'schedule') reload('schedule', 'remember').catch(() => {});  // Agent 在回复里改了日程：「今天」页跟着变
+    if (card.kind === 'project') { loadProjectRef.current(card.project).catch(() => {}); reload('sideChats').catch(() => {}); }  // 改了项目卡：顶上那张跟着变
   }, [reload]);
 
   /** 读回所有线程的对话记录；服务端还在回的线程接回去。 */
@@ -424,6 +445,7 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
   const refreshThread = useCallback(async (threadId: string) => {
     loadThreadInbox(threadId).catch(() => {});
     loadThreadCards(threadId).catch(() => {});
+    if (threadId.startsWith('sc-')) loadProjectRef.current(threadId).catch(() => {});  // 项目：顶上的项目卡也重读
     const h = await api.current.history(threadId);
     if (!h) return;
     setS((st) => ({ ...st, threads: { ...st.threads, [threadId]: h.messages }, threadModel: h.modelId ? { ...st.threadModel, [threadId]: h.modelId } : st.threadModel }));
@@ -769,6 +791,22 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
     return () => clearInterval(h);
   }, [s.connected, s.activeThread, activeCardsBusy, loadThreadCards]);
 
+  /** 读一张项目卡。没有这个项目了（删了）就丢掉；老服务器没有这个接口就不管。 */
+  const loadProject = useCallback(async (pid: string) => {
+    if (!api.current.connected) return;
+    try {
+      const card = await projectsApi.get(pid);
+      setS((st) => ({ ...st, projects: { ...st.projects, [pid]: card } }));
+    } catch (e) {
+      if (missing(e)) setS((st) => { const projects = { ...st.projects }; delete projects[pid]; return { ...st, projects }; });
+    }
+  }, []);
+  useEffect(() => { loadProjectRef.current = loadProject; }, [loadProject]);
+  /** 改了项目卡以后：重读那张卡和侧栏（最近的截止）；动了截止就连「今天」的日程和「要记得的」一起。 */
+  const afterProject = useCallback(async (pid: string, deadlines = true) => {
+    await Promise.all([loadProject(pid), reload('sideChats'), deadlines ? reload('schedule', 'remember') : null]);
+  }, [loadProject, reload]);
+
   const send = useCallback((threadId: string, text: string, files?: PendingFile[], opts?: { inboxId?: string; ref?: string }) => {
     const pending = files?.map((f, i) => ({ id: `local${i}`, name: f.name, mime: f.mime, size: f.size, kind: kindOf(f.name, f.mime), url: f.uri }));
     // '（见附件）' 是占位标记，和服务端 chat.py 一致，ChatView 按原文比较后隐藏：不翻译。
@@ -786,7 +824,11 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
       { ...(opts?.inboxId ? { inboxId: opts.inboxId } : {}), ...(opts?.ref ? { ref: opts.ref } : {}), onCard: onLiveCard(threadId) })
       .catch((e: unknown): Message => ({ id: id('r'), role: 'grava', time: timeNow(), modelId, body: { type: 'text', text: L('（这条没发出去。）', "(This message wasn't sent.)") }, error: errText(e) }))
       // 可能刚写了一张建议卡、提了一件要你点头的事、转给了某个 Agent、派了任务
-      .then((reply) => { reload('feed', 'schedule', 'remember'); loadThreadInbox(threadId).catch(() => {}); loadThreadCards(threadId, true).catch(() => {}); return reply; })
+      .then((reply) => {
+        reload('feed', 'schedule', 'remember'); loadThreadInbox(threadId).catch(() => {}); loadThreadCards(threadId, true).catch(() => {});
+        if (latest.current.sideChats.some((c) => c.id === threadId)) { loadProjectRef.current(threadId).catch(() => {}); reload('sideChats').catch(() => {}); }  // 它可能改了项目卡
+        return reply;
+      })
       .then((reply) => setS((st) => {
         const streaming = { ...st.streaming }; delete streaming[threadId];
         return {
@@ -900,10 +942,37 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
       if (latest.current.connected) dataApi.setAvatar(next).catch(() => {});
     },
     createSideChat: async (c) => {
-      const cid = await dataApi.createSideChat({ title: c.title, purpose: c.purpose, model: c.modelId });
+      // 先走项目的接口（职责就是目标）；老服务器没有就退回原来的独立空间
+      const cid = await projectsApi.create({ title: c.title, goal: c.purpose, model: c.modelId })
+        .catch((e: unknown) => (missing(e) ? dataApi.createSideChat({ title: c.title, purpose: c.purpose, model: c.modelId }) : Promise.reject(e)));
       setS((st) => ({ ...st, threads: { ...st.threads, [cid]: [] }, threadModel: { ...st.threadModel, [cid]: c.modelId } }));
       await reload('sideChats', 'activity');
       return cid;
+    },
+    createProject: async (p) => {
+      const cid = await projectsApi.create({ title: p.title, goal: p.goal, model: p.modelId, deadlines: p.deadline ? [p.deadline] : [] });
+      setS((st) => ({ ...st, threads: { ...st.threads, [cid]: [] }, threadModel: { ...st.threadModel, [cid]: p.modelId } }));
+      await Promise.all([reload('sideChats', 'activity'), loadProject(cid), p.deadline ? reload('schedule', 'remember') : null]);
+      return cid;
+    },
+    loadProject: (pid) => loadProject(pid),
+    patchProject: async (pid, patch) => { await projectsApi.patch(pid, patch); await afterProject(pid); },
+    addProjectItem: async (pid, item) => { await projectsApi.addItem(pid, item); await afterProject(pid, item.kind === 'deadline'); },
+    updateProjectItem: async (pid, change) => { await projectsApi.updateItem(pid, change); await afterProject(pid, !change.id.startsWith('pi-')); },
+    deleteProjectItem: async (pid, itemId) => { await projectsApi.deleteItem(pid, itemId); await afterProject(pid, !itemId.startsWith('pi-')); },
+    archiveProject: async (pid, summarize) => { await projectsApi.archive(pid, summarize); await afterProject(pid); reload('activity').catch(() => {}); },
+    restoreProject: async (pid) => { await projectsApi.restore(pid); await afterProject(pid); reload('activity').catch(() => {}); },
+    undoProjectCard: async (card) => {
+      const r = await projectsApi.undo(card.logId, card.status === 'undone');
+      const swap = (c: ChatCard) => (c.id === card.id ? { ...c, status: r.card.status } as ChatCard : c);
+      setS((st) => {
+        const cardsByThread = { ...st.cardsByThread };
+        for (const [tid, c] of Object.entries(cardsByThread)) if (c.cards.some((x) => x.id === card.id)) cardsByThread[tid] = { ...c, cards: c.cards.map(swap) };
+        const liveCards = { ...st.liveCards };
+        for (const [tid, m] of Object.entries(liveCards)) if (m[card.id]) liveCards[tid] = { ...m, [card.id]: swap(m[card.id]) };
+        return { ...st, cardsByThread, liveCards };
+      });
+      await afterProject(card.project);
     },
     renameSideChat: async (cid, title) => {
       await dataApi.patchSideChat(cid, { title });
@@ -947,7 +1016,7 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
       });
       await reload('schedule', 'remember');
     },
-  }), [refreshLive, reload, syncHealthNow, send, refreshThread, decide, markFeedSeen, markRead, setActiveThread, loadThreadCards]);
+  }), [refreshLive, reload, syncHealthNow, send, refreshThread, decide, markFeedSeen, markRead, setActiveThread, loadThreadCards, loadProject, afterProject]);
 
   const value = useMemo(() => ({ ...s, ...actions }), [s, actions]);
   return <Ctx.Provider value={value}>{children}</Ctx.Provider>;
