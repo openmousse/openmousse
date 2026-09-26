@@ -4,15 +4,18 @@ import { useNavigation } from '@react-navigation/native';
 import { Plus } from '../components/icons';
 import { GroupBadge } from '../components/GroupIcon';
 import { modelOf } from '../components/ModelPicker';
-import { LargeHeader, Pill, PullRefresh, Screen, T } from '../components/ui';
+import { CountPill, LargeHeader, Pill, PullRefresh, Screen, T } from '../components/ui';
 import { L } from '../i18n';
 import { useStore } from '../store';
 import { radius, space, useTheme } from '../theme';
 
+/** 列表里的一行预览：去掉 Markdown 记号，压成一行。 */
+const plain = (s: string) => s.replace(/[*_`#>]+/g, '').replace(/\s+/g, ' ').trim();
+
 export function GroupsScreen() {
   const t = useTheme();
   const nav = useNavigation<any>();
-  const { groups, approvals, live, connected, booting, dataErrors, reload } = useStore();
+  const { groups, inbox, unread, live, connected, booting, dataErrors, reload } = useStore();
   // 还没在 Agent 里聊过的，副标题用看板上的真实数据或者职责。
   const subtitle = (id: string, lastLine: string, purpose: string) => {
     if (lastLine) return lastLine;
@@ -29,7 +32,7 @@ export function GroupsScreen() {
   };
   return (
     <Screen>
-      <ScrollView contentContainerStyle={{ paddingBottom: space.xxl }} refreshControl={<PullRefresh onRefresh={() => reload('groups', 'feed')} />}>
+      <ScrollView contentContainerStyle={{ paddingBottom: space.xxl }} refreshControl={<PullRefresh onRefresh={() => reload('groups', 'feed', 'inbox', 'unread')} />}>
         <LargeHeader title="Agents" sub={L('每个 Agent 管一件事，记忆各自独立', 'Each agent handles one thing and has its own memory')}
           right={
             <Pressable onPress={() => nav.navigate('NewGroup')} accessibilityRole="button" accessibilityLabel={L('新建 Agent', 'New agent')}
@@ -44,18 +47,22 @@ export function GroupsScreen() {
               : booting ? L('正在连服务器…', 'Connecting to the server…') : L('没连上服务器。', 'Not connected to the server.')}</T>
           ) : null}
           {groups.map((g) => {
-            const pending = approvals.filter((a) => a.groupId === g.id).length;
+            const pending = inbox.filter((a) => a.source === g.id).length;
+            // 有没看的回复：右边青色数字，最后一句用深色、加粗一点（用未读里带的最新一条，列表里的 lastLine 可能还没刷新）
+            const u = unread.threads[g.id];
             return (
               <Pressable key={g.id} onPress={() => nav.navigate('Group', { id: g.id })} accessibilityRole="button"
                 style={({ pressed }) => [styles.card, { backgroundColor: t.surface, opacity: pressed ? 0.75 : 1 }]}>
                 <GroupBadge icon={g.icon} />
                 <View style={{ flex: 1, gap: 4 }}>
                   <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
-                    <T v="headline">{g.name}</T>
+                    <T v="headline" numberOfLines={1} style={{ flexShrink: 1 }}>{g.name}</T>
                     {g.dashboard === 'fitness' || g.dashboard === 'diet' ? <Pill label={live?.week?.source || live?.diet?.source || L('数据源', 'Data source')} tone="good" /> : null}
                     {pending ? <Pill label={L(`${pending} 个待审批`, `${pending} to approve`)} tone="gold" /> : null}
+                    <View style={{ flex: 1 }} />
+                    <CountPill n={u?.n ?? 0} />
                   </View>
-                  <T v="callout" color={t.ink2} numberOfLines={2}>{subtitle(g.id, g.lastLine, g.purpose)}</T>
+                  <T v="callout" color={u ? t.ink : t.ink2} numberOfLines={2} style={u ? { fontWeight: '500' } : undefined}>{(u?.last?.text && plain(u.last.text)) || subtitle(g.id, g.lastLine, g.purpose)}</T>
                   <T v="caption" color={t.ink3}>{modelOf(g.modelId)?.short ?? g.modelId}</T>
                 </View>
               </Pressable>

@@ -1,16 +1,16 @@
-import React, { useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { agentName } from '../brand';
-import { Alert, Pressable, ScrollView, StyleSheet, Switch, View } from 'react-native';
-import { useNavigation } from '@react-navigation/native';
+import { Alert, Animated, AppState, Platform, Pressable, ScrollView, StyleSheet, Switch, Text, View, type LayoutChangeEvent } from 'react-native';
+import { useIsFocused, useNavigation, useRoute } from '@react-navigation/native';
 import { ChevronLeft, ChevronRight, LoaderCircle, MapPin, X } from '../components/icons';
-import { ApprovalCard } from '../components/ApprovalCard';
+import { InboxCard } from '../components/InboxCard';
 import { modelName, originName } from '../components/TaskCard';
 import { Card, LargeHeader, ListRow, Pill, PullRefresh, Screen, SectionLabel, T } from '../components/ui';
-import type { FeedItem, JournalEntry, UpcomingTask } from '../data/types';
+import type { FeedItem, InboxItem, JournalEntry, UpcomingTask } from '../data/types';
 import { dataApi } from '../api/data';
 import { loadEventsOn, type LiveEvent } from '../api/live';
 import { L } from '../i18n';
-import { useStore } from '../store';
+import { receiptItems, useStore, type DataKey } from '../store';
 import { radius, space, useTheme } from '../theme';
 import { MealPlanCard } from '../components/LiveBoards';
 import { Markdown } from '../components/Markdown';
@@ -87,8 +87,8 @@ function EventList({ events, empty }: { events: LiveEvent[]; empty: string }) {
   );
 }
 
-/** 一张建议卡。别的日子不给划掉。 */
-function FeedCard({ f, onDismiss }: { f: FeedItem; onDismiss?: () => void }) {
+/** 一张建议卡。别的日子不给划掉。isNew：还没看过，时间后面标一个青色的「新」。 */
+function FeedCard({ f, onDismiss, isNew }: { f: FeedItem; onDismiss?: () => void; isNew?: boolean }) {
   const t = useTheme();
   const nav = useNavigation<any>();
   const { groups } = useStore();
@@ -97,7 +97,13 @@ function FeedCard({ f, onDismiss }: { f: FeedItem; onDismiss?: () => void }) {
     <Card style={{ gap: space.sm }}>
       <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
         <Pill label={gname} tone={f.groupId ? 'cyan' : 'gold'} />
-        <T v="caption" color={t.ink3} style={{ flex: 1 }}>{onDismiss ? f.time : f.createdAt?.slice(11, 16) || f.time}</T>
+        <T v="caption" color={t.ink3}>{onDismiss ? f.time : f.createdAt?.slice(11, 16) || f.time}</T>
+        {isNew ? (
+          <View style={[styles.newPill, { backgroundColor: t.cyan }]} accessible accessibilityLabel={L('新的', 'New')}>
+            <Text style={[styles.newText, { color: t.surface }]}>{L('新', 'New')}</Text>
+          </View>
+        ) : null}
+        <View style={{ flex: 1 }} />
         {onDismiss ? <Pressable onPress={onDismiss} hitSlop={10} accessibilityRole="button" accessibilityLabel={L('不感兴趣', 'Not interested')}><X size={16} color={t.ink3} /></Pressable> : null}
       </View>
       <T v="headline">{f.title}</T>
@@ -110,6 +116,32 @@ function FeedCard({ f, onDismiss }: { f: FeedItem; onDismiss?: () => void }) {
       ) : null}
     </Card>
   );
+}
+
+/** 从通知 / 小窗点进来时闪一下金边，只闪一次。 */
+function Flash({ token, round }: { token: number; round: number }) {
+  const t = useTheme();
+  const [o] = useState(() => new Animated.Value(0));
+  useEffect(() => {
+    if (!token) return;
+    const nd = Platform.OS !== 'web';
+    o.setValue(0);
+    Animated.sequence([
+      Animated.timing(o, { toValue: 1, duration: 180, useNativeDriver: nd }),
+      Animated.delay(900),
+      Animated.timing(o, { toValue: 0, duration: 700, useNativeDriver: nd }),
+    ]).start();
+  }, [token, o]);
+  return <Animated.View pointerEvents="none" style={[StyleSheet.absoluteFill, { borderRadius: round, borderWidth: 2, borderColor: t.goldFill, opacity: o }]} />;
+}
+
+const byNewest = (a: InboxItem, b: InboxItem) => (Date.parse(b.createdAt) || 0) - (Date.parse(a.createdAt) || 0);
+
+/** 「今天」页上的位置簿记（都是相对 ScrollView 内容的 y）：滚到某张卡、判断哪些卡在屏幕里。 */
+type Layout = { pad: number; inbox: number; feed: number; items: Record<string, { y: number; h: number }>; scrollY: number; viewH: number };
+function yOf(l: Layout, key: string): number | null {
+  const it = l.items[key];
+  return it ? l.pad + (key.startsWith('card:') ? l.feed : l.inbox) + it.y : null;
 }
 
 type DayData = { events: LiveEvent[]; feed: FeedItem[]; errors: string[] };
@@ -169,7 +201,9 @@ function DayView({ iso, offset, refreshKey }: { iso: string; offset: number; ref
 export function TodayScreen() {
   const t = useTheme();
   const nav = useNavigation<any>();
-  const { approvals, feed, upcoming, groups, sideChats, dismissFeed, live, tasks, connected, booting, reload, refreshLive, loading, dataErrors } = useStore();
+  const route = useRoute<any>();
+  const focused = useIsFocused();
+  const { inbox, inboxRecent, receipts, feed, upcoming, groups, sideChats, dismissFeed, markFeedSeen, live, tasks, connected, booting, reload, refreshLive, loading, dataErrors } = useStore();
   const [showOff, setShowOff] = useState(false);
   const [offset, setOffset] = useState(0);
   const [dayRefresh, setDayRefresh] = useState(0);
@@ -180,17 +214,100 @@ export function TodayScreen() {
   const tomorrows = (live?.events ?? []).filter((e) => e.date > iso);
   const on = upcoming.filter((u) => u.enabled);
   const off = upcoming.filter((u) => !u.enabled);
+  // 等你点头的 + 这次点过头的回执（今天的），新的在上面。回执和原来的卡同一个位置，点完原地收成一行。
+  const done = receiptItems(receipts, inboxRecent, inbox, iso);
+  const asks = [...inbox, ...done].sort(byNewest);
+  const waiting = done.some((i) => i.status === 'approved' || i.status === 'revising');
+
+  // —— 位置簿记 ——
+  const scroller = useRef<ScrollView>(null);
+  const lay = useRef<Layout>({ pad: 0, inbox: 0, feed: 0, items: {}, scrollY: 0, viewH: 0 });
+  const place = (key: string) => (e: LayoutChangeEvent) => { const { y, height } = e.nativeEvent.layout; lay.current.items[key] = { y, h: height }; };
+
+  // —— 新卡片：在屏幕里停留 1.5 秒算看过（只在「今天」、页面在前台时） ——
+  const live2 = useRef({ focused, offset, feed, markFeedSeen });
+  useEffect(() => { live2.current = { focused, offset, feed, markFeedSeen }; });
+  const seenTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const checkSeen = useCallback(() => {
+    const { focused: f, offset: o, feed: items, markFeedSeen: mark } = live2.current;
+    const l = lay.current;
+    if (!f || o !== 0 || !l.viewH || AppState.currentState !== 'active') return;
+    const top = l.scrollY;
+    const bottom = l.scrollY + l.viewH;
+    const ids = items.filter((x) => x.seen === false).filter((x) => {
+      const it = l.items[`card:${x.id}`];
+      if (!it) return false;
+      const y0 = l.pad + l.feed + it.y;
+      return Math.min(bottom, y0 + it.h) - Math.max(top, y0) >= Math.min(it.h * 0.5, 160);
+    }).map((x) => x.id);
+    if (ids.length) mark(ids);
+  }, []);
+  const scheduleSeen = useCallback(() => {
+    if (seenTimer.current) clearTimeout(seenTimer.current);
+    seenTimer.current = setTimeout(checkSeen, 1500);
+  }, [checkSeen]);
+  useEffect(() => {
+    if (focused && offset === 0) scheduleSeen();
+    return () => { if (seenTimer.current) clearTimeout(seenTimer.current); };
+  }, [focused, offset, feed, scheduleSeen]);
+
+  // 回到这一页时，有回执还在等结果：看看做完没有
+  useEffect(() => { if (focused && waiting && connected) reload('inboxRecent').catch(() => {}); }, [focused, waiting, connected, reload]);
+
+  // —— 从通知 / 小窗点进来：回到今天，滚到那张卡，闪一下金边 ——
+  const [flash, setFlash] = useState<{ key: string; token: number } | null>(null);
+  const hl = route.params?.highlight as { kind: 'card' | 'inbox'; id: string } | undefined;
+  const hlAt = (route.params?.at as number | undefined) ?? 0;
+  // 新的一次跳转：先回到今天（渲染时就调整，不在 effect 里 setState）
+  const [seenAt, setSeenAt] = useState(hlAt);
+  if (hlAt !== seenAt) {
+    setSeenAt(hlAt);
+    if (hlAt) setOffset(0);
+  }
+  const hlRef = useRef(hl);
+  // 现在页面上有哪些卡（量过的位置可能是早就划掉的那张留下的）
+  const shown = useRef(new Set<string>());
+  useEffect(() => {
+    hlRef.current = hl;
+    shown.current = new Set([...asks.map((i) => `inbox:${i.id}`), ...feed.map((f) => `card:${f.id}`)]);
+  });
+  useEffect(() => {
+    if (!hlAt) return undefined;
+    const target = hlRef.current;
+    if (!target) { scroller.current?.scrollTo({ y: 0, animated: true }); return undefined; }
+    const key = `${target.kind}:${target.id}`;
+    let tries = 0;
+    let timer: ReturnType<typeof setTimeout>;
+    const tick = () => {
+      const y = shown.current.has(key) ? yOf(lay.current, key) : null;
+      if (y != null) {
+        scroller.current?.scrollTo({ y: Math.max(0, y - 96), animated: true });
+        setFlash({ key, token: Date.now() });
+        return;
+      }
+      // 卡片可能还在读（推送刚到）：等一会儿再找，最多 8 秒；找不到就停在「等你点头」那一段
+      if (++tries < 40) { timer = setTimeout(tick, 200); return; }
+      if (target.kind === 'inbox') scroller.current?.scrollTo({ y: Math.max(0, lay.current.pad + lay.current.inbox - 48), animated: true });
+    };
+    timer = setTimeout(tick, 150);
+    return () => clearTimeout(timer);
+  }, [hlAt]);
+  const flashFor = (key: string) => (flash?.key === key ? flash.token : 0);
+
+  const refreshKeys: DataKey[] = ['inbox', 'unread', 'upcoming', 'tasks', 'feed', 'journal', ...(done.length ? ['inboxRecent' as const] : [])];
   return (
     <Screen>
-      <ScrollView contentContainerStyle={{ paddingBottom: space.xxl }}
-        refreshControl={<PullRefresh onRefresh={() => { if (offset !== 0) setDayRefresh((n) => n + 1); return connected ? reload('approvals', 'upcoming', 'tasks', 'feed', 'journal') : refreshLive(); }} />}>
+      <ScrollView ref={scroller} contentContainerStyle={{ paddingBottom: space.xxl }} scrollEventThrottle={100}
+        onScroll={(e) => { lay.current.scrollY = e.nativeEvent.contentOffset.y; scheduleSeen(); }}
+        onLayout={(e) => { lay.current.viewH = e.nativeEvent.layout.height; scheduleSeen(); }}
+        refreshControl={<PullRefresh onRefresh={() => { if (offset !== 0) setDayRefresh((n) => n + 1); return connected ? reload(...refreshKeys) : refreshLive(); }} />}>
         <LargeHeader title={titleOf(offset)} sub={subOf(offset)} right={(
           <View style={styles.nav}>
             <Pressable onPress={() => setOffset((o) => o - 1)} hitSlop={8} accessibilityRole="button" accessibilityLabel={L('前一天', 'Previous day')} style={({ pressed }) => [styles.navBtn, { backgroundColor: t.surface2, opacity: pressed ? 0.6 : 1 }]}><ChevronLeft size={20} color={t.ink} /></Pressable>
             <Pressable onPress={() => setOffset((o) => o + 1)} hitSlop={8} accessibilityRole="button" accessibilityLabel={L('后一天', 'Next day')} style={({ pressed }) => [styles.navBtn, { backgroundColor: t.surface2, opacity: pressed ? 0.6 : 1 }]}><ChevronRight size={20} color={t.ink} /></Pressable>
           </View>
         )} />
-        <View style={{ paddingHorizontal: space.lg }}>
+        <View style={{ paddingHorizontal: space.lg }} onLayout={(e) => { lay.current.pad = e.nativeEvent.layout.y; }}>
           {offset !== 0 ? (
             <Pressable onPress={() => setOffset(0)} accessibilityRole="button" style={{ alignSelf: 'flex-start', paddingVertical: 2, paddingHorizontal: space.xs }}>
               <T v="callout" color={t.gold} style={{ fontWeight: '600' }}>{L('回到今天', 'Back to today')}</T>
@@ -203,18 +320,27 @@ export function TodayScreen() {
           ) : null}
           {offset !== 0 ? <DayView iso={dayIso} offset={offset} refreshKey={dayRefresh} /> : (<>
 
-          <SectionLabel>{L('等你点头', 'Needs your OK')}</SectionLabel>
-          {approvals.length ? (
-            <View style={{ gap: space.md }}>{approvals.map((a) => <ApprovalCard key={a.id} approval={a} />)}</View>
+          <SectionLabel right={(
+            <Pressable onPress={() => nav.navigate('Inbox')} hitSlop={8} accessibilityRole="button" accessibilityLabel={L('已处理', 'Handled')} style={styles.more}>
+              <T v="callout" color={t.gold} style={{ fontWeight: '600' }}>{L('已处理', 'Handled')}</T>
+              <ChevronRight size={16} color={t.gold} />
+            </Pressable>
+          )}>{inbox.length ? L(`等你点头 · ${inbox.length}`, `Needs your OK · ${inbox.length}`) : L('等你点头', 'Needs your OK')}</SectionLabel>
+          {asks.length ? (
+            <View style={{ gap: space.md }} onLayout={(e) => { lay.current.inbox = e.nativeEvent.layout.y; }}>
+              {asks.map((it) => (
+                <View key={it.id} onLayout={place(`inbox:${it.id}`)}>
+                  <InboxCard item={it} />
+                  {flashFor(`inbox:${it.id}`) ? <Flash token={flashFor(`inbox:${it.id}`)} round={it.status === 'pending' ? radius.lg : 14} /> : null}
+                </View>
+              ))}
+            </View>
           ) : (
             <Card>
-              <T v="callout" color={dataErrors.approvals ? t.bad : t.ink2}>
-                {dataErrors.approvals
-                  ? L(`读不到审批队列：${dataErrors.approvals}`, `Couldn't load the approval queue: ${dataErrors.approvals}`)
-                  : L(
-                    `没有等你点头的事。${agentName()} 要做需要审批的动作时会出现在这里（审批开没开，见「我 → 安全」）。`,
-                    `Nothing waiting for your OK. When ${agentName()} wants to do something that needs approval, it shows up here (whether approvals are on: Me → Security).`,
-                  )}
+              <T v="callout" color={dataErrors.inbox ? t.bad : t.ink2}>
+                {dataErrors.inbox
+                  ? L(`读不到收件箱：${dataErrors.inbox}`, `Couldn't load the inbox: ${dataErrors.inbox}`)
+                  : L('没有等你点头的事。需要你决定的事会出现在这里。', 'Nothing waiting for your OK. Anything that needs your decision will show up here.')}
               </T>
             </Card>
           )}
@@ -249,8 +375,13 @@ export function TodayScreen() {
 
           <SectionLabel>{L(`${agentName()} 的建议`, `Suggestions from ${agentName()}`)}</SectionLabel>
           {feed.length ? (
-            <View style={{ gap: space.md }}>
-              {feed.map((f) => <FeedCard key={f.id} f={f} onDismiss={() => dismissFeed(f.id)} />)}
+            <View style={{ gap: space.md }} onLayout={(e) => { lay.current.feed = e.nativeEvent.layout.y; scheduleSeen(); }}>
+              {feed.map((f) => (
+                <View key={f.id} onLayout={place(`card:${f.id}`)}>
+                  <FeedCard f={f} onDismiss={() => dismissFeed(f.id)} isNew={f.seen === false} />
+                  {flashFor(`card:${f.id}`) ? <Flash token={flashFor(`card:${f.id}`)} round={radius.lg} /> : null}
+                </View>
+              ))}
             </View>
           ) : (
             <Card><T v="callout" color={t.ink2}>{L('还没有建议。起床报告和主动提醒会出现在这里。', 'No suggestions yet. Morning reports and proactive reminders will show up here.')}</T></Card>
@@ -290,5 +421,8 @@ const styles = StyleSheet.create({
   up: { flexDirection: 'row', alignItems: 'center', gap: space.md, paddingVertical: 12 },
   ev: { flexDirection: 'row', gap: space.md, paddingVertical: 12 },
   nav: { flexDirection: 'row', gap: 8 },
+  more: { flexDirection: 'row', alignItems: 'center', gap: 2 },
+  newPill: { height: 20, borderRadius: 10, paddingHorizontal: 8, alignItems: 'center', justifyContent: 'center' },
+  newText: { fontSize: 11, fontWeight: '700' },
   navBtn: { width: 36, height: 36, borderRadius: 18, alignItems: 'center', justifyContent: 'center' },
 });

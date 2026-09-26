@@ -15,6 +15,8 @@ import { TaskScreen, TasksScreen } from './screens/TasksScreen';
 import { TodayScreen } from './screens/TodayScreen';
 import { HistoryDayScreen, HistoryScreen } from './screens/HistoryScreen';
 import { ConnectScreen } from './screens/ConnectScreen';
+import { InboxScreen } from './screens/InboxScreen';
+import type { PushTarget } from './data/types';
 import { L } from './i18n';
 import { useStore } from './store';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -25,8 +27,13 @@ const Stack = createNativeStackNavigator();
 
 function Tabs() {
   const t = useTheme();
-  const { approvals } = useStore();
+  const { inbox, unread, groups, sideChats } = useStore();
   const insets = useSafeAreaInsets();
+  // 未读（青色）：「对话」= 主对话 + 独立空间，「Agents」= 各个 Agent。「今天」（金色）= 等你点头的。
+  const n = (id: string) => unread.threads[id]?.n ?? 0;
+  const chatUnread = n('main') + sideChats.reduce((sum, c) => sum + n(c.id), 0);
+  const agentUnread = groups.reduce((sum, g) => sum + n(g.id), 0);
+  const cyanBadge = { backgroundColor: t.cyan, color: t.surface };
   // Tab 的 name 是路由标识（深链 ?screen=今天、navigate 都用它），不翻译；界面上显示的是 tabBarLabel。
   return (
     <Tab.Navigator
@@ -37,10 +44,12 @@ function Tabs() {
         tabBarStyle: { backgroundColor: t.surface, borderTopColor: t.line, height: 72 + insets.bottom, paddingTop: 8, paddingBottom: insets.bottom + 10 },
         tabBarLabelStyle: { fontSize: 11, fontWeight: '600', lineHeight: 14 },
       }}>
-      <Tab.Screen name="对话" component={ChatScreen} options={{ tabBarLabel: L('对话', 'Chat'), tabBarIcon: ({ color, size }) => <MessageCircle color={color} size={size} /> }} />
-      <Tab.Screen name="Agents" component={GroupsScreen} options={{ tabBarIcon: ({ color, size }) => <LayoutGrid color={color} size={size} /> }} />
+      <Tab.Screen name="对话" component={ChatScreen}
+        options={{ tabBarLabel: L('对话', 'Chat'), tabBarIcon: ({ color, size }) => <MessageCircle color={color} size={size} />, tabBarBadge: chatUnread || undefined, tabBarBadgeStyle: cyanBadge }} />
+      <Tab.Screen name="Agents" component={GroupsScreen}
+        options={{ tabBarIcon: ({ color, size }) => <LayoutGrid color={color} size={size} />, tabBarBadge: agentUnread || undefined, tabBarBadgeStyle: cyanBadge }} />
       <Tab.Screen name="今天" component={TodayScreen}
-        options={{ tabBarLabel: L('今天', 'Today'), tabBarIcon: ({ color, size }) => <Sparkles color={color} size={size} />, tabBarBadge: approvals.length || undefined, tabBarBadgeStyle: { backgroundColor: t.goldFill, color: t.onGold } }} />
+        options={{ tabBarLabel: L('今天', 'Today'), tabBarIcon: ({ color, size }) => <Sparkles color={color} size={size} />, tabBarBadge: inbox.length || undefined, tabBarBadgeStyle: { backgroundColor: t.goldFill, color: t.onGold } }} />
       <Tab.Screen name="目标" component={GoalsScreen} options={{ tabBarLabel: L('目标', 'Goals'), tabBarIcon: ({ color, size }) => <Target color={color} size={size} /> }} />
       <Tab.Screen name="我" component={MeScreen} options={{ tabBarLabel: L('我', 'Me'), tabBarIcon: ({ color, size }) => <User color={color} size={size} /> }} />
     </Tab.Navigator>
@@ -59,15 +68,47 @@ function initialFromQuery() {
   return { routes: [{ name: 'Tabs' }, { name: screen, params }], index: 1 };
 }
 
-/** 给推送通知跳转用（src/store.tsx）。 */
+/** 给推送通知和小窗跳转用（src/store.tsx、components/Banner.tsx）。 */
 export const navigationRef = createNavigationContainerRef<any>();
 
-/** 打开某个对话：main / 独立空间在「对话」tab 里，Group 有自己的页。 */
-export function openThread(thread: string, isGroup: boolean) {
-  if (!navigationRef.isReady()) return;
-  if (thread === 'today') { navigationRef.navigate('Tabs', { screen: '今天' }); return; }  // 起床报告、提醒
-  if (isGroup) navigationRef.navigate('Group', { id: thread });
-  else navigationRef.navigate('Tabs', { screen: '对话', params: { thread, at: Date.now() } });
+/** 从收件箱「去对话里说」带到对话里的引用：输入框上面显示「回复：标题」，发出去时带上 inboxId。 */
+export interface ChatQuote { inboxId: string; title: string }
+
+// 冷启动时点通知，那一下可能比导航器准备好还早（RootNavigator 要等本机配置读完才渲染）：先记下来，onReady 时补上。
+let queued: { target: PushTarget; isGroup: boolean; quote?: ChatQuote } | null = null;
+
+/**
+ * 打开推送 / 小窗指向的地方：
+ * 对话 → main / 独立空间在「对话」tab 里，Agent 有自己的页；卡片、收件箱 → 「今天」页，滚到那一张闪一下金边。
+ * 去 tab 用 pop：从「已处理」「任务」这类叠在上面的页过去时退回到 tab，不再叠一层新的。
+ */
+export function openTarget(target: PushTarget, isGroup = false, quote?: ChatQuote) {
+  if (!navigationRef.isReady()) { queued = { target, isGroup, quote }; return; }
+  const at = Date.now();
+  const tab = (screen: string, params: object) => navigationRef.navigate('Tabs', { screen, params }, { pop: true });
+  switch (target.type) {
+    case 'thread':
+      if (target.thread === 'today') tab('今天', { at });
+      else if (isGroup) navigationRef.navigate('Group', { id: target.thread, tab: 'chat', at, quote });
+      else tab('对话', { thread: target.thread, at, quote });
+      return;
+    case 'card':
+    case 'inbox':
+      tab('今天', { highlight: { kind: target.type, id: target.id }, at });
+      return;
+    default:
+      tab('今天', { at });
+  }
+}
+
+/** 打开某个对话（quote：顺带一条收件箱引用）。 */
+export const openThread = (thread: string, isGroup: boolean, quote?: ChatQuote) => openTarget({ type: 'thread', thread }, isGroup, quote);
+
+function flushQueued() {
+  if (!queued || !navigationRef.isReady()) return;
+  const q = queued;
+  queued = null;
+  openTarget(q.target, q.isGroup, q.quote);
 }
 
 export function RootNavigator() {
@@ -77,13 +118,14 @@ export function RootNavigator() {
   if (!configLoaded) return null;  // 先读本机的服务器配置，决定首页是连接页还是 Tabs
   // 不配置 linking：导航状态只存在内存里，不读写浏览器地址栏，网页预览放在任何路径下都能跑。
   return (
-    <NavigationContainer ref={navigationRef} theme={{ ...base, colors: { ...base.colors, background: t.bg, card: t.surface, text: t.ink, border: t.line, primary: t.gold } }} documentTitle={{ enabled: false }} initialState={initialFromQuery()}>
+    <NavigationContainer ref={navigationRef} theme={{ ...base, colors: { ...base.colors, background: t.bg, card: t.surface, text: t.ink, border: t.line, primary: t.gold } }} documentTitle={{ enabled: false }} initialState={initialFromQuery()} onReady={flushQueued}>
       <Stack.Navigator initialRouteName={needsServer ? 'Connect' : 'Tabs'} screenOptions={{ headerShown: false, contentStyle: { backgroundColor: t.bg } }}>
         <Stack.Screen name="Tabs" component={Tabs} />
         <Stack.Screen name="Connect" component={ConnectScreen} />
         <Stack.Screen name="Group" component={GroupScreen} />
         <Stack.Screen name="History" component={HistoryScreen} />
         <Stack.Screen name="HistoryDay" component={HistoryDayScreen} />
+        <Stack.Screen name="Inbox" component={InboxScreen} />
         <Stack.Screen name="NewGroup" component={NewGroupScreen} options={{ presentation: 'modal' }} />
         <Stack.Screen name="Identity" component={IdentityScreen} />
         <Stack.Screen name="Memory" component={MemoryScreen} />

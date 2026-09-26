@@ -99,6 +99,16 @@ export function fileUrl(path: string): string {
 }
 
 export class AuthError extends Error {}
+/** 服务器回了错误状态码。status 用来区分「这个接口老服务器上没有」（404 / 405）。 */
+export class HttpError extends Error {
+  status: number;
+  constructor(message: string, status: number) { super(message); this.status = status; }
+}
+/** 错误里带的 HTTP 状态码（不靠 instanceof：跨打包边界时不一定认得出子类）。 */
+export const httpStatus = (e: unknown): number | undefined => {
+  const s = (e as { status?: unknown } | null)?.status;
+  return typeof s === 'number' ? s : undefined;
+};
 
 /** 试连某个服务器（不改当前配置）。 */
 export async function testServer(b: string, tok: string): Promise<{ ok: true; appName: string } | { ok: false; reason: 'auth' | 'down'; message: string }> {
@@ -131,7 +141,7 @@ export async function request<T>(path: string, init?: { method?: string; body?: 
     });
     const j = await r.json().catch(() => ({}));
     if (r.status === 401) throw new AuthError(j.error || L('接入令牌不对', 'Wrong access token'));
-    if (!r.ok || j.ok === false) throw new Error(j.detail || j.error || `HTTP ${r.status}`);
+    if (!r.ok || j.ok === false) throw new HttpError((typeof j.detail === 'string' && j.detail) || j.error || `HTTP ${r.status}`, r.status);
     return j as T;
   } finally {
     clearTimeout(timer);

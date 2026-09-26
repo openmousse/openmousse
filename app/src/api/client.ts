@@ -8,8 +8,9 @@ import { authHeaders, fileUrl, getBase } from './base';
 
 export interface GravaApi {
   readonly connected: boolean;
-  /** 发一条消息，拿回 Grava 的回复。threadId 为 'main'、groupId 或独立空间 id。onDelta 在流式输出时逐段回调。 */
-  send(threadId: string, text: string, modelId: string, onDelta?: (partial: string) => void, onStart?: (userId: string) => void, files?: PendingFile[]): Promise<Message>;
+  /** 发一条消息，拿回 Grava 的回复。threadId 为 'main'、groupId 或独立空间 id。onDelta 在流式输出时逐段回调。
+   *  extra.inboxId：这条是对收件箱里某件事的修改意见（从「去对话里说」带过来的引用），老服务器不认、忽略。 */
+  send(threadId: string, text: string, modelId: string, onDelta?: (partial: string) => void, onStart?: (userId: string) => void, files?: PendingFile[], extra?: { inboxId?: string }): Promise<Message>;
   /** 语音输入：录音传上去，拿回文字。 */
   transcribe(file: PendingFile): Promise<string>;
   /** 读线程的历史记录（真实接入后从服务器取）。inFlight 表示服务端还在回上一条。 */
@@ -119,11 +120,11 @@ const withBase = (m: any): Attachment[] | undefined => (m.attachments ? (m.attac
 
 export class HttpApi implements GravaApi {
   readonly connected = true;
-  async send(threadId: string, text: string, modelId: string, onDelta?: (partial: string) => void, onStart?: (userId: string) => void, files?: PendingFile[]): Promise<Message> {
+  async send(threadId: string, text: string, modelId: string, onDelta?: (partial: string) => void, onStart?: (userId: string) => void, files?: PendingFile[], extra?: { inboxId?: string }): Promise<Message> {
     const attachments = files?.length ? (await uploadFiles(threadId, files)).map((a) => a.id) : [];
     const r = await expoFetch(`${getBase()}/api/chat/send`, {
       method: 'POST', headers: { 'Content-Type': 'application/json', Accept: 'text/event-stream', ...authHeaders() },
-      body: JSON.stringify({ thread: threadId, text, model: modelId, attachments }),
+      body: JSON.stringify({ thread: threadId, text, model: modelId, attachments, ...(extra?.inboxId ? { inboxId: extra.inboxId } : {}) }),
     });
     if (!r.ok) {
       const j = await r.json().catch(() => ({}));

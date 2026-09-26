@@ -7,6 +7,7 @@ import { useNavigation, useRoute } from '@react-navigation/native';
 import { dataApi } from '../api/data';
 import { HttpApi } from '../api/client';
 import { Bubble } from '../components/ChatView';
+import { InboxCard } from '../components/InboxCard';
 import { Search, X } from '../components/icons';
 import { Card, NavHeader, Pill, Screen, SectionLabel, T } from '../components/ui';
 import type { DayInfo, Message, SearchHit } from '../data/types';
@@ -157,6 +158,9 @@ export function HistoryDayScreen() {
   const api = useMemo(() => new HttpApi(), []);
   const { thread, day, focus } = useRoute<any>().params as { thread: string; day: string; focus?: string };
   const name = useThreadName();
+  // 那天提过、要你点头的事：跟在提它的消息下面（处理过的是回执；还没处理的照样能点）
+  const { inboxByThread } = useStore();
+  const asks = inboxByThread[thread] ?? [];
   const [msgs, setMsgs] = useState<Message[] | null>(null);
   const [error, setError] = useState('');
   const scroll = useRef<ScrollView>(null);
@@ -181,6 +185,9 @@ export function HistoryDayScreen() {
             <View key={m.id} onLayout={(e) => { ys.current[m.id] = e.nativeEvent.layout.y; }}
               style={focus === m.id ? [styles.focus, { borderLeftColor: t.gold }] : undefined}>
               <Bubble m={m} showAvatar={m.role === 'grava' && msgs[i - 1]?.role !== 'grava'} />
+              {asks.filter((it) => it.messageId != null && `db${it.messageId}` === m.id).map((it) => (
+                <View key={it.id} style={{ paddingLeft: 36, marginTop: 14 }}><InboxCard item={it} variant="chat" /></View>
+              ))}
             </View>
           ))}
         </ScrollView>

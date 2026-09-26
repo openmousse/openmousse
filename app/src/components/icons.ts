@@ -69,3 +69,5 @@ export { default as FileAudio } from 'lucide-react-native/icons/audio-lines';
 export { default as Film } from 'lucide-react-native/icons/film';
 export { default as Search } from 'lucide-react-native/icons/search';
 export { default as CalendarDays } from 'lucide-react-native/icons/calendar-days';
+export { default as Inbox } from 'lucide-react-native/icons/inbox';
+export { default as CircleAlert } from 'lucide-react-native/icons/circle-alert';

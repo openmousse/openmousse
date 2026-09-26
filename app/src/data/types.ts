@@ -25,7 +25,7 @@ export interface Group {
   lastLine: string;
 }
 
-/** 等你点头：OpenClaw 审批队列里的一项（执行命令、插件动作等）。 */
+/** 老服务器的审批队列（/api/approvals）。新服务器走收件箱（InboxItem），这个只在 /api/inbox 不存在时兜底用。 */
 export interface Approval {
   id: string;
   kind: string;
@@ -35,6 +35,55 @@ export interface Approval {
   fields: { k: string; v: string }[];
   requestedAt: string;
 }
+
+/** 收件箱：要你点头的事。exec = OpenClaw 的执行命令审批（id 是 exec:<审批 id>），其余是 Agent 自己交上来的提案。 */
+export type InboxKind = 'exec' | 'task' | 'write' | 'send' | 'spend' | 'schedule' | 'push' | 'skill' | 'agent' | 'block' | 'code' | 'calendar' | 'other';
+export type InboxStatus = 'pending' | 'approved' | 'rejected' | 'revising' | 'done' | 'failed' | 'withdrawn' | 'expired';
+export type InboxAction = 'approve' | 'reject' | 'revise';
+export interface InboxItem {
+  id: string;
+  kind: InboxKind;
+  /** 'main' 或者 Agent（group）id */
+  source: string;
+  sourceName: string;
+  /** 这件事是在哪个对话里提的 */
+  thread: string;
+  /** 提这件事的那条助手消息（app 里的消息 id 是 "db<messageId>"），对话里这张卡就显示在它下面。没有 = 按时间排进去 */
+  messageId: number | null;
+  title: string;
+  why: string;
+  /** 会改什么，一条一行 */
+  changes: string[];
+  /** 更多说明（Markdown），默认收起 */
+  detail: string;
+  /** 同意按钮上的字（比如「记上」），空 = 「同意」 */
+  approveLabel: string;
+  /** 只有 exec 有：命令、目录这类 */
+  fields?: { k: string; v: string }[];
+  status: InboxStatus;
+  /** 「改一下」时写的意见 */
+  note: string;
+  /** 做完 / 没做成的结果 */
+  result: string;
+  level: 'ring' | 'quiet' | 'none';
+  createdAt: string;
+  decidedAt: string | null;
+  /** app 自己加的：老服务器（/api/approvals）没有 ISO 时间，只有显示用的文字 */
+  whenText?: string;
+}
+/** 这次打开 app 以来点过头的事：「今天」页上收成一行回执，留到换天。 */
+export interface Receipt { item: InboxItem; day: string }
+
+/** 未读：只列出 n > 0 的线程。last.id 是消息的数字 id（app 里的消息 id 是 "db<id>"）。 */
+export interface UnreadThread { n: number; mine: number; last?: { id: number; text: string; ts: string; origin: string } }
+export interface UnreadSummary { threads: Record<string, UnreadThread>; feedNew: string[]; inbox: number; badge: number }
+
+/** 推送 / 小窗点开去哪。 */
+export type PushTarget =
+  | { type: 'thread'; thread: string }
+  | { type: 'card'; id: string; thread?: string }
+  | { type: 'inbox'; id: string; thread?: string }
+  | { type: 'today' };
 
 /** 对话附件。url 是服务器地址（/api/files/id），还没上传完的用本地 uri。 */
 export interface Attachment { id: string; name: string; mime: string | null; size: number; kind: 'image' | 'doc' | 'audio' | 'video' | 'file'; url: string; chars?: number | null; note?: string | null; status?: string }
@@ -133,6 +182,8 @@ export interface FeedItem {
   kind?: string | null;
   data?: MealPlan | TrainingPlan | null;
   createdAt?: string;
+  /** 看过没有（任何一台设备上看过都算）。老服务器没有这一项，当作看过。 */
+  seen?: boolean;
 }
 
 /** 日志（L4 journal）：感受、想法、决定、记录。Grava 在对话里记。 */

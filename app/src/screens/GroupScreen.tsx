@@ -10,7 +10,8 @@ import { MemoryList } from '../components/MemoryList';
 import { ModelSwitch } from '../components/ModelPicker';
 import { Btn, Card, NavHeader, PullRefresh, Screen, SectionLabel, Segmented, T } from '../components/ui';
 import { L } from '../i18n';
-import { useStore } from '../store';
+import type { ChatQuote } from '../navigation';
+import { useStore, useThreadOnScreen } from '../store';
 import { space, useTheme } from '../theme';
 
 type Tab = 'chat' | 'board' | 'memory';
@@ -18,10 +19,18 @@ type Tab = 'chat' | 'board' | 'memory';
 export function GroupScreen() {
   const t = useTheme();
   const nav = useNavigation<any>();
-  const { id, tab: initialTab } = useRoute<any>().params as { id: string; tab?: Tab };
+  const { id, tab: initialTab, at, quote } = useRoute<any>().params as { id: string; tab?: Tab; at?: number; quote?: ChatQuote };
   const { groups, threadModel, setThreadModel, live, liveErrors, liveLoading, connected, booting, journal, applications, refreshBoards, removeGroup } = useStore();
   const g = groups.find((x) => x.id === id);
   const [tab, setTab] = useState<Tab>(initialTab ?? 'chat');
+  // 从通知 / 小窗 / 收件箱点进来（带 at）：切到要看的那个 tab（一般是对话）
+  const [seenAt, setSeenAt] = useState(at);
+  if (at !== seenAt) {
+    setSeenAt(at);
+    if (initialTab) setTab(initialTab);
+  }
+  // 对话 tab 在屏幕上：不为它弹小窗，新消息直接算已读
+  useThreadOnScreen(tab === 'chat' && g ? g.id : null);
   if (!g) return <Screen><NavHeader title="Agent" onBack={() => nav.goBack()} /></Screen>;
   return (
     <Screen>
@@ -36,7 +45,7 @@ export function GroupScreen() {
       <View style={{ paddingHorizontal: space.lg, paddingVertical: space.sm }}>
         <Segmented value={tab} onChange={setTab} options={[{ value: 'chat', label: L('对话', 'Chat') }, { value: 'board', label: L('看板', 'Dashboard') }, { value: 'memory', label: L('记忆', 'Memory') }]} />
       </View>
-      {tab === 'chat' ? <ChatView threadId={g.id} placeholder={L(`在「${g.name}」里说`, `Message "${g.name}"`)} empty={g.purpose ? L(`这个 Agent 负责：${g.purpose}`, `This agent handles: ${g.purpose}`) : undefined} /> : (
+      {tab === 'chat' ? <ChatView threadId={g.id} quote={quote} quoteAt={quote ? at ?? 0 : 0} placeholder={L(`在「${g.name}」里说`, `Message "${g.name}"`)} empty={g.purpose ? L(`这个 Agent 负责：${g.purpose}`, `This agent handles: ${g.purpose}`) : undefined} /> : (
         <ScrollView contentContainerStyle={{ padding: space.lg, paddingTop: space.sm, paddingBottom: space.xxl }}
           refreshControl={<PullRefresh onRefresh={refreshBoards} />}>
           {tab === 'board' ? (

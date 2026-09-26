@@ -9,10 +9,11 @@ import { GroupBadge } from '../components/GroupIcon';
 import { LensAvatar } from '../components/LensAvatar';
 import { ModelField, ModelSwitch } from '../components/ModelPicker';
 import { useSheet } from '../components/Sheet';
-import { Btn, Pill, Screen, T } from '../components/ui';
+import { Btn, CountPill, Pill, Screen, T } from '../components/ui';
 import type { SideChat } from '../data/types';
+import type { ChatQuote } from '../navigation';
 import { L } from '../i18n';
-import { useStore } from '../store';
+import { useStore, useThreadOnScreen } from '../store';
 import { radius, space, type, useTheme } from '../theme';
 
 /** 新建独立空间的弹层。 */
@@ -70,16 +71,17 @@ function SideChatMenu({ chat, close, onDeleted }: { chat: SideChat; close: () =>
   );
 }
 
-function DrawerRow({ icon, label, sub, on, onPress, right }: { icon: React.ReactNode; label: string; sub?: string; on?: boolean; onPress: () => void; right?: React.ReactNode }) {
+function DrawerRow({ icon, label, sub, on, onPress, right, unread = 0 }: { icon: React.ReactNode; label: string; sub?: string; on?: boolean; onPress: () => void; right?: React.ReactNode; unread?: number }) {
   const t = useTheme();
   return (
     <Pressable onPress={onPress} accessibilityRole="button" accessibilityState={{ selected: !!on }}
       style={({ pressed }) => [styles.row, { backgroundColor: on ? t.goldSoft : 'transparent', opacity: pressed ? 0.7 : 1 }]}>
       <View style={{ width: 28, alignItems: 'center' }}>{icon}</View>
       <View style={{ flex: 1, gap: 1 }}>
-        <T v="callout" numberOfLines={1} style={{ fontWeight: on ? '600' : '400' }}>{label}</T>
-        {sub ? <T v="caption" color={t.ink3} numberOfLines={1}>{sub}</T> : null}
+        <T v="callout" numberOfLines={1} style={{ fontWeight: on || unread ? '600' : '400' }}>{label}</T>
+        {sub ? <T v="caption" color={unread ? t.ink2 : t.ink3} numberOfLines={1}>{sub}</T> : null}
       </View>
+      <CountPill n={unread} small />
       {right}
     </Pressable>
   );
@@ -133,7 +135,8 @@ function Drawer({ active, onPick, onClose }: { active: string; onPick: (id: stri
   const nav = useNavigation<any>();
   const sheet = useSheet();
   const insets = useSafeAreaInsets();
-  const { avatar, sideChats, groups, tasks } = useStore();
+  const { avatar, sideChats, groups, tasks, unread } = useStore();
+  const n = (id: string) => unread.threads[id]?.n ?? 0;
   // 按最近活动倒序：折叠掉的永远是最久没碰的。
   const byRecent = (a: SideChat, b: SideChat) => b.updatedAt - a.updatedAt;
   const live = sideChats.filter((c) => !c.archived).sort(byRecent);
@@ -150,12 +153,12 @@ function Drawer({ active, onPick, onClose }: { active: string; onPick: (id: stri
           <T v="headline" style={{ flex: 1 }}>{`${agentName()}`}</T>
         </View>
         <ScrollView showsVerticalScrollIndicator={false}>
-          <DrawerRow icon={<LensAvatar size={20} config={avatar} />} label={L('主对话', 'Main chat')} sub={L('接待台，只放人话', 'Front desk, plain talk only')} on={active === 'main'} onPress={() => pick('main')} />
+          <DrawerRow icon={<LensAvatar size={20} config={avatar} />} label={L('主对话', 'Main chat')} sub={L('接待台，只放人话', 'Front desk, plain talk only')} on={active === 'main'} unread={n('main')} onPress={() => pick('main')} />
 
           <DrawerSection title={L('独立空间', 'Side chats')} count={live.length} empty={L('会持续几天的事，给它开一个。', 'Open one for anything that runs for days.')}
             right={<Pressable onPress={() => { onClose(); sheet.open({ title: L('开一个独立空间', 'New side chat'), content: (close) => <NewSideChat close={close} onCreated={onPick} /> }); }} hitSlop={8} accessibilityRole="button" accessibilityLabel={L('开一个独立空间', 'New side chat')}><Plus size={16} color={t.gold} /></Pressable>}>
             {live.map((c) => (
-              <DrawerRow key={c.id} icon={<MessagesSquare size={18} color={active === c.id ? t.gold : t.cyan} />} label={c.title} sub={c.lastLine} on={active === c.id} onPress={() => pick(c.id)}
+              <DrawerRow key={c.id} icon={<MessagesSquare size={18} color={active === c.id ? t.gold : t.cyan} />} label={c.title} sub={c.lastLine} on={active === c.id} unread={n(c.id)} onPress={() => pick(c.id)}
                 right={<Pressable onPress={() => menu(c)} hitSlop={8} accessibilityRole="button" accessibilityLabel={L(`${c.title} 的更多操作`, `More actions for ${c.title}`)}><Ellipsis size={18} color={t.ink3} /></Pressable>} />
             ))}
           </DrawerSection>
@@ -163,7 +166,7 @@ function Drawer({ active, onPick, onClose }: { active: string; onPick: (id: stri
           <DrawerSection title="Agents" count={groups.length}
             right={<Pressable onPress={() => { onClose(); nav.navigate('Tabs', { screen: 'Agents' }); }} hitSlop={8} accessibilityRole="button" accessibilityLabel={L('全部 Agents', 'All agents')}><LayoutGrid size={15} color={t.gold} /></Pressable>}>
             {groups.map((g) => (
-              <DrawerRow key={g.id} icon={<GroupBadge icon={g.icon} size={22} />} label={g.name} sub={g.lastLine} onPress={() => { onClose(); nav.navigate('Group', { id: g.id }); }} />
+              <DrawerRow key={g.id} icon={<GroupBadge icon={g.icon} size={22} />} label={g.name} sub={g.lastLine} unread={n(g.id)} onPress={() => { onClose(); nav.navigate('Group', { id: g.id }); }} />
             ))}
           </DrawerSection>
 
@@ -174,7 +177,7 @@ function Drawer({ active, onPick, onClose }: { active: string; onPick: (id: stri
 
           <DrawerSection title={L('已归档', 'Archived')} count={archived.length} defaultOpen={false} empty={L('还没有归档的空间。', 'No archived side chats yet.')}>
             {archived.map((c) => (
-              <DrawerRow key={c.id} icon={<Archive size={16} color={t.ink3} />} label={c.title} sub={L('独立空间 · 已归档', 'Side chat · Archived')} onPress={() => pick(c.id)}
+              <DrawerRow key={c.id} icon={<Archive size={16} color={t.ink3} />} label={c.title} sub={L('独立空间 · 已归档', 'Side chat · Archived')} unread={n(c.id)} onPress={() => pick(c.id)}
                 right={<Pressable onPress={() => menu(c)} hitSlop={8} accessibilityRole="button" accessibilityLabel={L(`${c.title} 的更多操作`, `More actions for ${c.title}`)}><Ellipsis size={18} color={t.ink3} /></Pressable>} />
             ))}
           </DrawerSection>
@@ -187,7 +190,7 @@ function Drawer({ active, onPick, onClose }: { active: string; onPick: (id: stri
 export function ChatScreen() {
   const t = useTheme();
   const nav = useNavigation<any>();
-  const { threadModel, setThreadModel, connected, booting, sideChats, tasks, avatar, sharedChannels } = useStore();
+  const { threadModel, setThreadModel, connected, booting, sideChats, tasks, avatar, sharedChannels, unread } = useStore();
   // 调试用：网页版 ?thread=<id> 直接打开某个线程，方便截图。
   // 当前线程：自己在侧栏选的，或者推送通知点进来带的导航参数（thread + at 时间戳；at 比上次选择新就以它为准）。
   const route = useRoute<any>();
@@ -198,14 +201,20 @@ export function ChatScreen() {
   const setActive = (id: string) => setSel({ id, at: Math.max(sel.at, wantedAt) });
   // 调试用：网页版 ?drawer=1 打开时就展开侧栏，方便截图。
   const [open, setOpen] = useState(() => Platform.OS === 'web' && typeof window !== 'undefined' && new URLSearchParams(window.location.search).get('drawer') === '1');
+  // 从收件箱「去对话里说」过来：带着那件事的引用（只给跳转过来的那个对话）
+  const quote = wanted && wantedAt > sel.at && active === wanted ? (route.params?.quote as ChatQuote | undefined) : undefined;
   const side = sideChats.find((c) => c.id === active);
   const running = tasks.filter((x) => x.status === '进行中').length;
+  // 这个对话在屏幕上：不为它弹小窗，新消息直接算已读
+  useThreadOnScreen(active);
+  // 侧栏里别的对话有没看的：菜单按钮上也亮一个点
+  const elsewhere = Object.entries(unread.threads).some(([tid, u]) => tid !== active && u.n > 0);
   return (
     <Screen>
       <View style={[styles.head, { borderBottomColor: t.line }]}>
         <Pressable onPress={() => { Keyboard.dismiss(); setOpen(true); }} hitSlop={10} accessibilityRole="button" accessibilityLabel={L('打开侧栏', 'Open sidebar')} style={styles.menuBtn}>
           <Menu size={22} color={t.ink} />
-          {running ? <View style={[styles.dot, { backgroundColor: t.cyan }]} /> : null}
+          {running || elsewhere ? <View style={[styles.dot, { backgroundColor: t.cyan }]} /> : null}
         </Pressable>
         {side ? <View style={[styles.sideIcon, { backgroundColor: t.cyanSoft }]}><MessagesSquare size={18} color={t.cyan} /></View> : <LensAvatar size={34} config={avatar} />}
         <View style={{ flex: 1 }}>
@@ -221,7 +230,7 @@ export function ChatScreen() {
         </Pressable>
         <ModelSwitch value={threadModel[active] ?? threadModel.main} onChange={(id) => setThreadModel(active, id)} />
       </View>
-      <ChatView key={active} threadId={active} placeholder={side ? L(`跟「${side.title}」说点什么`, `Message "${side.title}"`) : L(`跟 ${agentName()} 说点什么`, `Message ${agentName()}`)}
+      <ChatView key={active} threadId={active} quote={quote} quoteAt={quote ? wantedAt : 0} placeholder={side ? L(`跟「${side.title}」说点什么`, `Message "${side.title}"`) : L(`跟 ${agentName()} 说点什么`, `Message ${agentName()}`)}
         empty={side ? (side.purpose ? L(`这个空间只管：${side.purpose}`, `This side chat is only for: ${side.purpose}`) : L('新空间，说点什么开始吧。', 'New side chat. Say something to start.')) : L('主对话和 Telegram 共用同一个会话，这里还没有 app 发出的消息。', 'The main chat shares one session with Telegram. No messages from the app here yet.')} />
       {open ? <Drawer active={active} onPick={setActive} onClose={() => setOpen(false)} /> : null}
     </Screen>

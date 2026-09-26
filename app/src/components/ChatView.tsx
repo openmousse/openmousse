@@ -7,9 +7,10 @@ import * as Haptics from 'expo-haptics';
 import * as DocumentPicker from 'expo-document-picker';
 import * as ImagePicker from 'expo-image-picker';
 import { AudioModule, RecordingPresets, setAudioModeAsync, useAudioRecorder, useAudioRecorderState } from 'expo-audio';
-import { ArrowUp, Camera, Copy, FileAudio, FileText, Film, ImageIcon, Mic, Paperclip, Pencil, Square, Trash2, Undo2, X } from './icons';
-import type { Attachment, Message, PendingFile } from '../data/types';
+import { ArrowUp, Camera, Copy, FileAudio, FileText, Film, ImageIcon, Inbox, Mic, Paperclip, Pencil, Square, Trash2, Undo2, X } from './icons';
+import type { Attachment, InboxItem, Message, PendingFile } from '../data/types';
 import { L } from '../i18n';
+import type { ChatQuote } from '../navigation';
 import { useStore } from '../store';
 import { radius, space, type, useTheme } from '../theme';
 import { LensAvatar } from './LensAvatar';
@@ -18,9 +19,49 @@ import { modelOf } from './ModelPicker';
 import { useSheet } from './Sheet';
 import { PullRefresh, T } from './ui';
 import { Markdown } from './Markdown';
+import { InboxCard } from './InboxCard';
 
 // 没发出去的草稿按线程记着：切到看板、换线程、离开页面再回来还在（只在内存里，退出 app 就没了）。
 const drafts = new Map<string, string>();
+// 从「今天」的「去对话里说」带过来、还没发出去的引用，也按线程记着。
+const quotes = new Map<string, ChatQuote>();
+
+/** 逻辑日（04:00 为界）里的第几分钟：00:30 排在 23:30 后面。 */
+const dayMinute = (hhmm: string) => { const [h, m] = hhmm.split(':').map(Number); return (h * 60 + m - 240 + 1440) % 1440; };
+function logicalDayStart(): number {
+  const d = new Date();
+  if (d.getHours() < 4) d.setDate(d.getDate() - 1);
+  d.setHours(4, 0, 0, 0);
+  return d.getTime();
+}
+/**
+ * 对话里的收件箱卡片放在哪：跟在提它的那条消息（db<messageId>）下面；
+ * 没有 messageId（或者那条不在今天的记录里）的，放在比它早的最后一条消息后面，比今天的都早就放最上面（-1）。
+ */
+function placeInbox(items: InboxItem[], msgs: Message[]): Map<number, InboxItem[]> {
+  const index = new Map(msgs.map((m, i) => [m.id, i]));
+  const start = logicalDayStart();
+  const slots = new Map<number, InboxItem[]>();
+  for (const it of items) {
+    let at = it.messageId != null ? index.get(`db${it.messageId}`) : undefined;
+    if (at === undefined) {
+      at = -1;
+      const ms = Date.parse(it.createdAt);
+      if (!Number.isNaN(ms) && ms >= start) {
+        const minute = dayMinute(new Date(ms).toTimeString().slice(0, 5));
+        msgs.forEach((m, i) => { if (/^\d{1,2}:\d{2}$/.test(m.time) && dayMinute(m.time) <= minute) at = i; });
+      }
+    }
+    slots.set(at, [...(slots.get(at) ?? []), it]);
+  }
+  return slots;
+}
+
+/** 对话里的一张收件箱卡：和助手的消息对齐（让出头像那一列）。 */
+function ChatInbox({ items }: { items?: InboxItem[] }) {
+  if (!items?.length) return null;
+  return <>{items.map((it) => <View key={it.id} style={{ paddingLeft: 36 }}><InboxCard item={it} variant="chat" /></View>)}</>;
+}
 
 // 上限对齐主流 LLM 产品（服务端 files.py 同样的数）：一条消息 10 个附件，每个 30 MB，类型不限。
 const MAX_FILES = 10;
@@ -95,6 +136,15 @@ export function Bubble({ m, showAvatar, onLongPress }: { m: Message; showAvatar:
   const att = m.body.attachments ?? [];
   const text = att.length && m.body.text === PLACEHOLDER_TEXT ? '' : m.body.text;
   if (m.role === 'auto') {
+    // 【收件箱】：你在收件箱里点了同意 / 不要 / 改一下，或者同意的事做完了。前面换成收件箱图标。
+    if (text.startsWith('【收件箱】')) {
+      return (
+        <View style={{ flexDirection: 'row', justifyContent: 'center', alignItems: 'flex-start', gap: 4, paddingVertical: 2, paddingHorizontal: space.lg }}>
+          <View style={{ paddingTop: 1 }}><Inbox size={13} color={t.ink3} /></View>
+          <T v="caption" color={t.ink3} style={{ textAlign: 'center', flexShrink: 1 }}>{text.replace(/^【收件箱】\s*/, '')} · {m.time}</T>
+        </View>
+      );
+    }
     return (
       <View style={{ alignItems: 'center', paddingVertical: 2 }}>
         <T v="caption" color={t.ink3} style={{ textAlign: 'center' }}>{text.startsWith('【主对话转来】') ? L('↪ 主对话转来：', '↪ From main chat: ') : '⚙ '}{text.replace(/^【(自动触发|主对话转来)】/, '')} · {m.time}</T>
@@ -163,11 +213,35 @@ async function pickMedia(camera: boolean): Promise<PendingFile[]> {
   });
 }
 
-export function ChatView({ threadId, placeholder, empty }: { threadId: string; placeholder: string; empty?: string }) {
+export function ChatView({ threadId, placeholder, empty, quote: quoteProp, quoteAt = 0 }: {
+  threadId: string; placeholder: string; empty?: string;
+  /** 从收件箱「去对话里说」带过来的那件事；quoteAt 是那次跳转的时间（同一个对话再带一次也认得出） */
+  quote?: ChatQuote; quoteAt?: number;
+}) {
   const t = useTheme();
-  const { threads, typing, send, avatar, streaming, connected, booting, deleteMessage, rewindMessage, transcribe, refreshThread, sharedChannels } = useStore();
+  const { threads, typing, send, avatar, streaming, connected, booting, deleteMessage, rewindMessage, transcribe, refreshThread, sharedChannels, inboxByThread } = useStore();
   const sheet = useSheet();
   const msgs = threads[threadId] ?? [];
+  // 这个对话里的收件箱卡片：跟在提它的那条消息下面（处理过的显示成回执）
+  const slots = placeInbox(inboxByThread[threadId] ?? [], msgs);
+  const inboxCount = inboxByThread[threadId]?.length ?? 0;
+  // 引用：跳转带来的新引用替换旧的；发出去或点 × 就没了
+  const [quote, setQuote] = useState<ChatQuote | null>(() => quoteProp ?? quotes.get(threadId) ?? null);
+  const [quoteSeen, setQuoteSeen] = useState(quoteAt);
+  if (quoteAt !== quoteSeen) {
+    setQuoteSeen(quoteAt);
+    if (quoteProp) setQuote(quoteProp);
+  }
+  const input = useRef<TextInput>(null);
+  useEffect(() => {
+    if (quote) quotes.set(threadId, quote); else quotes.delete(threadId);
+  }, [threadId, quote]);
+  // 带着引用进来：直接把光标放进输入框
+  useEffect(() => {
+    if (!quoteAt || !quoteProp) return undefined;
+    const h = setTimeout(() => input.current?.focus(), 350);
+    return () => clearTimeout(h);
+  }, [quoteAt, quoteProp]);
   const partial = streaming[threadId];
   const [draft, setDraft] = useState(() => drafts.get(threadId) ?? '');
   const [pending, setPending] = useState<PendingFile[]>([]);
@@ -188,7 +262,7 @@ export function ChatView({ threadId, placeholder, empty }: { threadId: string; p
       list.current.y = Math.max(0, list.current.content - list.current.height);  // 滚动事件回来之前先按目标位置算
     }, 60);
     return () => clearTimeout(h);
-  }, [msgs.length, busy, partial?.length]);
+  }, [msgs.length, busy, partial?.length, inboxCount]);
 
   useEffect(() => {
     if (draft) drafts.set(threadId, draft);
@@ -243,9 +317,11 @@ export function ChatView({ threadId, placeholder, empty }: { threadId: string; p
   const submit = () => {
     const text = draft.trim();
     if ((!text && !pending.length) || busy || transcribing) return;
-    send(threadId, text, pending.length ? pending : undefined);
+    // 带着引用：这条是对收件箱里那件事的修改意见（服务器收到 inboxId 会把它退回去改）
+    send(threadId, text, pending.length ? pending : undefined, quote ? { inboxId: quote.inboxId } : undefined);
     setDraft('');
     setPending([]);
+    setQuote(null);
   };
 
   const startRecording = async () => {
@@ -328,7 +404,13 @@ export function ChatView({ threadId, placeholder, empty }: { threadId: string; p
             </T>
           </View>
         ) : null}
-        {msgs.map((m, i) => <Bubble key={m.id} m={m} showAvatar={m.role === 'grava' && msgs[i - 1]?.role !== 'grava'} onLongPress={() => openActions(m)} />)}
+        <ChatInbox items={slots.get(-1)} />
+        {msgs.map((m, i) => (
+          <React.Fragment key={m.id}>
+            <Bubble m={m} showAvatar={m.role === 'grava' && msgs[i - 1]?.role !== 'grava'} onLongPress={() => openActions(m)} />
+            <ChatInbox items={slots.get(i)} />
+          </React.Fragment>
+        ))}
         {busy ? (
           <View style={{ flexDirection: 'row', gap: space.sm, alignItems: partial ? 'flex-start' : 'center' }}>
             <LensAvatar size={28} config={avatar} />
@@ -337,6 +419,17 @@ export function ChatView({ threadId, placeholder, empty }: { threadId: string; p
         ) : null}
       </ScrollView>
       <View style={[styles.composerWrap, { borderTopColor: t.line, backgroundColor: t.bg }]}>
+        {quote ? (
+          <View style={{ paddingHorizontal: space.md, paddingTop: space.sm }}>
+            <View style={[styles.quote, { backgroundColor: t.goldSoft }]}>
+              <Inbox size={14} color={t.gold} />
+              <T v="callout" numberOfLines={1} style={{ flex: 1, fontSize: 13 }}>{L(`回复：${quote.title}`, `Re: ${quote.title}`)}</T>
+              <Pressable onPress={() => setQuote(null)} hitSlop={10} accessibilityRole="button" accessibilityLabel={L('不带这条引用', 'Remove the quote')}>
+                <X size={14} color={t.ink3} />
+              </Pressable>
+            </View>
+          </View>
+        ) : null}
         {pending.length ? (
           <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: space.sm, paddingHorizontal: space.md, paddingTop: space.sm }} keyboardShouldPersistTaps="handled">
             {pending.map((f, i) => (
@@ -370,7 +463,8 @@ export function ChatView({ threadId, placeholder, empty }: { threadId: string; p
               <Paperclip size={22} color={busy ? t.ink3 : t.ink2} />
             </Pressable>
             <TextInput
-              value={draft} onChangeText={setDraft} placeholder={transcribing ? L('正在转文字…', 'Transcribing…') : placeholder} placeholderTextColor={t.ink3}
+              ref={input}
+              value={draft} onChangeText={setDraft} placeholder={transcribing ? L('正在转文字…', 'Transcribing…') : quote ? L('说说要改什么', 'Say what should change') : placeholder} placeholderTextColor={t.ink3}
               multiline numberOfLines={1} onSubmitEditing={submit} submitBehavior="submit" returnKeyType="send" enablesReturnKeyAutomatically onKeyPress={webEnter}
               accessibilityLabel={L('消息输入框', 'Message')} editable={!transcribing}
               style={[type.body, styles.input, { backgroundColor: t.surface, color: t.ink }]}
@@ -404,4 +498,5 @@ const styles = StyleSheet.create({
   chip: { flexDirection: 'row', alignItems: 'center', gap: 8, borderWidth: StyleSheet.hairlineWidth, borderRadius: radius.md, paddingHorizontal: 10, paddingVertical: 6, maxWidth: 260 },
   recording: { flex: 1, flexDirection: 'row', alignItems: 'center', gap: 8, minHeight: 40, borderRadius: 20, paddingHorizontal: 14 },
   removeDot: { position: 'absolute', top: -6, right: -6, width: 20, height: 20, borderRadius: 10, alignItems: 'center', justifyContent: 'center' },
+  quote: { flexDirection: 'row', alignItems: 'center', gap: 6, borderRadius: radius.md, paddingHorizontal: 10, paddingVertical: 7 },
 });

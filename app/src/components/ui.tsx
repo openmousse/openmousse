@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { Pressable, RefreshControl, StyleSheet, Text, TextProps, View, ViewProps, type RefreshControlProps } from 'react-native';
+import { Alert, Platform, Pressable, RefreshControl, StyleSheet, Text, TextProps, View, ViewProps, type RefreshControlProps } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { ChevronLeft, ChevronRight } from './icons';
 import { L } from '../i18n';
@@ -48,14 +48,19 @@ export function LargeHeader({ title, sub, right }: { title: string; sub?: string
   );
 }
 
-export function NavHeader({ title, onBack, right }: { title: string; onBack: () => void; right?: React.ReactNode }) {
+export function NavHeader({ title, sub, onBack, right }: { title: string; sub?: string; onBack: () => void; right?: React.ReactNode }) {
   const t = useTheme();
   return (
-    <View style={[styles.navHeader, { borderBottomColor: t.line }]}>
+    <View style={[styles.navHeader, sub ? { height: 56 } : null, { borderBottomColor: t.line }]}>
       <Pressable onPress={onBack} hitSlop={12} accessibilityRole="button" accessibilityLabel={L('返回', 'Back')} style={styles.navSide}>
         <ChevronLeft size={26} color={t.gold} />
       </Pressable>
-      <T v="headline" numberOfLines={1} style={{ flex: 1, textAlign: 'center' }}>{title}</T>
+      {sub ? (
+        <View style={{ flex: 1, alignItems: 'center' }}>
+          <T v="headline" numberOfLines={1} style={{ textAlign: 'center' }}>{title}</T>
+          <T v="caption" color={t.ink2} numberOfLines={1} style={{ textAlign: 'center', fontWeight: '400', marginTop: 1 }}>{sub}</T>
+        </View>
+      ) : <T v="headline" numberOfLines={1} style={{ flex: 1, textAlign: 'center' }}>{title}</T>}
       <View style={[styles.navSide, { alignItems: 'flex-end' }]}>{right}</View>
     </View>
   );
@@ -88,6 +93,29 @@ export function Pill({ label, tone = 'neutral' }: { label: string; tone?: 'neutr
       <Text style={[type.caption, { color: fg }]}>{label}</Text>
     </View>
   );
+}
+
+/** 青色的未读数（Agent 列表、侧栏）。0 不显示。 */
+export function CountPill({ n, small }: { n: number; small?: boolean }) {
+  const t = useTheme();
+  if (!n) return null;
+  const h = small ? 20 : 24;
+  return (
+    <View accessible accessibilityLabel={L(`${n} 条未读`, `${n} unread`)}
+      style={{ minWidth: h, height: h, borderRadius: h / 2, paddingHorizontal: small ? 6 : 7, backgroundColor: t.cyan, alignItems: 'center', justifyContent: 'center' }}>
+      <Text style={{ color: t.surface, fontSize: small ? 11 : 13, fontWeight: '700' }}>{n > 99 ? '99+' : String(n)}</Text>
+    </View>
+  );
+}
+
+/** 出错提示。react-native-web 的 Alert 什么都不做，网页上改用浏览器自己的 alert，免得点了没反应。 */
+export function showError(title: string, e: unknown) {
+  const msg = e instanceof Error ? e.message : String(e ?? '');
+  if (Platform.OS === 'web') {
+    if (typeof window !== 'undefined' && typeof window.alert === 'function') window.alert(msg ? `${title}\n${msg}` : title);
+    return;
+  }
+  Alert.alert(title, msg);
 }
 
 export function Btn({ label, onPress, kind = 'primary', icon, flex }: { label: string; onPress: () => void; kind?: 'primary' | 'quiet' | 'danger'; icon?: React.ReactNode; flex?: boolean }) {
