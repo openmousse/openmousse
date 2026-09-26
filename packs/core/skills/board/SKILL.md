@@ -72,6 +72,7 @@ $B rows delete r-1a2b3c                        # 30 天内 rows restore 能找�
 - 一个数：加 `"agg": "sum|avg|count|min|max|last"` 和 `"field"`（count 不用 field；last 按 `date` 字段取最新一行）。两个数相除：`{"ratio": [Q1, Q2]}`。
 - 趋势：加 `"by": "day|week|month"`、`"date": 日期字段`、`"range": "14d|8w|6m"`。
 - 日期的值：today / tomorrow / yesterday / week（本周一）/ lastweek / month（本月 1 号）/ lastmonth / +3d / -30d / +2w / 2026-09-30。系统字段 `_created` / `_updated` 也能用。
+- 只读的系统来源（不用建表，不能改）：`health:daily`（每晚：sleep_min / deep_min / rem_min / core_min / awake_min / hrv_ms / rhr_bpm / resp_rate / wrist_temp_c，按 date）和 `health:<Apple 健康指标>`（按天汇总：date / sum / avg / min / max / count，比如 `health:StepCount` 的 sum 是当天步数）。例：`{"from": "health:daily", "agg": "avg", "field": "hrv_ms", "by": "day", "date": "date", "range": "14d"}`。
 
 ## 能插的位置（after）
 

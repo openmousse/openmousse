@@ -6,6 +6,8 @@
   描述（JSON，不是 SQL）：{"from": 表, "where": [[字段, 运算, 值]…], "sort": [字段 或 -字段], "limit": N}，汇总加 agg / field，
   按天周月分组加 by / date / range，比值 {"ratio": [Q1, Q2]}。服务端算好、按语言格式化，随配置一起给 app。
 - 放在哪：after = 内置看板的小节（ANCHORS，比如 diet.next）或另一块的 id；不写放最后。
+- 只读的系统来源（所有 Agent 都能用，不能改）：`health:daily`（每晚睡眠、HRV、静息心率……，表 health_daily）和
+  `health:<指标>`（Apple 健康按天汇总的某个指标，比如 health:StepCount，字段 date / sum / avg / min / max / count，表 health_metrics）。
 - 谁能改：用户在对话里让加的，Agent 直接 apply（看板顶上出撤回条）；Agent 自己想到的 propose → 收件箱 kind block，
   同意时这里把草稿换成 live（inbox.HOOKS）。积木只显示、只让用户自己点（改、删、打勾、按钮），不推送、不写外面的系统。
 - Agent 用 server/board_ctl.py 走这些接口；用户在 app 里的改动 by=user。
@@ -101,7 +103,48 @@ def collections_of(conn: sqlite3.Connection, agent: str, with_draft: bool = True
     return {r["name"]: coll_json(r) for r in rows if with_draft or r["status"] == "active"}
 
 
+HEALTH_DAILY = (("sleep_min", "睡了多久", "Sleep", "min"), ("deep_min", "深睡", "Deep sleep", "min"), ("rem_min", "REM", "REM", "min"),
+                ("core_min", "核心睡眠", "Core sleep", "min"), ("awake_min", "醒着", "Awake", "min"), ("hrv_ms", "HRV", "HRV", "ms"),
+                ("rhr_bpm", "静息心率", "Resting HR", "bpm"), ("resp_rate", "呼吸频率", "Respiratory rate", "/min"),
+                ("wrist_temp_c", "手腕温度", "Wrist temp", "°C"))
+METRIC = re.compile(r"^[A-Za-z][A-Za-z0-9_]{1,80}$")
+
+
+def virtual(conn: sqlite3.Connection, name: str) -> tuple[dict, str, list] | None:
+    """只读的系统来源：返回 (表结构, 当作 records 用的子查询, 子查询的参数)。子查询的列和 records 一样，查询代码不用分两套。"""
+    if not name.startswith("health:"):
+        return None
+    shape = "'h-' || date AS id, json_object({}) AS data, date AS created_at, updated_at, NULL AS deleted_at"
+    date_f = {"key": "date", "label": L("日期", "Date"), "type": "date"}
+    if name == "health:daily":
+        fields = [date_f] + [{"key": k, "label": L(zh, en), "type": "number", "unit": u} for k, zh, en, u in HEALTH_DAILY]
+        cols = ", ".join(f"'{f['key']}', {f['key']}" for f in fields)
+        sub = f"(SELECT {shape.format(cols)} FROM health_daily)"
+        params: list = []
+    else:
+        metric = name[7:]
+        if not METRIC.match(metric):
+            raise bad(f"「{name}」不对：写 health:指标名（比如 health:StepCount）", f'Bad source "{name}": write health:<metric>, e.g. health:StepCount')
+        try:
+            r = conn.execute("SELECT unit FROM health_metrics WHERE metric=? ORDER BY date DESC LIMIT 1", (metric,)).fetchone()
+        except sqlite3.Error:
+            r = None
+        if not r:
+            raise bad(f"Apple 健康里没有「{metric}」这个指标的数据", f'No Apple Health data for "{metric}"', 404)
+        unit = r["unit"] or None
+        fields = [date_f] + [{"key": k, "label": lab, "type": "number", **({"unit": unit} if unit and k != "count" else {})}
+                             for k, lab in (("sum", L("合计", "Total")), ("avg", L("平均", "Average")), ("min", L("最低", "Min")),
+                                            ("max", L("最高", "Max")), ("count", L("次数", "Count")))]
+        cols = ", ".join(f"'{f['key']}', {f['key']}" for f in fields)
+        sub = f"(SELECT {shape.format(cols)} FROM health_metrics WHERE metric=?)"
+        params = [metric]
+    return {"name": name, "title": name, "fields": fields, "status": "active", "readonly": True}, sub, params
+
+
 def get_coll(conn: sqlite3.Connection, agent: str, name: str) -> dict:
+    v = virtual(conn, name)
+    if v:
+        return v[0]
     r = conn.execute("SELECT * FROM collections WHERE agent=? AND name=? AND status IN ('active','draft')", (agent, name)).fetchone()
     if not r:
         raise bad(f"「{agent}」没有「{name}」这张表（board_ctl.py table list 能看到）", f'"{agent}" has no table called "{name}" (see board_ctl.py table list)', 404)
@@ -236,11 +279,19 @@ def fmt_date(s: str | None) -> str:
     return f"{d.month}/{d.day}" if lang() == "zh" else d.strftime("%-d %b")
 
 
+def fmt_minutes(x: float) -> str:
+    """分钟数：一小时以上写成 6h09（和 app 别处的睡眠时长一样），不到一小时写 45 min。"""
+    m = round(x)
+    return f"{m // 60}h{m % 60:02d}" if m >= 60 else f"{m} min"
+
+
 def fmt_value(field: dict | None, v: Any) -> str:
     if v is None or v == "":
         return "—"
     t = (field or {}).get("type", "text")
     unit = (field or {}).get("unit")
+    if t == "number" and unit == "min":
+        return fmt_minutes(float(v))
     if t == "money":
         return fmt_money(float(v), field.get("currency", "GBP"))
     if t == "number":
@@ -258,6 +309,8 @@ def fmt_value(field: dict | None, v: Any) -> str:
 def fmt_stat(x: float | None, fmt: str | None, unit: str | None, currency: str = "GBP") -> str:
     if x is None:
         return "—"
+    if unit == "min" and fmt in (None, "number", "int"):
+        return fmt_minutes(x)
     if fmt == "money":
         return fmt_money(x, currency)
     if fmt == "percent":
@@ -394,6 +447,11 @@ def order_sql(coll: dict, sort: Any) -> str:
 def base(conn: sqlite3.Connection, agent: str, q: dict) -> tuple[dict, str, list]:
     if not isinstance(q, dict) or not q.get("from"):
         raise bad("查询要写 from（哪张表）", "A query needs from (which table)")
+    v = virtual(conn, str(q["from"]))
+    if v:
+        coll, sub, sp = v
+        w, p = where_sql(coll, q.get("where"))
+        return coll, f"FROM {sub} AS records WHERE 1=1{w}", [*sp, *p]  # noqa: S608 — 子查询是写死的，指标名按规则校验过、走参数
     coll = get_coll(conn, agent, str(q["from"]))
     w, p = where_sql(coll, q.get("where"))
     return coll, f"FROM records WHERE agent=? AND collection=? AND deleted_at IS NULL{w}", [agent, coll["name"], *p]
@@ -599,6 +657,10 @@ def clean_block(conn: sqlite3.Connection, agent: str, raw: Any, anchors: tuple[s
         b["source"] = raw["source"]
         b["row"] = clean_row_spec(raw.get("row"))
         coll = get_coll(conn, agent, str(raw["source"]["from"]))
+        if coll.get("readonly"):
+            if typ == "checklist" or raw.get("rowActions"):
+                raise bad(f"「{coll['name']}」是只读的（Apple 健康），不能做清单或加 rowActions", f'"{coll["name"]}" is read-only (Apple Health): no checklist or rowActions')
+            raw = {**raw, "edit": False}
         for badge in b["row"]["badge"]:
             field_of(coll, badge["field"])
         if raw.get("limit"):
@@ -653,7 +715,8 @@ def clean_block(conn: sqlite3.Connection, agent: str, raw: Any, anchors: tuple[s
                     acc = [x for x in (a.get("accept") or ["camera", "photos", "files"]) if x in ("camera", "photos", "files")]
                     one["accept"] = acc or ["camera", "photos", "files"]
             else:
-                get_coll(conn, agent, str(a.get("collection") or ""))
+                if get_coll(conn, agent, str(a.get("collection") or "")).get("readonly"):
+                    raise bad("form 按钮不能写进只读的来源", "A form button can't write to a read-only source")
                 one["collection"] = str(a["collection"])
                 if isinstance(a.get("defaults"), dict):
                     one["defaults"] = a["defaults"]
