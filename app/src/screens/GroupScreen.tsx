@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { agentName } from '../brand';
-import { Alert, Pressable, RefreshControl, ScrollView, View } from 'react-native';
+import { Alert, Pressable, ScrollView, View } from 'react-native';
 import { CalendarDays } from '../components/icons';
 import { useNavigation, useRoute } from '@react-navigation/native';
 import { ChatView } from '../components/ChatView';
@@ -8,7 +8,7 @@ import { LiveDietBoard, LiveFitnessBoard, LiveFitnessTrendCard, LiveRecoveryCard
 import { ApplicationsBoard, JournalList, SleepReportSection, TrainingPlanSection } from '../components/Records';
 import { MemoryList } from '../components/MemoryList';
 import { ModelSwitch } from '../components/ModelPicker';
-import { Btn, Card, NavHeader, Screen, SectionLabel, Segmented, T } from '../components/ui';
+import { Btn, Card, NavHeader, PullRefresh, Screen, SectionLabel, Segmented, T } from '../components/ui';
 import { L } from '../i18n';
 import { useStore } from '../store';
 import { space, useTheme } from '../theme';
@@ -19,7 +19,7 @@ export function GroupScreen() {
   const t = useTheme();
   const nav = useNavigation<any>();
   const { id, tab: initialTab } = useRoute<any>().params as { id: string; tab?: Tab };
-  const { groups, threadModel, setThreadModel, live, liveErrors, liveLoading, connected, booting, journal, applications, loading, refreshBoards, removeGroup } = useStore();
+  const { groups, threadModel, setThreadModel, live, liveErrors, liveLoading, connected, booting, journal, applications, refreshBoards, removeGroup } = useStore();
   const g = groups.find((x) => x.id === id);
   const [tab, setTab] = useState<Tab>(initialTab ?? 'chat');
   if (!g) return <Screen><NavHeader title="Agent" onBack={() => nav.goBack()} /></Screen>;
@@ -38,7 +38,7 @@ export function GroupScreen() {
       </View>
       {tab === 'chat' ? <ChatView threadId={g.id} placeholder={L(`在「${g.name}」里说`, `Message "${g.name}"`)} empty={g.purpose ? L(`这个 Agent 负责：${g.purpose}`, `This agent handles: ${g.purpose}`) : undefined} /> : (
         <ScrollView contentContainerStyle={{ padding: space.lg, paddingTop: space.sm, paddingBottom: space.xxl }}
-          refreshControl={<RefreshControl refreshing={liveLoading || !!loading.feed || !!loading.journal} onRefresh={() => refreshBoards().catch(() => {})} />}>
+          refreshControl={<PullRefresh onRefresh={refreshBoards} />}>
           {tab === 'board' ? (
             !live ? (
               <Card><T v="callout" color={t.ink2}>{booting || liveLoading ? L('正在读…', 'Loading…') : !connected ? L('没连上服务器。检查「我 → 服务器」后回到这一页。', 'Not connected to the server. Check Me → Server, then come back here.') : L('看板数据没读到。', "Couldn't load the dashboard data.")}</T></Card>

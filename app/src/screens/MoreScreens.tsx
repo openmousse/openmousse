@@ -1,13 +1,13 @@
 import React, { useState } from 'react';
 import { agentName } from '../brand';
-import { Alert, Pressable, RefreshControl, ScrollView, StyleSheet, TextInput, View } from 'react-native';
+import { Alert, Pressable, ScrollView, StyleSheet, TextInput, View } from 'react-native';
 import { useNavigation } from '@react-navigation/native';
 import { CheckCheck, CircleX, Clock, Eraser, MessageCircle, Pencil, Trash2, X } from '../components/icons';
 import { LensAvatar } from '../components/LensAvatar';
 import { MemoryList } from '../components/MemoryList';
 import { modelOf, useBilling } from '../components/ModelPicker';
 import { useSheet } from '../components/Sheet';
-import { Btn, Card, ListRow, NavHeader, Pill, Screen, SectionLabel, T } from '../components/ui';
+import { Btn, Card, ListRow, NavHeader, Pill, PullRefresh, Screen, SectionLabel, T } from '../components/ui';
 import { MODELS, billingLabel, costLabel } from '../data/models';
 import type { ActivityEntry, AvatarConfig, ProfileItem } from '../data/types';
 import { L } from '../i18n';
@@ -17,12 +17,12 @@ import { JournalList } from '../components/Records';
 
 function Page({ title, children, refresh }: { title: string; children: React.ReactNode; refresh?: DataKey[] }) {
   const nav = useNavigation<any>();
-  const { reload, loading } = useStore();
+  const { reload } = useStore();
   return (
     <Screen>
       <NavHeader title={title} onBack={() => nav.goBack()} />
       <ScrollView contentContainerStyle={{ padding: space.lg, paddingBottom: space.xxl }} keyboardShouldPersistTaps="handled"
-        refreshControl={refresh ? <RefreshControl refreshing={refresh.some((k) => loading[k])} onRefresh={() => reload(...refresh)} /> : undefined}>
+        refreshControl={refresh ? <PullRefresh onRefresh={() => reload(...refresh)} /> : undefined}>
         {children}
       </ScrollView>
     </Screen>

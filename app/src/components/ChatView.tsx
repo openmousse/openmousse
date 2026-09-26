@@ -1,7 +1,7 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { agentName } from '../brand';
 import { useNavigation } from '@react-navigation/native';
-import { Alert, Image, KeyboardAvoidingView, Linking, Platform, Pressable, RefreshControl, ScrollView, StyleSheet, TextInput, View } from 'react-native';
+import { Alert, Image, Linking, Platform, Pressable, ScrollView, StyleSheet, TextInput, View, type LayoutChangeEvent, type NativeScrollEvent, type NativeSyntheticEvent, type TextInputKeyPressEventData } from 'react-native';
 import * as Clipboard from 'expo-clipboard';
 import * as Haptics from 'expo-haptics';
 import * as DocumentPicker from 'expo-document-picker';
@@ -13,10 +13,14 @@ import { L } from '../i18n';
 import { useStore } from '../store';
 import { radius, space, type, useTheme } from '../theme';
 import { LensAvatar } from './LensAvatar';
+import { useBottomInset } from './keyboard';
 import { modelOf } from './ModelPicker';
 import { useSheet } from './Sheet';
-import { T } from './ui';
+import { PullRefresh, T } from './ui';
 import { Markdown } from './Markdown';
+
+// 没发出去的草稿按线程记着：切到看板、换线程、离开页面再回来还在（只在内存里，退出 app 就没了）。
+const drafts = new Map<string, string>();
 
 // 上限对齐主流 LLM 产品（服务端 files.py 同样的数）：一条消息 10 个附件，每个 30 MB，类型不限。
 const MAX_FILES = 10;
@@ -162,15 +166,16 @@ async function pickMedia(camera: boolean): Promise<PendingFile[]> {
 export function ChatView({ threadId, placeholder, empty }: { threadId: string; placeholder: string; empty?: string }) {
   const t = useTheme();
   const { threads, typing, send, avatar, streaming, connected, booting, deleteMessage, rewindMessage, transcribe, refreshThread, sharedChannels } = useStore();
-  const [refreshing, setRefreshing] = useState(false);
-  const pull = () => { setRefreshing(true); refreshThread(threadId).catch(() => {}).finally(() => setRefreshing(false)); };
   const sheet = useSheet();
   const msgs = threads[threadId] ?? [];
   const partial = streaming[threadId];
-  const [draft, setDraft] = useState('');
+  const [draft, setDraft] = useState(() => drafts.get(threadId) ?? '');
   const [pending, setPending] = useState<PendingFile[]>([]);
   const [transcribing, setTranscribing] = useState(false);
   const scroller = useRef<ScrollView>(null);
+  const root = useRef<View>(null);
+  const bottom = useBottomInset(root);
+  const list = useRef({ y: 0, content: 0, height: 0 });
   const nav = useNavigation<any>();
   const busy = !!typing[threadId];
   const recorder = useAudioRecorder(SPEECH_PRESET);
@@ -178,9 +183,33 @@ export function ChatView({ threadId, placeholder, empty }: { threadId: string; p
   const canRecord = Platform.OS !== 'web';
 
   useEffect(() => {
-    const h = setTimeout(() => scroller.current?.scrollToEnd({ animated: true }), 60);
+    const h = setTimeout(() => {
+      scroller.current?.scrollToEnd({ animated: true });
+      list.current.y = Math.max(0, list.current.content - list.current.height);  // 滚动事件回来之前先按目标位置算
+    }, 60);
     return () => clearTimeout(h);
   }, [msgs.length, busy, partial?.length]);
+
+  useEffect(() => {
+    if (draft) drafts.set(threadId, draft);
+    else drafts.delete(threadId);
+  }, [threadId, draft]);
+
+  const track = (e: NativeSyntheticEvent<NativeScrollEvent>) => {
+    list.current.y = e.nativeEvent.contentOffset.y;
+    list.current.content = e.nativeEvent.contentSize.height;
+  };
+  // 消息区变矮（键盘升起、输入框变高）时内容跟着往上推，原来贴着输入栏的那条还贴着，不会被挡住；
+  // 变高（键盘收起）时位置不动，只在滚过了头时收回来，下面不留空白。
+  const keepBottom = (e: LayoutChangeEvent) => {
+    const l = list.current;
+    const h = e.nativeEvent.layout.height;
+    const shrink = l.height ? l.height - h : 0;
+    l.height = h;
+    if (!shrink || l.y < 0) return;
+    const y = Math.min(shrink > 0 ? l.y + shrink : l.y, Math.max(0, l.content - h));
+    if (Math.abs(y - l.y) > 1) { scroller.current?.scrollTo({ y, animated: true }); l.y = y; }
+  };
 
   const fail = (e: unknown) => Alert.alert(L('没做成', "Couldn't do that"), e instanceof Error ? e.message : String(e));
 
@@ -268,12 +297,24 @@ export function ChatView({ threadId, placeholder, empty }: { threadId: string; p
   };
 
   const canSend = (!!draft.trim() || pending.length > 0) && !busy && !transcribing;
+  // 手机上回车键是「发送」，发完键盘留着接着打（submitBehavior）。网页的多行输入框不认 submitBehavior，
+  // 自己接 Enter：发送、不丢焦点；Shift+Enter 换行；输入法选字时按的 Enter 不算。
+  const webEnter = Platform.OS === 'web' ? (e: NativeSyntheticEvent<TextInputKeyPressEventData>) => {
+    const k = e.nativeEvent as unknown as KeyboardEvent;
+    if (k.key !== 'Enter' || k.shiftKey || k.isComposing || k.keyCode === 229) return;
+    e.preventDefault();
+    submit();
+  } : undefined;
   const secs = Math.floor((rec.durationMillis ?? 0) / 1000);
 
   return (
-    <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === 'ios' ? 'padding' : undefined} keyboardVerticalOffset={90}>
-      <ScrollView ref={scroller} style={{ flex: 1 }} contentContainerStyle={{ padding: space.lg, gap: space.lg }} keyboardShouldPersistTaps="handled"
-        refreshControl={<RefreshControl refreshing={refreshing} onRefresh={pull} />}>
+    <View ref={root} onLayout={bottom.onLayout} style={{ flex: 1, paddingBottom: bottom.inset }}>
+      {/* 键盘开着时点消息区任何地方、或者往上划，都先收键盘（点到的消息不响应，再点一次才算）。
+          网页不开 on-drag：react-native-web 在任何滚动（包括新回复自动滚到底）时都会让输入框失焦。 */}
+      <ScrollView ref={scroller} style={{ flex: 1 }} contentContainerStyle={{ padding: space.lg, gap: space.lg }} keyboardShouldPersistTaps="never" keyboardDismissMode={Platform.OS === 'web' ? 'none' : 'on-drag'}
+        scrollToOverflowEnabled onLayout={keepBottom} onScroll={track} onScrollEndDrag={track} onMomentumScrollEnd={track} scrollEventThrottle={32}
+        onContentSizeChange={(_w, h) => { list.current.content = h; }}
+        refreshControl={<PullRefresh onRefresh={() => refreshThread(threadId)} />}>
         {connected ? (
           <Pressable onPress={() => nav.navigate('History', { thread: threadId })} accessibilityRole="button" style={{ alignSelf: 'center', paddingVertical: 2 }}>
             <T v="caption" color={t.ink3}>{L('这里只有今天的（04:00 起）· ', 'Today only (from 04:00) · ')}<T v="caption" color={t.gold}>{L('之前的在历史里', 'Earlier in History')}</T></T>
@@ -330,7 +371,8 @@ export function ChatView({ threadId, placeholder, empty }: { threadId: string; p
             </Pressable>
             <TextInput
               value={draft} onChangeText={setDraft} placeholder={transcribing ? L('正在转文字…', 'Transcribing…') : placeholder} placeholderTextColor={t.ink3}
-              multiline numberOfLines={1} onSubmitEditing={submit} blurOnSubmit accessibilityLabel={L('消息输入框', 'Message')} editable={!transcribing}
+              multiline numberOfLines={1} onSubmitEditing={submit} submitBehavior="submit" returnKeyType="send" enablesReturnKeyAutomatically onKeyPress={webEnter}
+              accessibilityLabel={L('消息输入框', 'Message')} editable={!transcribing}
               style={[type.body, styles.input, { backgroundColor: t.surface, color: t.ink }]}
             />
             {canRecord && !draft.trim() && !pending.length && !transcribing ? (
@@ -347,7 +389,7 @@ export function ChatView({ threadId, placeholder, empty }: { threadId: string; p
           </View>
         )}
       </View>
-    </KeyboardAvoidingView>
+    </View>
   );
 }
 

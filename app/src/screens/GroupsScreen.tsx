@@ -1,18 +1,18 @@
 import React from 'react';
-import { Pressable, RefreshControl, ScrollView, StyleSheet, View } from 'react-native';
+import { Pressable, ScrollView, StyleSheet, View } from 'react-native';
 import { useNavigation } from '@react-navigation/native';
 import { Plus } from '../components/icons';
 import { GroupBadge } from '../components/GroupIcon';
 import { modelOf } from '../components/ModelPicker';
-import { LargeHeader, Pill, Screen, T } from '../components/ui';
+import { LargeHeader, Pill, PullRefresh, Screen, T } from '../components/ui';
 import { L } from '../i18n';
-import { useStore, type DataKey } from '../store';
+import { useStore } from '../store';
 import { radius, space, useTheme } from '../theme';
 
 export function GroupsScreen() {
   const t = useTheme();
   const nav = useNavigation<any>();
-  const { groups, approvals, live, connected, booting, dataErrors, loading, reload } = useStore();
+  const { groups, approvals, live, connected, booting, dataErrors, reload } = useStore();
   // 还没在 Agent 里聊过的，副标题用看板上的真实数据或者职责。
   const subtitle = (id: string, lastLine: string, purpose: string) => {
     if (lastLine) return lastLine;
@@ -29,7 +29,7 @@ export function GroupsScreen() {
   };
   return (
     <Screen>
-      <ScrollView contentContainerStyle={{ paddingBottom: space.xxl }} refreshControl={<RefreshControl refreshing={['groups', 'feed'].some((k) => loading[k as DataKey])} onRefresh={() => reload('groups', 'feed')} />}>
+      <ScrollView contentContainerStyle={{ paddingBottom: space.xxl }} refreshControl={<PullRefresh onRefresh={() => reload('groups', 'feed')} />}>
         <LargeHeader title="Agents" sub={L('每个 Agent 管一件事，记忆各自独立', 'Each agent handles one thing and has its own memory')}
           right={
             <Pressable onPress={() => nav.navigate('NewGroup')} accessibilityRole="button" accessibilityLabel={L('新建 Agent', 'New agent')}

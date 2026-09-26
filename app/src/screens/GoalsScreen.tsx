@@ -1,9 +1,9 @@
 import { agentName } from '../brand';
 import React from 'react';
-import { Pressable, RefreshControl, ScrollView, View } from 'react-native';
+import { Pressable, ScrollView, View } from 'react-native';
 import { useNavigation } from '@react-navigation/native';
 import { Ring } from '../components/charts';
-import { Card, LargeHeader, Screen, SectionLabel, T } from '../components/ui';
+import { Card, LargeHeader, PullRefresh, Screen, SectionLabel, T } from '../components/ui';
 import type { Goal, GoalCategory } from '../data/types';
 import { L } from '../i18n';
 import { useStore } from '../store';
@@ -67,11 +67,11 @@ function TextGoal({ g }: { g: Goal }) {
 export function GoalsScreen() {
   const t = useTheme();
   const nav = useNavigation<any>();
-  const { goals, groups, reload, loading, dataErrors, connected, booting } = useStore();
+  const { goals, groups, reload, dataErrors, connected, booting } = useStore();
   return (
     <Screen>
       <ScrollView contentContainerStyle={{ paddingBottom: space.xxl }}
-        refreshControl={<RefreshControl refreshing={!!loading.goals} onRefresh={() => reload('goals')} />}>
+        refreshControl={<PullRefresh onRefresh={() => reload('goals')} />}>
         <LargeHeader title={L('目标', 'Goals')} sub={L(
           '取自你的档案「目标（当前）」。能用数字追踪的，自动读你接的数据源和 Apple 健康的最新数据',
           'From "Goals (current)" in your profile. Goals with numbers pull the latest from your data sources and Apple Health',

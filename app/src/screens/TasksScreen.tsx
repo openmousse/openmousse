@@ -1,12 +1,12 @@
 import React, { useCallback, useEffect, useState } from 'react';
 import { agentName } from '../brand';
-import { Alert, Pressable, RefreshControl, ScrollView, StyleSheet, View } from 'react-native';
+import { Alert, Pressable, ScrollView, StyleSheet, View } from 'react-native';
 import { useNavigation, useRoute } from '@react-navigation/native';
 import { dataApi } from '../api/data';
 import { Check, CircleDot, CircleX, Eye, LoaderCircle, Lightbulb, ListChecks, Pencil, Terminal } from '../components/icons';
 import { useSheet } from '../components/Sheet';
 import { ReviseSheetContent, fmtTokens, modelName, originName } from '../components/TaskCard';
-import { Btn, Card, ListRow, NavHeader, Pill, Screen, SectionLabel, T } from '../components/ui';
+import { Btn, Card, ListRow, NavHeader, Pill, PullRefresh, Screen, SectionLabel, T } from '../components/ui';
 import type { Task, TaskRun, TaskStep } from '../data/types';
 import { L } from '../i18n';
 import { useStore } from '../store';
@@ -37,7 +37,7 @@ export function TasksScreen() {
     <Screen>
       <NavHeader title={L('任务', 'Tasks')} onBack={() => nav.goBack()} />
       <ScrollView contentContainerStyle={{ padding: space.lg, paddingBottom: space.xxl }}
-        refreshControl={<RefreshControl refreshing={!!loading.tasks} onRefresh={() => reload('tasks')} />}>
+        refreshControl={<PullRefresh onRefresh={() => reload('tasks')} />}>
         <T v="callout" color={t.ink2}>{L(
           `${agentName()} 派出去的活。每个任务是 OpenClaw 的一个子会话：派给谁、做到哪、怎么做的，都在这里。在对话里让 ${agentName()}「派给 Fable 做」就会出现一个。`,
           `Work ${agentName()} has sent out. Each task is an OpenClaw sub-session; see who got it, how far along it is and how it was done. Ask ${agentName()} in chat to "send this to Fable" and one shows up.`,
@@ -113,9 +113,7 @@ export function TaskScreen() {
   const { tasks, groups, sideChats, cancelTask } = useStore();
   const [task, setTask] = useState<Task | undefined>(() => tasks.find((x) => x.id === id));
   const [err, setErr] = useState('');
-  const [loading, setLoading] = useState(false);
   const fetchTask = useCallback(() => dataApi.task(id).then((x) => { setTask(x); setErr(''); }).catch((e) => setErr(e instanceof Error ? e.message : String(e))), [id]);
-  const load = useCallback(() => { setLoading(true); fetchTask().finally(() => setLoading(false)); }, [fetchTask]);
   useEffect(() => { fetchTask(); }, [fetchTask]);
   if (!task) {
     return (
@@ -133,11 +131,11 @@ export function TaskScreen() {
     [L('时间', 'Time'), L(`${task.createdAt}${task.finishedAt ? `，${task.finishedAt} 结束` : ''}`, `${task.createdAt}${task.finishedAt ? `, ended ${task.finishedAt}` : ''}`)],
     [L('用量', 'Usage'), `${fmtTokens(task.tokens)} tokens${task.costUsd != null ? L(` · 约 $${task.costUsd.toFixed(3)}（按 API 价估算）`, ` · about $${task.costUsd.toFixed(3)} (estimated at API prices)`) : ''}`],
   ];
-  const cancel = () => cancelTask(task.id).then(load).catch((e) => Alert.alert(L('没取消成', "Couldn't cancel"), e instanceof Error ? e.message : String(e)));
+  const cancel = () => cancelTask(task.id).then(fetchTask).catch((e) => Alert.alert(L('没取消成', "Couldn't cancel"), e instanceof Error ? e.message : String(e)));
   return (
     <Screen>
       <NavHeader title={task.title} onBack={() => nav.goBack()} right={<Pill label={statusLabel(task.status)} tone={statusTone(task.status)} />} />
-      <ScrollView contentContainerStyle={{ padding: space.lg, paddingBottom: space.xxl }} refreshControl={<RefreshControl refreshing={loading} onRefresh={load} />}>
+      <ScrollView contentContainerStyle={{ padding: space.lg, paddingBottom: space.xxl }} refreshControl={<PullRefresh onRefresh={fetchTask} />}>
         {task.brief ? (
           <>
             <SectionLabel>{L('任务', 'Task')}</SectionLabel>
@@ -165,7 +163,7 @@ export function TaskScreen() {
           {task.status === '进行中' ? <Btn label={L('取消', 'Cancel')} kind="danger" flex icon={<CircleX size={15} color={t.bad} />} onPress={cancel} /> : null}
           {task.status === '完成' ? (
             <Btn label={L('改一下', 'Revise')} flex icon={<Pencil size={15} color={t.onGold} />}
-              onPress={() => sheet.open({ title: L('哪里要改', 'What to change'), content: (close) => <ReviseSheetContent task={task} close={() => { close(); load(); }} /> })} />
+              onPress={() => sheet.open({ title: L('哪里要改', 'What to change'), content: (close) => <ReviseSheetContent task={task} close={() => { close(); fetchTask(); }} /> })} />
           ) : null}
         </View>
         <T v="caption" color={t.ink3} style={{ marginTop: space.md, paddingHorizontal: space.xs }}>

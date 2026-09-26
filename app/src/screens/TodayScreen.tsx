@@ -1,11 +1,11 @@
 import React, { useEffect, useState } from 'react';
 import { agentName } from '../brand';
-import { Alert, Pressable, RefreshControl, ScrollView, StyleSheet, Switch, View } from 'react-native';
+import { Alert, Pressable, ScrollView, StyleSheet, Switch, View } from 'react-native';
 import { useNavigation } from '@react-navigation/native';
 import { ChevronLeft, ChevronRight, LoaderCircle, MapPin, X } from '../components/icons';
 import { ApprovalCard } from '../components/ApprovalCard';
 import { modelName, originName } from '../components/TaskCard';
-import { Card, LargeHeader, ListRow, Pill, Screen, SectionLabel, T } from '../components/ui';
+import { Card, LargeHeader, ListRow, Pill, PullRefresh, Screen, SectionLabel, T } from '../components/ui';
 import type { FeedItem, JournalEntry, UpcomingTask } from '../data/types';
 import { dataApi } from '../api/data';
 import { loadEventsOn, type LiveEvent } from '../api/live';
@@ -169,7 +169,7 @@ function DayView({ iso, offset, refreshKey }: { iso: string; offset: number; ref
 export function TodayScreen() {
   const t = useTheme();
   const nav = useNavigation<any>();
-  const { approvals, feed, upcoming, groups, sideChats, dismissFeed, live, tasks, connected, booting, reload, refreshLive, loading, liveLoading, dataErrors } = useStore();
+  const { approvals, feed, upcoming, groups, sideChats, dismissFeed, live, tasks, connected, booting, reload, refreshLive, loading, dataErrors } = useStore();
   const [showOff, setShowOff] = useState(false);
   const [offset, setOffset] = useState(0);
   const [dayRefresh, setDayRefresh] = useState(0);
@@ -180,11 +180,10 @@ export function TodayScreen() {
   const tomorrows = (live?.events ?? []).filter((e) => e.date > iso);
   const on = upcoming.filter((u) => u.enabled);
   const off = upcoming.filter((u) => !u.enabled);
-  const refreshing = liveLoading || !!loading.approvals || !!loading.upcoming;
   return (
     <Screen>
       <ScrollView contentContainerStyle={{ paddingBottom: space.xxl }}
-        refreshControl={<RefreshControl refreshing={refreshing} onRefresh={() => { if (offset !== 0) setDayRefresh((n) => n + 1); return connected ? reload('approvals', 'upcoming', 'tasks', 'feed', 'journal') : refreshLive(); }} />}>
+        refreshControl={<PullRefresh onRefresh={() => { if (offset !== 0) setDayRefresh((n) => n + 1); return connected ? reload('approvals', 'upcoming', 'tasks', 'feed', 'journal') : refreshLive(); }} />}>
         <LargeHeader title={titleOf(offset)} sub={subOf(offset)} right={(
           <View style={styles.nav}>
             <Pressable onPress={() => setOffset((o) => o - 1)} hitSlop={8} accessibilityRole="button" accessibilityLabel={L('前一天', 'Previous day')} style={({ pressed }) => [styles.navBtn, { backgroundColor: t.surface2, opacity: pressed ? 0.6 : 1 }]}><ChevronLeft size={20} color={t.ink} /></Pressable>

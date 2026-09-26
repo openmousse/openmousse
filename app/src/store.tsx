@@ -66,7 +66,7 @@ export type DataKey = 'groups' | 'sideChats' | 'tasks' | 'approvals' | 'feed' | 
 
 interface Actions {
   /** 重新探测服务器，读回全部数据和对话记录。 */
-  refreshLive(): void;
+  refreshLive(): Promise<void>;
   /** 重新读某几块数据；不传就全读。 */
   reload(...keys: DataKey[]): Promise<Partial<State>>;
   /** 读 HealthKit 推到服务器，再刷新看板（只在 iPhone 原生 app 里有效）。 */
@@ -250,7 +250,7 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
 
   const refreshLive = useCallback(() => {
     setS((st) => ({ ...st, liveLoading: true }));
-    loadServerConfig().then(async () => {
+    return loadServerConfig().then(async () => {
       const remembered = await loadAgentName();
       if (remembered) { setAgentName(remembered); setS((st) => ({ ...st, appName: agentName() })); }
       if (!serverConfigured()) {

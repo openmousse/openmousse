@@ -39,7 +39,7 @@ function NewGroupForm() {
   return (
     <Screen>
       <NavHeader title={L('新建 Agent', 'New agent')} onBack={() => nav.goBack()} />
-      <ScrollView contentContainerStyle={{ padding: space.lg, paddingBottom: space.xxl }} keyboardShouldPersistTaps="handled">
+      <ScrollView contentContainerStyle={{ padding: space.lg, paddingBottom: space.xxl }} keyboardShouldPersistTaps="handled" automaticallyAdjustKeyboardInsets keyboardDismissMode="interactive">
         <SectionLabel>{L('名字', 'Name')}</SectionLabel>
         <TextInput value={name} onChangeText={(v) => { setName(v); setErr(''); }} placeholder={L('比如：睡眠', 'e.g. Sleep')} placeholderTextColor={t.ink3}
           accessibilityLabel={L('Agent 名字', 'Agent name')} style={[type.body, styles.input, { backgroundColor: t.surface, color: t.ink }]} />

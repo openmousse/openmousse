@@ -44,12 +44,14 @@ What this is: the iOS / Android / Web client of OpenMousse — a shell for a per
 - **`.easignore` must live at the git repository root** (`../.easignore`). When it exists EAS ignores `.gitignore`, which is what lets the untracked identity files and icons travel with the build. Check what would be uploaded with `npx eas-cli build:inspect --platform ios --profile production --stage archive --output <dir>`.
 - `eas init` writes `extra.eas.projectId` into `app.json`; move it into the identity file afterwards. The template must not carry anyone's project id.
 - `runtimeVersion` follows `appVersion`. JS-only changes ship with `eas update --channel production --environment production`; anything native (new module, permissions, entitlements) needs a new build and a bumped `version` first, so old binaries never receive a bundle that references a module they do not have. Never OTA a bundle that imports a native module absent from the installed binary; keep the last known-good update group id for `eas update:republish`.
+- `eas update` exports into `dist/` by default, the same folder `../server` serves as the web version, and leaves it without the home-screen tags `scripts/build-web.mjs` adds. Run `npm run web:build` again after every `eas update`.
 
 ### Architecture
 
 - **Navigation is React Navigation, not Expo Router**, on purpose: `NavigationContainer` has no `linking`, so the single-file web preview works from any path. Do not migrate.
 - **Icons only from `src/components/icons.ts`**. Importing from `lucide-react-native` directly pulls thousands of icons into the bundle. Add a line there for a new icon.
-- **Bottom sheets use `src/components/Sheet.tsx`**, not React Native's `Modal` (which escapes the phone frame on web). Inside a native modal screen wrap the page in its own `SheetProvider`.
+- **Bottom sheets use `src/components/Sheet.tsx`**, not React Native's `Modal` (which escapes the phone frame on web). Inside a native modal screen wrap the page in its own `SheetProvider`. `open` dismisses the keyboard first and the sheet slides in as it goes down; a sheet with its own inputs lifts above the keyboard by itself.
+- **Keyboard: no `KeyboardAvoidingView` with a hard-coded `keyboardVerticalOffset`.** It compares a parent-relative layout with screen coordinates, so a wrong offset leaves a gap under the composer (the old `90` left 90pt). Anything pinned to the bottom takes `useBottomInset` (`src/components/keyboard.ts`) as its `paddingBottom`: it measures the view in the window, follows the iOS keyboard, and leaves room for the home indicator when the view reaches the screen bottom. Don't pass it a ref inside a native modal (coordinates there are modal-relative). Form screens use `automaticallyAdjustKeyboardInsets` on their `ScrollView`. The chat list dismisses the keyboard on tap (`keyboardShouldPersistTaps="never"`) and on drag, except on web, where react-native-web's `on-drag` blurs the input on every scroll, including auto-scroll to a new reply.
 - **Theme** in `src/theme.tsx`: gold = the assistant itself; cyan = data and progress; semantic colors only for state. `chartA` / `chartB` are validated on both backgrounds — do not change casually.
 - **Assistant name is never hard-coded**: `src/brand.ts` `agentName()` comes from the server's `/api/health` (`app_name`), remembered between launches. Do not write a product name into UI strings.
 - Data loading is centralized in `src/store.tsx` (`LOADERS`), API calls in `src/api/`. Server routes and the source of truth for every page are documented at the top of `../server/data.py`.
@@ -62,7 +64,8 @@ What this is: the iOS / Android / Web client of OpenMousse — a shell for a per
 - Optional data sources: `/api/health` reports `sources` (workouts, meals, body, calendar, health). `loadLive()` skips missing ones and boards render `NoSourceCard` instead of an error.
 - Apple Health (iOS only, `src/api/health.ts`, `@kingstinct/react-native-healthkit`): daily summaries pushed to `/api/health/daily` and `/api/health/metrics`; reproductive-health types are excluded and never requested. Derived metrics (recovery, energy balance, fitness trend) are computed on the server.
 - Attachments and voice input: `POST /api/chat/upload` (10 files × 30 MB per message), `POST /api/chat/transcribe`. Push: `/api/push/register`, notifications open the thread.
-- Every page supports pull-to-refresh (`Page` component with `refresh` keys); assistant replies render as Markdown (`src/components/Markdown.tsx`).
+- Every page supports pull-to-refresh through `PullRefresh` (`src/components/ui.tsx`; the `Page` component in `MoreScreens.tsx` takes `refresh` keys); assistant replies render as Markdown (`src/components/Markdown.tsx`).
+- **The refresh spinner follows only the user's own pull.** Never pass the store's `loading` (or any state that changes in the background) as `refreshing`: on iOS a programmatic `refreshing={true}` pushes the ScrollView down one spinner height and never pushes it back, so every background reload stacks more blank space onto tabs that are not on screen.
 
 ### Debugging
 

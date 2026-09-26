@@ -1,18 +1,18 @@
 import React from 'react';
 import { agentName } from '../brand';
-import { Pressable, RefreshControl, ScrollView, View } from 'react-native';
+import { Pressable, ScrollView, View } from 'react-native';
 import { useNavigation } from '@react-navigation/native';
 import { Activity, BookOpen, Brain, ClipboardList, Cpu, IdCard, Palette, Server, ShieldCheck } from '../components/icons';
 import { LensAvatar } from '../components/LensAvatar';
-import { Card, LargeHeader, ListRow, Pill, Screen, SectionLabel, Segmented, T } from '../components/ui';
+import { Card, LargeHeader, ListRow, Pill, PullRefresh, Screen, SectionLabel, Segmented, T } from '../components/ui';
 import { L, useLang, type LangPref } from '../i18n';
-import { useStore, type DataKey } from '../store';
+import { useStore } from '../store';
 import { space, useAppearance, useTheme } from '../theme';
 
 export function MeScreen() {
   const t = useTheme();
   const nav = useNavigation<any>();
-  const { avatar, profile, memories, activity, connected, booting, authFailed, appName, tasks, security, models, journal, loading, reload } = useStore();
+  const { avatar, profile, memories, activity, connected, booting, authFailed, appName, tasks, security, models, journal, reload } = useStore();
   const { appearance, setAppearance } = useAppearance();
   const { pref, setPref } = useLang();
   const warn = security?.facts.filter((f) => f.tone === 'warn') ?? [];
@@ -20,7 +20,7 @@ export function MeScreen() {
   const running = tasks.filter((x) => x.status === '进行中').length;
   return (
     <Screen>
-      <ScrollView contentContainerStyle={{ paddingBottom: space.xxl }} refreshControl={<RefreshControl refreshing={['profile', 'memories', 'journal', 'activity', 'tasks', 'security', 'models'].some((k) => loading[k as DataKey])} onRefresh={() => reload('profile', 'memories', 'journal', 'activity', 'tasks', 'security', 'models')} />}>
+      <ScrollView contentContainerStyle={{ paddingBottom: space.xxl }} refreshControl={<PullRefresh onRefresh={() => reload('profile', 'memories', 'journal', 'activity', 'tasks', 'security', 'models')} />}>
         <LargeHeader title={L('我', 'Me')} />
         <View style={{ paddingHorizontal: space.lg }}>
           <Pressable onPress={() => nav.navigate('Avatar')} accessibilityRole="button" accessibilityLabel={L(`定制 ${agentName()} 的形象`, `Customize ${agentName()}'s look`)}>

@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { agentName } from '../brand';
-import { Alert, Platform, Pressable, ScrollView, StyleSheet, TextInput, View } from 'react-native';
+import { Alert, Keyboard, Platform, Pressable, ScrollView, StyleSheet, TextInput, View } from 'react-native';
 import { useNavigation, useRoute } from '@react-navigation/native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { ChatView } from '../components/ChatView';
@@ -203,7 +203,7 @@ export function ChatScreen() {
   return (
     <Screen>
       <View style={[styles.head, { borderBottomColor: t.line }]}>
-        <Pressable onPress={() => setOpen(true)} hitSlop={10} accessibilityRole="button" accessibilityLabel={L('打开侧栏', 'Open sidebar')} style={styles.menuBtn}>
+        <Pressable onPress={() => { Keyboard.dismiss(); setOpen(true); }} hitSlop={10} accessibilityRole="button" accessibilityLabel={L('打开侧栏', 'Open sidebar')} style={styles.menuBtn}>
           <Menu size={22} color={t.ink} />
           {running ? <View style={[styles.dot, { backgroundColor: t.cyan }]} /> : null}
         </Pressable>

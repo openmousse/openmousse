@@ -2,7 +2,7 @@
 // 只读。Group 会话按天重置后，当天之外的记录都从这里看（蓝图 4.3）。
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { agentName } from '../brand';
-import { ActivityIndicator, Pressable, ScrollView, StyleSheet, TextInput, View } from 'react-native';
+import { ActivityIndicator, Platform, Pressable, ScrollView, StyleSheet, TextInput, View } from 'react-native';
 import { useNavigation, useRoute } from '@react-navigation/native';
 import { dataApi } from '../api/data';
 import { HttpApi } from '../api/client';
@@ -101,7 +101,7 @@ export function HistoryScreen() {
           </View>
         ) : null}
       </View>
-      <ScrollView contentContainerStyle={{ padding: space.lg, paddingBottom: space.xxl }} keyboardShouldPersistTaps="handled">
+      <ScrollView contentContainerStyle={{ padding: space.lg, paddingBottom: space.xxl }} keyboardShouldPersistTaps="handled" automaticallyAdjustKeyboardInsets keyboardDismissMode={Platform.OS === 'web' ? 'none' : 'on-drag'}>
         {!connected ? <Card><T v="callout" color={t.ink2}>{L('没连上服务器。', 'Not connected to the server.')}</T></Card> : null}
         {error ? <Card><T v="callout" color={t.bad}>{error}</T></Card> : null}
         {q.trim() ? (

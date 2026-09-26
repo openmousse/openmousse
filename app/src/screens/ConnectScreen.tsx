@@ -32,7 +32,7 @@ export function ConnectScreen() {
   return (
     <Screen>
       <NavHeader title={L('服务器', 'Server')} onBack={() => (needsServer ? undefined : nav.goBack())} right={connected ? <Pill label={L('已连接', 'Connected')} tone="good" /> : undefined} />
-      <ScrollView contentContainerStyle={{ padding: space.lg, paddingBottom: space.xxl }} keyboardShouldPersistTaps="handled">
+      <ScrollView contentContainerStyle={{ padding: space.lg, paddingBottom: space.xxl }} keyboardShouldPersistTaps="handled" automaticallyAdjustKeyboardInsets keyboardDismissMode="interactive">
         <T v="callout" color={t.ink2} style={{ marginBottom: space.md }}>
           {L('这个 app 是一个壳，所有对话、记忆和数据都在你自己的服务器上。填服务器的地址和接入令牌就能用。',
             'This app connects to your own server, where all your chats, memory and data live. Enter the server address and access token to get started.')}

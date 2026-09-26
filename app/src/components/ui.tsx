@@ -1,5 +1,5 @@
-import React from 'react';
-import { Pressable, StyleSheet, Text, TextProps, View, ViewProps } from 'react-native';
+import React, { useState } from 'react';
+import { Pressable, RefreshControl, StyleSheet, Text, TextProps, View, ViewProps, type RefreshControlProps } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { ChevronLeft, ChevronRight } from './icons';
 import { L } from '../i18n';
@@ -13,6 +13,21 @@ export function Screen({ children, style, ...rest }: ViewProps) {
       {children}
     </View>
   );
+}
+
+/**
+ * 下拉刷新。圆环只跟着用户自己的下拉转，不要把 store 的 loading 接到 refreshing 上：
+ * iOS 上 refreshing 被代码改成 true 时，RN 会先把 ScrollView 往下推一个圆环的高度，结束时不推回去。
+ * 后台重读（每条回复后读 feed、回前台读 journal……）会把没在显示的 tab 一次次往下推，
+ * 切过去就是上面一大块空白、中间一个圆环，得手动滑一下才弹回来。
+ */
+export function PullRefresh({ onRefresh, ...rest }: Omit<RefreshControlProps, 'refreshing' | 'onRefresh'> & { onRefresh: () => unknown }) {
+  const [refreshing, setRefreshing] = useState(false);
+  const pull = async () => {
+    setRefreshing(true);
+    try { await onRefresh(); } catch { /* 读失败的原因各页自己显示 */ } finally { setRefreshing(false); }
+  };
+  return <RefreshControl {...rest} refreshing={refreshing} onRefresh={pull} />;
 }
 
 export function T({ v = 'body', color, style, ...rest }: TextProps & { v?: keyof typeof type; color?: string }) {
