@@ -237,8 +237,33 @@ button.ritem:hover { border-color: var(--goldFill); }
 .tline a { flex: none; width: 58px; font: 12px/1.95 ui-monospace, "SF Mono", Menlo, monospace; color: var(--cyan); text-decoration: none; }
 .tline a:hover { text-decoration: underline; }
 .tline mark { background: var(--goldSoft); color: var(--ink); border-radius: 3px; }
+.tslide { margin: 12px 0 2px 70px; font-size: 11.5px; font-weight: 600; color: var(--gold); letter-spacing: .02em; }
+.rlist.searching .tslide { display: none; }
 .md .flash { animation: flash 1.6s ease-out; border-radius: 4px; }
 @keyframes flash { from { background: var(--goldSoft); } to { background: transparent; } }
+.morebtn { display: flex; align-items: center; gap: 6px; width: 100%; text-align: left; padding: 5px 8px; color: var(--ink3); font-size: 12px; border-radius: 7px; }
+.morebtn:hover { background: var(--surface2); color: var(--ink2); }
+.morebtn .chev { width: 12px; transition: transform .15s; }
+.morebtn.open .chev { transform: rotate(90deg); }
+.more { display: none; padding-left: 8px; }
+.more.open { display: block; }
+.mod.res .modh { font-weight: 500; color: var(--ink2); }
+/* 按小节提问 */
+.md h2, .md h3 { position: relative; }
+.askbtn2 { display: inline-flex; align-items: center; gap: 4px; margin-left: 10px; padding: 2px 9px; border-radius: 999px; border: 1px solid var(--line); background: var(--surface);
+  color: var(--ink3); font-size: 12px; font-weight: 500; vertical-align: 3px; opacity: .45; transition: opacity .15s; }
+.md h2:hover .askbtn2, .md h3:hover .askbtn2, .askbtn2:focus { opacity: 1; }
+.askbtn2:hover { color: var(--gold); border-color: var(--goldFill); }
+@media (hover: none) { .askbtn2 { opacity: 1; } }
+.selask { position: fixed; z-index: 40; padding: 5px 12px; border-radius: 999px; background: var(--ink); color: var(--bg); font-size: 12.5px; font-weight: 600; box-shadow: var(--shadow); }
+.quote { display: none; margin-bottom: 8px; padding: 8px 10px; border-radius: 10px; background: var(--goldSoft); font-size: 12.5px; }
+.quote.on { display: block; }
+.quote .qh { display: flex; gap: 8px; align-items: flex-start; }
+.quote .ql { flex: 1; min-width: 0; color: var(--ink); overflow: hidden; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; }
+.quote .qx { color: var(--ink3); font-size: 14px; line-height: 1; padding: 0 2px; }
+.quote .qa { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 6px; }
+.quote .qa button { padding: 3px 9px; border-radius: 999px; border: 1px solid var(--goldFill); background: var(--surface); color: var(--ink2); font-size: 12px; }
+.quote .qa button:hover { color: var(--ink); }
 .it .prog { margin-left: auto; flex: none; font-size: 11px; color: var(--ink3); }
 .it .prog.full { color: var(--good); }
 .it .prog + .dots { margin-left: 6px; }
@@ -313,6 +338,7 @@ button.ritem:hover { border-color: var(--goldFill); }
       <div class="askh"><div class="t1"><span class="dot"></span><span id="askTitle"></span></div><div class="t2" id="askSub"></div></div>
       <div class="msgs" id="msgs"></div>
       <div class="compose">
+        <div class="quote" id="quote"></div>
         <textarea id="input" rows="2"></textarea>
         <div class="row"><span id="composeHint"></span><button class="send" id="sendBtn"></button></div>
       </div>
@@ -486,20 +512,40 @@ function renderNav() {
   const c = curCourse();
   if (!c) return;
   if (c.pages.length) nav.append(h('div', { class: 'sect' }, L('课程总览', 'Course overview')), h('div', { class: 'items', style: 'display:block' }, c.pages.map(pageItem)));
-  nav.append(h('div', { class: 'sect' }, L('模块', 'Modules')));
-  for (const m of c.modules) {
-    const key = c.name + '/' + m.id;
-    const open = key in S.open ? S.open[key] : (m.pages.length > 0 || (S.unit && m.files.some(f => isOn('file', f.path))));
-    const el = h('div', { class: 'mod' + (open ? ' open' : '') },
-      h('button', { class: 'modh', onclick: () => { el.classList.toggle('open'); S.open[key] = el.classList.contains('open'); store.set('study.open', JSON.stringify(S.open)); } },
-        h('span', { class: 'chev' }, '›'), h('span', { class: 'mt' }, m.title), h('span', { class: 'cnt' }, m.pages.length ? L(`${m.pages.length} 页笔记`, `${m.pages.length} note${m.pages.length === 1 ? '' : 's'}`) : m.files.length || '')),
-      h('div', { class: 'items' }, m.pages.map(pageItem), m.files.map(fileItem)));
-    nav.append(el);
-  }
+  // 上面按周 / 节排（每节点进去是学习路线），课程信息、作业说明、阅读清单这类资料模块收到下面
+  const sess = c.modules.filter(m => m.kind !== 'resource'), res = c.modules.filter(m => m.kind === 'resource');
+  if (sess.length) nav.append(h('div', { class: 'sect' }, L('按周学习', 'By week')), ...sess.map(m => modEl(c, m, false)));
+  if (res.length) nav.append(h('div', { class: 'sect' }, L('课程资料', 'Course info & files')), ...res.map(m => modEl(c, m, true)));
   if (c.videos?.length) {
     nav.append(h('div', { class: 'sect' }, L('其他视频', 'Other videos')), h('div', { class: 'items', style: 'display:block' }, c.videos.map(v =>
       h('button', { class: 'it', onclick: () => { openUnit({ kind: 'video', path: v.path, title: v.name }); closeDrawers(); } }, h('span', { class: 'b' }, '▶'), h('span', { class: 't' }, v.name)))));
   }
+}
+const toggleOpen = (key, el) => { el.classList.toggle('open'); S.open[key] = el.classList.contains('open'); store.set('study.open', JSON.stringify(S.open)); };
+// 其他文件的顺序：欢迎 / 介绍 → 按 Session 编号 → 其余 → 复习
+function sortFiles(files) {
+  const rank = f => { const n = f.name.toLowerCase(), m = /session\s*(\d+)/i.exec(f.name); return /welcome|introduction/.test(n) ? [0, 0] : /review/.test(n) ? [3, 0] : m ? [1, +m[1]] : [2, 0]; };
+  return [...files].sort((a, b) => { const x = rank(a), y = rank(b); return x[0] - y[0] || x[1] - y[1] || a.name.localeCompare(b.name); });
+}
+function modEl(c, m, resource) {
+  const key = c.name + '/' + m.id;
+  const hasCur = !!S.unit && (m.files.some(f => isOn('file', f.path)) || m.pages.some(p => isOn('page', p.path)));
+  const open = hasCur || (key in S.open ? S.open[key] : (!resource && m.pages.length > 0));
+  // 有学习页的周：已经挂进学习页（标签 / 阅读）的课件不再重复列，剩下的收进「本周其他文件」
+  const rest = sortFiles(m.pages.length ? m.files.filter(f => !f.used) : m.files);
+  const items = h('div', { class: 'items' }, m.pages.map(pageItem));
+  if (m.pages.length && rest.length) {
+    const mkey = key + '#more';
+    const moreOpen = rest.some(f => isOn('file', f.path)) || !!S.open[mkey];
+    const box = h('div', { class: 'more' + (moreOpen ? ' open' : '') }, rest.map(fileItem));
+    const btn = h('button', { class: 'morebtn' + (moreOpen ? ' open' : '') }, h('span', { class: 'chev' }, '›'), L(`其他文件 · ${rest.length}`, `Other files · ${rest.length}`));
+    btn.onclick = () => { toggleOpen(mkey, box); btn.classList.toggle('open', box.classList.contains('open')); };
+    items.append(btn, box);
+  } else items.append(...rest.map(fileItem));
+  const cnt = m.pages.length ? L(`${m.pages.length} 节`, `${m.pages.length} session${m.pages.length === 1 ? '' : 's'}`) : (m.files.length ? L(`${m.files.length} 个文件`, `${m.files.length} file${m.files.length === 1 ? '' : 's'}`) : '');
+  const el = h('div', { class: 'mod' + (open ? ' open' : '') + (resource ? ' res' : '') });
+  el.append(h('button', { class: 'modh', onclick: () => toggleOpen(key, el) }, h('span', { class: 'chev' }, '›'), h('span', { class: 'mt' }, m.title), h('span', { class: 'cnt' }, cnt)), items);
+  return el;
 }
 function selectCourse(name, keepUnit) {
   S.course = name;
@@ -541,6 +587,8 @@ const tabKey = id => (id.startsWith('read:') ? 'readings' : id);
 function openUnit(u, tab) {
   if (u.kind === 'page') u = { ...(findPage(u.path) || {}), ...u };
   S.unit = u;
+  S.quote = null;
+  paintQuote();
   store.set('study.last', JSON.stringify({ course: S.course, kind: u.kind, path: u.path, title: u.title, tab: tab || null }));
   renderNav();
   const tabs = tabsOf(u);
@@ -575,7 +623,11 @@ async function selectTab(id) {
     if (id === 'page') {
       const j = await api('/api/study/page?' + qs({ course: S.course, path: S.unit.path }));
       const el = mdEl(j.markdown);
-      el.querySelectorAll('h2, h3').forEach((x, i) => { x.id = 's' + (i + 1); });  // 和服务端 headings_of 的编号一致
+      el.querySelectorAll('h2, h3').forEach((x, i) => {
+        x.id = 's' + (i + 1);  // 和服务端 headings_of 的编号一致
+        const title = x.dataset.title = x.textContent.trim();
+        x.append(h('button', { class: 'askbtn2', title: L('就这一节提问', 'Ask about this section'), onclick: e => { e.stopPropagation(); setQuote(title, sectionText(x)); } }, L('问这一节', 'Ask')));
+      });
       if (done(el)) {
         const target = anchor && el.querySelector('#' + anchor);
         if (target) { target.scrollIntoView({ block: 'start' }); target.classList.add('flash'); } else v.scrollTop = 0;
@@ -713,8 +765,8 @@ function matRow(r) {
 function matsBox(m, open) {
   const have = m.readings.filter(r => r.file).length, miss = m.missing.length;
   if (!m.readings.length && !m.recordings.length) return h('div', { class: 'mats' }, L('这一节没有阅读清单，也还没有录播。', 'No reading list or lecture recording for this session yet.'));
-  const recs = m.recordings.map(r => h('div', { class: 'mrow' }, h('span', { class: 'st' }, r.has_captions ? '✓' : '○'), h('span', { class: 'mk' }, L('录播', 'Lecture')),
-    h('span', { class: 'mt' }, r.name || '', h('span', { class: 'mi' }, ' · ' + String(r.start || '').slice(0, 10) + (r.has_captions ? '' : L(' · 没有字幕', ' · no captions'))))));
+  const recs = m.recordings.map(r => h('button', { class: 'mrow', onclick: () => selectTab('recs') }, h('span', { class: 'st' }, r.has_captions ? '✓' : '○'), h('span', { class: 'mk' }, L('录播', 'Lecture')),
+    h('span', { class: 'mt' }, r.title || r.name || '', r.has_captions ? null : h('span', { class: 'mi bad' }, L(' · 没有字幕', ' · no captions')))));
   const title = miss ? L(`还缺 ${miss} 样必读材料`, `${miss} required item${miss === 1 ? '' : 's'} missing`)
     : L(`材料齐了 · 阅读 ${have}/${m.readings.length} · 录播 ${m.recordings.length}`, `Materials complete · readings ${have}/${m.readings.length} · lectures ${m.recordings.length}`);
   return h('details', { class: 'mats' + (miss ? ' warn' : ''), open: open || miss > 0 }, h('summary', {}, (miss ? '⚠︎ ' : '✓ ') + title), m.readings.map(matRow), recs);
@@ -736,8 +788,8 @@ function openRef(r) {
     selectTab(((S.unit.sources || []).includes(r.path) ? 'src:' : 'read:') + r.path);
   } else if (r.type === 'video') selectTab('videos');
   else if (r.type === 'recording') {
-    const rec = (S.mats?.recordings || []).find(x => x.id === r.id);
-    if (rec?.viewer_url) window.open(panoptoAt(rec.viewer_url, r.t), '_blank', 'noopener'); else selectTab('recs');
+    const url = r.url || (S.mats?.recordings || []).find(x => x.id === r.id)?.viewer_url;
+    if (url) window.open(panoptoAt(url, r.t), '_blank', 'noopener'); else selectTab('recs');
   } else selectTab(r.type);
 }
 function setStep(i) {
@@ -832,8 +884,8 @@ async function renderReadings(my) {
     return h(r.file ? 'button' : 'div', { class: 'ritem', onclick: r.file ? () => selectTab('read:' + r.file) : null }, h('span', { class: 'st' }, icon), body);
   };
   const req = m.readings.filter(r => r.required), opt = m.readings.filter(r => !r.required);
-  if (req.length) list.append(h('div', { class: 'rgroup' }, L('必读', 'Required')), req.map(row));
-  if (opt.length) list.append(h('div', { class: 'rgroup' }, L('选读', 'Optional')), opt.map(row));
+  if (req.length) list.append(h('div', { class: 'rgroup' }, L('必读', 'Required')), ...req.map(row));
+  if (opt.length) list.append(h('div', { class: 'rgroup' }, L('选读', 'Optional')), ...opt.map(row));
   if (!m.readings.length) list.append(h('div', { class: 'note' }, L('这一节没有阅读清单。', 'No readings for this session.')));
   v.append(list);
 }
@@ -850,10 +902,12 @@ async function renderRecs(my) {
   wrap.append(find);
   const lines = [];
   for (const r of j.items) {
-    const box = h('div', { class: 'rec' }, h('h3', {}, r.name || L('录播', 'Lecture')),
-      h('div', { class: 'mi', style: 'margin-bottom:8px' }, String(r.start || '').slice(0, 16).replace('T', ' '), r.viewer_url ? h('a', { href: r.viewer_url, target: '_blank', rel: 'noopener', style: 'margin-left:10px' }, L('在 Panopto 打开', 'Open in Panopto')) : null));
+    const box = h('div', { class: 'rec' }, h('h3', {}, r.title || r.name || L('录播', 'Lecture')),
+      h('div', { class: 'mi', style: 'margin-bottom:8px' }, r.duration ? L(`${Math.round(r.duration / 60)} 分钟`, `${Math.round(r.duration / 60)} min`) : '',
+        r.viewer_url ? h('a', { href: r.viewer_url, target: '_blank', rel: 'noopener', style: 'margin-left:10px' }, L('在 Panopto 打开', 'Open in Panopto')) : null));
     if (!r.has_captions) box.append(h('div', { class: 'note' }, L('这节录播没有字幕。', 'This recording has no captions.')));
     for (const c of r.chunks || []) {
+      if (c.slide) box.append(h('div', { class: 'tslide' }, L(`课件 p.${c.slide}`, `Slide p.${c.slide}`) + (c.slide_title ? ' · ' + c.slide_title : '')));
       const text = h('span', {}, c.text);
       const line = h('div', { class: 'tline' }, h('a', { href: panoptoAt(r.viewer_url, c.t) || '#', target: '_blank', rel: 'noopener' }, clock(c.t)), text);
       lines.push([line, text, c.text]);
@@ -864,6 +918,7 @@ async function renderRecs(my) {
   if (!j.items.length) wrap.append(h('div', { class: 'note' }, L('这一节还没有录播。', 'No recording for this session yet.')));
   find.addEventListener('input', () => {
     const q = find.value.trim().toLowerCase();
+    wrap.classList.toggle('searching', !!q);
     for (const [line, span, raw] of lines) {
       const hit = !q || raw.toLowerCase().includes(q);
       line.style.display = hit ? '' : 'none';
@@ -1043,13 +1098,19 @@ async function send(text) {
   if (!text || S.busy || !S.unit || S.unit.kind === 'video') return;
   const my = S.chatSeq;
   const box = $('#msgs');
+  // 引用了某一节 / 某一段：对话里写明问的是哪里，全文只给助手
+  const q = S.quote;
+  const quote = q ? (q.section ? q.section + '\n' : '') + q.text : null;
+  if (q) text = (q.sel ? L(`〔关于这段：“${short(q.text, 50)}”〕`, `[Re: “${short(q.text, 50)}”] `) : L(`〔关于「${q.section}」〕`, `[Re: “${q.section}”] `)) + text;
+  S.quote = null;
+  paintQuote();
   box.querySelector('.hints')?.parentElement?.remove();
   box.append(msgEl('user', text, ''));
   $('#input').value = '';
   autosize();
   S.busy = true; paintSend();
   try {
-    const r = await fetch('/api/study/ask', { method: 'POST', headers: hdrs({ 'Content-Type': 'application/json' }), body: JSON.stringify({ course: S.course, text, step: curStepOf(), ...unitRef() }) });
+    const r = await fetch('/api/study/ask', { method: 'POST', headers: hdrs({ 'Content-Type': 'application/json' }), body: JSON.stringify({ course: S.course, text, step: curStepOf(), quote, ...unitRef() }) });
     if (r.status === 401) { showAuth(); throw new Error('auth'); }
     if (!r.ok) { let j = null; try { j = await r.json(); } catch { /* */ } throw new Error((j && (j.detail || j.error)) || 'HTTP ' + r.status); }
     await readSSE(r, streamInto(my));
@@ -1058,6 +1119,56 @@ async function send(text) {
   }
   S.busy = false; paintSend(); scrollDown();
 }
+// —— 就某一节 / 某一段提问 ——
+const short = (t, n) => { t = String(t || '').replace(/\s+/g, ' ').trim(); return t.length > n ? t.slice(0, n) + '…' : t; };
+function sectionText(hd) {
+  const lvl = +hd.tagName[1], parts = [hd.dataset.title || ''];
+  for (let n = hd.nextElementSibling; n && !(/^H[1-6]$/.test(n.tagName) && +n.tagName[1] <= lvl); n = n.nextElementSibling) parts.push(n.innerText);
+  return parts.join('\n').slice(0, 4000);
+}
+function sectionOf(node) {
+  const md = node.closest('.md');
+  let el = node;
+  while (el && el.parentElement !== md) el = el.parentElement;
+  for (let x = el; x; x = x.previousElementSibling) if (/^H[23]$/.test(x.tagName)) return x.dataset.title || x.textContent.trim();
+  return '';
+}
+function setQuote(section, text, sel) {
+  S.quote = { section, text, sel: !!sel };
+  paintQuote();
+  document.body.classList.add('ask-open');
+  $('#input').focus();
+}
+function paintQuote() {
+  const box = $('#quote');
+  if (!box) return;
+  box.innerHTML = '';
+  box.classList.toggle('on', !!S.quote);
+  if (!S.quote) return;
+  const q = S.quote;
+  const label = q.sel ? `「${short(q.text, 60)}」` + (q.section ? ' · ' + q.section : '') : q.section;
+  box.append(h('div', { class: 'qh' }, h('span', { class: 'ql' }, L('引用：', 'Quoting: ') + label), h('button', { class: 'qx', title: L('取消引用', 'Remove'), onclick: () => { S.quote = null; paintQuote(); } }, '✕')),
+    h('div', { class: 'qa' }, [L('用大白话讲一遍', 'Explain it simply'), L('举个例子', 'Give an example'), L('出一道题考我', 'Quiz me on it')].map(t => h('button', { onclick: () => send(t) }, t))));
+}
+let selBtn = null;
+const hideSel = () => { selBtn?.remove(); selBtn = null; };
+document.addEventListener('mouseup', e => {
+  if (e.target.closest?.('.selask')) return;
+  setTimeout(() => {
+    hideSel();
+    const sel = window.getSelection();
+    const text = sel ? sel.toString().trim() : '';
+    if (text.length < 4 || !sel.rangeCount || !S.unit) return;
+    const node = sel.anchorNode && (sel.anchorNode.nodeType === 1 ? sel.anchorNode : sel.anchorNode.parentElement);
+    if (!node || !node.closest('#view .md')) return;
+    const r = sel.getRangeAt(0).getBoundingClientRect();
+    selBtn = h('button', { class: 'selask', style: `left:${Math.max(8, Math.min(window.innerWidth - 100, r.left + r.width / 2 - 40))}px;top:${Math.max(58, r.top - 38)}px` }, L('问这段', 'Ask about this'));
+    selBtn.onmousedown = ev => ev.preventDefault();  // 别让点按钮把选区清掉
+    selBtn.onclick = () => { setQuote(sectionOf(node), text.slice(0, 3000), true); hideSel(); sel.removeAllRanges(); };
+    document.body.append(selBtn);
+  }, 0);
+});
+document.addEventListener('scroll', hideSel, true);
 function autosize() { const t = $('#input'); t.style.height = 'auto'; t.style.height = Math.min(200, t.scrollHeight + 2) + 'px'; paintSend(); }
 
 // —— 其他 ——

@@ -56,6 +56,7 @@ TEXT_EXT = {".md", ".markdown", ".txt", ".rmd", ".r", ".py", ".csv", ".tex", ".j
 VIDEO_EXT = {".mp4", ".webm", ".mov", ".m4v"}
 KINDS = ("cards", "quiz", "path")
 KIND_ORDER = {"textbook": 0, "case": 1, "article": 2, "note": 3, "news": 4, "web": 5, "book": 6}
+SESSION_RE = re.compile(r"\b(session|week|lecture|lesson|topic|unit|chapter)\s*\d+|第\s*\d+\s*[周讲课节章]", re.I)
 _text_cache: dict[str, tuple[float, str]] = {}
 _json_cache: dict[str, tuple[float, object]] = {}
 _deadlines: tuple[float, dict] | None = None
@@ -213,15 +214,17 @@ def readings_of(course: str, session: int | None) -> list[dict]:
     return out
 
 
-def recordings_of(course: str, session: int | None) -> list[dict]:
-    """录播索引里属于这一节的录播，按时间排。path = 带字幕的 JSON（没有字幕就是 None）。"""
+def recordings_of(course: str, session: int | None, every: bool = False) -> list[dict]:
+    """录播索引里属于这一节的录播，按时间排。path = 带字幕的 JSON（没有字幕就是 None）。
+    同一堂课常有几份（两个班各录一次、同一个 tutorial 连上几场）：按「覆盖哪几节 × 时长」分组，每组只留一份——
+    有字幕的优先，其次字幕完整的、自己课表上那一场（in_timetable）、字幕条数多的。every=True 时全部返回。"""
     base = root("recordings")
     if not base or session is None:
         return []
     cdir = base / course
     data = load_json(cdir / "index.json")
     items = (data.get("recordings") or data.get("items")) if isinstance(data, dict) else data
-    out = []
+    found = []
     for r in items if isinstance(items, list) else []:
         if not isinstance(r, dict) or session not in sessions_in(r.get("sessions")):
             continue
@@ -231,15 +234,41 @@ def recordings_of(course: str, session: int | None) -> list[dict]:
             path = path.with_suffix(".json")
         detail = load_json(path) if path and path.is_file() else None
         detail = detail if isinstance(detail, dict) else {}
-        pick = lambda k: r.get(k) or detail.get(k)  # noqa: E731
-        out.append({"id": str(pick("id") or ""), "name": str(pick("name") or ""), "start": pick("start"), "duration": pick("duration"),
-                    "viewer_url": pick("viewer_url"), "has_captions": bool(detail.get("segments")), "path": path if detail else None})
-    out.sort(key=lambda x: str(x.get("start") or ""))
-    return out
+        pick = lambda k: r.get(k) if r.get(k) is not None else detail.get(k)  # noqa: E731
+        try:
+            hours = round(float(pick("duration") or 0) / 3600)
+        except (TypeError, ValueError):
+            hours = 0
+        covers = tuple(sorted(sessions_in(pick("sessions"))))
+        found.append({"id": str(pick("id") or ""), "name": str(pick("name") or ""), "start": pick("start"), "duration": pick("duration"),
+                      "viewer_url": pick("viewer_url"), "has_captions": bool(detail.get("segments")), "path": path if detail else None,
+                      "mine": bool(r.get("in_timetable")), "coverage": float(r.get("caption_coverage") or (1 if detail.get("segments") else 0)),
+                      "segments": int(r.get("segments") or len(detail.get("segments") or [])), "note": r.get("note"),
+                      "kind": "class" if len(covers) > 1 else ("tutorial" if 0 < hours <= 1 else "lecture"), "group": (covers, hours)})
+    if not every:
+        best: dict = {}
+        for r in found:
+            score = (r["has_captions"], r["coverage"] >= 0.9, r["mine"], r["segments"])
+            if r["group"] not in best or score > best[r["group"]][0]:
+                best[r["group"]] = (score, r)
+        found = [r for _, r in best.values()]
+    found.sort(key=lambda x: ({"lecture": 0, "class": 1, "tutorial": 2}[x["kind"]], str(x.get("start") or "")))
+    return found
+
+
+def rec_title(r: dict) -> str:
+    """「讲课 · 9/7 周一 11:00（你那一班）」：比 Panopto 的房间号名字好认。"""
+    kind = {"lecture": L("讲课", "Lecture"), "class": L("助教做题课", "Class (TA)"), "tutorial": "Tutorial"}.get(r.get("kind") or "", L("录播", "Recording"))
+    try:
+        d = datetime.fromisoformat(str(r.get("start")))
+        when = L(f"{d.month}/{d.day} 周{'一二三四五六日'[d.weekday()]} {d:%H:%M}", f"{d:%a} {d.day}/{d.month} {d:%H:%M}")
+    except (TypeError, ValueError):
+        when = str(r.get("start") or "")[:16]
+    return f"{kind} · {when}" + (L("（你那一班）", " (your class)") if r.get("mine") else "")
 
 
 def slim_rec(r: dict) -> dict:
-    return {k: r.get(k) for k in ("id", "name", "start", "duration", "viewer_url", "has_captions")}
+    return {k: r.get(k) for k in ("id", "name", "start", "duration", "viewer_url", "has_captions", "mine", "kind", "note")} | {"title": rec_title(r)}
 
 
 def segments_of(rec: dict) -> list[dict]:
@@ -255,24 +284,44 @@ def segments_of(rec: dict) -> list[dict]:
     return out
 
 
+def slides_of(rec: dict) -> list[dict]:
+    """录播里翻到第几页课件的时间点（Panopto 记下的幻灯片切换）：[{t, n, title}]。"""
+    data = load_json(rec.get("path"))
+    out = []
+    for s in (data.get("slides") if isinstance(data, dict) else None) or []:
+        try:
+            out.append({"t": float(s["t"]), "n": int(s["n"]), "title": str(s.get("title") or "").strip()})
+        except (KeyError, TypeError, ValueError):
+            continue
+    return sorted(out, key=lambda s: s["t"])
+
+
 def clock(t: float) -> str:
     t = int(t)
     return f"{t // 3600}:{t % 3600 // 60:02d}:{t % 60:02d}"
 
 
-def transcript_chunks(segs: list[dict], every: float = 30.0) -> list[dict]:
-    """字幕并成大约 every 秒一段，读起来像段落：[{t, text}]。"""
+def transcript_chunks(segs: list[dict], slides: list[dict] | None = None, every: float = 30.0) -> list[dict]:
+    """字幕并成大约 every 秒一段，读起来像段落：[{t, text, slide?}]。翻到新的一页课件就另起一段，并记下页码。"""
     out: list[dict] = []
+    marks = list(slides or [])
     for s in segs:
-        if out and s["t"] - out[-1]["t"] < every:
+        slide = None
+        while marks and marks[0]["t"] <= s["t"] + 0.5:
+            slide = marks.pop(0)
+        if out and slide is None and s["t"] - out[-1]["t"] < every:
             out[-1]["text"] += " " + s["text"]
         else:
-            out.append(dict(s))
+            out.append(dict(s) | ({"slide": slide["n"], "slide_title": slide["title"]} if slide else {}))
     return out
 
 
 def transcript_text(rec: dict) -> str:
-    return "\n".join(f"[{clock(c['t'])}] {c['text']}" for c in transcript_chunks(segments_of(rec)))[:TRANSCRIPT_CHARS]
+    lines = []
+    for c in transcript_chunks(segments_of(rec), slides_of(rec)):
+        page = L(f"〔课件 p.{c['slide']}" + (f" {c['slide_title']}" if c.get("slide_title") else "") + "〕 ", f"(slide p.{c['slide']}) ") if c.get("slide") else ""
+        lines.append(f"[{clock(c['t'])}] {page}{c['text']}")
+    return "\n".join(lines)[:TRANSCRIPT_CHARS]
 
 
 def materials_of(unit: dict) -> dict:
@@ -352,8 +401,19 @@ def course_tree(course: str) -> dict:
                      "progress": {"done": len(done_steps(course, f.name, route, progress)), "total": len(route.get("items") or [])} if route else None}
             target = next((index[s.split("/")[0]] for s in sources if s.split("/")[0] in index), None)
             (target["pages"] if target else loose).append(entry)
+    # 左栏按「周 / 节」排：有学习页或名字像一节课的模块在上面，课程信息、作业说明、阅读清单这类资料模块收到下面；
+    # 已经挂进某个学习页（标签或阅读）的文件标 used，左栏不再重复列
+    used = {s for mod in modules for p in mod["pages"] for s in p["sources"]} | {s for p in loose for s in p["sources"]}
+    base = root("readings")
+    data = load_json(base / f"{course}.json") if base else None
+    for it in (data.get("items") if isinstance(data, dict) else data) or []:
+        if isinstance(it, dict) and isinstance(it.get("file"), str) and sessions_in(it.get("sessions")):
+            used.add(it["file"])
     for mod in modules:
         mod["pages"].sort(key=lambda p: (p["session"] is None, p["session"] or 0, p["path"]))
+        mod["kind"] = "session" if mod["pages"] or SESSION_RE.search(mod["title"]) else "resource"
+        for f in mod["files"]:
+            f["used"] = f["path"] in used
     loose.sort(key=lambda p: (p["session"] is not None, p["session"] or 0, p["path"]))  # 总览（没有 session）排前面
     return {"name": course, "modules": modules, "pages": loose,
             "videos": [v for v in videos if not any(p["session"] == v["session"] for mod in modules for p in mod["pages"])]}
@@ -428,8 +488,7 @@ def context_for(unit: dict, budget: int | None = None) -> str:
             add(L(f"课件：{src.name}", f"Material: {src.name}"), src, lambda s=src: text_of(s))
     for rec in mats["recordings"]:
         if rec["has_captions"]:
-            when = str(rec.get("start") or "")[:16].replace("T", " ")
-            add(L(f"录播字幕：{rec['name']}（{when}）", f"Lecture captions: {rec['name']} ({when})"), None, lambda r=rec: transcript_text(r))
+            add(L(f"录播字幕：{rec_title(rec)}", f"Captions: {rec_title(rec)}"), None, lambda r=rec: transcript_text(r))
     for r, path in reading_files:
         need = L("必读", "required") if r["required"] else L("选读", "optional")
         how = L("；", "; ") + str(r["instructions"]) if r.get("instructions") else ""
@@ -554,6 +613,7 @@ class AskBody(BaseModel):
     text: str
     model: str | None = None
     step: int | None = None  # 学习路线里正在做的那一步（从 0 数）
+    quote: str | None = None  # 就学习页里的哪一节 / 哪一段提问（只给模型看）
 
 
 def step_note(unit: dict, step: int | None) -> str | None:
@@ -574,9 +634,10 @@ async def ask(body: AskBody):
         raise HTTPException(400, L("空消息", "Empty message"))
     unit = resolve_unit(body.course, body.page, body.file)
     context = await asyncio.to_thread(context_for, unit) if needs_context(unit["thread"]) else None
-    note = step_note(unit, body.step)
-    if note:
-        context = f"{context}\n\n{note}" if context else note
+    notes = [n for n in (step_note(unit, body.step),
+                         L("【我问的是这一段】\n", "[I'm asking about this passage]\n") + body.quote.strip()[:4000] if (body.quote or "").strip() else None) if n]
+    if notes:
+        context = "\n\n".join(([context] if context else []) + notes)
     run = chat.start_run(unit["thread"], text, body.model, context=context)
     run.notify = False  # 人就在电脑前看着，不推到手机
     return StreamingResponse(chat.attach(run), media_type="text/event-stream", headers={"Cache-Control": "no-store", "X-Accel-Buffering": "no"})
@@ -665,9 +726,9 @@ def route_catalog(unit: dict, mats: dict) -> tuple[str, dict]:
         lines += [f"- {v['path']}（{v['name']}）" for v in vids]
     if recs:
         lines.append(L("录播（type=recording，写 id；t 是秒数，按字幕里的 [时:分:秒] 换算）：", "Lecture recordings (type=recording, give the id; t = seconds, from the [h:mm:ss] marks in the captions):"))
-        lines += [f"- {r['id']}（{r['name']}，{str(r.get('start') or '')[:10]}，{minutes_of(r.get('duration'))}）" for r in recs]
+        lines += [f"- {r['id']}（{rec_title(r)}，{minutes_of(r.get('duration'))}）" for r in recs]
     lines.append(L("闪卡（type=cards）、小测（type=quiz）：点开就能用，还没有的会先生成。", "Flashcards (type=cards) and quiz (type=quiz): open them directly; missing ones get generated first."))
-    allowed = {"section": dict(secs), "file": set(files), "video": {v["path"] for v in vids}, "recording": {r["id"]: r["name"] for r in recs}}
+    allowed = {"section": dict(secs), "file": set(files), "video": {v["path"] for v in vids}, "recording": {r["id"]: (rec_title(r), r.get("viewer_url")) for r in recs}}
     return "\n".join(lines), allowed
 
 
@@ -726,7 +787,8 @@ def check_route(data: dict, allowed: dict) -> list[dict]:
                     ref["page"] = page
                 refs.append(ref)
             elif t == "recording" and str(r.get("id")) in allowed["recording"]:
-                ref = {"type": t, "id": str(r["id"]), "label": allowed["recording"][str(r["id"])]}
+                label, url = allowed["recording"][str(r["id"])]
+                ref = {"type": t, "id": str(r["id"]), "label": label, "url": url}
                 if isinstance(r.get("t"), (int, float)) and r["t"] >= 0:
                     ref["t"] = int(r["t"])
                 refs.append(ref)
@@ -934,7 +996,7 @@ def materials(course: str, page: str):
 @router.get("/api/study/recordings")
 def recordings(course: str, page: str):
     unit = resolve_unit(course, page, None)
-    return {"ok": True, "items": [slim_rec(r) | {"chunks": transcript_chunks(segments_of(r))} for r in recordings_of(course, unit.get("session"))]}
+    return {"ok": True, "items": [slim_rec(r) | {"chunks": transcript_chunks(segments_of(r), slides_of(r))} for r in recordings_of(course, unit.get("session"))]}
 
 
 class ProgressBody(BaseModel):
