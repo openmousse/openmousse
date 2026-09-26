@@ -29,6 +29,7 @@ python3 $A delete g-xxxxxxxx
 用户在 app 的新建页点了「还没想好？先聊聊」，会开一个独立空间，第一条消息说他想建一个 Agent、还没想好它管什么。这时：
 
 1. 陪他想清楚，一次问一两件：它管什么、不管什么；要记哪些数据、从哪里来；看板上放什么；和哪些 Agent 联动；要不要定时提醒（新推送要他另外点头）。
-2. 想清楚后**不要直接建**，用 inbox skill 出一张卡：`--kind agent --title "新建 Agent「名字」" --why "为什么值得单独一个 Agent" --change "负责：…" --change "记这些数据：…" --change "看板：本月预算进度、按类别的花费、每周趋势、订阅列表、记一笔按钮" --change "图标 moon · 颜色 purple" --approve-label 建好它 --dedupe agent-<名字>`。看板那一行用大白话列出每一块；同时把表和积木写成 board 文件（见上面第 1 步）存好，文件路径记在卡片的 detail 里。
+2. 想清楚后**不要直接建**，用 inbox skill 出一张卡：`--kind agent --title "新建 Agent「名字」" --why "为什么值得单独一个 Agent" --change "负责：…" --change "记这些数据：…" --change "看板：本月预算进度、按类别的花费、每周趋势、订阅列表、记一笔按钮" --change "图标 moon · 颜色 purple" --approve-label 建好它 --dedupe agent-<名字> --board-file 那个文件`。看板那一行用大白话列出每一块。board 文件（见上面第 1 步）先存好、先 `python3 ~/.openmousse/repo/server/board_ctl.py check --plan 文件` 看一眼；给了 `--board-file`，卡片里会直接画出建好以后的看板。表里可以带几行 `"rows": [...]` 示例（用他聊天里说过的真实例子），预览才有内容；建的时候示例行不会写进去。
+   有现成的功能包合适（`board_ctl.py pack list`），方案里直接说「装上 XX 功能包」，建好以后 `pack install`，不用自己重写那一套。
 3. 收到【收件箱】已同意的消息后，用 `create --name … --purpose … --icon … --color … --board-file 那个文件` 建好，再 `inbox_ctl.py done <id> --result "建好了：名字（id），看板 N 块"`。
 4. 用户在新建页直接填好点「创建」的，不走这里。
