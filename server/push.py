@@ -4,7 +4,8 @@
 - 三个档位 level：ring 响铃（有声音、高优先级、interruptionLevel active）；quiet 静默（不出声，进通知中心，passive）；none 不推。
   server.json 的 push.quiet_hours（默认 ["23:00", "07:30"]，按 timezone）里 ring 自动降成 quiet。
 - 谁用哪档：用户发的消息回完 → ring；主对话转给 Agent（relay）→ none；系统触发（/api/chat/trigger）→ 触发方给的 level，默认 quiet；
-  学习台 → none；收件箱新条目 → 条目的 level；收件箱做完 / 没做成 → quiet。
+  学习台 → none；收件箱新条目 → 条目的 level；收件箱做完 / 没做成 → quiet；从 app 派的后台任务做完 / 没做成 / 到点停了、
+  「改一下」的一轮做完 → quiet（cards.py）。
 - 回复结束（chat.py run_gateway 末尾）→ notify_run()：这次回复里写了建议卡（feed_items 新行、group_id 是这个线程）就推卡片
   （标题 = Agent 名，副标题 = 卡的类型，正文 = 卡标题 · 第一条要点），否则推回复的开头（preview：去掉 Markdown，按句子截断）。
 - data 永远带 thread（老版本 app 只认它）和 target（新版按它跳）：{type: thread, thread} | {type: card, id, thread} | {type: inbox, id} | {type: today}；

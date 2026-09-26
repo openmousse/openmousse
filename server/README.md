@@ -82,6 +82,27 @@ Asking for changes: reply to the Agent in its chat with the card quoted; `/api/c
 
 Item: `{id, kind, source, sourceName, thread, title, why, changes: [], detail, approveLabel, fields?, status, note, result, level, createdAt, updatedAt, decidedAt, expiresAt, messageId}`. `messageId`: an item an Agent submits during a reply is attached to that reply (`messages.id`) when the reply finishes; items submitted outside a reply have null. kind: task / write / send / spend / schedule / push / skill / agent / block / code / calendar / other (exec only comes from OpenClaw and carries `fields`); status: pending / approved / rejected / revising / done / failed / withdrawn / expired. The old `/api/approvals` endpoints still work for older app builds.
 
+## Handoff and task cards
+
+When the main chat hands a question to an Agent (`scripts/ask_agent.py` → `/api/chat/relay`) or starts a background task (OpenClaw `sessions_spawn`), the chat shows a card. See [`cards.py`](cards.py).
+
+- **Handoff card**: appears as soon as the question goes out ("asking Diet…", with the question as sent), turns into "handed to Diet · 34 s" when the answer is back, and sits under the reply that asked. Tap it to open the Agent's chat at that question. The relay run itself is recorded in `handoffs` (grava.db); the reply that asked is the one mid-reply when the relay arrives (the script can't tell which session called it; main-agent threads win, then the newest). A relay refused with 409 (the Agent is busy) is recorded as `busy`.
+- **Task card**: read from OpenClaw's task ledger (`<openclaw_home>/state/openclaw.sqlite`, tables `task_runs` / `subagent_runs`, read-only, a few ms per read instead of a 2-second `tasks.list`). While a reply is running the server looks every 2 s for tasks that session started and sends them over the same SSE stream (`event: card`), so the card shows up mid-reply; when the reply ends they are attached to it (`task_links`). Running: the step it's on ("reading L2.pdf", from the sub-session's transcript, read at most every 20 s). Done: the start of the result. "Revise" sends notes to the same sub-session (`POST /api/tasks/{id}/revise`); rounds, notes and each round's result come from the `task:<id>` thread.
+- **Allowance**: `server.json` → `tasks: {daily_limit: 10, max_minutes: 30, notify_done: true}`. It's a number for the Agents to check (`tasks_ctl.py quota`, exit code 3 when used up); what actually stops a long task is OpenClaw's `agents.defaults.subagents.runTimeoutSeconds`.
+
+```bash
+python3 tasks_ctl.py quota   # started today, the limit, how many are left
+python3 tasks_ctl.py list
+```
+
+| Endpoint | What it does |
+|---|---|
+| `GET /api/chat/cards?thread=&day=` | `{cards, incoming, tasksAvailable}`: that thread's handoff and task cards for the day (from 04:00), oldest first, each with `messageId` (the reply it belongs under; null while that reply is still running); `incoming` = handoffs other threads sent to this one |
+| `GET /api/tasks/quota` | `{today, running, limit, left, maxMinutes}`; `today` / `left` are null when the ledger can't be read |
+| `GET /api/tasks` | now also `quota` (plus `tokens` used today), and per task `minutes`, `timedOut`, `step` |
+
+Handoff card: `{kind: "handoff", id, thread, messageId, createdAt, status: running / done / error / busy / lost, to, toName, from, fromName, question, seconds, relayId, replyId, error}`. Task card: `{kind: "task", id, thread, messageId, createdAt, status (进行中 / 完成 / 失败 / 已取消), timedOut, title, deliverable: [], modelId, minutes, startedAt, finishedAt, tools, step, result, error, round, roundStatus, note, roundResult, tokens, limitMinutes}`. `deliverable` is the task text's "要交：" / "Deliverable:" line plus the list under it.
+
 ## Notifications
 
 Three levels: **ring** (sound, interruptionLevel active), **quiet** (no sound, goes to Notification Center, passive), **none** (not sent). During `push.quiet_hours` in `server.json` (default `["23:00", "07:30"]`, in `timezone`; `[]` turns it off) ring is downgraded to quiet.
@@ -93,6 +114,7 @@ Three levels: **ring** (sound, interruptionLevel active), **quiet** (no sound, g
 | System triggers (`/api/chat/trigger`) | the request's `level`; only `notify: false` = none; neither = quiet |
 | A new (or resubmitted) inbox item | the item's level (task / write / send / spend / calendar default to ring, the rest to quiet) |
 | An inbox item done / failed | quiet |
+| A background task started from the app finished, failed or hit its time limit; a revision round finished (`tasks.notify_done`) | quiet (tasks started on Telegram are answered there by OpenClaw; cancelled ones aren't pushed) |
 | `/api/push/send` (wake-up report, deadline reminders, …) | the request's `level`, default ring |
 
 If the reply wrote a card (a new `feed_items` row whose group_id is this thread; for main, cards without an Agent), the card is pushed (subtitle = the card type, body = "card title · first point"); otherwise the start of the reply (Markdown stripped, cut at a sentence boundary). `data` carries `thread` (all older app builds read), `target` (`{type: thread | card | inbox | today, …}`), `level` (the level actually used after quiet hours) and `kind` (reply / card / inbox / done / report). The badge is inbox items waiting for you plus unread replies to your own messages. `/api/push/send` takes `{title, body, thread?, thread_id?, subtitle?, level?, category?, collapse?, target?}`.

@@ -8,6 +8,7 @@
 - 推送：/api/push/register 存 Expo push token；回复完成后 push.notify_run 按档位（ring / quiet / none）推回复或这次写的卡（见 push.py）。
 - 收件箱「等你点头」：/api/inbox，Agent 经 inbox_ctl.py 提交要你同意的事，OpenClaw 执行审批也合在里面（见 inbox.py）。
 - 未读：/api/unread，各线程的未读回复、新卡片、角标（见 unread.py）。
+- 对话里的转交卡、任务卡：/api/chat/cards；后台任务额度 /api/tasks/quota；后台任务做完静默推一条（见 cards.py）。
 - 训记数据不落库：训记是真源，这里只有短时缓存（由 xunji.py / calendar_ics.py 管）。
 - 学习台：/study 网页 + /api/study/*，课件和学习页按课程 / 模块浏览，问答走同一条对话通道（见 study.py）。
 - 数据源可选（sources.py）：workspace 的 scripts/ 里没有对应脚本时，相关接口回 ok=false + missing_source，其它照常。
@@ -22,6 +23,8 @@ import threading
 import time
 from datetime import date, datetime, timedelta
 
+from contextlib import asynccontextmanager
+
 from fastapi import FastAPI, HTTPException, Query, Request
 from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
@@ -32,7 +35,9 @@ import i18n  # noqa: E402
 from i18n import L  # noqa: E402
 from sources import calendar_ics, xunji  # noqa: E402
 import study  # noqa: E402
+import cards  # noqa: E402
 from chat import router as chat_router  # noqa: E402
+from cards import router as cards_router  # noqa: E402
 from health import router as health_router  # noqa: E402
 from data import router as data_router  # noqa: E402
 from files import router as files_router  # noqa: E402
@@ -69,8 +74,15 @@ def xunji_name() -> str:
     return L("训记", "Xunji")
 
 
-app = FastAPI(title=f"{settings.app_name} API", docs_url=None, redoc_url=None, openapi_url=None)
+@asynccontextmanager
+async def lifespan(_app: FastAPI):
+    cards.start()  # 盯 OpenClaw 的任务台账：后台任务做完了静默推一条
+    yield
+
+
+app = FastAPI(title=f"{settings.app_name} API", docs_url=None, redoc_url=None, openapi_url=None, lifespan=lifespan)
 app.include_router(chat_router)
+app.include_router(cards_router)  # 在 data 之前：/api/tasks/quota 不能被 /api/tasks/{tid} 先接走
 app.include_router(health_router)
 app.include_router(data_router)
 app.include_router(files_router)

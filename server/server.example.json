@@ -18,6 +18,7 @@
   },
   "nutrition_targets": null,
   "push": {"quiet_hours": ["23:00", "07:30"]},
+  "tasks": {"daily_limit": 10, "max_minutes": 30, "notify_done": true},
   "study": {
     "materials": "~/study/materials",
     "pages": "~/study/pages",

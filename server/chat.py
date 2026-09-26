@@ -59,6 +59,8 @@ class Run:
     level: str | None = None  # 推送档位 ring / quiet / none；None = 按 origin 定（见 push.run_level）
     feed_mark: int = 0  # 开跑时 feed_items 的最大 rowid：回完看这之后这个线程有没有写新卡，有就推卡片
     inbox_mark: int = 0  # 开跑时 inbox 的最大 rowid：回完把这之后这个线程新交的收件箱条目挂到这条回复下（created_at 只到秒，不够准）
+    handoff_mark: int = 0  # 开跑时 handoffs 的最大 rowid：回完把这之后从这个线程转出去的挂到这条回复下（见 cards.py）
+    cards: dict = field(default_factory=dict)  # 这次回复里出的转交卡、任务卡（id → 最新的样子）：客户端重新接上时补发（见 cards.py）
 
     def publish(self, item: tuple[str, dict]) -> None:
         for q in list(self.queues):
@@ -90,6 +92,19 @@ def session_key(thread: str) -> str:
     if thread in settings.group_agents:
         return f"agent:{thread}:main"
     return f"agent:main:grava:{thread}"
+
+
+def thread_of(key: str | None) -> str | None:
+    """session_key 反过来：agent:main:main → main，agent:main:grava:<id> → <id>，agent:<Agent>:main → 那个 Agent。
+    别的会话（定时任务、Telegram 群、子会话）不是 app 的线程，返回 None。"""
+    parts = (key or "").split(":")
+    if key == "agent:main:main":
+        return "main"
+    if len(parts) >= 4 and parts[:3] == ["agent", "main", "grava"]:
+        return ":".join(parts[3:])
+    if len(parts) == 3 and parts[0] == "agent" and parts[2] == "main" and parts[1] in settings.group_agents:
+        return parts[1]
+    return None
 
 
 def db() -> sqlite3.Connection:
@@ -309,10 +324,20 @@ async def run_gateway(run: Run, text: str | list, token: str) -> None:
         inbox_mod.link_message(run.thread, run.inbox_mark, run.reply_id)
     except Exception:  # noqa: BLE001 — 挂不上只是对话里少一张卡，回复照常结束
         pass
+    try:  # 这次回复里转出去的、派出去的也挂到它下面；这次是被转的 Agent 在答，就更新那张转交卡（见 cards.py）
+        import cards as cards_mod  # 延迟导入：cards.py 依赖本模块
+        cards_mod.on_run_end(run)
+    except Exception:  # noqa: BLE001
+        pass
     run.done = True
     run.publish(("done", done_payload(run)))
     import push as push_mod  # 延迟导入：push.py 依赖本模块
     await push_mod.notify_run(run)  # 按档位推：这次写了卡就推卡，否则推回复（level none 不推；推送失败不影响回复）
+    try:
+        import cards as cards_mod
+        await cards_mod.after_run(run)  # 「改一下」的那一轮做完了：静默推到派这个任务的对话
+    except Exception:  # noqa: BLE001
+        pass
 
     def _forget() -> None:
         if RUNS.get(run.thread) is run:
@@ -348,6 +373,8 @@ async def attach(run: Run) -> AsyncIterator[bytes]:
     run.queues.append(q)
     try:
         yield sse("start", {"userId": f"db{run.user_id}", "time": hhmm(run.started), "modelId": run.model, "sessionKey": run.key or session_key(run.thread)})
+        for card in list(run.cards.values()):  # 这次回复里已经出的转交卡、任务卡（老版本 app 不认 card 事件，直接跳过）
+            yield sse("card", card)
         if run.text:
             yield sse("delta", {"text": run.text})
         if run.done:
@@ -413,9 +440,14 @@ def start_run(thread: str, text: str, model: str | None, key: str | None = None,
         log_activity(L(f"发了 {len(rows)} 个附件给 {settings.app_name}（{'、'.join(r['name'] for r in rows)[:80]}）",
                        f"Sent {len(rows)} attachment{'' if len(rows) == 1 else 's'} to {settings.app_name} ({', '.join(r['name'] for r in rows)[:80]})"), "upload")
     run = Run(thread=thread, model=model, user_id=user_id, started=ts, key=key, origin=origin, level=level, feed_mark=feed_mark(),
-              inbox_mark=max_rowid("inbox"))
+              inbox_mark=max_rowid("inbox"), handoff_mark=max_rowid("handoffs"))
     RUNS[thread] = run
     asyncio.create_task(run_gateway(run, content, token))
+    try:  # 回复进行中盯着 OpenClaw 的任务台账：这次新派的子任务当场出任务卡（见 cards.py）
+        import cards as cards_mod  # 延迟导入：cards.py 依赖本模块
+        cards_mod.watch(run)
+    except Exception:  # noqa: BLE001
+        pass
     return run
 
 
@@ -461,12 +493,20 @@ class RelayBody(BaseModel):
 
 @router.post("/api/chat/relay")
 async def relay(body: RelayBody):
-    """主对话把问题转给某个 Agent：记进那个 Agent 的线程（role=auto，app 里显示成一行灰字），等它答完，把答案带回去。
-    不推送（用户在主对话里等着）。上一条没回完 → 409。超时 → 200 但 status=timeout，回复仍会在后台完成并入库。"""
+    """主对话把问题转给某个 Agent：记进那个 Agent 的线程（role=auto，app 里显示成「主对话转来」），等它答完，把答案带回去。
+    不推送（用户在主对话里等着）。上一条没回完 → 409。超时 → 200 但 status=timeout，回复仍会在后台完成并入库。
+    同时记一张转交卡（cards.py）：发起转交的那次回复当场出「正在问 …」，答完变成「转给了 …」，挂在那条回复下面。"""
     text = body.text.strip()
     if not text:
         raise HTTPException(400, L("空消息", "Empty message"))
-    run = start_run(body.thread, PREFIX_RELAY + text, None, origin="relay", level="none")
+    import cards as cards_mod  # 延迟导入：cards.py 依赖本模块
+    try:
+        run = start_run(body.thread, PREFIX_RELAY + text, None, origin="relay", level="none")
+    except HTTPException as e:
+        if e.status_code == 409:  # 那个 Agent 上一条还没回完：也记一张（没转过去），主对话里看得到
+            cards_mod.handoff_start(body.thread, text, None, status="busy")
+        raise
+    cards_mod.handoff_start(body.thread, text, run)
     deadline = time.time() + min(max(body.timeout, 10), 600)
     while not run.done and time.time() < deadline:
         await asyncio.sleep(0.5)

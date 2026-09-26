@@ -8,7 +8,7 @@
 | 未读、「今天」页的新卡片、app 角标 | grava.db `read_marks` + `messages.origin` + `feed_items.seen_at`（见 unread.py） |
 | 推送 | Expo Push，三档 ring / quiet / none + server.json 的 `push.quiet_hours`（见 push.py） |
 | 接下来会自动做的事 | OpenClaw cron（`cron.list / cron.update`）+ systemd user timer（只读） |
-| 任务 | OpenClaw 子会话（`tasks.list`；详情读子会话的 `chat.history`） |
+| 任务 | OpenClaw 子会话：列表读 OpenClaw 的任务台账（`state/openclaw.sqlite`，读不到再走 `tasks.list`）；详情读子会话的 `chat.history`；额度和对话里的任务卡、转交卡见 cards.py |
 | 活动记录 | app 的 activity_log + Gateway 审计（`audit.activity.list`，只有元数据）+ 定时任务的运行记录 |
 | 基础档案 | L0 `~/.openclaw/shared/profile/USER.md`：改一条就写回，旧版本存 `grava/profile-history.md`（不在检索路径里） |
 | 记忆 | L1 各 agent 工作区的 `MEMORY.md`：忘记 = 删掉这一条，活动记录只留一行、不含内容 |
@@ -35,11 +35,12 @@ from typing import Any, Awaitable, Callable
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
-from chat import OPENCLAW, TZ, _lock, db, gateway_call, log_activity, now_iso, session_key, start_run
+from chat import OPENCLAW, TZ, _lock, day_bounds, day_of, db, gateway_call, log_activity, now_iso, session_key, start_run, thread_of
 
 router = APIRouter()
 
 import agents  # noqa: E402
+import cards  # noqa: E402
 from config import settings as cfg  # noqa: E402（这个模块里 settings 是接口函数名）
 from i18n import L, lang  # noqa: E402
 
@@ -781,15 +782,12 @@ async def decide(aid: str, body: Decision):
 TASK_STATUS = {"completed": "完成", "succeeded": "完成", "failed": "失败", "timed_out": "失败", "lost": "失败",
                "cancelled": "已取消", "canceled": "已取消", "running": "进行中", "queued": "进行中", "pending": "进行中"}
 _task_detail: dict[tuple[str, str], dict] = {}  # 做完的子会话不会再变，详情缓存起来；键是 (子会话 key, 语言)，步骤说明按请求语言写
+_detail_slots = asyncio.Semaphore(3)  # 同时最多读 3 个子会话的记录
 
 
 def origin_of(key: str) -> str:
-    if key == "agent:main:main":
-        return "main"
-    parts = (key or "").split(":")
-    if len(parts) >= 4 and parts[2] == "grava":
-        return ":".join(parts[3:])
-    return key or "main"
+    """派任务的会话 → app 线程（主对话、Agent、独立空间）；不是 app 的线程（定时任务之类）原样返回 key。"""
+    return thread_of(key) or key or "main"
 
 
 def hm(ms: float | None) -> str:
@@ -797,7 +795,23 @@ def hm(ms: float | None) -> str:
     return dt.strftime("%H:%M") if dt else ""
 
 
+def ledger_task(r: dict) -> dict:
+    """OpenClaw 任务台账的一行（cards.ledger）→ 和 tasks.list 一样的形状，外加 model、timedOut。"""
+    running = cards.status_of(r) == "进行中"
+    return {"id": r["task_id"], "kind": "subagent", "title": r.get("label") or "", "status": r.get("status"), "ownerKey": r.get("owner_key"),
+            "childSessionKey": r.get("child_session_key"), "createdAt": r.get("created_at"), "startedAt": r.get("started_at"),
+            "endedAt": r.get("ended_at"), "progressSummary": r.get("progress_summary"), "terminalSummary": cards.result_of(r) or None,
+            "error": r.get("error"), "toolUseCount": r.get("tool_use_count") or 0, "lastToolName": r.get("last_tool_name"),
+            "execution": {"state": "running" if running else "finished"},
+            "updatedAt": r.get("ended_at") or r.get("started_at") or r.get("created_at"),
+            "model": (r.get("payload") or {}).get("model"), "timedOut": cards.timed_out(r)}
+
+
 async def task_rows() -> list[dict]:
+    """子会话任务。先读 OpenClaw 的任务台账（SQLite，几毫秒，见 cards.py）；读不到再走 tasks.list（起 node 进程，约 2 秒，缓存 10 秒）。"""
+    rows = await asyncio.to_thread(cards.ledger, "1", (), 60)
+    if rows is not None:
+        return [ledger_task(r) for r in rows]
     data = await cached("tasks", 10, lambda: gateway_call("tasks.list", {}, timeout=30))
     return [t for t in data.get("tasks", []) if t.get("kind") == "subagent"]
 
@@ -805,12 +819,16 @@ async def task_rows() -> list[dict]:
 def task_summary(t: dict, detail: dict | None) -> dict:
     status = TASK_STATUS.get(t.get("status") or "", "进行中" if (t.get("execution") or {}).get("state") != "finished" else "完成")
     info = (detail or {}).get("info") or {}
-    model = f"{info['modelProvider']}/{info['model']}" if info.get("model") and info.get("modelProvider") else None
+    model = f"{info['modelProvider']}/{info['model']}" if info.get("model") and info.get("modelProvider") else t.get("model")
+    start, end = t.get("startedAt") or t.get("createdAt"), t.get("endedAt")
+    minutes = max(0, round(((end if end and status != "进行中" else time.time() * 1000) - start) / 60000)) if start else None
     return {"id": t["id"], "title": t.get("title") or L("子会话任务", "Sub-session task"), "status": status, "origin": origin_of(t.get("ownerKey") or t.get("sessionKey") or ""),
             "sessionKey": t.get("childSessionKey") or "", "modelId": model, "createdAt": when(london(t.get("createdAt"))),
             "startedAt": hm(t.get("startedAt")), "finishedAt": hm(t.get("endedAt")), "summary": t.get("progressSummary") or t.get("terminalSummary") or "",
             "error": t.get("error"), "toolUseCount": t.get("toolUseCount") or 0, "lastTool": t.get("lastToolName"),
-            "tokens": info.get("totalTokens") or 0, "costUsd": info.get("estimatedCostUsd"), "updatedAt": t.get("updatedAt") or 0}
+            "tokens": info.get("totalTokens") or 0, "costUsd": info.get("estimatedCostUsd"), "updatedAt": t.get("updatedAt") or 0,
+            "createdMs": t.get("createdAt") or 0, "minutes": minutes, "timedOut": bool(t.get("timedOut")),
+            "step": cards.step_of(t["id"], t.get("lastToolName")) if status == "进行中" else ""}
 
 
 def text_of(content: Any) -> str:
@@ -833,7 +851,8 @@ async def task_detail(t: dict) -> dict:
     ck = (key, lang())
     if ck in _task_detail and done:
         return _task_detail[ck]
-    hist = await gateway_call("chat.history", {"sessionKey": key, "limit": 300}, timeout=30) if key else {}
+    async with _detail_slots:  # 每次起一个 node 进程（约 200 MB）：服务刚起、缓存是空的时候任务页一次要 30 个，别同时起
+        hist = await gateway_call("chat.history", {"sessionKey": key, "limit": 300}, timeout=30) if key else {}
     info = hist.get("sessionInfo") or {}
     runs: list[dict] = []
     for m in hist.get("messages", []):
@@ -883,7 +902,11 @@ async def tasks():
     rows.sort(key=lambda t: t.get("createdAt") or 0, reverse=True)
     rows = rows[:30]
     details = await asyncio.gather(*(task_detail(t) for t in rows), return_exceptions=True)
-    return {"ok": True, "tasks": [task_summary(t, d if isinstance(d, dict) else None) for t, d in zip(rows, details)]}
+    out = [task_summary(t, d if isinstance(d, dict) else None) for t, d in zip(rows, details)]
+    quota = cards.quota()  # 任务页顶上的额度：今天派了几个、上限、单个最长几分钟，加上今天这些用了多少 token
+    since = cards.ms_of(day_bounds(day_of(now_iso()))[0])
+    quota["tokens"] = sum(x["tokens"] for x in out if (x.get("createdMs") or 0) >= since) or None
+    return {"ok": True, "tasks": out, "quota": quota}
 
 
 @router.get("/api/tasks/{tid}")
@@ -919,10 +942,12 @@ async def revise_task(tid: str, body: Revise):
         raise HTTPException(404, L("找不到这个任务的子会话", "Can't find this task's sub-session"))
     d = await task_detail(t)
     info = d.get("info") or {}
-    model = f"{info['modelProvider']}/{info['model']}" if info.get("model") and info.get("modelProvider") else None
-    start_run(f"task:{tid}", body.note.strip(), model, key=t["childSessionKey"])
+    model = f"{info['modelProvider']}/{info['model']}" if info.get("model") and info.get("modelProvider") else t.get("model")
+    # 回完不按回复推（线程 task:<id> 在 app 里没有对话页）：cards.after_run 推一条「改好了」到派这个任务的对话
+    start_run(f"task:{tid}", body.note.strip(), model, key=t["childSessionKey"], level="none")
     for ck in [k for k in _task_detail if k[0] == t["childSessionKey"]]:  # 两种语言的缓存都作废
         _task_detail.pop(ck, None)
+    cards.forget(tid)
     forget_cache("tasks")
     log_activity(L(f"给任务「{t.get('title')}」发了修改意见", f'Sent revision notes for task "{t.get("title")}"'), "edit")
     return {"ok": True}

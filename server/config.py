@@ -29,6 +29,8 @@
   backup_dir        改 openclaw.json 前的备份目录（默认 <data_dir>/backups）
   push              推送：{"quiet_hours": ["23:00", "07:30"]}：静默时段（HH:MM，按 timezone，可以跨午夜），这段时间里
                     「响铃」的推送自动降成「静默」（照样进通知中心，只是不出声不亮屏）；null 或 [] = 不设。每次读文件，不用重启（见 push.py）
+  tasks             后台任务：{"daily_limit": 10, "max_minutes": 30, "notify_done": true}：每天几个、单个最长几分钟（给 Agent 看的额度，
+                    tasks_ctl.py quota）、做完了要不要静默推一条（见 cards.py；每次读文件，不用重启）
   study             学习台：{materials, pages, courses, deadlines_cmd, video_cmd, readings, recordings}（见 study.py；每次读文件，不用重启）
 
 agent_workspaces 由「新建 Agent」自动维护（agents.py），每次读文件，不用重启。
