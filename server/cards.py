@@ -1,4 +1,4 @@
-"""对话里的卡片：主对话转给 Agent 的「转交卡」、派出去的后台任务的「任务卡」（2026-09-26）。
+"""对话里的卡片：主对话转给 Agent 的「转交卡」、派出去的后台任务的「任务卡」（2026-09-26）；Agent 改了日程的「日程卡」在 schedule.py。
 
 转交（skills/handoff → scripts/ask_agent.py → POST /api/chat/relay）
 - relay 开跑时在 grava.db 的 handoffs 表记一行：从哪个线程转给谁、问了什么。「从哪个线程」= 这时正在回复、又不是 relay 的那个线程
@@ -400,6 +400,11 @@ def on_run_end(run: chat.Run) -> None:
     2) 这次是被转的 Agent 在答（origin=relay）：更新那张转交卡，发起转交的回复还在进行就给它补发 card。"""
     if run.reply_id is None:
         return
+    try:  # 这次回复里改的日程也挂到它下面（见 schedule.py）
+        import schedule as schedule_mod  # 延迟导入：schedule 发卡片时要用本模块
+        schedule_mod.link_run(run)
+    except Exception:  # noqa: BLE001
+        pass
     row = None
     with _lock, cdb() as conn:
         conn.execute("UPDATE handoffs SET message_id=? WHERE from_thread=? AND message_id IS NULL AND rowid>?",
@@ -501,6 +506,8 @@ async def cards(thread: str = "main", day: str | None = None):
         out += [task_json(r, links.get(r["task_id"]), conn, seq) for r in reversed(rows or [])]
     for r in rows or []:
         want_detail(r)
+    import schedule as schedule_mod  # 延迟导入
+    out += await asyncio.to_thread(schedule_mod.changes_for, thread, lo, hi)  # Agent 在回复里改的日程（日程卡）
     out.sort(key=lambda c: c["createdAt"] or "")
     return {"ok": True, "thread": thread, "day": day, "cards": out, "incoming": incoming, "tasksAvailable": rows is not None}
 

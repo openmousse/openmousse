@@ -103,6 +103,39 @@ python3 tasks_ctl.py list
 
 转交卡：`{kind: "handoff", id, thread, messageId, createdAt, status: running / done / error / busy / lost, to, toName, from, fromName, question, seconds, relayId, replyId, error}`。任务卡：`{kind: "task", id, thread, messageId, createdAt, status（进行中 / 完成 / 失败 / 已取消）, timedOut, title, deliverable: [], modelId, minutes, startedAt, finishedAt, tools, step, result, error, round, roundStatus, note, roundResult, tokens, limitMinutes, seq, dailyLimit}`（`seq` = 今天第几个派的）。`deliverable` 取任务正文里「要交：」/「Deliverable:」那一行和紧跟着的列表。
 
+## 日程和「要记得的」
+
+每天一条时间线、一张「要记得的」，都能改。见 [`schedule.py`](schedule.py)。
+
+- **日程** = 课表（可选数据源 `calendar`，只读）+ 服务器自己存的一层（grava.db 的 `schedule_items`：用户自己的安排、各 Agent 排的）+ 当天到期的截止（带勾）。课表本身改不了，但这一层能给一节课标「不去」（`series` = 每周这节都不去）、改地点、加备注。过去的日子记实际发生的：去没去、做没做、实际几点（key 是 `<agent>:training:<日期>` 的训练，实际时间从训练数据源来）。
+- **要记得的** = 课程作业（`study.deadlines_cmd`）+ 邮件里抽出来的事（下面的 `remember.mail`）+ 求职和申请的截止（`applications`）+ 用户自己加的截止。一件事只出现一次：到期那天挪进那天的时间线。分组：`security`（置顶）、`overdue`、`tomorrow`、`week`、`later`、`nodate`、`news`（没日子的钱和状态类邮件）。
+- **打勾** = 做完了或不用管（`schedule_marks.done_at`）：从列表里去掉，提醒的脚本也不再提（Grava 的 watcher 读 `schedule_marks`）。邮件条目打勾同时跑 `remember.mail.cmd --done <id>`（取消：`--undo`）；改条目（`/api/remember/edit`）跑 `--edit <id> --json …`。
+- **Agent 改的**（`schedule_ctl.py`，带 `source` 调这些接口）：它正在回复时，从它的 SSE 流发一张 `schedule` 卡；回复结束挂到那条回复下面（`schedule_log.message_id`）。每次改动都能撤销（`/api/schedule/undo/{id}`）。Agent 用同一个 `key` 再加一次就是改那一条，但不会盖掉用户自己挪过的时间。
+- **iPhone 日历**：`GET /cal/<令牌>.ics` 在 `/api` 之外、不要认证头，链接里的令牌就是密码（app 里能换）。四类开关：课表（默认关，手机上已经有课表就不重复）、你的和 Agent 排的、截止、邮件里的活动。
+
+```bash
+python3 schedule_ctl.py day [--date 明天] [--days 3]
+python3 schedule_ctl.py remember
+python3 schedule_ctl.py add --title "训练 · Push A" --date 今天 --start 17:30 --end 18:30 --key fitness:training:2026-09-28
+python3 schedule_ctl.py skip "ics:2026-09-28T13:00|QDA Office Hours" --every-week
+python3 schedule_ctl.py done "mail:1a0d…:todo"
+python3 schedule_ctl.py undo 42
+```
+
+| 接口 | 做什么 |
+|---|---|
+| `GET /api/schedule?from=&days=` | 合并后的时间线（从 `from` 起 1–14 天，默认今天）。每条：`id`（改它用的 ref：`item:` / `ics:` / `canvas:` / `mail:` / `app:`）、`kind`、`origin`、`title`、`date`、`start`、`end`、`allDay`、`badge`、`by`、`link`、`done`、`skip`、`series`、`attended`、`actualStart`、`actualEnd`、`clash`、`past` |
+| `POST /api/schedule` | 加一条 `{title, date, start?, end?, kind: event/deadline, location?, note?, key?, source?}` |
+| `PATCH /api/schedule/{id}` / `DELETE` | 改 / 删自己的（软删，能撤销） |
+| `POST /api/schedule/mark` | 课：`{ref, skip?, series?, location?, note?, attended?, actualStart?, actualEnd?}` |
+| `GET /api/remember?all=` | 要记得的，分好组（`all=1` 连打过勾的也给） |
+| `POST /api/remember/done` | `{ref, done}`：打勾 / 取消 |
+| `POST /api/remember/edit` | `{ref, title?, due?, detail?, type?}`：改邮件条目（或自己加的截止） |
+| `POST /api/schedule/undo/{log}` | 撤销一次改动（`{redo: true}` 再做回来） |
+| `GET/POST /api/schedule/feed` | iPhone 订阅：`{path, include}`；`{include}` 开关各类，`{rotate: true}` 换链接 |
+
+`server.json` 的 `remember.mail`（可选）：`{"items": "<邮件抽取脚本写的 JSON>", "cmd": ["python3", ".../mail_digest.py"], "sources": {"<键>": "<显示名>"}, "link": "https://mail.google.com/mail/?authuser=…#all/{thread_id}"}`。
+
 ## 推送
 
 三档：**ring** 响铃（有声音，interruptionLevel active）、**quiet** 静默（不出声，进通知中心，passive）、**none** 不推。`server.json` 的 `push.quiet_hours`（默认 `["23:00", "07:30"]`，按 `timezone`；`[]` = 不设）里 ring 自动降成 quiet。

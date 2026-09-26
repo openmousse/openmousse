@@ -271,6 +271,7 @@ class SendBody(BaseModel):
     notify: bool | None = None   # 旧开关（/api/chat/trigger）：false = 回完不推，等于 level none
     level: str | None = None     # 推送档位（/api/chat/trigger）：ring 响铃 / quiet 静默进通知中心 / none 不推；都不给 = quiet
     inboxId: str | None = None   # （/api/chat/send）引用收件箱里的一条回复 = 「改一下」：还没定下来的那条改成 revising，给模型带上前情
+    ref: str | None = None       # （/api/chat/send）说的是日程或「要记得的」里的哪一条（schedule.py 的 id）：模型另外看到是哪一条、怎么改
 
 
 def sse(event: str, data: dict) -> bytes:
@@ -462,7 +463,11 @@ async def send(body: SendBody):
     if body.inboxId:  # 引用收件箱的卡回复：对话记录里只有用户的话，模型另外看到「这是在回复哪一条、改好怎么交」
         import inbox as inbox_mod  # 延迟导入：inbox.py 依赖本模块
         reply_to = inbox_mod.reply_context(body.inboxId)
-    run = start_run(body.thread, text, body.model, attachment_ids=body.attachments, origin=body.origin, context=reply_to[1] if reply_to else None)
+    context = reply_to[1] if reply_to else None
+    if body.ref and not reply_to:  # 「要记得的」里点「不对？跟它说」带过来的
+        import schedule as schedule_mod  # 延迟导入：schedule.py 依赖本模块
+        context = await asyncio.to_thread(schedule_mod.ref_context, body.ref)
+    run = start_run(body.thread, text, body.model, attachment_ids=body.attachments, origin=body.origin, context=context)
     if reply_to:
         inbox_mod.mark_revising(reply_to[0], text)
     return StreamingResponse(attach(run), media_type="text/event-stream", headers={"Cache-Control": "no-store", "X-Accel-Buffering": "no"})

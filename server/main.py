@@ -11,6 +11,7 @@
 - 对话里的转交卡、任务卡：/api/chat/cards；后台任务额度 /api/tasks/quota；后台任务做完静默推一条（见 cards.py）。
 - 训记数据不落库：训记是真源，这里只有短时缓存（由 xunji.py / calendar_ics.py 管）。
 - 学习台：/study 网页 + /api/study/*，课件和学习页按课程 / 模块浏览，问答走同一条对话通道（见 study.py）。
+- 日程和「要记得的」：/api/schedule（课表 + 自己的日程 + 当天的截止，能改）、/api/remember（作业、邮件、求职的 ddl，打勾），iPhone 日历订阅 /cal/<令牌>.ics（见 schedule.py）。
 - 数据源可选（sources.py）：workspace 的 scripts/ 里没有对应脚本时，相关接口回 ok=false + missing_source，其它照常。
 """
 from __future__ import annotations
@@ -36,6 +37,7 @@ from i18n import L  # noqa: E402
 from sources import calendar_ics, xunji  # noqa: E402
 import study  # noqa: E402
 import cards  # noqa: E402
+import schedule  # noqa: E402
 from chat import router as chat_router  # noqa: E402
 from cards import router as cards_router  # noqa: E402
 from health import router as health_router  # noqa: E402
@@ -45,6 +47,7 @@ from push import router as push_router  # noqa: E402
 from study import router as study_router  # noqa: E402
 from inbox import router as inbox_router  # noqa: E402
 from unread import router as unread_router  # noqa: E402
+from schedule import router as schedule_router  # noqa: E402
 
 DIST = settings.dist
 settings.db.parent.mkdir(parents=True, exist_ok=True)  # 新实例第一次启动：数据目录还不存在
@@ -90,6 +93,7 @@ app.include_router(push_router)
 app.include_router(study_router)
 app.include_router(inbox_router)
 app.include_router(unread_router)
+app.include_router(schedule_router)  # 含 /cal/<令牌>.ics（在网页版的静态文件之前注册）
 app.add_exception_handler(sources.NoSource, sources.no_source_handler)
 _whois: dict[str, tuple[float, str | None]] = {}
 _lock = threading.Lock()
@@ -207,6 +211,9 @@ def trains_on(d: date) -> list[dict]:
     with _lock:  # 训记限频按天计，这里串行化避免并发打同一天
         data = xunji.call("train_get", body, scope=d.isoformat(), ttl=ttl_for(d))
     return [shape_train(t) for t in (data.get("res") or {}).get("trains") or []]
+
+
+schedule.TRAINS_ON = trains_on  # 过去的训练日程用训练记录补实际时间
 
 
 def shared_channels() -> list[str]:

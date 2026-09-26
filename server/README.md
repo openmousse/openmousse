@@ -103,6 +103,39 @@ python3 tasks_ctl.py list
 
 Handoff card: `{kind: "handoff", id, thread, messageId, createdAt, status: running / done / error / busy / lost, to, toName, from, fromName, question, seconds, relayId, replyId, error}`. Task card: `{kind: "task", id, thread, messageId, createdAt, status (进行中 / 完成 / 失败 / 已取消), timedOut, title, deliverable: [], modelId, minutes, startedAt, finishedAt, tools, step, result, error, round, roundStatus, note, roundResult, tokens, limitMinutes, seq, dailyLimit}` (`seq` = the how-manyth task started today). `deliverable` is the task text's "要交：" / "Deliverable:" line plus the list under it.
 
+## Schedule and "To remember"
+
+One timeline per day and one list of things to remember, both editable. See [`schedule.py`](schedule.py).
+
+- **Schedule** = the timetable (the optional `calendar` source, read-only) + a layer the server keeps itself (`schedule_items` in grava.db: the user's own plans and the ones Agents put in) + deadlines due that day, each with a tick. The timetable can't change, but this layer can mark a class "not going" (`series` = every week), move its place, add a note. Past days record what actually happened: went / didn't, done / didn't, actual times (a workout planned with key `<agent>:training:<date>` gets its actual time from the workouts source).
+- **To remember** = coursework deadlines (`study.deadlines_cmd`) + things pulled out of email (`remember.mail`, below) + application deadlines (`applications`) + the user's own deadlines. Each thing shows up once: the day it's due it moves into that day's timeline. Groups: `security` (pinned), `overdue`, `tomorrow`, `week`, `later`, `nodate`, `news` (undated money / status mail).
+- **Tick** = done or not needed (`schedule_marks.done_at`): gone from the list, and scripts that remind (Grava's watcher reads `schedule_marks`) stop mentioning it. Ticking a mail item also runs `remember.mail.cmd --done <id>` (untick: `--undo`); fixing one (`/api/remember/edit`) runs `--edit <id> --json …`.
+- **Changes by Agents** (via `schedule_ctl.py`, which calls this API with `source`): while an Agent is replying, a `schedule` card goes out on its SSE stream; when the reply ends the change is attached to it (`schedule_log.message_id`). Every change can be undone (`/api/schedule/undo/{id}`). An Agent re-adding with the same `key` updates that item, but never overrides a time the user moved himself.
+- **iPhone calendar**: `GET /cal/<token>.ics` is outside `/api` and needs no token header; the token in the link is the password (rotate it in the app). Four switches: classes (off by default, so a timetable already on the phone isn't doubled), yours and the Agents', deadlines, email events.
+
+```bash
+python3 schedule_ctl.py day [--date tomorrow] [--days 3]
+python3 schedule_ctl.py remember
+python3 schedule_ctl.py add --title "Workout · Push A" --date today --start 17:30 --end 18:30 --key fitness:training:2026-09-28
+python3 schedule_ctl.py skip "ics:2026-09-28T13:00|QDA Office Hours" --every-week
+python3 schedule_ctl.py done "mail:1a0d…:todo"
+python3 schedule_ctl.py undo 42
+```
+
+| Endpoint | What it does |
+|---|---|
+| `GET /api/schedule?from=&days=` | The merged timeline (1–14 days from `from`, default today). Each entry: `id` (the ref to change it: `item:` / `ics:` / `canvas:` / `mail:` / `app:`), `kind`, `origin`, `title`, `date`, `start`, `end`, `allDay`, `badge`, `by`, `link`, `done`, `skip`, `series`, `attended`, `actualStart`, `actualEnd`, `clash`, `past` |
+| `POST /api/schedule` | Add `{title, date, start?, end?, kind: event/deadline, location?, note?, key?, source?}` |
+| `PATCH /api/schedule/{id}` / `DELETE` | Change / delete your own (soft delete, undoable) |
+| `POST /api/schedule/mark` | A class: `{ref, skip?, series?, location?, note?, attended?, actualStart?, actualEnd?}` |
+| `GET /api/remember?all=` | To remember, grouped (`all=1` includes ticked ones) |
+| `POST /api/remember/done` | `{ref, done}`: tick / untick |
+| `POST /api/remember/edit` | `{ref, title?, due?, detail?, type?}`: fix a mail item (or your own deadline) |
+| `POST /api/schedule/undo/{log}` | Undo a change (`{redo: true}` to redo) |
+| `GET/POST /api/schedule/feed` | The iPhone subscription: `{path, include}`; `{include}` to switch categories, `{rotate: true}` for a new link |
+
+`server.json` → `remember.mail` (optional): `{"items": "<the JSON the mail extractor writes>", "cmd": ["python3", ".../mail_digest.py"], "sources": {"<key>": "<label>"}, "link": "https://mail.google.com/mail/?authuser=…#all/{thread_id}"}`.
+
 ## Notifications
 
 Three levels: **ring** (sound, interruptionLevel active), **quiet** (no sound, goes to Notification Center, passive), **none** (not sent). During `push.quiet_hours` in `server.json` (default `["23:00", "07:30"]`, in `timezone`; `[]` turns it off) ring is downgraded to quiet.
