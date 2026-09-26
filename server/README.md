@@ -39,6 +39,21 @@ python3 agent_ctl.py delete g-xxxxxxxx      # workspace archived to ~/.openclaw/
 
 With `packs/core/skills/agent-builder` installed on the main agent (the installer does this) you can create Agents from chat.
 
+## Study desk
+
+`/study` is a wide-screen page for a computer: courses and modules on the left, study notes / slides (PDF) / flashcards / quiz in the middle, and a chat on the right that answers from this session's materials. Configure it with `study` in `server.json` (see [`study.py`](study.py)):
+
+- `materials`: one folder per course, one subfolder per module (week / session), files inside. A module-by-module download of a learning platform (e.g. Canvas) has exactly this shape.
+- `pages`: study notes, one folder per course, Markdown with YAML front matter (`session`, `title`, `sources` = material paths relative to the course folder). Notes attach to the module of their first source; videos go in `<course>/media/` named `S03 ….mp4`.
+- `courses` (optional): which course folders to show, in order. `deadlines_cmd` (optional): a command that prints a JSON array of `{due, course, title, url}` shown along the top.
+- `readings` (optional): a folder with one `<course>.json` reading list per course: `{"items": [{title, kind, required, instructions, sessions, file, status, url}]}`, `file` relative to the course's materials folder. Each session gets a "Readings" tab; if a required reading is missing, generating a study path / flashcards / quiz asks you to supply it first.
+- `recordings` (optional): lecture captions, `<course>/index.json` listing recordings (`id, name, start, duration, sessions, file`), each `file` holding `{viewer_url, segments: [{t, text}]}`. Each session gets a "Lectures" tab (captions with timestamps that open the recording at that moment), and the captions go into the chat context. Keep captions private if your institution's recording policy says so.
+- `video_cmd` (optional): a render command (argv list; `{script}` = the Manim script the assistant wrote, `{media_dir}` = a work folder). When set, each session gets "make a video": the assistant writes the script, the server renders it and hands any error back once for a fix. This runs code the assistant wrote on your machine, so only turn it on where you already trust the assistant to run code.
+
+Every study page opens on its **study path**: 5–8 steps (what to do, which slide pages / note section / reading / recording time, roughly how long), generated from all of the session's materials, with a tick box per step; progress is saved on the server and shown in the course tree.
+
+Questions go through the same chat channel as the app, one thread per study page. The first question of each day carries the notes, the full text of the materials, the lecture captions and the readings (as much as fits; the rest by file path), plus the study-path step you're on; flashcards, quizzes and study paths are generated the same way and saved next to the notes.
+
 ## Data sources are optional
 
 The boards need workouts / meals / body / calendar / derived health metrics, each provided by one script in the `scripts` directory named in `server.json` (default `<workspace>/scripts`): `xunji.py` (workouts / meals / body), `calendar_ics.py` (calendar), `apple_health.py` (recovery score, energy balance, fitness trend). A script that is present gets loaded; a missing one means "not connected": `/api/health` reports `sources` so the app knows, the affected endpoints answer `ok=false` + `missing_source`, boards show an empty state, everything else works. See [`sources.py`](sources.py).

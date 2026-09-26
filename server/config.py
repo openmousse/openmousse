@@ -27,6 +27,7 @@
   transcribe_prompt 语音转写的词表提示（你常说的专有名词）
   transcribe_url    OpenAI 兼容的转写接口（默认 OpenAI 官方；自建 Whisper 服务或代理填它的 /audio/transcriptions）
   backup_dir        改 openclaw.json 前的备份目录（默认 <data_dir>/backups）
+  study             学习台：{materials, pages, courses, deadlines_cmd, video_cmd, readings, recordings}（见 study.py；每次读文件，不用重启）
 
 agent_workspaces 由「新建 Agent」自动维护（agents.py），每次读文件，不用重启。
 """

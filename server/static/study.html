@@ -1,0 +1,1109 @@
+<!doctype html>
+<html lang="zh">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Study desk</title>
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.css">
+<script defer src="https://cdn.jsdelivr.net/npm/marked@12.0.2/marked.min.js"></script>
+<script defer src="https://cdn.jsdelivr.net/npm/dompurify@3.1.6/dist/purify.min.js"></script>
+<script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.js"></script>
+<style>
+:root {
+  --bg: #F1F3F4; --surface: #FFFFFF; --surface2: #E7EAEC; --ink: #12151A; --ink2: #4B535C; --ink3: #7D858F; --line: #DCE0E3;
+  --gold: #9A6B16; --goldFill: #D9AE62; --goldSoft: #F5EAD3; --onGold: #2A1E06; --cyan: #0F7A93; --cyanSoft: #DAF0F5;
+  --good: #22794F; --goodSoft: #DDF1E7; --warn: #9A6408; --warnSoft: #FAEBCF; --bad: #B83A30; --badSoft: #FBE3E0;
+  --shadow: 0 1px 2px rgba(18, 21, 26, .06), 0 4px 16px rgba(18, 21, 26, .05);
+  color-scheme: light;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #0B0D10; --surface: #14171C; --surface2: #1E2329; --ink: #ECEEF0; --ink2: #A6AEB7; --ink3: #737C86; --line: #252A31;
+    --gold: #DDB56A; --goldSoft: #30271A; --cyan: #5CCFE6; --cyanSoft: #10303A; --good: #55C795; --goodSoft: #12301F;
+    --warn: #E5AD4E; --warnSoft: #33270F; --bad: #EC7A70; --badSoft: #3A1815; --shadow: none; color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #0B0D10; --surface: #14171C; --surface2: #1E2329; --ink: #ECEEF0; --ink2: #A6AEB7; --ink3: #737C86; --line: #252A31;
+  --gold: #DDB56A; --goldSoft: #30271A; --cyan: #5CCFE6; --cyanSoft: #10303A; --good: #55C795; --goodSoft: #12301F;
+  --warn: #E5AD4E; --warnSoft: #33270F; --bad: #EC7A70; --badSoft: #3A1815; --shadow: none; color-scheme: dark;
+}
+* { box-sizing: border-box; }
+html, body { height: 100%; margin: 0; }
+body {
+  background: var(--bg); color: var(--ink); font: 14px/1.5 -apple-system, BlinkMacSystemFont, "SF Pro Text", "PingFang SC", "Hiragino Sans GB",
+  "Microsoft YaHei", "Segoe UI", Roboto, sans-serif; -webkit-font-smoothing: antialiased; overflow: hidden;
+}
+button { font: inherit; color: inherit; background: none; border: 0; cursor: pointer; padding: 0; }
+a { color: var(--cyan); }
+.app { display: grid; grid-template-rows: 52px 1fr; height: 100vh; }
+
+/* 顶栏 */
+.top { display: flex; align-items: center; gap: 14px; padding: 0 14px; background: var(--surface); border-bottom: 1px solid var(--line); min-width: 0; }
+.brand { display: flex; align-items: center; gap: 8px; white-space: nowrap; font-weight: 600; }
+.brand .dot { width: 10px; height: 10px; border-radius: 50%; background: var(--goldFill); box-shadow: 0 0 0 3px var(--goldSoft); }
+.brand .sub { color: var(--ink3); font-weight: 500; }
+.ddl { flex: 1; display: flex; gap: 8px; overflow-x: auto; scrollbar-width: none; min-width: 0; }
+.ddl::-webkit-scrollbar { display: none; }
+.chip { display: inline-flex; align-items: center; gap: 6px; white-space: nowrap; padding: 4px 10px; border-radius: 999px; background: var(--surface2);
+  color: var(--ink2); font-size: 12.5px; border: 1px solid transparent; text-decoration: none; }
+.chip b { color: var(--ink); font-weight: 600; }
+.chip.hot { background: var(--badSoft); color: var(--bad); }
+.chip.hot b { color: var(--bad); }
+.chip.warm { background: var(--warnSoft); color: var(--warn); }
+.chip.warm b { color: var(--warn); }
+.chip.muted { background: transparent; border-color: var(--line); }
+.topbtn { padding: 6px 10px; border-radius: 8px; color: var(--ink2); font-size: 13px; white-space: nowrap; }
+.topbtn:hover { background: var(--surface2); color: var(--ink); }
+.iconbtn { display: none; }
+
+/* 三栏 */
+.grid { display: grid; grid-template-columns: 290px minmax(0, 1fr) 400px; min-height: 0; }
+.nav { background: var(--surface); border-right: 1px solid var(--line); overflow-y: auto; padding: 12px 10px 40px; min-height: 0; }
+.center { display: flex; flex-direction: column; min-width: 0; min-height: 0; }
+.ask { background: var(--surface); border-left: 1px solid var(--line); display: flex; flex-direction: column; min-height: 0; }
+
+/* 左栏：课程与模块 */
+.courses { display: flex; flex-direction: column; gap: 2px; margin-bottom: 12px; }
+.course { text-align: left; padding: 8px 10px; border-radius: 8px; font-weight: 600; color: var(--ink2); }
+.course:hover { background: var(--surface2); }
+.course.on { background: var(--goldSoft); color: var(--ink); }
+.course .n { float: right; color: var(--ink3); font-weight: 500; font-size: 12px; }
+.sect { font-size: 11.5px; letter-spacing: .04em; text-transform: uppercase; color: var(--ink3); padding: 10px 10px 4px; }
+.mod { margin: 2px 0; }
+.modh { display: flex; align-items: center; gap: 6px; width: 100%; text-align: left; padding: 6px 8px; border-radius: 8px; color: var(--ink); font-weight: 600; font-size: 13px; }
+.modh:hover { background: var(--surface2); }
+.modh .chev { width: 14px; color: var(--ink3); transition: transform .15s; flex: none; }
+.mod.open .modh .chev { transform: rotate(90deg); }
+.modh .mt { flex: 1; min-width: 0; }
+.modh .cnt { margin-left: auto; color: var(--ink3); font-weight: 500; font-size: 11.5px; white-space: nowrap; flex: none; }
+.items { display: none; padding: 2px 0 6px 12px; }
+.mod.open .items { display: block; }
+.it { display: flex; align-items: flex-start; gap: 8px; width: 100%; text-align: left; padding: 6px 8px; border-radius: 7px; color: var(--ink2); font-size: 13px; }
+.it:hover { background: var(--surface2); color: var(--ink); }
+.it.on { background: var(--cyanSoft); color: var(--ink); }
+.it .b { flex: none; font-size: 10px; font-weight: 700; letter-spacing: .03em; padding: 2px 5px; border-radius: 4px; background: var(--surface2); color: var(--ink3); margin-top: 1px; min-width: 34px; text-align: center; }
+.it.page .b { background: var(--goldSoft); color: var(--gold); }
+.it.on .b { background: var(--surface); }
+.it .t { min-width: 0; overflow-wrap: anywhere; }
+.it .dots { margin-left: auto; flex: none; color: var(--ink3); font-size: 11px; }
+
+/* 中栏 */
+.uhead { padding: 14px 22px 0; background: var(--bg); }
+.uhead h1 { margin: 0 0 10px; font-size: 19px; line-height: 1.35; font-weight: 700; }
+.uhead .crumb { color: var(--ink3); font-size: 12.5px; margin-bottom: 2px; }
+.tabs { display: flex; gap: 4px; overflow-x: auto; scrollbar-width: thin; border-bottom: 1px solid var(--line); }
+.tab { padding: 8px 12px 9px; border-bottom: 2px solid transparent; color: var(--ink2); white-space: nowrap; font-size: 13px; margin-bottom: -1px; }
+.tab:hover { color: var(--ink); }
+.tab.on { color: var(--ink); border-bottom-color: var(--goldFill); font-weight: 600; }
+.tab.gen { color: var(--cyan); }
+.view { flex: 1; min-height: 0; overflow-y: auto; padding: 22px; }
+.view.pdf { padding: 0; overflow: hidden; display: flex; flex-direction: column; }
+.view.pdf iframe, .view.pdf embed { width: 100%; flex: 1; min-height: 0; border: 0; display: block; background: var(--surface2); }
+.view.pdf .backbar { padding: 8px 16px; border-bottom: 1px solid var(--line); background: var(--bg); }
+.empty { max-width: 560px; margin: 12vh auto; text-align: center; color: var(--ink2); }
+.empty h2 { color: var(--ink); font-size: 20px; margin: 0 0 8px; }
+.loading { color: var(--ink3); padding: 20px; }
+.spin { display: inline-block; width: 14px; height: 14px; border: 2px solid var(--line); border-top-color: var(--gold); border-radius: 50%; animation: spin .8s linear infinite; vertical-align: -2px; margin-right: 8px; }
+@keyframes spin { to { transform: rotate(360deg); } }
+.err { color: var(--bad); background: var(--badSoft); padding: 10px 12px; border-radius: 8px; margin: 12px 0; }
+.pill { display: inline-flex; align-items: center; gap: 6px; padding: 8px 14px; border-radius: 999px; background: var(--goldFill); color: var(--onGold); font-weight: 600; }
+.pill:hover { filter: brightness(1.05); }
+.pill.ghost { background: var(--surface2); color: var(--ink); font-weight: 500; }
+.pill[disabled] { opacity: .6; cursor: default; }
+.bar { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin-bottom: 16px; color: var(--ink3); font-size: 12.5px; }
+.bar .grow { flex: 1; }
+
+/* Markdown */
+.md { max-width: 800px; margin: 0 auto; font-size: 15px; line-height: 1.75; overflow-wrap: anywhere; }
+.md h1 { font-size: 24px; line-height: 1.3; margin: 0 0 16px; }
+.md h2 { font-size: 19px; margin: 34px 0 10px; padding-top: 6px; border-top: 1px solid var(--line); }
+.md h3 { font-size: 16px; margin: 24px 0 8px; }
+.md p, .md ul, .md ol { margin: 10px 0; }
+.md li { margin: 3px 0; }
+.md code { font: 13px/1.5 ui-monospace, "SF Mono", Menlo, Consolas, monospace; background: var(--surface2); padding: 1px 5px; border-radius: 4px; }
+.md pre { background: var(--surface); border: 1px solid var(--line); border-radius: 10px; padding: 12px 14px; overflow-x: auto; }
+.md pre code { background: none; padding: 0; }
+.md blockquote { margin: 12px 0; padding: 6px 14px; border-left: 3px solid var(--goldFill); background: var(--goldSoft); border-radius: 0 8px 8px 0; color: var(--ink); }
+.md table { border-collapse: collapse; margin: 12px 0; font-size: 14px; display: block; overflow-x: auto; max-width: 100%; }
+.md th, .md td { border: 1px solid var(--line); padding: 6px 10px; text-align: left; vertical-align: top; }
+.md th { background: var(--surface2); }
+.md hr { border: 0; border-top: 1px solid var(--line); margin: 24px 0; }
+.md details { margin: 10px 0; border: 1px solid var(--line); border-radius: 10px; background: var(--surface); }
+.md details > summary { cursor: pointer; padding: 8px 12px; color: var(--gold); font-weight: 600; list-style: none; }
+.md details > summary::-webkit-details-marker { display: none; }
+.md details > summary::before { content: "▸ "; }
+.md details[open] > summary::before { content: "▾ "; }
+.md details > :not(summary) { padding: 0 14px; }
+.md details[open] { padding-bottom: 6px; }
+.md .katex-display { overflow-x: auto; overflow-y: hidden; padding: 4px 0; }
+.md img { max-width: 100%; }
+
+/* 闪卡、小测 */
+.cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 12px; max-width: 1100px; margin: 0 auto; }
+.card { background: var(--surface); border: 1px solid var(--line); border-radius: 12px; padding: 14px 16px; cursor: pointer; box-shadow: var(--shadow); text-align: left; }
+.card:hover { border-color: var(--goldFill); }
+.card .meta { display: flex; justify-content: space-between; color: var(--ink3); font-size: 11.5px; margin-bottom: 6px; }
+.card .tag { color: var(--gold); }
+.card .q { font-weight: 600; font-size: 14.5px; }
+.card .a { display: none; margin-top: 10px; padding-top: 10px; border-top: 1px dashed var(--line); color: var(--ink2); }
+.card.show .a { display: block; }
+.card .hint { color: var(--ink3); font-size: 12px; margin-top: 8px; }
+.card.show .hint { display: none; }
+.card .ref { color: var(--ink3); font-size: 11.5px; margin-top: 6px; }
+.quiz { max-width: 800px; margin: 0 auto; }
+.qz { background: var(--surface); border: 1px solid var(--line); border-radius: 12px; padding: 14px 16px; margin-bottom: 12px; box-shadow: var(--shadow); }
+.qz .qq { font-weight: 600; margin-bottom: 10px; }
+.qz .qq p { display: inline; margin: 0; }
+.opt { display: flex; gap: 10px; align-items: flex-start; width: 100%; text-align: left; padding: 8px 10px; border: 1px solid var(--line); border-radius: 9px; margin: 6px 0; }
+.opt:hover { border-color: var(--cyan); }
+.opt .k { flex: none; width: 22px; height: 22px; border-radius: 50%; background: var(--surface2); display: grid; place-items: center; font-size: 12px; font-weight: 700; color: var(--ink2); }
+.opt.right { border-color: var(--good); background: var(--goodSoft); }
+.opt.right .k { background: var(--good); color: #fff; }
+.opt.wrong { border-color: var(--bad); background: var(--badSoft); }
+.opt.wrong .k { background: var(--bad); color: #fff; }
+.qz[data-done] .opt { cursor: default; }
+.explain { margin-top: 10px; padding: 10px 12px; border-radius: 9px; background: var(--surface2); color: var(--ink2); font-size: 13.5px; }
+.explain .ref { color: var(--ink3); font-size: 12px; margin-top: 4px; }
+.score { position: sticky; top: -22px; z-index: 1; background: var(--bg); padding: 8px 0 10px; font-weight: 600; }
+.score .ok { color: var(--good); }
+.vids { max-width: 1000px; margin: 0 auto; display: flex; flex-direction: column; gap: 18px; }
+.vid .vt { font-weight: 600; margin-bottom: 6px; }
+.genv { max-width: 1000px; margin: 22px auto 0; padding: 16px; border: 1px dashed var(--line); border-radius: 12px; background: var(--surface); }
+.genv h3 { margin: 0 0 8px; font-size: 15px; }
+.vrow { display: flex; gap: 8px; margin-top: 10px; }
+.vin { flex: 1; min-width: 0; padding: 8px 12px; border-radius: 999px; border: 1px solid var(--line); background: var(--bg); color: var(--ink); font: inherit; outline: none; }
+.vin:focus { border-color: var(--goldFill); }
+.running { display: flex; align-items: center; gap: 4px; flex-wrap: wrap; color: var(--ink2); }
+video.player { width: 100%; max-width: 1000px; display: block; margin: 0 auto; border-radius: 12px; background: #000; }
+pre.code { max-width: 1000px; margin: 0 auto; background: var(--surface); border: 1px solid var(--line); border-radius: 10px; padding: 14px 16px;
+  overflow-x: auto; font: 12.5px/1.6 ui-monospace, "SF Mono", Menlo, Consolas, monospace; white-space: pre; }
+
+/* 学习路线 */
+.route, .rlist { max-width: 860px; margin: 0 auto; }
+.rhead { display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; }
+.rhead .big { font-size: 16px; font-weight: 700; }
+.rhead .sub { color: var(--ink3); font-size: 12.5px; }
+.rhead .grow { flex: 1; }
+.pbar { height: 6px; border-radius: 999px; background: var(--surface2); overflow: hidden; margin: 8px 0 12px; }
+.pbar > i { display: block; height: 100%; background: var(--good); border-radius: 999px; transition: width .25s; }
+.rsum { color: var(--ink2); margin: 0 0 14px; }
+.mats { border: 1px solid var(--line); border-radius: 12px; background: var(--surface); padding: 10px 14px; margin: 0 0 16px; font-size: 13px; text-align: left; }
+.mats.warn { border-color: var(--warn); background: var(--warnSoft); }
+.mats > summary { cursor: pointer; font-weight: 600; list-style: none; }
+.mats > summary::-webkit-details-marker { display: none; }
+.mats[open] > summary { margin-bottom: 6px; }
+.mrow { display: flex; gap: 8px; align-items: baseline; padding: 4px 0; width: 100%; text-align: left; border-radius: 6px; }
+button.mrow:hover .mt { color: var(--cyan); }
+.mrow .st { flex: none; width: 18px; text-align: center; }
+.mk { flex: none; font-size: 10.5px; font-weight: 700; padding: 1px 6px; border-radius: 4px; background: var(--surface2); color: var(--ink3); white-space: nowrap; }
+.mk.req { background: var(--goldSoft); color: var(--gold); }
+.mrow .mt { min-width: 0; overflow-wrap: anywhere; }
+.mi { color: var(--ink3); font-size: 12px; }
+.mi.bad { color: var(--bad); }
+.step { display: flex; gap: 12px; background: var(--surface); border: 1px solid var(--line); border-radius: 12px; padding: 12px 14px; margin-bottom: 10px; box-shadow: var(--shadow); transition: opacity .2s; }
+.step.done { opacity: .6; }
+.step.cur { border-color: var(--goldFill); }
+.chk { flex: none; width: 26px; height: 26px; border-radius: 50%; border: 2px solid var(--line); display: grid; place-items: center; font-size: 12.5px; font-weight: 700; color: var(--ink3); margin-top: 1px; }
+.chk:hover { border-color: var(--good); color: var(--good); }
+.step.done .chk { background: var(--good); border-color: var(--good); color: #fff; }
+.step .sb { flex: 1; min-width: 0; }
+.step .st1 { display: flex; gap: 8px; align-items: baseline; }
+.step .stt { font-weight: 700; font-size: 14.5px; }
+.step .min { color: var(--ink3); font-size: 12px; white-space: nowrap; margin-left: auto; }
+.step .do { color: var(--ink2); margin: 4px 0 8px; font-size: 14px; line-height: 1.65; }
+.step .do p { margin: 0; }
+.refs { display: flex; flex-wrap: wrap; gap: 6px; }
+.ref { display: inline-flex; align-items: center; gap: 5px; padding: 4px 10px; border-radius: 999px; border: 1px solid var(--line); background: var(--bg); color: var(--ink); font-size: 12.5px; max-width: 100%; }
+.ref:hover { border-color: var(--goldFill); }
+.ref .ri { color: var(--ink3); flex: none; }
+.ref .rl { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.rfoot { display: flex; gap: 10px; align-items: center; color: var(--ink3); font-size: 12px; margin-top: 16px; }
+
+/* 阅读、录播 */
+.rgroup { font-size: 11.5px; letter-spacing: .04em; text-transform: uppercase; color: var(--ink3); margin: 16px 0 6px; }
+.ritem { display: flex; gap: 10px; align-items: flex-start; padding: 10px 12px; border: 1px solid var(--line); border-radius: 10px; background: var(--surface); margin-bottom: 8px; width: 100%; text-align: left; }
+button.ritem:hover { border-color: var(--goldFill); }
+.ritem .st { flex: none; width: 18px; text-align: center; margin-top: 1px; }
+.ritem .rt { font-weight: 600; }
+.ritem .rb { min-width: 0; flex: 1; }
+.back { display: inline-flex; gap: 6px; align-items: center; color: var(--ink2); font-size: 13px; }
+.back:hover { color: var(--ink); }
+.rec { margin: 0 0 22px; }
+.rec h3 { margin: 0 0 2px; font-size: 15px; }
+.tfind { width: 100%; padding: 8px 12px; border-radius: 999px; border: 1px solid var(--line); background: var(--bg); color: var(--ink); font: inherit; outline: none; margin: 4px 0 14px; }
+.tfind:focus { border-color: var(--goldFill); }
+.tline { display: flex; gap: 12px; padding: 3px 0; font-size: 14px; line-height: 1.65; }
+.tline a { flex: none; width: 58px; font: 12px/1.95 ui-monospace, "SF Mono", Menlo, monospace; color: var(--cyan); text-decoration: none; }
+.tline a:hover { text-decoration: underline; }
+.tline mark { background: var(--goldSoft); color: var(--ink); border-radius: 3px; }
+.md .flash { animation: flash 1.6s ease-out; border-radius: 4px; }
+@keyframes flash { from { background: var(--goldSoft); } to { background: transparent; } }
+.it .prog { margin-left: auto; flex: none; font-size: 11px; color: var(--ink3); }
+.it .prog.full { color: var(--good); }
+.it .prog + .dots { margin-left: 6px; }
+
+/* 右栏：问答 */
+.askh { padding: 14px 16px 10px; border-bottom: 1px solid var(--line); }
+.askh .t1 { font-weight: 700; display: flex; align-items: center; gap: 8px; }
+.askh .t1 .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--goldFill); }
+.askh .t2 { color: var(--ink3); font-size: 12.5px; margin-top: 2px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.msgs { flex: 1; overflow-y: auto; padding: 14px 16px; min-height: 0; }
+.msg { margin: 0 0 14px; }
+.msg.user { display: flex; justify-content: flex-end; }
+.msg.user .bub { background: var(--cyanSoft); color: var(--ink); border-radius: 14px 14px 4px 14px; padding: 8px 12px; max-width: 88%; white-space: pre-wrap; overflow-wrap: anywhere; }
+.msg.bot .bub { font-size: 14px; line-height: 1.7; }
+.msg.bot .bub.md { max-width: none; font-size: 14px; }
+.msg.bot .bub.md h1, .msg.bot .bub.md h2 { font-size: 15.5px; border: 0; margin: 14px 0 6px; padding: 0; }
+.msg .time { color: var(--ink3); font-size: 11px; margin-top: 2px; }
+.msg.user .time { text-align: right; }
+.msg.bot .who { color: var(--gold); font-weight: 600; font-size: 12px; margin-bottom: 2px; }
+.msg.err .bub { color: var(--bad); }
+.hints { display: flex; flex-wrap: wrap; gap: 6px; margin: 4px 0 10px; }
+.hints button { padding: 6px 10px; border-radius: 999px; border: 1px solid var(--line); color: var(--ink2); font-size: 12.5px; text-align: left; }
+.hints button:hover { border-color: var(--goldFill); color: var(--ink); }
+.note { color: var(--ink3); font-size: 12.5px; margin-bottom: 10px; }
+.compose { border-top: 1px solid var(--line); padding: 10px 12px 12px; }
+.compose textarea { width: 100%; resize: none; min-height: 44px; max-height: 200px; border: 1px solid var(--line); border-radius: 12px; padding: 10px 12px;
+  background: var(--bg); color: var(--ink); font: inherit; outline: none; }
+.compose textarea:focus { border-color: var(--goldFill); }
+.compose .row { display: flex; align-items: center; justify-content: space-between; margin-top: 6px; color: var(--ink3); font-size: 11.5px; }
+.send { padding: 6px 14px; border-radius: 999px; background: var(--goldFill); color: var(--onGold); font-weight: 600; font-size: 13px; }
+.send[disabled] { opacity: .5; cursor: default; }
+.overlay { position: fixed; inset: 0; background: rgba(0, 0, 0, .35); display: grid; place-items: center; z-index: 50; }
+.overlay .box { background: var(--surface); border-radius: 14px; padding: 22px; width: min(460px, 92vw); box-shadow: var(--shadow); }
+.overlay input { width: 100%; padding: 10px 12px; border-radius: 10px; border: 1px solid var(--line); background: var(--bg); color: var(--ink); font: inherit; margin: 12px 0; }
+
+/* 窄屏：问答收起成抽屉，再窄目录也收起 */
+@media (max-width: 1180px) { .grid { grid-template-columns: 260px minmax(0, 1fr) 340px; } }
+@media (max-width: 980px) {
+  .grid { grid-template-columns: 250px minmax(0, 1fr); }
+  .ask { position: fixed; right: 0; top: 52px; bottom: 0; width: min(420px, 100vw); z-index: 20; box-shadow: -8px 0 30px rgba(0, 0, 0, .15); transform: translateX(105%); transition: transform .2s; }
+  body.ask-open .ask { transform: none; }
+  .iconbtn.askbtn { display: inline-flex; }
+}
+@media (max-width: 720px) {
+  .grid { grid-template-columns: minmax(0, 1fr); }
+  .nav { position: fixed; left: 0; top: 52px; bottom: 0; width: min(320px, 88vw); z-index: 20; transform: translateX(-105%); transition: transform .2s; box-shadow: 8px 0 30px rgba(0, 0, 0, .15); }
+  body.nav-open .nav { transform: none; }
+  .iconbtn.navbtn { display: inline-flex; }
+  .brand .sub, .ddl { display: none; }
+  .uhead { padding: 12px 16px 0; }
+  .view { padding: 16px; }
+}
+</style>
+</head>
+<body>
+<div class="app">
+  <header class="top">
+    <button class="topbtn iconbtn navbtn" id="navBtn">☰</button>
+    <div class="brand"><span class="dot"></span><span id="appName">…</span><span class="sub" id="deskName"></span></div>
+    <div class="ddl" id="ddl"></div>
+    <button class="topbtn" id="langBtn"></button>
+    <a class="topbtn" id="homeLink" href="/"></a>
+    <button class="topbtn iconbtn askbtn" id="askBtn"></button>
+  </header>
+  <main class="grid">
+    <nav class="nav" id="nav"><div class="loading"><span class="spin"></span></div></nav>
+    <section class="center">
+      <div class="uhead" id="uhead"></div>
+      <div class="view" id="view"></div>
+    </section>
+    <aside class="ask" id="ask">
+      <div class="askh"><div class="t1"><span class="dot"></span><span id="askTitle"></span></div><div class="t2" id="askSub"></div></div>
+      <div class="msgs" id="msgs"></div>
+      <div class="compose">
+        <textarea id="input" rows="2"></textarea>
+        <div class="row"><span id="composeHint"></span><button class="send" id="sendBtn"></button></div>
+      </div>
+    </aside>
+  </main>
+</div>
+<script>
+'use strict';
+// 学习台（server/study.py 提供数据）。和网页版同源：令牌、语言沿用网页版存在 localStorage 的设置。
+const store = {
+  get(k) { try { return localStorage.getItem(k); } catch { return null; } },
+  set(k, v) { try { if (v == null) localStorage.removeItem(k); else localStorage.setItem(k, v); } catch { /* 存不了就算了 */ } },
+};
+const pickLang = v => (v === 'zh' || v === 'en') ? v : null;
+const CHOSEN = pickLang(store.get('study.lang')) || pickLang(store.get('mousse.lang'));
+let LANG = CHOSEN || (/^zh/i.test(navigator.language || '') ? 'zh' : 'en');
+const L = (zh, en) => (LANG === 'zh' ? zh : en);
+const TOKEN = (store.get('mousse.token') || '').trim();
+const $ = (s, el = document) => el.querySelector(s);
+const S = { tree: null, course: null, unit: null, tab: null, seq: 0, chatSeq: 0, busy: false, appName: '', open: {} };
+try { S.open = JSON.parse(store.get('study.open') || '{}') || {}; } catch { S.open = {}; }
+
+function h(tag, attrs, ...kids) {
+  const e = document.createElement(tag);
+  for (const [k, v] of Object.entries(attrs || {})) {
+    if (v == null || v === false) continue;
+    if (k === 'class') e.className = v;
+    else if (k === 'html') e.innerHTML = v;
+    else if (k.startsWith('on')) e.addEventListener(k.slice(2), v);
+    else e.setAttribute(k, v === true ? '' : v);
+  }
+  for (const kid of kids.flat()) {
+    if (kid == null || kid === false) continue;
+    e.append(kid.nodeType ? kid : document.createTextNode(String(kid)));
+  }
+  return e;
+}
+const esc = s => String(s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+const qs = o => new URLSearchParams(Object.entries(o).filter(([, v]) => v != null && v !== '')).toString();
+const base = p => p.split('/').pop();
+const nice = n => n.replace(/\.(pdf|md)$/i, '').replace(/_ /g, ': ').replace(/_$/, '');
+const pad = n => String(n).padStart(2, '0');
+
+// —— 接口 ——
+function hdrs(extra) {
+  const x = { 'Accept-Language': LANG === 'zh' ? 'zh-CN' : 'en', ...(extra || {}) };
+  if (TOKEN) x.Authorization = 'Bearer ' + TOKEN;
+  return x;
+}
+async function api(path, opts = {}) {
+  const r = await fetch(path, { ...opts, headers: hdrs(opts.headers) });
+  if (r.status === 401) { showAuth(); throw new Error('auth'); }
+  let j = null;
+  try { j = await r.json(); } catch { /* 不是 JSON */ }
+  if (!r.ok) throw new Error((j && (j.detail || j.error)) || ('HTTP ' + r.status));
+  return j;
+}
+const fileSrc = (path, where) => '/api/study/file?' + qs({ course: S.course, path, where });
+const blobs = new Map();
+async function fileUrl(path, where) {
+  // 本机在免令牌名单里时直接给地址（浏览器能边下边显示大 PDF）；用令牌时 iframe 带不了请求头，先取成 blob
+  if (!TOKEN) return fileSrc(path, where);
+  const key = S.course + '|' + where + '|' + path;
+  if (blobs.has(key)) return blobs.get(key);
+  const r = await fetch(fileSrc(path, where), { headers: hdrs() });
+  if (!r.ok) throw new Error('HTTP ' + r.status);
+  const url = URL.createObjectURL(await r.blob());
+  blobs.set(key, url);
+  return url;
+}
+async function fileText(path, where) {
+  const r = await fetch(fileSrc(path, where), { headers: hdrs() });
+  if (r.status === 401) { showAuth(); throw new Error('auth'); }
+  if (!r.ok) throw new Error('HTTP ' + r.status);
+  return r.text();
+}
+
+// —— Markdown + 公式 ——
+function renderMD(md, inline) {
+  if (!window.marked) return '<p>' + esc(md) + '</p>';
+  const math = [], codes = [];
+  let src = String(md || '').replace(/```[\s\S]*?```|`[^`\n]*`/g, m => `\u0000${codes.push(m) - 1}\u0000`);
+  const put = (t, d) => `@@M${math.push({ t, d }) - 1}@@`;
+  src = src.replace(/\$\$([\s\S]+?)\$\$/g, (_, t) => put(t, true))
+    .replace(/\\\[([\s\S]+?)\\\]/g, (_, t) => put(t, true))
+    .replace(/\\\((.+?)\\\)/g, (_, t) => put(t, false))
+    .replace(/(^|[^\\$])\$(?!\s)([^$\n]*?[^\s$])\$(?!\d)/g, (m, pre, t) => (/^[\d.,\s%]+$/.test(t) ? m : pre + put(t, false)));  // 不用 lookbehind：旧版 Safari 不支持
+  src = src.replace(/\u0000(\d+)\u0000/g, (_, i) => codes[+i]);
+  // <details> 里要空一行，里面的 Markdown 才会被解析
+  src = src.replace(/(<summary>[\s\S]*?<\/summary>)[ \t]*\n?/g, '$1\n\n').replace(/\n?[ \t]*<\/details>/g, '\n\n</details>');
+  let html = inline ? marked.parseInline(src) : marked.parse(src, { gfm: true });
+  html = window.DOMPurify ? DOMPurify.sanitize(html, { ADD_TAGS: ['details', 'summary'], ADD_ATTR: ['open', 'target'] }) : esc(src);
+  return html.replace(/@@M(\d+)@@/g, (_, i) => {
+    const { t, d } = math[+i];
+    try { return window.katex ? katex.renderToString(t, { displayMode: d, throwOnError: false }) : esc(t); } catch { return esc(t); }
+  });
+}
+function mdEl(md, cls) {
+  const el = h('div', { class: 'md' + (cls ? ' ' + cls : ''), html: renderMD(md) });
+  el.querySelectorAll('a[href^="http"]').forEach(a => { a.target = '_blank'; a.rel = 'noopener'; });
+  return el;
+}
+
+// —— 界面文字 ——
+function paintStatic() {
+  document.documentElement.lang = LANG === 'zh' ? 'zh' : 'en';
+  $('#deskName').textContent = '· ' + L('学习台', 'Study desk');
+  document.title = (S.appName ? S.appName + ' · ' : '') + L('学习台', 'Study desk');
+  $('#langBtn').textContent = LANG === 'zh' ? 'EN' : '中文';
+  $('#homeLink').textContent = L('回到 app', 'Back to app');
+  $('#askBtn').textContent = L('提问', 'Ask');
+  $('#sendBtn').textContent = L('发送', 'Send');
+  $('#composeHint').textContent = L('Enter 发送 · Shift+Enter 换行', 'Enter to send · Shift+Enter for a new line');
+  $('#input').placeholder = L('问这一节的任何问题…', 'Ask anything about this session…');
+}
+
+// —— 顶栏 ddl ——
+function dueDate(s) { const m = /^(\d{4})-(\d\d)-(\d\d)[ T](\d\d):(\d\d)/.exec(s || ''); return m ? new Date(+m[1], m[2] - 1, +m[3], +m[4], +m[5]) : null; }
+function left(ms) {
+  const hrs = Math.floor(ms / 3.6e6), d = Math.floor(hrs / 24);
+  if (ms < 0) return L('已过期', 'overdue');
+  if (d >= 1) return L(`还剩 ${d} 天 ${hrs % 24} 小时`, `${d}d ${hrs % 24}h left`);
+  return L(`还剩 ${hrs} 小时 ${Math.floor(ms / 6e4) % 60} 分`, `${hrs}h ${Math.floor(ms / 6e4) % 60}m left`);
+}
+async function loadDDL(refresh) {
+  const box = $('#ddl');
+  try {
+    const j = await api('/api/study/deadlines' + (refresh ? '?refresh=1' : ''));
+    box.innerHTML = '';
+    if (!j.configured) return;
+    if (!j.ok) { box.append(h('span', { class: 'chip warm', title: j.error || '' }, L('ddl 读取失败：', 'Deadlines unavailable: ') + (j.error || '').slice(0, 60))); return; }
+    if (!j.items.length) box.append(h('span', { class: 'chip muted' }, L('近期没有待交的作业', 'Nothing due soon')));
+    const wk = L('日一二三四五六', 'SunMonTueWedThuFriSat');
+    for (const it of j.items) {
+      const d = dueDate(it.due);
+      const ms = d ? d - Date.now() : Infinity;
+      const day = d ? (LANG === 'zh' ? `${d.getMonth() + 1}/${d.getDate()} 周${wk[d.getDay()]}` : `${wk.slice(d.getDay() * 3, d.getDay() * 3 + 3)} ${d.getDate()}/${d.getMonth() + 1}`) : '';
+      const cls = 'chip' + (ms < 48 * 3.6e6 ? ' hot' : ms < 7 * 24 * 3.6e6 ? ' warm' : '');
+      box.append(h(it.url ? 'a' : 'span', { class: cls, href: it.url || null, target: it.url ? '_blank' : null, rel: 'noopener', title: `${it.course || ''} · ${it.title || ''}` },
+        h('b', {}, `${day} ${it.due.slice(11, 16)}`), `${it.course ? it.course + ' · ' : ''}${it.title || ''}`, d ? ' · ' + left(ms) : ''));
+    }
+  } catch (e) { if (e.message !== 'auth') box.innerHTML = ''; }
+}
+
+// —— 左栏 ——
+const curCourse = () => (S.tree?.courses || []).find(c => c.name === S.course);
+const isOn = (kind, path) => S.unit && S.unit.kind === kind && S.unit.path === path;
+function badge(f) {
+  const ext = (f.name.split('.').pop() || '').toUpperCase();
+  return f.kind === 'md' ? L('页面', 'PAGE') : ext.length <= 5 ? ext : L('文件', 'FILE');
+}
+function pageItem(p) {
+  const gen = [p.generated?.cards && L('卡', 'C'), p.generated?.quiz && L('测', 'Q'), p.videos?.length && '▶'].filter(Boolean).join(' ');
+  const pr = p.progress && p.progress.total ? h('span', { class: 'prog' + (p.progress.done === p.progress.total ? ' full' : ''), title: L('学习路线进度', 'Study path progress') },
+    p.progress.done === p.progress.total ? '✓' : `${p.progress.done}/${p.progress.total}`) : null;
+  return h('button', { class: 'it page' + (isOn('page', p.path) ? ' on' : ''), onclick: () => { openUnit({ kind: 'page', ...p }); closeDrawers(); } },
+    h('span', { class: 'b' }, p.session != null ? 'S' + p.session : L('总览', 'INFO')), h('span', { class: 't' }, p.title), pr, gen ? h('span', { class: 'dots' }, gen) : null);
+}
+function fileItem(f) {
+  return h('button', { class: 'it' + (isOn('file', f.path) ? ' on' : ''), onclick: () => { openUnit({ kind: 'file', path: f.path, title: nice(f.name), fileKind: f.kind }); closeDrawers(); } },
+    h('span', { class: 'b' }, badge(f)), h('span', { class: 't' }, nice(f.name)));
+}
+function renderNav() {
+  const nav = $('#nav');
+  nav.innerHTML = '';
+  const courses = S.tree?.courses || [];
+  nav.append(h('div', { class: 'courses' }, courses.map(c => {
+    const n = c.modules.reduce((a, m) => a + m.pages.length, c.pages.length);
+    return h('button', { class: 'course' + (c.name === S.course ? ' on' : ''), onclick: () => selectCourse(c.name) }, c.name, n ? h('span', { class: 'n' }, L(`${n} 页`, `${n} note${n === 1 ? '' : 's'}`)) : null);
+  })));
+  const c = curCourse();
+  if (!c) return;
+  if (c.pages.length) nav.append(h('div', { class: 'sect' }, L('课程总览', 'Course overview')), h('div', { class: 'items', style: 'display:block' }, c.pages.map(pageItem)));
+  nav.append(h('div', { class: 'sect' }, L('模块', 'Modules')));
+  for (const m of c.modules) {
+    const key = c.name + '/' + m.id;
+    const open = key in S.open ? S.open[key] : (m.pages.length > 0 || (S.unit && m.files.some(f => isOn('file', f.path))));
+    const el = h('div', { class: 'mod' + (open ? ' open' : '') },
+      h('button', { class: 'modh', onclick: () => { el.classList.toggle('open'); S.open[key] = el.classList.contains('open'); store.set('study.open', JSON.stringify(S.open)); } },
+        h('span', { class: 'chev' }, '›'), h('span', { class: 'mt' }, m.title), h('span', { class: 'cnt' }, m.pages.length ? L(`${m.pages.length} 页笔记`, `${m.pages.length} note${m.pages.length === 1 ? '' : 's'}`) : m.files.length || '')),
+      h('div', { class: 'items' }, m.pages.map(pageItem), m.files.map(fileItem)));
+    nav.append(el);
+  }
+  if (c.videos?.length) {
+    nav.append(h('div', { class: 'sect' }, L('其他视频', 'Other videos')), h('div', { class: 'items', style: 'display:block' }, c.videos.map(v =>
+      h('button', { class: 'it', onclick: () => { openUnit({ kind: 'video', path: v.path, title: v.name }); closeDrawers(); } }, h('span', { class: 'b' }, '▶'), h('span', { class: 't' }, v.name)))));
+  }
+}
+function selectCourse(name, keepUnit) {
+  S.course = name;
+  store.set('study.course', name);
+  if (!keepUnit) {
+    const c = curCourse();
+    const first = c && (c.modules.flatMap(m => m.pages)[0] || c.pages[0]);
+    if (first) openUnit({ kind: 'page', ...first });
+    else { S.unit = null; renderNav(); renderEmpty(); }
+    return;
+  }
+  renderNav();
+}
+
+// —— 中栏 ——
+function unitRef(u = S.unit) { return u.kind === 'page' ? { page: u.path } : { file: u.path }; }
+function findPage(path) { const c = curCourse(); return c && [...c.pages, ...c.modules.flatMap(m => m.pages)].find(p => p.path === path); }
+function tabsOf(u) {
+  const t = [];
+  if (u.kind === 'page') {
+    t.push({ id: 'path', label: pathTabLabel(u) }, { id: 'page', label: L('学习页', 'Notes') });
+    for (const s of u.sources || []) t.push({ id: 'src:' + s, label: nice(base(s)) });
+    if (u.readings?.total) t.push({ id: 'readings', label: L('阅读', 'Readings') + ` · ${u.readings.have}/${u.readings.total}` });
+    if (u.recordings) t.push({ id: 'recs', label: L('录播', 'Lectures') + ' · ' + u.recordings });
+    if ((u.videos || []).length || S.tree?.video) t.push({ id: 'videos', label: videoTabLabel(u), gen: true });
+  } else if (u.kind === 'video') {
+    t.push({ id: 'vid:' + u.path, label: '▶ ' + u.title });
+    return t;
+  } else {
+    t.push({ id: 'src:' + u.path, label: nice(base(u.path)) });
+  }
+  t.push({ id: 'cards', label: L('闪卡', 'Flashcards'), gen: true }, { id: 'quiz', label: L('小测', 'Quiz'), gen: true });
+  return t;
+}
+const videoTabLabel = u => L('视频', 'Videos') + ((u.videos || []).length ? ' · ' + u.videos.length : '');
+const pathTabLabel = u => L('学习路线', 'Study path') + (u.progress?.total ? ` · ${u.progress.done}/${u.progress.total}` : '');
+// 子视图（阅读材料里打开的某个文件）高亮它所属的标签
+const tabKey = id => (id.startsWith('read:') ? 'readings' : id);
+function openUnit(u, tab) {
+  if (u.kind === 'page') u = { ...(findPage(u.path) || {}), ...u };
+  S.unit = u;
+  store.set('study.last', JSON.stringify({ course: S.course, kind: u.kind, path: u.path, title: u.title, tab: tab || null }));
+  renderNav();
+  const tabs = tabsOf(u);
+  const mod = curCourse()?.modules.find(m => m.pages.some(p => p.path === u.path) || m.files.some(f => f.path === u.path));
+  $('#uhead').innerHTML = '';
+  $('#uhead').append(h('div', { class: 'crumb' }, [S.course, mod?.title].filter(Boolean).join(' · ')), h('h1', {}, u.title),
+    h('div', { class: 'tabs', id: 'tabs' }, tabs.map(t => h('button', { class: 'tab' + (t.gen ? ' gen' : ''), 'data-id': t.id, onclick: () => selectTab(t.id) }, t.label))));
+  selectTab(tabs.some(t => t.id === tab) ? tab : tabs[0].id);
+  if (u.kind !== 'video') loadChat();
+  else { $('#msgs').innerHTML = ''; $('#askSub').textContent = ''; }
+}
+function renderEmpty(msg) {
+  $('#uhead').innerHTML = '';
+  $('#view').className = 'view';
+  $('#view').innerHTML = '';
+  $('#view').append(h('div', { class: 'empty' }, h('h2', {}, L('从左边选一节开始', 'Pick a session on the left')), h('p', {}, msg || '')));
+}
+async function selectTab(id) {
+  S.tab = id;
+  const my = ++S.seq;
+  const anchor = S.anchor, pdfPage = S.pdfPage;  // 学习路线里点进来的：滚到哪一节 / PDF 翻到哪一页
+  S.anchor = S.pdfPage = null;
+  document.querySelectorAll('#tabs .tab').forEach(b => b.classList.toggle('on', b.dataset.id === tabKey(id)));
+  const last = JSON.parse(store.get('study.last') || '{}');
+  store.set('study.last', JSON.stringify({ ...last, tab: id.startsWith('read:') ? 'readings' : id }));
+  const v = $('#view');
+  v.className = 'view';
+  v.innerHTML = '';
+  v.append(h('div', { class: 'loading' }, h('span', { class: 'spin' }), L('加载中…', 'Loading…')));
+  const done = el => { if (my !== S.seq) return false; v.innerHTML = ''; if (el) v.append(el); return true; };
+  try {
+    if (id === 'page') {
+      const j = await api('/api/study/page?' + qs({ course: S.course, path: S.unit.path }));
+      const el = mdEl(j.markdown);
+      el.querySelectorAll('h2, h3').forEach((x, i) => { x.id = 's' + (i + 1); });  // 和服务端 headings_of 的编号一致
+      if (done(el)) {
+        const target = anchor && el.querySelector('#' + anchor);
+        if (target) { target.scrollIntoView({ block: 'start' }); target.classList.add('flash'); } else v.scrollTop = 0;
+      }
+    } else if (id.startsWith('src:') || id.startsWith('read:')) {
+      const p = id.slice(id.indexOf(':') + 1), ext = (p.split('.').pop() || '').toLowerCase();
+      const back = id.startsWith('read:') ? h('button', { class: 'back', onclick: () => selectTab('readings') }, '← ' + L('回到阅读清单', 'Back to readings')) : null;
+      if (ext === 'pdf') {
+        const url = await fileUrl(p, 'materials');
+        if (my !== S.seq) return;
+        v.className = 'view pdf';
+        done(h('div', { style: 'display:contents' }, back ? h('div', { class: 'backbar' }, back) : null, h('iframe', { src: url + (pdfPage ? '#page=' + pdfPage : ''), title: base(p) })));
+      } else if (ext === 'md') {
+        const t = await fileText(p, 'materials');
+        done(h('div', {}, back ? h('div', { class: 'md', style: 'margin-bottom:12px' }, back) : null, mdEl(t)));
+      } else if (['rmd', 'r', 'py', 'txt', 'csv', 'tex', 'json'].includes(ext)) {
+        const t = await fileText(p, 'materials');
+        done(h('pre', { class: 'code' }, t));
+      } else {
+        const url = await fileUrl(p, 'materials');
+        done(h('div', { class: 'empty' }, h('h2', {}, base(p)), h('p', {}, L('这种文件浏览器里预览不了，可以下载后打开；也可以直接在右边问它的内容。', "The browser can't preview this file. Download it, or ask about it on the right.")),
+          h('a', { class: 'pill', href: url, download: base(p) }, L('下载', 'Download'))));
+      }
+    } else if (id === 'path') {
+      await renderPath(my);
+    } else if (id === 'readings') {
+      await renderReadings(my);
+    } else if (id === 'recs') {
+      await renderRecs(my);
+    } else if (id.startsWith('vid:')) {
+      const url = await fileUrl(id.slice(4), 'pages');
+      done(h('video', { class: 'player', src: url, controls: true, preload: 'metadata' }));
+    } else if (id === 'cards' || id === 'quiz') {
+      await renderGen(id, my);
+    } else if (id === 'videos') {
+      await renderVideos(my);
+    }
+  } catch (e) {
+    if (e.message !== 'auth') done(h('div', { class: 'err' }, L('打不开：', "Couldn't open: ") + e.message));
+  }
+}
+
+// —— 闪卡 / 小测 ——
+async function renderGen(kind, my) {
+  const v = $('#view');
+  const j = await api('/api/study/generated?' + qs({ course: S.course, kind, ...unitRef() }));
+  if (my !== S.seq) return;
+  v.innerHTML = '';
+  const what = kind === 'cards' ? L('闪卡', 'flashcards') : L('小测', 'quiz');
+  if (j.status === 'running') {
+    v.append(h('div', { class: 'empty' }, h('h2', {}, h('span', { class: 'spin' }), L(`正在生成${what}…`, `Making ${what}…`)),
+      h('p', {}, L('会把这一节的学习页和课件全文交给助手，一般要一两分钟。可以先去看别的，好了会存下来。', 'The notes and full course materials go to the assistant; this usually takes a minute or two. Feel free to look at something else; the result is saved.'))));
+    setTimeout(() => { if (my === S.seq && S.tab === kind) renderGen(kind, my); }, 4000);
+    return;
+  }
+  if (!j.data) {
+    v.append(h('div', { class: 'empty' },
+      h('h2', {}, kind === 'cards' ? L('这一节还没有闪卡', 'No flashcards yet') : L('这一节还没有小测', 'No quiz yet')),
+      h('p', {}, kind === 'cards' ? L('按学习页和课件全文生成 12–20 张卡：一张一个点，点一下看答案。', 'Generates 12–20 cards from the notes and full materials: one idea per card, click to reveal.')
+        : L('按学习页和课件全文出 8 道单选题，选完马上看解析。', 'Generates 8 multiple-choice questions from the notes and full materials, with instant explanations.')),
+      j.error ? h('div', { class: 'err' }, L('上次生成失败：', 'Last attempt failed: ') + j.error) : null,
+      h('button', { class: 'pill', onclick: () => startGen(kind) }, kind === 'cards' ? L('生成闪卡', 'Make flashcards') : L('生成小测', 'Make a quiz'))));
+    return;
+  }
+  const d = j.data;
+  const when = (d.generated || '').slice(0, 16).replace('T', ' ');
+  const bar = h('div', { class: 'bar' }, h('span', {}, L(`${d.items.length} ${kind === 'cards' ? '张' : '题'} · 生成于 ${when}`, `${d.items.length} ${kind === 'cards' ? 'cards' : 'questions'} · made ${when}`)),
+    h('span', { class: 'grow' }), h('button', { class: 'pill ghost', onclick: () => startGen(kind) }, L('重新生成', 'Regenerate')));
+  v.append(bar);
+  if (kind === 'cards') drawCards(v, bar, d.items); else drawQuiz(v, d.items);
+}
+async function startGen(kind, force) {
+  let j;
+  try {
+    j = await api('/api/study/generate', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ course: S.course, kind, force: !!force, ...unitRef() }) });
+  } catch (e) { if (e.message !== 'auth') alert(e.message); return; }
+  if (j && j.ok === false && j.status === 'needs_materials') { showMissing(kind, j.missing || []); return; }
+  selectTab(kind === 'path' ? 'path' : kind);
+  pollTree(kind);
+}
+const KIND_NAME = () => ({ path: L('学习路线', 'the study path'), cards: L('闪卡', 'flashcards'), quiz: L('小测', 'the quiz') });
+// 必读材料还没齐：先提醒去准备，确定不等了才用现有材料生成
+function showMissing(kind, missing) {
+  if ($('.overlay')) return;
+  const close = () => $('.overlay')?.remove();
+  document.body.append(h('div', { class: 'overlay', onclick: e => { if (e.target === e.currentTarget) close(); } }, h('div', { class: 'box', style: 'width:min(560px,92vw)' },
+    h('h3', { style: 'margin:0 0 6px' }, L('先把材料准备好', 'Get the materials first')),
+    h('div', { style: 'color:var(--ink2);margin-bottom:10px' }, L(`这一节还缺 ${missing.length} 样必读材料。补齐以后再生成${KIND_NAME()[kind]}，内容才完整。`,
+      `This session is missing ${missing.length} required item${missing.length === 1 ? '' : 's'}. Generate ${KIND_NAME()[kind]} once they're in, so nothing is left out.`)),
+    h('div', { class: 'mats warn', style: 'max-height:40vh;overflow:auto' }, missing.map(matRow)),
+    h('div', { style: 'display:flex;gap:8px;justify-content:flex-end;flex-wrap:wrap' },
+      h('button', { class: 'pill ghost', onclick: () => { close(); startGen(kind, true); } }, L('先用现有材料生成', 'Generate with what I have')),
+      h('button', { class: 'pill', onclick: close }, L('好，我去准备', "OK, I'll get them"))))));
+}
+function pollTree(kind) {
+  // 生成完以后刷新左栏的「卡 / 测 / 进度」标记
+  const t = setInterval(async () => {
+    try {
+      const j = await api('/api/study/generated?' + qs({ course: S.course, kind: kind || 'cards', ...unitRef() }));
+      if (j.status !== 'running') { clearInterval(t); await refreshUnit(); }
+    } catch { clearInterval(t); }
+  }, 5000);
+}
+// 重新取目录，把当前这一节的计数（进度、阅读、录播）和标签文字更新掉
+async function refreshUnit() {
+  await loadTree();
+  const fresh = S.unit?.kind === 'page' ? findPage(S.unit.path) : null;
+  if (fresh) S.unit = { ...S.unit, ...fresh };
+  renderNav();
+  paintTabLabels();
+}
+function paintTabLabels() {
+  if (!S.unit) return;
+  for (const t of tabsOf(S.unit)) { const b = document.querySelector(`#tabs .tab[data-id="${CSS.escape(t.id)}"]`); if (b) b.textContent = t.label; }
+}
+
+// —— 学习路线 ——
+const clock = t => { t = Math.max(0, Math.floor(t)); const hh = Math.floor(t / 3600), mm = Math.floor(t % 3600 / 60); return (hh ? hh + ':' + pad(mm) : String(mm)) + ':' + pad(t % 60); };
+const panoptoAt = (url, t) => (url && t != null ? url + (url.includes('?') ? '&' : '?') + 'start=' + Math.floor(t) : url);
+const KIND_LABEL = () => ({ textbook: L('教材', 'Textbook'), case: 'Case', article: L('文章', 'Article'), note: L('讲义', 'Note'), news: L('新闻', 'News'), web: L('网页', 'Web'), book: L('书', 'Book') });
+function statusOf(r) {
+  if (r.status === 'have') return ['✓', ''];
+  if (r.status === 'needs_leo') return ['✋', L('等你提供', 'needs you')];
+  if (r.status === 'blocked') return ['⛔', L('网站打不开：可以在自己电脑上打开链接存成 PDF 发我', "site blocked: open the link yourself and send a PDF")];
+  if (r.status === 'optional') return ['○', L('选读，没下载', 'optional, not downloaded')];
+  return ['✗', L('还没有', 'missing')];
+}
+function matRow(r) {
+  const [icon, note] = statusOf(r);
+  const kids = [h('span', { class: 'st' }, icon), h('span', { class: 'mk' + (r.required ? ' req' : '') }, KIND_LABEL()[r.kind] || r.kind || L('材料', 'Item')),
+    h('span', { class: 'mt' }, r.title || '', r.instructions ? h('span', { class: 'mi' }, ' · ' + r.instructions) : null, note ? h('span', { class: 'mi' + (r.status === 'have' ? '' : ' bad') }, ' · ' + note) : null,
+      !r.file && r.url ? h('a', { href: r.url, target: '_blank', rel: 'noopener', class: 'mi', style: 'margin-left:6px', onclick: e => e.stopPropagation() }, L('原链接', 'link')) : null)];
+  return r.file ? h('button', { class: 'mrow', onclick: () => { $('.overlay')?.remove(); selectTab('read:' + r.file); } }, kids) : h('div', { class: 'mrow' }, kids);
+}
+function matsBox(m, open) {
+  const have = m.readings.filter(r => r.file).length, miss = m.missing.length;
+  if (!m.readings.length && !m.recordings.length) return h('div', { class: 'mats' }, L('这一节没有阅读清单，也还没有录播。', 'No reading list or lecture recording for this session yet.'));
+  const recs = m.recordings.map(r => h('div', { class: 'mrow' }, h('span', { class: 'st' }, r.has_captions ? '✓' : '○'), h('span', { class: 'mk' }, L('录播', 'Lecture')),
+    h('span', { class: 'mt' }, r.name || '', h('span', { class: 'mi' }, ' · ' + String(r.start || '').slice(0, 10) + (r.has_captions ? '' : L(' · 没有字幕', ' · no captions'))))));
+  const title = miss ? L(`还缺 ${miss} 样必读材料`, `${miss} required item${miss === 1 ? '' : 's'} missing`)
+    : L(`材料齐了 · 阅读 ${have}/${m.readings.length} · 录播 ${m.recordings.length}`, `Materials complete · readings ${have}/${m.readings.length} · lectures ${m.recordings.length}`);
+  return h('details', { class: 'mats' + (miss ? ' warn' : ''), open: open || miss > 0 }, h('summary', {}, (miss ? '⚠︎ ' : '✓ ') + title), m.readings.map(matRow), recs);
+}
+function refLabel(r) {
+  if (r.type === 'section') return ['§', r.label || r.id];
+  if (r.type === 'file') {
+    const rd = (S.mats?.readings || []).find(x => x.file === r.path);
+    return ['📄', (rd ? rd.title : nice(base(r.path))) + (r.page ? ' · p.' + r.page : '')];
+  }
+  if (r.type === 'video') return ['▶', (S.unit.videos || []).find(x => x.path === r.path)?.name || nice(base(r.path))];
+  if (r.type === 'recording') return ['🎙', (r.label || L('录播', 'Lecture')) + (r.t != null ? ' · ' + clock(r.t) : '')];
+  if (r.type === 'cards') return ['🃏', L('闪卡', 'Flashcards')];
+  return ['✎', L('小测', 'Quiz')];
+}
+function openRef(r) {
+  if (r.type === 'section') { S.anchor = r.id; selectTab('page'); } else if (r.type === 'file') {
+    S.pdfPage = r.page || null;
+    selectTab(((S.unit.sources || []).includes(r.path) ? 'src:' : 'read:') + r.path);
+  } else if (r.type === 'video') selectTab('videos');
+  else if (r.type === 'recording') {
+    const rec = (S.mats?.recordings || []).find(x => x.id === r.id);
+    if (rec?.viewer_url) window.open(panoptoAt(rec.viewer_url, r.t), '_blank', 'noopener'); else selectTab('recs');
+  } else selectTab(r.type);
+}
+function setStep(i) {
+  S.curStep = { course: S.course, path: S.unit.path, i };
+  const t = S.route?.items?.[i]?.title;
+  $('#askSub').textContent = S.unit.title + (t ? L(` · 第 ${i + 1} 步：${t}`, ` · step ${i + 1}: ${t}`) : '');
+}
+const curStepOf = () => (S.curStep && S.curStep.course === S.course && S.unit && S.curStep.path === S.unit.path ? S.curStep.i : null);
+async function renderPath(my) {
+  const v = $('#view');
+  const [j, m] = await Promise.all([api('/api/study/generated?' + qs({ course: S.course, kind: 'path', ...unitRef() })), api('/api/study/materials?' + qs({ course: S.course, page: S.unit.path }))]);
+  if (my !== S.seq) return;
+  S.mats = m;
+  v.innerHTML = '';
+  const wrap = h('div', { class: 'route' });
+  v.append(wrap);
+  if (j.status === 'running') {
+    wrap.append(h('div', { class: 'empty' }, h('h2', {}, h('span', { class: 'spin' }), L('正在排学习路线…', 'Planning the study path…')),
+      h('p', {}, L('会把学习页、课件、录播字幕和阅读材料一起交给助手，一般要两三分钟。可以先去看别的，好了会存下来。', 'The notes, materials, lecture captions and readings go to the assistant; this usually takes two or three minutes. The result is saved.'))));
+    setTimeout(() => { if (my === S.seq && S.tab === 'path') renderPath(my); }, 5000);
+    return;
+  }
+  if (!j.data) {
+    S.route = null;
+    wrap.append(h('div', { class: 'empty', style: 'margin-top:6vh' }, h('h2', {}, L('这一节还没有学习路线', 'No study path yet')),
+      h('p', {}, L('按这一节的学习页、课件、教材和阅读材料、录播字幕排 5–8 步：每一步做什么、看哪几页、大概多久，做完一步打个勾。',
+        'Plans 5–8 steps from the notes, slides, textbook and readings, and lecture captions: what to do, which pages, roughly how long. Tick each step off as you go.')),
+      matsBox(m, true), j.error ? h('div', { class: 'err' }, L('上次生成失败：', 'Last attempt failed: ') + j.error) : null,
+      h('button', { class: 'pill', onclick: () => startGen('path') }, L('生成学习路线', 'Make a study path'))));
+    return;
+  }
+  const d = j.data;
+  S.route = d;
+  const done = new Set(j.done || []);
+  const total = d.items.length;
+  const count = h('span', { class: 'sub' });
+  const bar = h('i', {});
+  const paint = () => {
+    const mins = d.items.reduce((a, s, i) => a + (done.has(i) ? 0 : s.minutes || 0), 0);
+    count.textContent = L(`已完成 ${done.size} / ${total}`, `${done.size} / ${total} done`) + (mins ? L(` · 还要约 ${mins} 分钟`, ` · ~${mins} min left`) : '');
+    bar.style.width = (total ? 100 * done.size / total : 0) + '%';
+  };
+  const phase = d.phase === 'pre' ? L('课前预习', 'Preparation') : L('课后复习', 'Review');
+  wrap.append(h('div', { class: 'rhead' }, h('span', { class: 'big' }, L(`${phase} · ${total} 步 · 约 ${d.total_minutes || 0} 分钟`, `${phase} · ${total} steps · ~${d.total_minutes || 0} min`)), h('span', { class: 'grow' }), count),
+    h('div', { class: 'pbar' }, bar), d.summary ? h('p', { class: 'rsum' }, d.summary) : null, matsBox(m, false));
+  const cur = curStepOf();
+  d.items.forEach((s, i) => {
+    const card = h('div', { class: 'step' + (done.has(i) ? ' done' : '') + (cur === i ? ' cur' : '') });
+    const chk = h('button', { class: 'chk', title: L('做完了打勾', 'Tick when done') }, done.has(i) ? '✓' : String(i + 1));
+    chk.onclick = async () => {
+      const want = !done.has(i);
+      try {
+        const r = await api('/api/study/progress', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ course: S.course, page: S.unit.path, step: i, done: want }) });
+        done.clear(); (r.done || []).forEach(x => done.add(x));
+      } catch (e) { if (e.message !== 'auth') alert(e.message); return; }
+      card.classList.toggle('done', done.has(i));
+      chk.textContent = done.has(i) ? '✓' : String(i + 1);
+      paint();
+      const next = d.items.findIndex((_, k) => !done.has(k));
+      wrap.querySelectorAll('.step').forEach((el, k) => el.classList.toggle('cur', k === next));
+      if (next >= 0) setStep(next);
+      refreshUnit();
+    };
+    card.append(chk, h('div', { class: 'sb' },
+      h('div', { class: 'st1' }, h('span', { class: 'stt' }, s.title), s.minutes ? h('span', { class: 'min' }, L(`约 ${s.minutes} 分钟`, `~${s.minutes} min`)) : null),
+      s.do ? h('div', { class: 'do', html: renderMD(s.do) }) : null,
+      (s.refs || []).length ? h('div', { class: 'refs' }, s.refs.map(r => { const [ic, lb] = refLabel(r); return h('button', { class: 'ref', title: lb, onclick: () => { setStep(i); openRef(r); } }, h('span', { class: 'ri' }, ic), h('span', { class: 'rl' }, lb)); })) : null));
+    wrap.append(card);
+  });
+  paint();
+  const when = (d.generated || '').slice(0, 16).replace('T', ' ');
+  wrap.append(h('div', { class: 'rfoot' }, h('span', {}, L(`生成于 ${when}`, `Made ${when}`)), h('span', { class: 'grow', style: 'flex:1' }),
+    h('button', { class: 'pill ghost', onclick: () => { if (confirm(L('重新生成会清掉这一节已经打的勾，确定吗？', 'Regenerating clears the ticks for this session. Continue?'))) startGen('path'); } }, L('重新生成', 'Regenerate'))));
+}
+
+// —— 阅读清单 ——
+async function renderReadings(my) {
+  const m = await api('/api/study/materials?' + qs({ course: S.course, page: S.unit.path }));
+  if (my !== S.seq) return;
+  S.mats = m;
+  const v = $('#view');
+  v.innerHTML = '';
+  const list = h('div', { class: 'rlist' });
+  if (m.missing.length) list.append(h('div', { class: 'mats warn' }, L(`还缺 ${m.missing.length} 样必读材料，补齐前先别生成学习路线、闪卡和小测。`, `${m.missing.length} required item${m.missing.length === 1 ? '' : 's'} still missing. Hold off on generating until they're in.`)));
+  const row = r => {
+    const [icon, note] = statusOf(r);
+    const body = h('div', { class: 'rb' }, h('div', {}, h('span', { class: 'mk' + (r.required ? ' req' : ''), style: 'margin-right:6px' }, KIND_LABEL()[r.kind] || r.kind || ''), h('span', { class: 'rt' }, r.title || '')),
+      r.authors ? h('div', { class: 'mi' }, Array.isArray(r.authors) ? r.authors.join(', ') : r.authors) : null,
+      r.instructions ? h('div', { class: 'mi', style: 'color:var(--ink2)' }, L('要求：', 'Assigned: ') + r.instructions) : null,
+      note ? h('div', { class: 'mi' + (r.status === 'optional' ? '' : ' bad') }, note) : null,
+      !r.file && r.url ? h('a', { href: r.url, target: '_blank', rel: 'noopener', class: 'mi', onclick: e => e.stopPropagation() }, L('打开原链接', 'Open original link')) : null);
+    return h(r.file ? 'button' : 'div', { class: 'ritem', onclick: r.file ? () => selectTab('read:' + r.file) : null }, h('span', { class: 'st' }, icon), body);
+  };
+  const req = m.readings.filter(r => r.required), opt = m.readings.filter(r => !r.required);
+  if (req.length) list.append(h('div', { class: 'rgroup' }, L('必读', 'Required')), req.map(row));
+  if (opt.length) list.append(h('div', { class: 'rgroup' }, L('选读', 'Optional')), opt.map(row));
+  if (!m.readings.length) list.append(h('div', { class: 'note' }, L('这一节没有阅读清单。', 'No readings for this session.')));
+  v.append(list);
+}
+
+// —— 录播字幕 ——
+async function renderRecs(my) {
+  const j = await api('/api/study/recordings?' + qs({ course: S.course, page: S.unit.path }));
+  if (my !== S.seq) return;
+  const v = $('#view');
+  v.innerHTML = '';
+  const wrap = h('div', { class: 'rlist' });
+  wrap.append(h('div', { class: 'note' }, L('录播字幕只供你自己学习（学校规定不能分享录播和其中的内容）。点时间会在 Panopto 里跳到那一刻。', 'Captions are for your own study only (college policy: recordings and their content may not be shared). Click a time to jump there in Panopto.')));
+  const find = h('input', { class: 'tfind', placeholder: L('在字幕里找…（比如 exam、Nash）', 'Search the captions… (e.g. exam, Nash)') });
+  wrap.append(find);
+  const lines = [];
+  for (const r of j.items) {
+    const box = h('div', { class: 'rec' }, h('h3', {}, r.name || L('录播', 'Lecture')),
+      h('div', { class: 'mi', style: 'margin-bottom:8px' }, String(r.start || '').slice(0, 16).replace('T', ' '), r.viewer_url ? h('a', { href: r.viewer_url, target: '_blank', rel: 'noopener', style: 'margin-left:10px' }, L('在 Panopto 打开', 'Open in Panopto')) : null));
+    if (!r.has_captions) box.append(h('div', { class: 'note' }, L('这节录播没有字幕。', 'This recording has no captions.')));
+    for (const c of r.chunks || []) {
+      const text = h('span', {}, c.text);
+      const line = h('div', { class: 'tline' }, h('a', { href: panoptoAt(r.viewer_url, c.t) || '#', target: '_blank', rel: 'noopener' }, clock(c.t)), text);
+      lines.push([line, text, c.text]);
+      box.append(line);
+    }
+    wrap.append(box);
+  }
+  if (!j.items.length) wrap.append(h('div', { class: 'note' }, L('这一节还没有录播。', 'No recording for this session yet.')));
+  find.addEventListener('input', () => {
+    const q = find.value.trim().toLowerCase();
+    for (const [line, span, raw] of lines) {
+      const hit = !q || raw.toLowerCase().includes(q);
+      line.style.display = hit ? '' : 'none';
+      span.innerHTML = q && hit ? esc(raw).replace(new RegExp(q.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'gi'), s => `<mark>${s}</mark>`) : esc(raw);
+    }
+  });
+  v.append(wrap);
+}
+function drawCards(v, bar, items) {
+  const grid = h('div', { class: 'cards' });
+  items.forEach((c, i) => {
+    grid.append(h('div', { class: 'card', onclick: e => { if (!e.target.closest('a')) e.currentTarget.classList.toggle('show'); } },
+      h('div', { class: 'meta' }, h('span', {}, `${i + 1} / ${items.length}`), c.tag ? h('span', { class: 'tag' }, c.tag) : null),
+      h('div', { class: 'q', html: renderMD(c.q) }),
+      h('div', { class: 'hint' }, L('点一下看答案', 'Click to reveal')),
+      h('div', { class: 'a' }, h('div', { html: renderMD(c.a) }), c.ref ? h('div', { class: 'ref' }, c.ref) : null)));
+  });
+  let all = false;
+  bar.insertBefore(h('button', { class: 'pill ghost', onclick: e => { all = !all; grid.querySelectorAll('.card').forEach(x => x.classList.toggle('show', all)); e.currentTarget.textContent = all ? L('全部盖上', 'Hide all') : L('全部翻开', 'Reveal all'); } }, L('全部翻开', 'Reveal all')), bar.lastChild);
+  v.append(grid);
+}
+function drawQuiz(v, items) {
+  let answered = 0, right = 0;
+  const score = h('div', { class: 'score' });
+  const paint = () => { score.innerHTML = ''; score.append(L(`已答 ${answered} / ${items.length} · `, `Answered ${answered} / ${items.length} · `), h('span', { class: 'ok' }, L(`答对 ${right}`, `${right} correct`))); };
+  paint();
+  const wrap = h('div', { class: 'quiz' }, score);
+  items.forEach((q, i) => {
+    const box = h('div', { class: 'qz' });
+    const opts = h('div', {});
+    q.options.forEach((o, k) => {
+      opts.append(h('button', { class: 'opt', onclick: () => {
+        if (box.dataset.done) return;
+        box.dataset.done = '1';
+        answered++;
+        if (k === q.answer) right++;
+        [...opts.children].forEach((x, xi) => { if (xi === q.answer) x.classList.add('right'); else if (xi === k) x.classList.add('wrong'); });
+        box.append(h('div', { class: 'explain' }, h('div', { html: renderMD((k === q.answer ? L('✓ 对了。', '✓ Correct. ') : L('✗ 不对。', '✗ Not quite. ')) + (q.explain || '')) }), q.ref ? h('div', { class: 'ref' }, q.ref) : null));
+        paint();
+      } }, h('span', { class: 'k' }, 'ABCDEFG'[k] || k + 1), h('span', { html: renderMD(String(o), true) })));
+    });
+    box.append(h('div', { class: 'qq', html: `<b>${i + 1}.</b> ` + renderMD(q.q, true) }), opts);
+    wrap.append(box);
+  });
+  v.append(wrap);
+}
+
+// —— 视频：这一节已有的 + 让助手做一个新的 ——
+const STAGE = () => ({ script: L('助手在写动画脚本…', 'The assistant is writing the animation script…'),
+  render: L('正在渲染视频…（一般 1–3 分钟）', 'Rendering the video… (usually 1–3 minutes)'),
+  fix: L('渲染出错，助手在修脚本…', 'Render failed; the assistant is fixing the script…') });
+async function renderVideos(my) {
+  const v = $('#view');
+  const st = S.tree.video ? await api('/api/study/generated?' + qs({ course: S.course, kind: 'video', ...unitRef() })) : { status: 'none' };
+  if (my !== S.seq) return;
+  if (S.videoRunning && st.status !== 'running') {
+    // 刚生成完：刷新目录拿到新视频
+    S.videoRunning = false;
+    await loadTree();
+    if (my !== S.seq) return;
+    const fresh = findPage(S.unit.path);
+    if (fresh) S.unit = { ...S.unit, ...fresh };
+    renderNav();
+    const tb = document.querySelector('#tabs .tab[data-id="videos"]');
+    if (tb) tb.textContent = videoTabLabel(S.unit);
+  }
+  const vids = S.unit.videos || [];
+  const list = h('div', { class: 'vids' });
+  for (const x of vids) {
+    const url = await fileUrl(x.path, 'pages');
+    if (my !== S.seq) return;
+    list.append(h('div', { class: 'vid' }, h('div', { class: 'vt' }, x.name), h('video', { class: 'player', src: url, controls: true, preload: 'metadata' })));
+  }
+  if (!vids.length) list.append(h('div', { class: 'note' }, L('这一节还没有视频。', 'No videos for this session yet.')));
+  v.innerHTML = '';
+  v.append(list);
+  if (!S.tree.video) return;
+  const panel = h('div', { class: 'genv' }, h('h3', {}, L('做一个新视频', 'Make a new video')));
+  if (st.status === 'running') {
+    S.videoRunning = true;
+    panel.append(h('div', { class: 'running' }, h('span', { class: 'spin' }), STAGE()[st.stage] || ''), st.concept ? h('div', { class: 'note' }, '「' + st.concept + '」') : null);
+    setTimeout(() => { if (my === S.seq && S.tab === 'videos') renderVideos(my); }, 5000);
+  } else {
+    if (st.status === 'error') panel.append(h('div', { class: 'err' }, L('上次生成失败：', 'Last attempt failed: ') + (st.error || '')));
+    panel.append(h('div', { class: 'note' }, L('助手按这一节的材料写一段 Manim 动画，服务器渲染成 45–90 秒的视频，存进这一节。', "The assistant writes a Manim animation from this session's materials; the server renders a 45–90 second video into this session.")));
+    const cands = S.unit.video_candidates || [];
+    if (cands.length) panel.append(h('div', { class: 'hints' }, cands.map(c => h('button', { onclick: () => startVideo(c) }, '🎬 ' + c))));
+    const inp = h('input', { class: 'vin', placeholder: L('或者写一个你想看的概念…', 'Or describe a concept you want to see…') });
+    inp.addEventListener('keydown', e => { if (e.key === 'Enter' && !e.isComposing && e.keyCode !== 229 && inp.value.trim()) startVideo(inp.value.trim()); });
+    panel.append(h('div', { class: 'vrow' }, inp, h('button', { class: 'pill', onclick: () => inp.value.trim() && startVideo(inp.value.trim()) }, L('生成', 'Generate'))));
+  }
+  v.append(panel);
+}
+async function startVideo(concept) {
+  try {
+    await api('/api/study/generate', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ course: S.course, kind: 'video', concept, ...unitRef() }) });
+  } catch (e) { if (e.message !== 'auth') alert(e.message); return; }
+  S.videoRunning = true;
+  selectTab('videos');
+}
+
+// —— 右栏：问答 ——
+function msgEl(role, text, time) {
+  if (role === 'user') return h('div', { class: 'msg user' }, h('div', {}, h('div', { class: 'bub' }, text), time ? h('div', { class: 'time' }, time) : null));
+  const bub = mdEl(text || '', 'bub');
+  return h('div', { class: 'msg bot' }, h('div', { class: 'who' }, S.appName), bub, time ? h('div', { class: 'time' }, time) : null);
+}
+function hintsEl() {
+  const qs2 = [L('用三句话讲清这一节在说什么', 'Explain this session in three sentences'), L('这一节考试最可能怎么考？', 'How is this most likely to be examined?'),
+    L('出一道题考我，先别给答案', 'Quiz me with one question, no answer yet'), L('这里最容易搞混的是什么？', 'What do people usually get confused about here?')];
+  return h('div', {}, h('div', { class: 'note' }, L('每天第一次提问时，会把这一节的学习页、课件、录播字幕和阅读材料一起交给助手，之后接着聊。在学习路线里点过某一步，助手也知道你在第几步。',
+    "Your first question each day sends this session's notes, materials, lecture captions and readings along; after that the conversation continues. If you opened a step in the study path, the assistant knows which one.")),
+    h('div', { class: 'hints' }, qs2.map(t => h('button', { onclick: () => send(t) }, t))));
+}
+function scrollDown() { const m = $('#msgs'); m.scrollTop = m.scrollHeight; }
+async function loadChat() {
+  const my = ++S.chatSeq;
+  const box = $('#msgs');
+  $('#askTitle').textContent = L(`问 ${S.appName}`, `Ask ${S.appName}`);
+  $('#askSub').textContent = S.unit.title;
+  box.innerHTML = '';
+  try {
+    const j = await api('/api/study/history?' + qs({ course: S.course, ...unitRef() }));
+    if (my !== S.chatSeq) return;
+    S.thread = j.thread;
+    box.innerHTML = '';
+    for (const m of j.messages) box.append(msgEl(m.role === 'user' ? 'user' : 'bot', m.text, m.time));
+    if (!j.messages.length) box.append(hintsEl());
+    if (j.inFlight) reattach(my);
+    scrollDown();
+  } catch (e) { if (e.message !== 'auth') box.append(h('div', { class: 'err' }, e.message)); }
+}
+async function readSSE(resp, on) {
+  const reader = resp.body.getReader();
+  const dec = new TextDecoder();
+  let buf = '';
+  for (;;) {
+    const { value, done } = await reader.read();
+    if (done) break;
+    buf += dec.decode(value, { stream: true });
+    let i;
+    while ((i = buf.indexOf('\n\n')) >= 0) {
+      const chunk = buf.slice(0, i);
+      buf = buf.slice(i + 2);
+      let ev = 'message', data = '';
+      for (const line of chunk.split('\n')) {
+        if (line.startsWith('event:')) ev = line.slice(6).trim();
+        else if (line.startsWith('data:')) data += line.slice(5).trim();
+      }
+      try { on(ev, JSON.parse(data || '{}')); } catch { /* 坏的一段跳过 */ }
+    }
+  }
+}
+function streamInto(my) {
+  const box = $('#msgs');
+  const bot = h('div', { class: 'msg bot' }, h('div', { class: 'who' }, S.appName), h('div', { class: 'md bub' }, h('span', { class: 'spin' })));
+  box.append(bot);
+  scrollDown();
+  let text = '', raf = 0;
+  const paint = () => { raf = 0; if (my !== S.chatSeq) return; const b = bot.querySelector('.bub'); b.innerHTML = renderMD(text); const nearBottom = box.scrollHeight - box.scrollTop - box.clientHeight < 120; if (nearBottom) scrollDown(); };
+  return (ev, d) => {
+    if (ev === 'delta') { text += d.text || ''; if (!raf) raf = requestAnimationFrame(paint); }
+    if (ev === 'done') { text = d.text || text; paint(); bot.append(h('div', { class: 'time' }, d.time || '')); if (d.status === 'error') bot.classList.add('err'); }
+  };
+}
+async function reattach(my) {
+  S.busy = true; paintSend();
+  try {
+    const r = await fetch('/api/chat/stream?' + qs({ thread: S.thread }), { headers: hdrs() });
+    if (r.status === 200) await readSSE(r, streamInto(my));
+  } catch { /* 断了就算了，刷新能看到 */ }
+  S.busy = false; paintSend();
+}
+function paintSend() { $('#sendBtn').disabled = S.busy || !$('#input').value.trim(); }
+async function send(text) {
+  text = (text || '').trim();
+  if (!text || S.busy || !S.unit || S.unit.kind === 'video') return;
+  const my = S.chatSeq;
+  const box = $('#msgs');
+  box.querySelector('.hints')?.parentElement?.remove();
+  box.append(msgEl('user', text, ''));
+  $('#input').value = '';
+  autosize();
+  S.busy = true; paintSend();
+  try {
+    const r = await fetch('/api/study/ask', { method: 'POST', headers: hdrs({ 'Content-Type': 'application/json' }), body: JSON.stringify({ course: S.course, text, step: curStepOf(), ...unitRef() }) });
+    if (r.status === 401) { showAuth(); throw new Error('auth'); }
+    if (!r.ok) { let j = null; try { j = await r.json(); } catch { /* */ } throw new Error((j && (j.detail || j.error)) || 'HTTP ' + r.status); }
+    await readSSE(r, streamInto(my));
+  } catch (e) {
+    if (e.message !== 'auth') box.append(h('div', { class: 'msg bot err' }, h('div', { class: 'bub' }, L('没发出去：', "Couldn't send: ") + e.message)));
+  }
+  S.busy = false; paintSend(); scrollDown();
+}
+function autosize() { const t = $('#input'); t.style.height = 'auto'; t.style.height = Math.min(200, t.scrollHeight + 2) + 'px'; paintSend(); }
+
+// —— 其他 ——
+function showAuth() {
+  if ($('.overlay')) return;
+  const input = h('input', { type: 'password', placeholder: L('接入令牌', 'Access token'), value: TOKEN });
+  document.body.append(h('div', { class: 'overlay' }, h('div', { class: 'box' },
+    h('h3', { style: 'margin:0 0 6px' }, L('这台设备还没有权限', "This device isn't authorised")),
+    h('div', { style: 'color:var(--ink2)' }, L('把设备加进服务器 server.json 的 auth.tailscale_nodes，或者填一个接入令牌（服务器上 python3 tokens.py add <名字> 生成）。',
+      'Add this device to auth.tailscale_nodes in the server\'s server.json, or enter an access token (generate one on the server with python3 tokens.py add <name>).')),
+    input, h('button', { class: 'pill', onclick: () => { store.set('mousse.token', input.value.trim() || null); location.reload(); } }, L('保存并重试', 'Save and retry')))));
+}
+function closeDrawers() { document.body.classList.remove('nav-open', 'ask-open'); }
+async function loadTree() {
+  S.tree = await api('/api/study/tree');
+  S.appName = S.tree.app_name || '';
+  if (!CHOSEN && pickLang(S.tree.language)) LANG = S.tree.language;  // 没手动选过：跟这台服务器设定的语言
+  $('#appName').textContent = S.appName;
+  paintStatic();
+  return S.tree;
+}
+
+async function boot() {
+  paintStatic();
+  $('#langBtn').onclick = () => { LANG = LANG === 'zh' ? 'en' : 'zh'; store.set('study.lang', LANG); location.reload(); };
+  $('#navBtn').onclick = () => document.body.classList.toggle('nav-open');
+  $('#askBtn').onclick = () => document.body.classList.toggle('ask-open');
+  $('#sendBtn').onclick = () => send($('#input').value);
+  $('#input').addEventListener('input', autosize);
+  $('#input').addEventListener('keydown', e => { if (e.key === 'Enter' && !e.shiftKey && !e.isComposing && e.keyCode !== 229) { e.preventDefault(); send($('#input').value); } });
+  paintSend();
+  try { await loadTree(); } catch (e) { if (e.message !== 'auth') $('#nav').innerHTML = `<div class="err">${esc(e.message)}</div>`; return; }
+  if (!S.tree.configured) { $('#nav').innerHTML = ''; renderEmpty(S.tree.hint); return; }
+  loadDDL();
+  setInterval(() => loadDDL(), 30 * 60 * 1000);
+  const url = new URLSearchParams(location.search);
+  const last = (() => { try { return JSON.parse(store.get('study.last') || 'null'); } catch { return null; } })();
+  const names = S.tree.courses.map(c => c.name);
+  const want = url.get('course') || last?.course || store.get('study.course');
+  S.course = names.includes(want) ? want : names[0];
+  if (!S.course) { renderNav(); renderEmpty(); return; }
+  if (url.get('page') || url.get('file')) openUnit(url.get('page') ? { kind: 'page', path: url.get('page') } : { kind: 'file', path: url.get('file'), title: base(url.get('file')) }, url.get('tab'));
+  else if (last && last.course === S.course && last.path) openUnit({ kind: last.kind, path: last.path, title: last.title }, last.tab);
+  else selectCourse(S.course);
+}
+window.addEventListener('DOMContentLoaded', boot);
+</script>
+</body>
+</html>

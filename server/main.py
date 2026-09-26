@@ -7,6 +7,7 @@
 - 附件：/api/chat/upload 存盘 + 抽文字 / 转写，/api/chat/send 带附件 id，/api/files/{id} 回放，/api/chat/transcribe 语音输入（见 files.py）。
 - 推送：/api/push/register 存 Expo push token；回复完成后 push.notify_reply 推一条（见 push.py）。
 - 训记数据不落库：训记是真源，这里只有短时缓存（由 xunji.py / calendar_ics.py 管）。
+- 学习台：/study 网页 + /api/study/*，课件和学习页按课程 / 模块浏览，问答走同一条对话通道（见 study.py）。
 - 数据源可选（sources.py）：workspace 的 scripts/ 里没有对应脚本时，相关接口回 ok=false + missing_source，其它照常。
 """
 from __future__ import annotations
@@ -28,11 +29,13 @@ from config import TZ, settings  # noqa: E402
 import i18n  # noqa: E402
 from i18n import L  # noqa: E402
 from sources import calendar_ics, xunji  # noqa: E402
+import study  # noqa: E402
 from chat import router as chat_router  # noqa: E402
 from health import router as health_router  # noqa: E402
 from data import router as data_router  # noqa: E402
 from files import router as files_router  # noqa: E402
 from push import router as push_router  # noqa: E402
+from study import router as study_router  # noqa: E402
 
 DIST = settings.dist
 settings.db.parent.mkdir(parents=True, exist_ok=True)  # 新实例第一次启动：数据目录还不存在
@@ -68,6 +71,7 @@ app.include_router(health_router)
 app.include_router(data_router)
 app.include_router(files_router)
 app.include_router(push_router)
+app.include_router(study_router)
 app.add_exception_handler(sources.NoSource, sources.no_source_handler)
 _whois: dict[str, tuple[float, str | None]] = {}
 _lock = threading.Lock()
@@ -315,19 +319,23 @@ def calendar(days: int = 1, from_: str | None = Query(None, alias="from")):
             raise HTTPException(400, L("from 要写成 YYYY-MM-DD", "from must be YYYY-MM-DD")) from exc
     lo = datetime.combine(start, datetime.min.time(), TZ)
     hi = lo + timedelta(days=days)
+    now = datetime.now(TZ)
+    # 学习台的 ddl（server.json 的 study.deadlines_cmd）按截止时间插进日程：「今天」页当天就看得到
+    dues = [{"date": d.strftime("%Y-%m-%d"), "weekday": weekday_name(d.weekday()), "all_day": False, "start": d.strftime("%H:%M"), "end": "",
+             "title": title, "location": "", "past": d < now, "tentative": False, "deadline": True} for d, title in study.deadlines_between(lo, hi)]
     if not sources.AVAILABLE["calendar"]:
-        return {"ok": True, "source": None, "available": False, "timezone": settings.timezone, "events": []}
+        return {"ok": True, "source": None, "available": False, "timezone": settings.timezone, "events": dues}
     try:
         items = calendar_ics.expand(calendar_ics.parse_events(calendar_ics.fetch("ic", False), TZ), lo, hi)
     except SystemExit as exc:
         raise HTTPException(502, L("日历拉取失败，链接可能已失效", "Couldn't fetch the calendar; the link may have expired")) from exc
-    now = datetime.now(TZ)
     out = []
     for x in items:
         s, e = x["start"].astimezone(TZ), x["end"].astimezone(TZ)
         out.append({"date": s.strftime("%Y-%m-%d"), "weekday": weekday_name(s.weekday()), "all_day": x["all_day"],
                     "start": L("全天", "All day") if x["all_day"] else s.strftime("%H:%M"), "end": "" if x["all_day"] else e.strftime("%H:%M"),
                     "title": x["title"], "location": x["location"], "past": e < now, "tentative": x["busy"] == "TENTATIVE"})
+    out = sorted(out + dues, key=lambda e: (e["date"], not e["all_day"], e["start"]))
     return {"ok": True, "source": L("日历", "Calendar"), "timezone": settings.timezone, "events": out}
 
 

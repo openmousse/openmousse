@@ -351,9 +351,19 @@ async def attach(run: Run) -> AsyncIterator[bytes]:
             run.queues.remove(q)
 
 
-def start_run(thread: str, text: str, model: str | None, key: str | None = None, attachment_ids: list[str] | None = None, origin: str = "user") -> Run:
+def with_context(context: str, content: str | list) -> str | list:
+    """把前情放在这条消息前面：content 是字符串就直接拼，是 content 数组（带图片）就拼进第一段文字。"""
+    if isinstance(content, str):
+        return f"{context}\n\n{content}"
+    first, *rest = content
+    return [{**first, "text": f"{context}\n\n{first.get('text', '')}"}, *rest]
+
+
+def start_run(thread: str, text: str, model: str | None, key: str | None = None, attachment_ids: list[str] | None = None, origin: str = "user",
+              context: str | None = None) -> Run:
     """记下用户这一条，在后台开跑。thread 决定记录存在哪；key 不给就按 thread 推 session key。
-    有附件时：图片随消息给模型，文档 / 音频抽出的文字拼进消息，其它只给路径（见 files.py）。"""
+    有附件时：图片随消息给模型，文档 / 音频抽出的文字拼进消息，其它只给路径（见 files.py）。
+    context：只给模型看的前情（学习台的课件全文之类），拼在消息前面；对话记录里只显示 text。"""
     if (cur := RUNS.get(thread)) and not cur.done:
         raise HTTPException(409, L("上一条还没回完，等它结束或先接回去看。", "The last reply isn't finished yet. Wait for it, or reconnect to see it."))
     token = gateway_token()
@@ -361,11 +371,13 @@ def start_run(thread: str, text: str, model: str | None, key: str | None = None,
     rows = files_mod.load_pending(thread, attachment_ids or [])
     role = "auto" if origin in ("auto", "relay") else "user"
     content, gw_text = files_mod.build_content(text, rows)
+    if context:
+        content, gw_text = with_context(context, content), f"{context}\n\n{gw_text}"
     with _lock, db() as conn:
         model = model or thread_model(conn, thread)
         ts = now_iso()
         user_id = conn.execute("INSERT INTO messages(thread, role, text, model, ts, gw_text) VALUES(?,?,?,?,?,?)",
-                               (thread, role, text, None, ts, gw_text if rows else None)).lastrowid
+                               (thread, role, text, None, ts, gw_text if rows or context else None)).lastrowid
         conn.execute("INSERT INTO threads(id, model, updated_at) VALUES(?,?,?) ON CONFLICT(id) DO UPDATE SET updated_at=excluded.updated_at",
                      (thread, model, ts))
     if rows:

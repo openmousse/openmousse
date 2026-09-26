@@ -16,5 +16,14 @@
     "tailscale_nodes": [],
     "trust_loopback": false
   },
-  "nutrition_targets": null
+  "nutrition_targets": null,
+  "study": {
+    "materials": "~/study/materials",
+    "pages": "~/study/pages",
+    "courses": [],
+    "deadlines_cmd": [],
+    "video_cmd": [],
+    "readings": null,
+    "recordings": null
+  }
 }
