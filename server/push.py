@@ -226,6 +226,12 @@ async def send_push(title: str, body: str, data: dict | None = None, thread_id: 
     lv = effective_level(level)
     if lv == "none":
         return {"ok": True, "sent": 0, "level": "none", "skipped": True}
+    try:  # 冥想时间：一律不推，记下来，结束时给小结（见 think.py）
+        import think  # 延迟导入：think.py 依赖 chat
+        if think.hold_push(title, body, data, level=lv, kind=kind, subtitle=subtitle):
+            return {"ok": True, "sent": 0, "level": lv, "held": True}
+    except Exception:  # noqa: BLE001 — 查不了就照常推
+        pass
     tokens = active_tokens()
     if not tokens:
         return {"ok": False, "sent": 0, "level": lv, "error": L("没有注册的设备", "No registered devices")}
@@ -267,6 +273,11 @@ def thread_title(thread: str) -> str:
                 return f"{settings.app_name} · {r['title']}"
         except sqlite3.Error:
             pass
+    if thread.startswith("tp-"):  # 思考主题
+        import think  # 延迟导入
+        name = think.topic_title(thread)
+        if name:
+            return f"{settings.app_name} · {name}"
     return settings.app_name
 
 

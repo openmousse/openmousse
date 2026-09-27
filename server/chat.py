@@ -179,6 +179,8 @@ def thread_model(conn: sqlite3.Connection, thread: str) -> str:
 def history(thread: str = "main", limit: int = 200, day: str | None = None, all: int = 0):
     """默认只给当前逻辑日（04:00 为界）的记录：会话每天 04:00 重置，模型也只记得今天的，之前的在历史页翻。
     day=YYYY-MM-DD 取某一天；all=1 取最近 limit 条（调试用）。"""
+    if not day and not all and thread.startswith("tp-"):
+        all = 1  # 思考主题跨好几天聊：整段都给（主题里的碎片每天第一句话会重新带给模型）
     if not day and not all:
         day = day_of(now_iso())
     with _lock, db() as conn:
@@ -272,6 +274,7 @@ class SendBody(BaseModel):
     level: str | None = None     # 推送档位（/api/chat/trigger）：ring 响铃 / quiet 静默进通知中心 / none 不推；都不给 = quiet
     inboxId: str | None = None   # （/api/chat/send）引用收件箱里的一条回复 = 「改一下」：还没定下来的那条改成 revising，给模型带上前情
     ref: str | None = None       # （/api/chat/send）说的是日程或「要记得的」里的哪一条（schedule.py 的 id）：模型另外看到是哪一条、怎么改
+    save: str | None = None      # （/api/chat/send）问的是哪条收藏（saves.py 的 id）：模型另外看到它的来源、备注和正文
 
 
 def sse(event: str, data: dict) -> bytes:
@@ -432,6 +435,13 @@ def start_run(thread: str, text: str, model: str | None, key: str | None = None,
         card = None
     if card:
         context = f"{card}\n\n{context}" if context else card
+    try:  # 思考主题：每天第一句话、碎片变了以后，把碎片和「陪你想」的规矩带给模型（见 think.py）
+        import think as think_mod  # 延迟导入：think.py 依赖本模块
+        topic = think_mod.context_for(thread)
+    except Exception:  # noqa: BLE001 — 带不上只是模型少看一眼碎片
+        topic = None
+    if topic:
+        context = f"{topic}\n\n{context}" if context else topic
     if context:
         content, gw_text = with_context(context, content), f"{context}\n\n{gw_text}"
     with _lock, db() as conn:
@@ -474,6 +484,9 @@ async def send(body: SendBody):
     if body.ref and not reply_to:  # 「要记得的」里点「不对？跟它说」带过来的
         import schedule as schedule_mod  # 延迟导入：schedule.py 依赖本模块
         context = await asyncio.to_thread(schedule_mod.ref_context, body.ref)
+    if body.save and not reply_to:  # 收藏里点「问问」「翻译」带过来的
+        import saves as saves_mod  # 延迟导入：saves.py 依赖本模块
+        context = await asyncio.to_thread(saves_mod.save_context, body.save)
     run = start_run(body.thread, text, body.model, attachment_ids=body.attachments, origin=body.origin, context=context)
     if reply_to:
         inbox_mod.mark_revising(reply_to[0], text)

@@ -34,9 +34,12 @@ def udb() -> sqlite3.Connection:
 
 
 def tracked(conn: sqlite3.Connection) -> list[str]:
-    """算未读的线程：main、每个 Agent、没归档的独立空间。"""
+    """算未读的线程：main、每个 Agent、没归档的独立空间（项目）、没想完的思考主题。"""
+    topics = []
+    if conn.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='think_topics'").fetchone():  # 思考主题（think.py）
+        topics = [r["id"] for r in conn.execute("SELECT id FROM think_topics WHERE status='open' ORDER BY created_at")]
     return (["main"] + [r["id"] for r in conn.execute("SELECT id FROM groups ORDER BY position, created_at")]
-            + [r["id"] for r in conn.execute("SELECT id FROM side_chats WHERE archived=0 ORDER BY created_at")])
+            + [r["id"] for r in conn.execute("SELECT id FROM side_chats WHERE archived=0 ORDER BY created_at")] + topics)
 
 
 def counts(conn: sqlite3.Connection) -> dict[str, dict]:
