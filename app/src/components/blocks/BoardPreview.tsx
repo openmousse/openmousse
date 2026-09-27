@@ -45,15 +45,15 @@ export function BoardPreview({ inboxId, plan = false }: { inboxId: string; plan?
 }
 
 /** 提醒的卡片：画一条「到点推出来的通知」，按现在的数据；查出来是空的就说到点不会推。 */
-export function AlertPreview({ inboxId, source }: { inboxId: string; source: string }) {
+export function AlertPreview({ inboxId, source, onShown }: { inboxId: string; source: string; onShown?: (shown: boolean) => void }) {
   const t = useTheme();
   const [a, setA] = useState<BoardAlert | null>(null);
   const [failed, setFailed] = useState(false);
   useEffect(() => {
     let live = true;
-    boardsApi.alertProposal(inboxId).then((x) => { if (live) setA(x); }, () => { if (live) setFailed(true); });
+    boardsApi.alertProposal(inboxId).then((x) => { if (live) { setA(x); onShown?.(true); } }, () => { if (live) setFailed(true); });
     return () => { live = false; };
-  }, [inboxId]);
+  }, [inboxId, onShown]);
   if (failed || !a) return null;
   return (
     <View style={[styles.box, { backgroundColor: t.bg, gap: 6 }]}>
@@ -71,7 +71,6 @@ export function AlertPreview({ inboxId, source }: { inboxId: string; source: str
           </View>
         </View>
       ) : null}
-      <T v="caption" color={t.ink2} style={{ fontWeight: '400' }}>{`${a.when} · ${a.levelText}`}</T>
     </View>
   );
 }

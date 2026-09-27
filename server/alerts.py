@@ -201,9 +201,9 @@ async def propose(agent: str, spec_raw: dict, *, why: str = "", title: str = "",
                 else L("按现在的数据查出来是空的，到点不会推", "With today's data nothing matches, so it wouldn't send anything"))
     res = await inbox.add(inbox.ItemIn(
         kind="push", source=agent, title=title.strip() or L(f"{spec['title']}：{when_text(spec)}", f"{spec['title']}: {when_text(spec)}"),
-        why=why, changes=[L(f"什么时候：{when_text(spec)}", f"When: {when_text(spec)}"), L(f"怎么推：{level_text(spec['level'])}", f"How: {level_text(spec['level'])}"),
+        why=why, changes=[L(f"怎么推：{level_text(spec['level'])}", f"How: {level_text(spec['level'])}"),
                           L("开了以后在看板最底下「提醒」里能暂停、删掉", "Once on, pause or delete it under Reminders at the bottom of the board")],
-        detail=now_line,  # app 在卡片上画成一条通知（/api/alerts/proposal），这句留给看不到预览的地方
+        detail=now_line,  # 按现在的数据会推什么：app 在卡片上画成一条通知（/api/alerts/proposal），看不到预览的地方「展开」看这句
         approveLabel=L("开这个提醒", "Turn it on"), dedupe=f"alert:{agent}:{spec['id']}"))
     if not isinstance(res, dict):
         return res

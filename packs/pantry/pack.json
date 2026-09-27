@@ -37,7 +37,7 @@
    "source": {"from": "pantry", "where": [["staple", "=", true], ["qty", "<=", {"field": "min_qty", "default": 0}]], "sort": ["category", "name"]},
    "row": {"title": "name", "right": "{qty} {unit}",
            "badge": [{"field": "qty", "op": "<=", "value": 0, "text": {"zh": "没了", "en": "Out"}, "tone": "warn"}]},
-   "style": "chips", "edit": true, "empty": {"zh": "常备的都还有", "en": "All your staples are stocked"}},
+   "style": "chips", "edit": true, "empty": {"zh": "没有快用完的常备品", "en": "No staples running low"}},
   {"id": "pantry", "type": "list", "title": {"zh": "家里有什么", "en": "In the pantry"}, "after": "diet.shopping",
    "source": {"from": "pantry", "where": [["qty", ">", 0]], "sort": ["category", "expires"]},
    "row": {"title": "{name} · {qty} {unit}", "sub": ["note"], "right": "expires"},

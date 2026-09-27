@@ -930,10 +930,17 @@ def resolve(conn: sqlite3.Connection, agent: str, b: dict) -> dict:
             agg = b["series"].get("agg", "count")
             summary = b.get("summary") or ""
             if not summary and vals:
-                if agg in ("sum", "count"):  # 流量（花了多少、练了几次）：平均每段多少
-                    avg = fmt_stat(sum(vals) / len(pts), fmt, unit, cur)
-                    summary = {"day": L(f"平均每天 {avg}", f"Avg {avg} a day"), "week": L(f"平均每周 {avg}", f"Avg {avg} a week"),
-                               "month": L(f"平均每月 {avg}", f"Avg {avg} a month")}[by]
+                if agg in ("sum", "count"):  # 流量（花了多少、练了几次）：从开始有记录的那一段算起，平均每段多少
+                    first = next((i for i, p in enumerate(pts) if p["value"]), len(pts) - 1)
+                    span = pts[first:]
+                    if len(span) == 1:  # 这一段才开始记：说这一段，别拿前面空着的几段拉低平均
+                        now_txt = fmt_stat(span[0]["value"] or 0, fmt, unit, cur)
+                        summary = {"day": L(f"今天 {now_txt}", f"{now_txt} today"), "week": L(f"这周 {now_txt}，之前没有记录", f"{now_txt} this week, nothing earlier"),
+                                   "month": L(f"这个月 {now_txt}", f"{now_txt} this month")}[by]
+                    else:
+                        avg = fmt_stat(sum(p["value"] or 0 for p in span) / len(span), fmt, unit, cur)
+                        summary = {"day": L(f"平均每天 {avg}", f"Avg {avg} a day"), "week": L(f"平均每周 {avg}", f"Avg {avg} a week"),
+                                   "month": L(f"平均每月 {avg}", f"Avg {avg} a month")}[by]
                 elif len(vals) > 1:  # 水平（体重、分数）：最近是多少、这段时间里升降了多少
                     d = vals[-1] - vals[0]
                     sign = "+" if d > 0 else ("−" if d < 0 else "±")

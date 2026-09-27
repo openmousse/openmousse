@@ -149,6 +149,7 @@ function PendingCard({ item, chat }: { item: InboxItem; chat: boolean }) {
   const name = item.sourceName || nameOf(item.source);
   const [busy, setBusy] = useState<InboxAction | null>(null);
   const [more, setMore] = useState(false);
+  const [alertShown, setAlertShown] = useState(false);  // 提醒卡画出了通知预览：detail 是同一句的文字版，不再显示
   const exec = item.kind === 'exec';
   const act = (action: InboxAction) => {
     if (busy) return;
@@ -174,9 +175,9 @@ function PendingCard({ item, chat }: { item: InboxItem; chat: boolean }) {
       {item.why ? <T v="callout" color={t.ink2}>{item.why}</T> : null}
       {item.kind === 'block' ? <BoardPreview inboxId={item.id} />
         : item.kind === 'agent' ? <BoardPreview inboxId={item.id} plan />
-          : item.kind === 'push' ? <AlertPreview inboxId={item.id} source={name} /> : null}
+          : item.kind === 'push' ? <AlertPreview inboxId={item.id} source={name} onShown={setAlertShown} /> : null}
       {item.kind === 'project' && item.project?.action === 'open' ? <ProjectPreview info={item.project} /> : null}
-      {item.detail && !(item.kind === 'project' && item.project?.action === 'open') ? (
+      {item.detail && !(item.kind === 'project' && item.project?.action === 'open') && !(item.kind === 'push' && alertShown) ? (
         <>
           {more ? <Markdown text={item.detail} color={t.ink2} compact /> : null}
           <Pressable onPress={() => setMore((v) => !v)} hitSlop={8} accessibilityRole="button" accessibilityState={{ expanded: more }} style={{ alignSelf: 'flex-start' }}>

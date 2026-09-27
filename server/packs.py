@@ -171,7 +171,12 @@ def plan(conn: sqlite3.Connection, agent: str, dashboard: str | None, p: dict) -
         if after and after not in anchors and after not in pack_ids and after not in have:
             nb.pop("after")  # 包是按饮食看板写的，装到别的 Agent 上那一节不存在：放最后
         add.append(nb)
-    blocks = [({**b, "pack": p["name"]} if b.get("id") in adopt else b) for b in live] + add
+    blocks = [({**b, "pack": p["name"]} if b.get("id") in adopt else b) for b in live]
+    order = [str(b.get("id")) for b in p["blocks"] if isinstance(b, dict)]
+    for nb in add:  # 按包里的先后插：放在包里排在它后面、看板上已经有的那一块前面（同一节里先后就对了），没有就接在最后
+        later = order[order.index(nb["id"]) + 1:]
+        at = next((i for i, b in enumerate(blocks) if b.get("id") in later), len(blocks))
+        blocks.insert(at, nb)
     titles = [b.get("title") or " / ".join(a.get("label", "") for a in b.get("actions", [])) or b["id"] for b in add]
     if titles:
         lines.append(L(f"看板加 {len(titles)} 块：{'、'.join(titles)}", f"Add {len(titles)} block(s) to the board: {', '.join(titles)}"))
