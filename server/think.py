@@ -467,7 +467,8 @@ def set_topics(f: dict, add: str | None = None, remove: str | None = None) -> No
 def topics_open() -> list[dict]:
     with _lock, tdb() as conn:
         rows = conn.execute("SELECT * FROM think_topics WHERE status='open' ORDER BY updated_at DESC LIMIT 20").fetchall()
-    return [topic_brief(r) for r in rows]
+    notes = note_ids()
+    return [topic_brief(r, notes) for r in rows]
 
 
 @router.get("/api/think/stream")
@@ -483,7 +484,7 @@ async def stream(before: str | None = None, limit: int = 80, status: str = "open
     import saves
     return {"ok": True, "fragments": [frag_json(f, full=False) for f in page], "more": len(frags) > len(page),
             "topics": await asyncio.to_thread(topics_open), "savesNew": await asyncio.to_thread(saves.new_count),
-            "vault": vault() is not None, "folder": rel(inbox_dir())}
+            "vault": vault() is not None, "folder": rel(inbox_dir()), "obsidianVault": cfg().get("obsidian_vault") or None}
 
 
 @router.get("/api/think/fragments/{fid}")
@@ -538,7 +539,7 @@ def save_upload(f: UploadFile) -> tuple[Path, str, int]:
 
 @router.post("/api/think/fragments/upload")
 async def upload_fragment(files: list[UploadFile] = File(...), text: str = Form(""), kind: str = Form(""), keywords: str = Form(""),
-                          duration: float | None = Form(None)):
+                          duration: float | None = Form(None), title: str = Form("")):
     """带附件的一条：照片、文件、语音（kind=voice：转成文字当正文，原声留着）。keywords 是 JSON 数组。"""
     if not files or len(files) > 10:
         raise HTTPException(400, L("一次 1 到 10 个文件", "1 to 10 files at a time"))
@@ -547,7 +548,7 @@ async def upload_fragment(files: list[UploadFile] = File(...), text: str = Form(
         kws = json.loads(keywords) if keywords.strip() else []
     except ValueError:
         kws = []
-    if not kind:
+    if kind not in KINDS:
         kind = kind_of_file(saved[0][1], files[0].content_type or "")
         kind = kind if kind in ("photo", "voice") else "file"
     body = text
@@ -558,7 +559,7 @@ async def upload_fragment(files: list[UploadFile] = File(...), text: str = Form(
         except Exception as exc:  # noqa: BLE001 — 转写失败：原声照存，正文写一句
             said = L(f"（没转成文字：{str(exc)[:80]}）", f"(Couldn't transcribe: {str(exc)[:80]})")
         body = f"{text.strip()}\n\n{said}".strip() if text.strip() else said
-    frag = await asyncio.to_thread(create_fragment, kind=kind, text=body, keywords=kws, files=[(p, n) for p, n, _ in saved], duration=duration)
+    frag = await asyncio.to_thread(create_fragment, kind=kind, text=body, title=title, keywords=kws, files=[(p, n) for p, n, _ in saved], duration=duration)
     return {"ok": True, "fragment": frag}
 
 
@@ -698,14 +699,21 @@ def load_topic(tid: str) -> sqlite3.Row:
     return r
 
 
-def topic_brief(r: sqlite3.Row) -> dict:
+def note_ids() -> set[str]:
+    return {f["id"] for f in scan() if f["note"]}
+
+
+def topic_brief(r: sqlite3.Row, notes: set[str] | None = None) -> dict:
+    """count 只数碎片；聊的时候「只记下」的那几条单算 notes（它们在对话里显示）。列表调用时把 note_ids() 传进来，省得每个主题扫一遍。"""
     ids = json.loads(r["fragments"] or "[]")
+    notes = note_ids() if notes is None else notes
+    mine = [i for i in ids if i in notes]
     with _lock, db() as conn:
         last = conn.execute("SELECT text, ts FROM messages WHERE thread=? AND role='grava' ORDER BY id DESC LIMIT 1", (r["id"],)).fetchone()
         n = conn.execute("SELECT COUNT(*) FROM messages WHERE thread=? AND role='grava'", (r["id"],)).fetchone()[0]
-    return {"id": r["id"], "title": r["title"], "count": len(ids), "status": r["status"], "createdAt": r["created_at"], "updatedAt": r["updated_at"],
+    return {"id": r["id"], "title": r["title"], "count": len(ids) - len(mine), "notes": len(mine), "status": r["status"], "createdAt": r["created_at"], "updatedAt": r["updated_at"],
             "talked": n, "lastLine": (last["text"].strip().replace("\n", " ")[:80] if last else ""), "lastAt": last["ts"] if last else None,
-            "draft": r["draft_status"], "notePath": r["note_path"]}
+            "draftStatus": r["draft_status"], "notePath": r["note_path"]}
 
 
 def topic_title_for(frags: list[dict]) -> str:
@@ -788,7 +796,8 @@ async def list_topics(status: str = "open"):
     with _lock, tdb() as conn:
         rows = conn.execute("SELECT * FROM think_topics" + ("" if status == "all" else " WHERE status=?") + " ORDER BY updated_at DESC LIMIT 200",
                             (() if status == "all" else (status,))).fetchall()
-    return {"ok": True, "topics": [topic_brief(r) for r in rows]}
+    notes = note_ids()
+    return {"ok": True, "topics": [topic_brief(r, notes) for r in rows]}
 
 
 @router.get("/api/think/topics/{tid}")
@@ -1231,8 +1240,9 @@ def search_sync(q: str, scope: str) -> dict:
                 hit = next((m["text"] for m in msgs if all_words(m["text"], words)), None)
                 if hit or all_words(r["title"], words):
                     found.append((r, hit))
+        notes = note_ids() if found else set()
         for r, hit in found:  # topic_brief 自己拿锁：出了 with 再调
-            out["topics"].append({**topic_brief(r), "parts": parts_of(hit or r["title"], words)})
+            out["topics"].append({**topic_brief(r, notes), "parts": parts_of(hit or r["title"], words)})
     if scope in ("all", "note"):
         for p in note_files():
             try:
@@ -1298,7 +1308,8 @@ def keyword_sync(k: str) -> dict:
     if topic_ids:
         with _lock, tdb() as conn:
             rows_t = [r for tid in topic_ids if (r := conn.execute("SELECT * FROM think_topics WHERE id=?", (tid,)).fetchone())]
-    topics = [topic_brief(r) for r in rows_t]
+    notes = note_ids()
+    topics = [topic_brief(r, notes) for r in rows_t]
     name = (frags[0]["keywords"] if frags else json.loads(rows[0]["keywords"]) if rows else [k])
     shown = next((x for x in name if kw_norm(x) == key), k)
     return {"k": shown, "ideas": len(frags), "saves": len(rows), "since": items[-1]["at"] if items else None, "items": items,
