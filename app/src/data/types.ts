@@ -419,25 +419,81 @@ export interface UpcomingTask {
 }
 
 export type GoalCategory = '健康' | '学业' | '职业' | '财务';
+export type GoalStatus = 'active' | 'done' | 'dropped';
 
 export interface Goal {
   id: string;
   category: GoalCategory;
   title: string;
   detail: string;
+  /** YYYY-MM-DD、YYYY-MM，或者一句话（「2027 秋」） */
   due: string;
+  /** 截止还有几天（due 是日子才有） */
+  daysLeft: number | null;
   groupId: string | null;
   source: string;
-  /** 下面几项只有能用数字追踪的目标才有（比如体脂） */
+  status: GoalStatus;
+  /** 服务器自动读当前值的指标（bodyfat / weight）；null = 不自动读 */
+  metric: string | null;
+  /** 下面几项只有能用数字追踪的目标才有（比如体脂）；目标区间可以只有一头 */
   unit: string | null;
   targetLow: number | null;
   targetHigh: number | null;
   current: number | null;
   currentDate: string | null;
   currentSource: string | null;
+  /** 起点：设目标那天或之前最近的一次读数 */
   start: number | null;
+  startDate: string | null;
+  /** 从起点到目标区间走了多少（0–1，进了区间 = 1）；服务器算好的，老服务器没有 */
+  progress: number | null;
+  /** 往下走 / 往上走 / 保持在区间里 */
+  direction: 'down' | 'up' | 'keep' | null;
+  /** 现在在区间里、上面还是下面 */
+  state: 'in' | 'above' | 'below' | null;
   /** 最新读数超过 30 天 */
   stale: boolean;
+  /** 谁加的（leo / main / Agent id；老目标是 null） */
+  addedBy: string | null;
+  closedAt: string | null;
+}
+
+/** 一次改动（server/goals.py 的 goal_log）：目标页顶上那条「撤销」用。 */
+export interface GoalChange {
+  logId: number;
+  at: string;
+  actor: string;
+  actorName: string;
+  goal: string;
+  title: string;
+  action: string;
+  summary: string;
+  status: 'done' | 'undone';
+}
+
+/** 能自动读数的指标（服务器给，名字按语言）。 */
+export interface GoalMetric { key: string; label: string; unit: string }
+
+/** 体重 / 体脂的读数和摘要（GET /api/goals/trend）。source：body = 训练软件（训记），health = Apple 健康 */
+export interface GoalTrendPoint { date: string; value: number; source: 'body' | 'health' }
+export interface GoalTrend {
+  metric: string;
+  label: string;
+  unit: string;
+  days: number;
+  from: string;
+  to: string;
+  series: GoalTrendPoint[];
+  summary: {
+    source: 'body' | 'health';
+    sourceName: string;
+    latest: { date: string; value: number };
+    avg7: { value: number; n: number } | null;
+    change30: { value: number; since: string } | null;
+    /** 对照来源同一天的读数差得多时才有 */
+    check: { date: string; value: number; sourceName: string } | null;
+  } | null;
+  sources: { key: 'body' | 'health'; name: string; primary: boolean; connected: boolean; error: string | null }[];
 }
 
 /** L1 长期记忆的一条（某个 agent 工作区 MEMORY.md 的一个要点）。 */

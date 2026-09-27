@@ -1,6 +1,6 @@
-import React from 'react';
+import React, { useState } from 'react';
 import { StyleSheet, Text, View } from 'react-native';
-import Svg, { Circle } from 'react-native-svg';
+import Svg, { Circle, Polyline, Rect } from 'react-native-svg';
 import { L } from '../i18n';
 import { type, useTheme } from '../theme';
 
@@ -20,8 +20,10 @@ export function Ring({ size = 64, stroke = 7, value, target, color, children }: 
     <View style={{ width: size, height: size, alignItems: 'center', justifyContent: 'center' }}>
       <Svg width={size} height={size} style={StyleSheet.absoluteFill}>
         <Circle cx={size / 2} cy={size / 2} r={r} stroke={t.track} strokeWidth={stroke} fill="none" />
-        <Circle cx={size / 2} cy={size / 2} r={r} stroke={color ?? t.chartA} strokeWidth={stroke} fill="none"
-          strokeDasharray={`${c * p} ${c}`} strokeLinecap="round" transform={`rotate(-90 ${size / 2} ${size / 2})`} />
+        {p > 0 ? (  // 0 不画：圆头的线帽会在顶上留一个点，像是有进度
+          <Circle cx={size / 2} cy={size / 2} r={r} stroke={color ?? t.chartA} strokeWidth={stroke} fill="none"
+            strokeDasharray={`${c * p} ${c}`} strokeLinecap="round" transform={`rotate(-90 ${size / 2} ${size / 2})`} />
+        ) : null}
       </Svg>
       {children}
     </View>
@@ -59,6 +61,54 @@ export function DayBars({ days, todayIndex, unit }: { days: { d: string; date: s
           </View>
         );
       })}
+    </View>
+  );
+}
+
+// —— 读数折线（目标页的体重）——
+
+type Reading = { date: string; value: number };
+/** YYYY-MM-DD → 第几天（只拿来比远近）。 */
+export const dayNum = (iso: string) => Math.round(Date.UTC(Number(iso.slice(0, 4)), Number(iso.slice(5, 7)) - 1, Number(iso.slice(8, 10))) / 86400000);
+
+/**
+ * 读数折线：主来源连成线、每次一个点，最新那次大一点（青）；对照来源是淡淡的空心圈（和主来源同一天同一个数就正好套在点外面）；
+ * 目标区间是一条浅绿的带（只有一头就一直铺到边上）。横轴按日期：隔了几天没量，线上就空几天。纵轴按数据自己的高低，
+ * 把目标区间也算进去：离目标远，线就贴在一边，这正是要看的。
+ */
+export function TrendLine({ points, secondary = [], band, from, to, height = 96, label }: {
+  points: Reading[]; secondary?: Reading[]; band?: { low: number | null; high: number | null } | null; from: string; to: string; height?: number; label: string;
+}) {
+  const t = useTheme();
+  const [w, setW] = useState(0);
+  const H = height;
+  const pad = 8;
+  const vals = [...points, ...secondary].map((p) => p.value);
+  const edges = [band?.low, band?.high].filter((v): v is number => v != null);
+  let lo = Math.min(...vals, ...edges);
+  let hi = Math.max(...vals, ...edges);
+  if (!Number.isFinite(lo) || !Number.isFinite(hi)) { lo = 0; hi = 1; }
+  const margin = (hi - lo || Math.abs(hi) || 1) * 0.12;
+  lo -= margin; hi += margin;
+  const d0 = dayNum(from);
+  const span = Math.max(1, dayNum(to) - d0);
+  const xOf = (iso: string) => pad + ((dayNum(iso) - d0) / span) * Math.max(0, w - pad * 2);
+  const yOf = (v: number) => pad + (1 - (v - lo) / (hi - lo)) * (H - pad * 2);
+  const line = points.map((p) => `${xOf(p.date)},${yOf(p.value)}`).join(' ');
+  const last = points[points.length - 1];
+  const top = band?.high != null ? yOf(band.high) : 0;
+  const bottom = band?.low != null ? yOf(band.low) : H;
+  return (
+    <View style={{ height: H }} onLayout={(e) => setW(e.nativeEvent.layout.width)} accessible accessibilityLabel={label}>
+      {w > 0 ? (
+        <Svg width={w} height={H}>
+          {band && (band.low != null || band.high != null) ? <Rect x={0} y={Math.max(0, top)} width={w} height={Math.max(2, Math.min(H, bottom) - Math.max(0, top))} rx={6} fill={t.goodSoft} /> : null}
+          {secondary.map((p) => <Circle key={`s${p.date}`} cx={xOf(p.date)} cy={yOf(p.value)} r={4.5} fill="none" stroke={t.ink3} strokeOpacity={0.7} strokeWidth={1.2} />)}
+          {points.length > 1 ? <Polyline points={line} fill="none" stroke={t.chartA} strokeWidth={2.5} strokeLinejoin="round" strokeLinecap="round" /> : null}
+          {points.map((p) => (p === last ? null : <Circle key={p.date} cx={xOf(p.date)} cy={yOf(p.value)} r={2.5} fill={t.chartA} />))}
+          {last ? <Circle cx={xOf(last.date)} cy={yOf(last.value)} r={4.5} fill={t.cyan} stroke={t.surface} strokeWidth={1.5} /> : null}
+        </Svg>
+      ) : null}
     </View>
   );
 }

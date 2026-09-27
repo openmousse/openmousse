@@ -14,11 +14,12 @@ import { L } from './i18n';
 import { openTarget } from './navigation';
 import type {
   Application, JournalEntry, PendingFile,
-  ActivityEntry, AgentColor, AvatarConfig, ChatCard, FeedItem, Goal, Group, GroupIcon, GroupPatch, InboxAction, InboxItem, MemoryItem, Message, ModelsInfo, ProfileItem, PushTarget, Receipt,
+  ActivityEntry, AgentColor, AvatarConfig, ChatCard, FeedItem, Goal, GoalChange, GoalMetric, GoalStatus, GoalTrend, Group, GroupIcon, GroupPatch, InboxAction, InboxItem, MemoryItem, Message, ModelsInfo, ProfileItem, PushTarget, Receipt,
   ProjectCard, ProjectChangeCard, ScheduleChangeCard, ScheduleEntry, SecurityInfo, SideChat, Task, TaskQuota, ThreadCards, UnreadSummary, UpcomingTask,
 } from './data/types';
 import * as sched from './api/schedule';
 import * as projectsApi from './api/projects';
+import * as goalsApi from './api/goals';
 
 // 2026-09-23 起：界面上的每一项都来自服务器上的真实来源，没有示例数据。连不上服务器时各页显示"未连接"，不冒充。
 
@@ -77,7 +78,17 @@ interface State {
   remember: ScheduleEntry[];
   rememberErrors: Record<string, string>;
   upcoming: UpcomingTask[];
+  /** 进行中的目标（server/goals.py）；完成的、不做了的在 goalsClosed */
   goals: Goal[];
+  goalsClosed: Goal[];
+  /** Agent 24 小时内改的目标（目标页顶上那条「撤销」） */
+  goalChanges: GoalChange[];
+  /** 能自动读数的指标（体脂、体重） */
+  goalMetrics: GoalMetric[];
+  /** 服务器能改目标（老服务器只读） */
+  goalsEditable: boolean;
+  /** 体重的读数和趋势（训记为主，Apple 健康对照）；老服务器没有 = null */
+  weightTrend: GoalTrend | null;
   journal: JournalEntry[];
   applications: Application[];
   memories: MemoryItem[];
@@ -95,7 +106,7 @@ interface State {
   dataErrors: Partial<Record<DataKey, string>>;
 }
 
-export type DataKey = 'groups' | 'sideChats' | 'tasks' | 'inbox' | 'inboxRecent' | 'unread' | 'feed' | 'schedule' | 'remember' | 'upcoming' | 'goals' | 'journal' | 'applications' | 'memories' | 'activity' | 'profile' | 'models' | 'security' | 'avatar' | 'wake';
+export type DataKey = 'groups' | 'sideChats' | 'tasks' | 'inbox' | 'inboxRecent' | 'unread' | 'feed' | 'schedule' | 'remember' | 'upcoming' | 'goals' | 'weightTrend' | 'journal' | 'applications' | 'memories' | 'activity' | 'profile' | 'models' | 'security' | 'avatar' | 'wake';
 
 interface Actions {
   /** 重新探测服务器，读回全部数据和对话记录。 */
@@ -162,6 +173,16 @@ interface Actions {
   reviseTask(id: string, note: string): Promise<void>;
   /** 对话里日程卡的「撤销」（撤销过的再点 = 做回来）。 */
   undoScheduleCard(card: ScheduleChangeCard): Promise<void>;
+  /** 加一个目标（id 为 null）或改一个（只带改了的字段，null = 清掉）。返回服务器的一句话摘要。 */
+  saveGoal(id: string | null, fields: goalsApi.GoalFields): Promise<string>;
+  /** 标记完成 / 不做了 / 放回进行中。 */
+  setGoalStatus(id: string, status: GoalStatus): Promise<void>;
+  /** 撤销一次目标改动（redo = 再做回来）。 */
+  undoGoalChange(logId: number, redo?: boolean): Promise<void>;
+  /** 目标页顶上那条「知道了」。 */
+  ackGoalChanges(ids: number[]): Promise<void>;
+  /** 下拉刷新目标页：目标和体重都按最新的读（训记的缓存超过一分半就重读）。 */
+  refreshGoals(): Promise<void>;
 }
 
 const Ctx = createContext<(State & Actions) | null>(null);
@@ -233,7 +254,11 @@ const LOADERS: Record<DataKey, () => Promise<Partial<State>>> = {
   schedule: async () => { const r = await sched.timeline(todayIso(), 2); return { schedule: r.events, scheduleErrors: r.errors, scheduleEditable: r.editable }; },
   remember: async () => { const r = await sched.remember(); return { remember: r.items, rememberErrors: r.errors }; },
   upcoming: async () => ({ upcoming: await dataApi.upcoming() }),
-  goals: async () => ({ goals: await dataApi.goals() }),
+  goals: async () => {
+    const g = await goalsApi.load();
+    return { goals: g.goals, goalsClosed: g.closed, goalChanges: g.recent, goalMetrics: g.metrics, goalsEditable: g.editable };
+  },
+  weightTrend: async () => ({ weightTrend: await goalsApi.trend('weight') }),
   journal: async () => ({ journal: await dataApi.journal() }),
   applications: async () => ({ applications: await dataApi.applications() }),
   memories: async () => { const m = await dataApi.memories(); return { memories: m.items, memoriesUpdated: m.updated }; },
@@ -296,6 +321,11 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
     rememberErrors: {},
     upcoming: [],
     goals: [],
+    goalsClosed: [],
+    goalChanges: [],
+    goalMetrics: [],
+    goalsEditable: false,
+    weightTrend: null,
     journal: [],
     applications: [],
     memories: [],
@@ -368,7 +398,7 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
         for (const k of HEALTH_KEYS) if (!(k in errors)) delete liveErrors[k];
         return st.live ? { ...st, live: { ...st.live, ...patch }, liveErrors } : st;
       });
-      reload('goals');  // 体脂目标可能有了新读数
+      reload('goals', 'weightTrend');  // 体脂、体重可能有了新读数
     } catch (e) {
       setS((st) => ({ ...st, liveErrors: { ...st.liveErrors, health: errText(e) } }));
       throw e;
@@ -825,7 +855,7 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
       .catch((e: unknown): Message => ({ id: id('r'), role: 'grava', time: timeNow(), modelId, body: { type: 'text', text: L('（这条没发出去。）', "(This message wasn't sent.)") }, error: errText(e) }))
       // 可能刚写了一张建议卡、提了一件要你点头的事、转给了某个 Agent、派了任务
       .then((reply) => {
-        reload('feed', 'schedule', 'remember'); loadThreadInbox(threadId).catch(() => {}); loadThreadCards(threadId, true).catch(() => {});
+        reload('feed', 'schedule', 'remember', 'goals'); loadThreadInbox(threadId).catch(() => {}); loadThreadCards(threadId, true).catch(() => {});
         if (latest.current.sideChats.some((c) => c.id === threadId)) { loadProjectRef.current(threadId).catch(() => {}); reload('sideChats').catch(() => {}); }  // 它可能改了项目卡
         return reply;
       })
@@ -1015,6 +1045,37 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
         return { ...st, cardsByThread, liveCards };
       });
       await reload('schedule', 'remember');
+    },
+    saveGoal: async (gid, fields) => {
+      const r = gid ? await goalsApi.patch(gid, fields) : await goalsApi.add(fields as goalsApi.GoalFields & { title: string; category: Goal['category'] });
+      await reload('goals');
+      reload('activity').catch(() => {});
+      return r.summary;
+    },
+    setGoalStatus: async (gid, status) => {
+      await goalsApi.patch(gid, { status });
+      await reload('goals');
+      reload('activity').catch(() => {});
+    },
+    undoGoalChange: async (logId, redo = false) => {
+      await goalsApi.undo(logId, redo);
+      await reload('goals');
+      reload('activity').catch(() => {});
+    },
+    ackGoalChanges: async (ids) => {
+      setS((st) => ({ ...st, goalChanges: st.goalChanges.filter((c) => !ids.includes(c.logId)) }));
+      await goalsApi.seen(ids).catch(() => reload('goals'));
+    },
+    refreshGoals: async () => {
+      try {
+        const [g, w] = await Promise.all([goalsApi.load(true), goalsApi.trend('weight', 180, true)]);
+        setS((st) => {
+          const dataErrors = { ...st.dataErrors }; delete dataErrors.goals; delete dataErrors.weightTrend;
+          return { ...st, goals: g.goals, goalsClosed: g.closed, goalChanges: g.recent, goalMetrics: g.metrics, goalsEditable: g.editable, weightTrend: w, dataErrors };
+        });
+      } catch (e) {
+        setS((st) => ({ ...st, dataErrors: { ...st.dataErrors, goals: errText(e) } }));
+      }
     },
   }), [refreshLive, reload, syncHealthNow, send, refreshThread, decide, markFeedSeen, markRead, setActiveThread, loadThreadCards, loadProject, afterProject]);
 

@@ -1,6 +1,6 @@
 // app 其余页面的数据接口（server/data.py）。每一项的真源写在 data.py 顶部的表格里。
 import type {
-  ActivityEntry, AgentColor, ChatCard, DayInfo, HandoffCard, SearchHit, Application, Approval, AvatarConfig, FeedItem, Goal, Group, GroupIcon, InboxAction, InboxItem, InboxProposalInfo, InboxStatus, JournalEntry, MemoryItem, ModelsInfo, ProfileItem, SecurityInfo, SideChat, Task, TaskQuota, ThreadCards, UnreadSummary, UpcomingTask,
+  ActivityEntry, AgentColor, ChatCard, DayInfo, HandoffCard, SearchHit, Application, Approval, AvatarConfig, FeedItem, Group, GroupIcon, InboxAction, InboxItem, InboxProposalInfo, InboxStatus, JournalEntry, MemoryItem, ModelsInfo, ProfileItem, SecurityInfo, SideChat, Task, TaskQuota, ThreadCards, UnreadSummary, UpcomingTask,
 } from '../data/types';
 import { L } from '../lang';
 import { httpStatus, request } from './base';
@@ -130,7 +130,6 @@ export const dataApi = {
   deleteSideChat: (id: string) => request(`/api/sidechats/${id}`, { method: 'DELETE' }),
   deleteGroup: (id: string) => request(`/api/groups/${id}`, { method: 'DELETE' }),
 
-  goals: () => request<{ goals: Goal[] }>('/api/goals').then((j) => j.goals),
   journal: () => request<{ entries: JournalEntry[] }>('/api/journal?days=365&limit=300').then((j) => j.entries),
   deleteJournal: (id: string) => request(`/api/journal/${id}`, { method: 'DELETE' }),
   applications: () => request<{ applications: Application[] }>('/api/applications').then((j) => j.applications),
