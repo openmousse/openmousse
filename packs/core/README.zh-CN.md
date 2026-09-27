@@ -14,6 +14,7 @@
 | `skills/dispatch` | 派后台任务：先看今天的额度（`server/tasks_ctl.py quota`），按「目标 / 要交 / 约束」写任务；app 对话里出一张任务卡，显示在做哪一步和结果，「改一下」直接发给同一个子会话 |
 | `skills/project` | 项目，有始有终的事（几天到几周、有目标和截止）：用户让开就开，一件事要聊好几天就提议开；在项目里随手更新项目卡，项目的事转进项目，归档时写结论（`server/project_ctl.py` → 服务的 `/api/projects`） |
 | `skills/board` | 每个 Agent 自己的表和看板：用户想长期记的东西记进它自己定义的表，用积木（数字、进度、趋势、列表、清单、文字、按钮）摆到看板上，app 按配置画，不用改代码。用户让加的直接加（看板顶上能撤回）；它自己想到的交提案，「等你点头」里带预览（`server/board_ctl.py` → 服务的 `/api/boards`） |
+| `skills/goals` | 用户的长期目标（app「目标」页：健康 / 学业 / 职业 / 财务）。用户让加、让改的直接改（目标页顶上能撤销）；它自己觉得该调的交提案，进「等你点头」；用户没说过的目标不编。体重、体脂的当前值自动读（训练软件为主，Apple 健康对照），体脂从不自动算（`server/goals_ctl.py` → 服务的 `/api/goals`） |
 | `scripts/daily_close.py` | 03:45 给当天有过对话的线程发「【自动触发】日结」，04:00 会话重置前把结论写进记忆（回完不推送） |
 | `scripts/mousse_common.py` | 上面几个脚本共用：从 `~/.openmousse/server.json` 读服务地址、`local` 令牌、数据库、时区 |
 | `systemd/` | `openmousse-server`、`openmousse-daily-close.timer` 的模板 |

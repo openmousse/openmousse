@@ -4,9 +4,9 @@
 把一台已经装好 OpenClaw 的机器配成能跑 OpenMousse：
   1. ~/.openmousse/repo → 仓库（skills 里的命令都走这个固定路径）
   2. ~/.openmousse/server.json：名字、时区、语言、监听地址、OpenClaw 的位置、令牌（phone 给手机，local 给本机脚本）
-  3. 主 agent 工作区的 skills/ 里软链 packs/core 的九个 skill（handoff / agent-builder / journal / memory-tree / inbox / dispatch / project / board / proposals）；AGENTS.md 末尾追加 OpenMousse 的规则（按所选语言写）
+  3. 主 agent 工作区的 skills/ 里软链 packs/core 的十个 skill（handoff / agent-builder / journal / memory-tree / inbox / dispatch / project / board / proposals / goals）；AGENTS.md 末尾追加 OpenMousse 的规则（按所选语言写）
   4. openclaw.json（先备份，改完 openclaw config validate，不过就恢复）：
-     - agents.defaults.skills 是列表的话追加主对话用的八个 skill（board 只给 Agent，写在 server.json 的 agent_default_skills；没有这个键 = 不限制，不动）
+     - agents.defaults.skills 是列表的话追加主对话用的九个 skill（board 只给 Agent，写在 server.json 的 agent_default_skills；没有这个键 = 不限制，不动）
      - gateway.http.endpoints.chatCompletions.enabled = true（app 的对话走它）
      - session.reset = daily 04:00（对话页按天，日结在 03:45）
      - tools.deny 加 ask_user（app 通道没人能回答工具里的提问，会卡死）
@@ -34,7 +34,7 @@ from pathlib import Path
 HERE = Path(__file__).resolve().parent
 MOUSSE_HOME = Path("~/.openmousse").expanduser()
 SERVER_JSON = MOUSSE_HOME / "server.json"
-SKILLS = ("handoff", "agent-builder", "journal", "memory-tree", "inbox", "dispatch", "project", "board", "proposals")
+SKILLS = ("handoff", "agent-builder", "journal", "memory-tree", "inbox", "dispatch", "project", "board", "proposals", "goals")
 MAIN_SKILLS = tuple(s for s in SKILLS if s != "board")  # 主对话用的；board（Agent 自己的表和看板）只给 Agent；proposals（日结提案）只有主对话用
 AGENTS_MARK = "## OpenMousse"
 AGENTS_RULES_ZH = """
@@ -176,7 +176,7 @@ def write_server_json(a: argparse.Namespace, oc: dict, home: Path, workspace: Pa
     dm = default_model(oc)
     if dm:
         setdefault("default_model", dm)
-    setdefault("agent_default_skills", ["journal", "memory-tree", "inbox", "board"])
+    setdefault("agent_default_skills", ["journal", "memory-tree", "inbox", "board", "goals"])
     shared_profile = home / "shared/profile/USER.md"
     if not cfg.get("profile") and not shared_profile.exists() and (workspace / "USER.md").exists():
         cfg["profile"] = str(workspace / "USER.md")
