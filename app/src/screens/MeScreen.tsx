@@ -4,7 +4,7 @@ import { Pressable, ScrollView, View } from 'react-native';
 import { useNavigation } from '@react-navigation/native';
 import { Activity, BookOpen, Brain, CalendarDays, ClipboardList, Cpu, IdCard, Palette, Plug, Server, ShieldCheck, TreeDeciduous } from '../components/icons';
 import { LensAvatar } from '../components/LensAvatar';
-import { Card, LargeHeader, ListRow, Pill, PullRefresh, Screen, SectionLabel, Segmented, T } from '../components/ui';
+import { Card, LargeHeader, ListRow, NavHeader, Pill, PullRefresh, Screen, SectionLabel, Segmented, T } from '../components/ui';
 import { L, useLang, type LangPref } from '../i18n';
 import { useStore } from '../store';
 import { space, useAppearance, useTheme } from '../theme';
@@ -24,8 +24,10 @@ export function MeScreen() {
   useEffect(() => { if (connected) reload('tree', 'connectors').catch(() => {}); }, [connected, reload]);
   return (
     <Screen>
-      <ScrollView contentContainerStyle={{ paddingBottom: space.xxl }} refreshControl={<PullRefresh onRefresh={() => reload('profile', 'tree', 'memories', 'journal', 'activity', 'tasks', 'security', 'models', 'connectors')} />}>
-        <LargeHeader title={L('我', 'Me')} />
+      {/* 从侧栏底部进来（2026-09-27 起「我」不是 tab 了）：顶上一个返回 */}
+      {nav.canGoBack() ? <NavHeader title={L('我', 'Me')} onBack={() => nav.goBack()} /> : null}
+      <ScrollView contentContainerStyle={{ paddingTop: nav.canGoBack() ? space.lg : 0, paddingBottom: space.xxl }} refreshControl={<PullRefresh onRefresh={() => reload('profile', 'tree', 'memories', 'journal', 'activity', 'tasks', 'security', 'models', 'connectors')} />}>
+        {nav.canGoBack() ? null : <LargeHeader title={L('我', 'Me')} />}
         <View style={{ paddingHorizontal: space.lg }}>
           <Pressable onPress={() => nav.navigate('Avatar')} accessibilityRole="button" accessibilityLabel={L(`定制 ${agentName()} 的形象`, `Customize ${agentName()}'s look`)}>
             <Card style={{ flexDirection: 'row', alignItems: 'center', gap: space.lg }}>

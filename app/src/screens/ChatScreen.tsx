@@ -4,7 +4,7 @@ import { Alert, Keyboard, Platform, Pressable, ScrollView, StyleSheet, TextInput
 import { useNavigation, useRoute } from '@react-navigation/native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { ChatView } from '../components/ChatView';
-import { Archive, ArchiveRestore, CalendarDays, ChevronDown, ChevronRight, ClipboardList, Ellipsis, FolderKanban, LayoutGrid, Menu, Pencil, Plus, Trash2 } from '../components/icons';
+import { Archive, ArchiveRestore, CalendarDays, ChevronDown, ChevronRight, ClipboardList, Ellipsis, FolderKanban, LayoutGrid, Menu, Pencil, Plus, Settings, Trash2, User } from '../components/icons';
 import { GroupBadge } from '../components/GroupIcon';
 import { LensAvatar } from '../components/LensAvatar';
 import { ModelSwitch } from '../components/ModelPicker';
@@ -158,6 +158,16 @@ function Drawer({ active, onPick, onClose }: { active: string; onPick: (id: stri
             ))}
           </DrawerSection>
         </ScrollView>
+        {/* 「我」（档案、记忆、日志、设置）：2026-09-27 从 tab 挪到这里，tab 让给「思考」 */}
+        <Pressable onPress={() => { onClose(); nav.navigate('Me'); }} accessibilityRole="button" accessibilityLabel={L('打开「我」：档案、记忆、日志、设置', 'Open Me: profile, memory, journal, settings')}
+          style={({ pressed }) => [styles.me, { borderTopColor: t.line, opacity: pressed ? 0.7 : 1 }]}>
+          <View style={[styles.meIcon, { backgroundColor: t.surface2 }]}><User size={18} color={t.ink2} /></View>
+          <View style={{ flex: 1, gap: 1 }}>
+            <T v="callout" style={{ fontWeight: '600' }}>{L('我', 'Me')}</T>
+            <T v="caption" color={t.ink3} numberOfLines={1}>{L('档案、记忆、日志、设置', 'Profile, memory, journal, settings')}</T>
+          </View>
+          <View style={[styles.meIcon, { backgroundColor: t.surface }]}><Settings size={18} color={t.ink2} /></View>
+        </Pressable>
       </View>
     </View>
   );
@@ -225,4 +235,6 @@ const styles = StyleSheet.create({
   input: { borderRadius: radius.md, paddingHorizontal: space.lg, paddingVertical: 13 },
   drawer: { position: 'absolute', left: 0, top: 0, bottom: 0, width: 292, borderTopRightRadius: radius.lg + 4, borderBottomRightRadius: radius.lg + 4, paddingHorizontal: space.sm },
   row: { flexDirection: 'row', alignItems: 'center', gap: space.sm, borderRadius: radius.md, paddingHorizontal: space.sm, paddingVertical: 9 },
+  me: { flexDirection: 'row', alignItems: 'center', gap: space.sm, borderTopWidth: StyleSheet.hairlineWidth, paddingHorizontal: space.sm, paddingTop: space.md, marginTop: space.sm },
+  meIcon: { width: 36, height: 36, borderRadius: 18, alignItems: 'center', justifyContent: 'center' },
 });

@@ -3,7 +3,7 @@ import { Platform } from 'react-native';
 import { createNavigationContainerRef, DarkTheme, DefaultTheme, NavigationContainer } from '@react-navigation/native';
 import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
-import { LayoutGrid, MessageCircle, Sparkles, Target, User } from './components/icons';
+import { LayoutGrid, Lightbulb, MessageCircle, Sparkles, Target } from './components/icons';
 import { ChatScreen } from './screens/ChatScreen';
 import { GoalsScreen } from './screens/GoalsScreen';
 import { GroupScreen } from './screens/GroupScreen';
@@ -21,6 +21,11 @@ import { ConnectScreen } from './screens/ConnectScreen';
 import { InboxScreen } from './screens/InboxScreen';
 import { TreeScreen } from './screens/TreeScreen';
 import { ConnectorsScreen } from './screens/ConnectorsScreen';
+import { ThinkScreen } from './screens/ThinkScreen';
+import { ThinkDoneScreen, ThinkTalkScreen } from './screens/ThinkTalkScreen';
+import { ThinkWriteScreen, ZenEndScreen } from './screens/ThinkWriteScreen';
+import { ThinkHistoryScreen, ThinkKeywordScreen, ThinkSearchScreen } from './screens/ThinkFindScreens';
+import { SaveScreen } from './screens/SaveScreen';
 import type { PushTarget } from './data/types';
 import { L } from './i18n';
 import { useStore } from './store';
@@ -34,10 +39,11 @@ function Tabs() {
   const t = useTheme();
   const { inbox, unread, groups, sideChats } = useStore();
   const insets = useSafeAreaInsets();
-  // 未读（青色）：「对话」= 主对话 + 项目，「Agents」= 各个 Agent。「今天」（金色）= 等你点头的。
+  // 未读（青色）：「对话」= 主对话 + 项目，「Agents」= 各个 Agent，「思考」= 聊聊里的回复。「今天」（金色）= 等你点头的。
   const n = (id: string) => unread.threads[id]?.n ?? 0;
   const chatUnread = n('main') + sideChats.reduce((sum, c) => sum + n(c.id), 0);
   const agentUnread = groups.reduce((sum, g) => sum + n(g.id), 0);
+  const thinkUnread = Object.entries(unread.threads).reduce((sum, [tid, u]) => sum + (tid.startsWith('tp-') ? u.n : 0), 0);
   const cyanBadge = { backgroundColor: t.cyan, color: t.surface };
   // Tab 的 name 是路由标识（深链 ?screen=今天、navigate 都用它），不翻译；界面上显示的是 tabBarLabel。
   return (
@@ -53,10 +59,11 @@ function Tabs() {
         options={{ tabBarLabel: L('对话', 'Chat'), tabBarIcon: ({ color, size }) => <MessageCircle color={color} size={size} />, tabBarBadge: chatUnread || undefined, tabBarBadgeStyle: cyanBadge }} />
       <Tab.Screen name="Agents" component={GroupsScreen}
         options={{ tabBarIcon: ({ color, size }) => <LayoutGrid color={color} size={size} />, tabBarBadge: agentUnread || undefined, tabBarBadgeStyle: cyanBadge }} />
+      <Tab.Screen name="思考" component={ThinkScreen}
+        options={{ tabBarLabel: L('思考', 'Think'), tabBarIcon: ({ color, size }) => <Lightbulb color={color} size={size} />, tabBarBadge: thinkUnread || undefined, tabBarBadgeStyle: cyanBadge }} />
       <Tab.Screen name="今天" component={TodayScreen}
         options={{ tabBarLabel: L('今天', 'Today'), tabBarIcon: ({ color, size }) => <Sparkles color={color} size={size} />, tabBarBadge: inbox.length || undefined, tabBarBadgeStyle: { backgroundColor: t.goldFill, color: t.onGold } }} />
       <Tab.Screen name="目标" component={GoalsScreen} options={{ tabBarLabel: L('目标', 'Goals'), tabBarIcon: ({ color, size }) => <Target color={color} size={size} /> }} />
-      <Tab.Screen name="我" component={MeScreen} options={{ tabBarLabel: L('我', 'Me'), tabBarIcon: ({ color, size }) => <User color={color} size={size} /> }} />
     </Tab.Navigator>
   );
 }
@@ -68,7 +75,7 @@ function initialFromQuery() {
   const screen = q.get('screen');
   if (!screen) return undefined;
   const params = Object.fromEntries([...q.entries()].filter(([k]) => k !== 'screen'));
-  const tabs = ['对话', 'Agents', '今天', '目标', '我'];
+  const tabs = ['对话', 'Agents', '思考', '今天', '目标'];
   if (tabs.includes(screen)) return { routes: [{ name: 'Tabs', state: { routes: tabs.map((name) => ({ name })), index: tabs.indexOf(screen) } }] };
   return { routes: [{ name: 'Tabs' }, { name: screen, params }], index: 1 };
 }
@@ -80,7 +87,7 @@ export const navigationRef = createNavigationContainerRef<any>();
  * 输入框上面的引用：从收件箱「去对话里说」带过来的（inboxId：显示「回复：标题」，发出去时带上），
  * 或者任务卡上点了「改一下」（taskId：显示「改：标题」，发出去的话直接交给做这件事的子会话，不进这个对话）。
  */
-export interface ChatQuote { inboxId?: string; taskId?: string; title: string; model?: string | null; /** 日程或「要记得的」里的一条（schedule.py 的 id）：发出去时带上，模型知道说的是哪一条 */ ref?: string }
+export interface ChatQuote { inboxId?: string; taskId?: string; title: string; model?: string | null; /** 日程或「要记得的」里的一条（schedule.py 的 id）：发出去时带上，模型知道说的是哪一条 */ ref?: string; /** 收藏里的一条（问问、翻译）：发出去时带上，模型看到它的正文 */ saveId?: string }
 
 // 冷启动时点通知，那一下可能比导航器准备好还早（RootNavigator 要等本机配置读完才渲染）：先记下来，onReady 时补上。
 let queued: { target: PushTarget; isGroup: boolean; quote?: ChatQuote; focus?: string } | null = null;
@@ -97,6 +104,7 @@ export function openTarget(target: PushTarget, isGroup = false, quote?: ChatQuot
   switch (target.type) {
     case 'thread':
       if (target.thread === 'today') tab('今天', { at });
+      else if (target.thread.startsWith('tp-')) navigationRef.navigate('ThinkTalk', { id: target.thread, at });  // 思考主题
       else if (isGroup) navigationRef.navigate('Group', { id: target.thread, tab: 'chat', at, quote, focus });
       else tab('对话', { thread: target.thread, at, quote, focus });
       return;
@@ -152,6 +160,16 @@ export function RootNavigator() {
         <Stack.Screen name="Tasks" component={TasksScreen} />
         <Stack.Screen name="ScheduleFeed" component={ScheduleFeedScreen} />
         <Stack.Screen name="Task" component={TaskScreen} />
+        {/* 「我」从 tab 挪到了侧栏底部（2026-09-27） */}
+        <Stack.Screen name="Me" component={MeScreen} />
+        <Stack.Screen name="ThinkTalk" component={ThinkTalkScreen} />
+        <Stack.Screen name="ThinkDone" component={ThinkDoneScreen} />
+        <Stack.Screen name="ThinkWrite" component={ThinkWriteScreen} options={({ route }: { route: { params?: { zen?: boolean } } }) => ({ gestureEnabled: !route.params?.zen, animation: route.params?.zen ? 'fade' : 'slide_from_bottom' })} />
+        <Stack.Screen name="ZenEnd" component={ZenEndScreen} options={{ animation: 'fade' }} />
+        <Stack.Screen name="ThinkSearch" component={ThinkSearchScreen} options={{ animation: 'fade' }} />
+        <Stack.Screen name="ThinkKeyword" component={ThinkKeywordScreen} />
+        <Stack.Screen name="ThinkHistory" component={ThinkHistoryScreen} />
+        <Stack.Screen name="Save" component={SaveScreen} />
       </Stack.Navigator>
     </NavigationContainer>
   );

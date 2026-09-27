@@ -23,6 +23,7 @@ import * as projectsApi from './api/projects';
 import * as goalsApi from './api/goals';
 import * as treeApi from './api/tree';
 import * as connectorsApi from './api/connectors';
+import { isMeditating } from './think/focus';
 
 // 2026-09-23 起：界面上的每一项都来自服务器上的真实来源，没有示例数据。连不上服务器时各页显示"未连接"，不冒充。
 
@@ -125,7 +126,7 @@ interface Actions {
   /** 点了「我起来了」：告诉服务器，马上出起床报告。 */
   imUp(): Promise<void>;
   /** inboxId：这条是对收件箱里某件事的修改意见（从「今天」的「去对话里说」带过来），那件事在本地先标成「改一下」。 */
-  send(threadId: string, text: string, files?: PendingFile[], opts?: { inboxId?: string; ref?: string }): void;
+  send(threadId: string, text: string, files?: PendingFile[], opts?: { inboxId?: string; ref?: string; save?: string }): void;
   deleteJournal(id: string): Promise<void>;
   /** 下拉刷新看板：只重读看板数据（训记 / 健康 / 派生指标）和建议、日志、申请，不重连、不重读全部。 */
   refreshBoards(): Promise<void>;
@@ -528,7 +529,8 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
     const th = !tg ? undefined : tg.type === 'thread' ? tg.thread : tg.type === 'card' || tg.type === 'inbox' ? tg.thread : undefined;
     return !(onScreen && th && th === onScreen);
   };
-  const showBanner = (b: BannerSpec) => { if (bannerAllowed(b.target)) banner.show(b); };
+  // 冥想时间里不弹小窗（推送服务器那边已经压住了，这里管 app 开着时的）
+  const showBanner = (b: BannerSpec) => { if (bannerAllowed(b.target) && !isMeditating()) banner.show(b); };
   // 小窗的 key 由 Banner 按「来源 + 去处」算：同一件事再来一条就替换，不重复排队
   const inboxBanner = (it: InboxItem, subtitle?: string): BannerSpec => ({
     kind: 'inbox', title: it.title, subtitle: subtitle || `${L('要你点头', 'Needs your OK')} · ${kindLabel(it.kind)}`,
@@ -855,7 +857,7 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
     await Promise.all([loadProject(pid), reload('sideChats'), deadlines ? reload('schedule', 'remember') : null]);
   }, [loadProject, reload]);
 
-  const send = useCallback((threadId: string, text: string, files?: PendingFile[], opts?: { inboxId?: string; ref?: string }) => {
+  const send = useCallback((threadId: string, text: string, files?: PendingFile[], opts?: { inboxId?: string; ref?: string; save?: string }) => {
     const pending = files?.map((f, i) => ({ id: `local${i}`, name: f.name, mime: f.mime, size: f.size, kind: kindOf(f.name, f.mime), url: f.uri }));
     // '（见附件）' 是占位标记，和服务端 chat.py 一致，ChatView 按原文比较后隐藏：不翻译。
     const mine: Message = { id: id('u'), role: 'user', time: timeNow(), body: { type: 'text', text: text || '（见附件）', attachments: pending } };
@@ -869,7 +871,7 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
     });
     const swapId = (userId: string) => setS((st) => ({ ...st, threads: { ...st.threads, [threadId]: (st.threads[threadId] ?? []).map((m) => (m.id === mine.id ? { ...m, id: userId } : m)) } }));
     api.current.send(threadId, text, modelId, (partial) => setS((st) => ({ ...st, streaming: { ...st.streaming, [threadId]: partial } })), swapId, files,
-      { ...(opts?.inboxId ? { inboxId: opts.inboxId } : {}), ...(opts?.ref ? { ref: opts.ref } : {}), onCard: onLiveCard(threadId) })
+      { ...(opts?.inboxId ? { inboxId: opts.inboxId } : {}), ...(opts?.ref ? { ref: opts.ref } : {}), ...(opts?.save ? { save: opts.save } : {}), onCard: onLiveCard(threadId) })
       .catch((e: unknown): Message => ({ id: id('r'), role: 'grava', time: timeNow(), modelId, body: { type: 'text', text: L('（这条没发出去。）', "(This message wasn't sent.)") }, error: errText(e) }))
       // 可能刚写了一张建议卡、提了一件要你点头的事、转给了某个 Agent、派了任务
       .then((reply) => {

@@ -5,7 +5,7 @@ import { Alert, Image, Linking, Platform, Pressable, ScrollView, StyleSheet, Tex
 import * as Clipboard from 'expo-clipboard';
 import * as Haptics from 'expo-haptics';
 import { AudioModule, RecordingPresets, setAudioModeAsync, useAudioRecorder, useAudioRecorderState } from 'expo-audio';
-import { ArrowUp, Camera, Copy, FileAudio, FileText, Film, ImageIcon, Inbox, ListChecks, Mic, Paperclip, Pencil, Square, Trash2, Undo2, X } from './icons';
+import { ArrowUp, Bookmark, Camera, Copy, EyeOff, FileAudio, FileText, Film, ImageIcon, Inbox, ListChecks, Mic, Paperclip, Pencil, Square, Trash2, Undo2, X } from './icons';
 import type { Attachment, ChatCard, HandoffCard, InboxItem, Message, PendingFile, TaskCardInfo } from '../data/types';
 import { L } from '../i18n';
 import type { ChatQuote } from '../navigation';
@@ -21,6 +21,7 @@ import { InboxCard } from './InboxCard';
 import { HandoffChip, HandoffFrom, ProjectChip, ScheduleChip, TaskCardView, modelLabel } from './ChatCards';
 import { MAX_FILES, pickDocuments, pickMedia } from './chatInput';
 import { loadDraft, saveDraft } from '../drafts';
+import { saveMessage } from '../api/think';
 
 // 从「今天」的「去对话里说」带过来、还没发出去的引用，也按线程记着。
 const quotes = new Map<string, ChatQuote>();
@@ -186,6 +187,20 @@ export function Bubble({ m, showAvatar, onLongPress, before, from, highlight }: 
         </View>
       );
     }
+    // 【只记下】：思考主题里记下的一句，没给模型看（server/think.py）。右边一个虚线气泡。
+    if (text.startsWith('【只记下】')) {
+      return (
+        <View style={{ alignItems: 'flex-end' }}>
+          <View style={[styles.userBubble, { borderWidth: 1.5, borderStyle: 'dashed', borderColor: t.line, backgroundColor: t.bg, gap: 3 }]}>
+            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
+              <EyeOff size={12} color={t.ink3} />
+              <T v="caption" color={t.ink3}>{L(`只记下 · 它没看 · ${m.time}`, `Private note · not shown to it · ${m.time}`)}</T>
+            </View>
+            <T v="body" color={t.ink2}>{text.replace(/^【只记下】/, '')}</T>
+          </View>
+        </View>
+      );
+    }
     // 【主对话转来】：别的对话（一般是主对话）把问题转给了这个 Agent。点一下回到转交它的那条回复。
     if (text.startsWith('【主对话转来】')) return <HandoffFrom question={text.replace(/^【主对话转来】\s*/, '')} time={m.time} card={from} highlight={highlight} />;
     return (
@@ -235,8 +250,14 @@ function Action({ icon: Icon, label, note, danger, onPress }: { icon: typeof Cop
   );
 }
 
-export function ChatView({ threadId, placeholder, empty, quote: quoteProp, quoteAt = 0, focus, focusAt = 0 }: {
+export function ChatView({ threadId, placeholder, empty, quote: quoteProp, quoteAt = 0, focus, focusAt = 0, hideHistoryLink, composerTop, intercept }: {
   threadId: string; placeholder: string; empty?: string;
+  /** 不显示顶上「这里只有今天的」（思考主题整段都给） */
+  hideHistoryLink?: boolean;
+  /** 输入框上面的一条（思考主题：说给它 / 只记下） */
+  composerTop?: React.ReactNode;
+  /** 发之前问一句：返回 Promise = 这句另外处理了（比如只记下），成功就清空输入框，不发给模型；返回 null 照常发 */
+  intercept?: (text: string) => Promise<unknown> | null;
   /** 从收件箱「去对话里说」带过来的那件事；quoteAt 是那次跳转的时间（同一个对话再带一次也认得出） */
   quote?: ChatQuote; quoteAt?: number;
   /** 从转交卡点过来：滚到这条消息（"db<id>"）闪一下；focusAt 是那次跳转的时间 */
@@ -382,9 +403,14 @@ export function ChatView({ threadId, placeholder, empty, quote: quoteProp, quote
       setQuote(null);
       return;
     }
+    const taken = text && !pending.length && intercept ? intercept(text) : null;
+    if (taken) {
+      taken.then(() => setDraft('')).catch(fail);
+      return;
+    }
     if ((!text && !pending.length) || busy || transcribing) return;
-    // 带着引用：这条是对收件箱里那件事的修改意见（服务器收到 inboxId 会把它退回去改）
-    send(threadId, text, pending.length ? pending : undefined, quote?.inboxId ? { inboxId: quote.inboxId } : quote?.ref ? { ref: quote.ref } : undefined);
+    // 带着引用：这条是对收件箱里那件事的修改意见（服务器收到 inboxId 会把它退回去改）；收藏：模型另外看到那条收藏
+    send(threadId, text, pending.length ? pending : undefined, quote?.inboxId ? { inboxId: quote.inboxId } : quote?.ref ? { ref: quote.ref } : quote?.saveId ? { save: quote.saveId } : undefined);
     setDraft('');
     setPending([]);
     setQuote(null);
@@ -434,6 +460,10 @@ export function ChatView({ threadId, placeholder, empty, quote: quoteProp, quote
       content: () => (
         <View style={{ gap: space.sm }}>
           <Action icon={Copy} label={L('复制', 'Copy')} onPress={() => { close(); Clipboard.setStringAsync(text).catch(() => {}); }} />
+          {m.id.startsWith('db') && m.role !== 'auto' ? (
+            <Action icon={Bookmark} label={L('收藏', 'Save')} note={L('存进「思考 → 收藏」，以后能搜、能交给 Agent', 'Keep it in Think → Saved to search or hand to an Agent later')}
+              onPress={() => { close(); saveMessage(threadId, m.id).then(() => Alert.alert(L('收藏好了', 'Saved'), L('在「思考 → 收藏」里', 'In Think → Saved'))).catch(fail); }} />
+          ) : null}
           {m.role === 'user' && !busy ? <>
             <Action icon={Pencil} label={L('重新编辑', 'Edit')} note={L(`放回输入框改完再发。${tail}${agentName()} 也会忘掉这段。${shared}${m.body.attachments?.length ? '附件要重新加。' : ''}`, `Puts it back in the input box to edit and resend. ${tail}${agentName()} will forget it too.${shared}${m.body.attachments?.length ? ' Attachments need to be added again.' : ''}`)} onPress={() => rewind(true)} />
             <Action icon={Undo2} label={L('撤回', 'Unsend')} note={L(`${tail}${agentName()} 也会忘掉这段。${shared}`, `${tail}${agentName()} will forget it too.${shared}`)} onPress={() => rewind(false)} />
@@ -465,7 +495,7 @@ export function ChatView({ threadId, placeholder, empty, quote: quoteProp, quote
         scrollToOverflowEnabled onLayout={keepBottom} onScroll={track} onScrollEndDrag={track} onMomentumScrollEnd={track} scrollEventThrottle={32}
         onContentSizeChange={(_w, h) => { list.current.content = h; }}
         refreshControl={<PullRefresh onRefresh={() => refreshThread(threadId)} />}>
-        {connected ? (
+        {connected && !hideHistoryLink ? (
           <Pressable onPress={() => nav.navigate('History', { thread: threadId })} accessibilityRole="button" style={{ alignSelf: 'center', paddingVertical: 2 }}>
             <T v="caption" color={t.ink3}>{L('这里只有今天的（04:00 起）· ', 'Today only (from 04:00) · ')}<T v="caption" color={t.gold}>{L('之前的在历史里', 'Earlier in History')}</T></T>
           </Pressable>
@@ -508,14 +538,15 @@ export function ChatView({ threadId, placeholder, empty, quote: quoteProp, quote
         {busy ? <ChatTasks cards={liveTasks} onRevise={reviseCard} thread={threadId} /> : null}
       </ScrollView>
       <View style={[styles.composerWrap, { borderTopColor: t.line, backgroundColor: t.bg }]}>
+        {composerTop}
         {quote ? (
           <View style={{ paddingHorizontal: space.md, paddingTop: space.sm }}>
             <View style={[styles.quote, { backgroundColor: t.goldSoft }]}>
-              {quote.taskId ? <Pencil size={14} color={t.gold} /> : quote.ref ? <ListChecks size={14} color={t.gold} /> : <Inbox size={14} color={t.gold} />}
+              {quote.taskId ? <Pencil size={14} color={t.gold} /> : quote.ref ? <ListChecks size={14} color={t.gold} /> : quote.saveId ? <Bookmark size={14} color={t.gold} /> : <Inbox size={14} color={t.gold} />}
               <T v="callout" numberOfLines={1} style={{ flex: 1, fontSize: 13 }}>
                 {quote.taskId
                   ? L(`改「${quote.title}」· 直接发给做它的 ${modelLabel(quote.model)}`, `Revise "${quote.title}" · goes straight to ${modelLabel(quote.model)}`)
-                  : quote.ref ? L(`说的是：${quote.title}`, `About: ${quote.title}`) : L(`回复：${quote.title}`, `Re: ${quote.title}`)}
+                  : quote.ref ? L(`说的是：${quote.title}`, `About: ${quote.title}`) : quote.saveId ? L(`关于收藏：${quote.title}`, `About the saved item: ${quote.title}`) : L(`回复：${quote.title}`, `Re: ${quote.title}`)}
               </T>
               <Pressable onPress={() => setQuote(null)} hitSlop={10} accessibilityRole="button" accessibilityLabel={L('不带这条引用', 'Remove the quote')}>
                 <X size={14} color={t.ink3} />

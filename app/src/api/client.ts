@@ -27,7 +27,8 @@ export interface GravaApi {
   rewind(threadId: string, msgId: string): Promise<string>;
 }
 
-export interface SendExtra { inboxId?: string; ref?: string; onCard?: (card: ChatCard) => void }
+/** save：问的是哪条收藏（「问问」「翻译」带过来的），模型另外看到它的来源、备注和正文。 */
+export interface SendExtra { inboxId?: string; ref?: string; save?: string; onCard?: (card: ChatCard) => void }
 
 const now = () => {
   const d = new Date();
@@ -89,12 +90,12 @@ async function consume(r: Response, onDelta?: (partial: string) => void, onStart
 /** multipart 里的文件：web 上是 File 对象；原生上是 {uri, name, type}，由 RN 的原生网络层读盘上传。
  *  注意 Expo 57 起全局 fetch 是 expo/fetch，它的 FormData 不认 {uri} 这种部件（报 "Unsupported FormDataPart implementation"），
  *  所以上传一律走 XMLHttpRequest（仍是 RN 自己的实现，支持 uri 部件，web 上也能传 File）。 */
-function formFile(fd: FormData, field: string, f: PendingFile) {
+export function formFile(fd: FormData, field: string, f: PendingFile) {
   if (f.file) fd.append(field, f.file, f.name);
   else fd.append(field, { uri: f.uri, name: f.name, type: f.mime || 'application/octet-stream' } as unknown as Blob);
 }
 
-function xhrUpload(url: string, fd: FormData, timeoutMs = 10 * 60 * 1000): Promise<any> {
+export function xhrUpload(url: string, fd: FormData, timeoutMs = 10 * 60 * 1000): Promise<any> {
   return new Promise((resolve, reject) => {
     const xhr = new XMLHttpRequest();
     xhr.open('POST', url);
@@ -129,7 +130,7 @@ export class HttpApi implements GravaApi {
     const attachments = files?.length ? (await uploadFiles(threadId, files)).map((a) => a.id) : [];
     const r = await expoFetch(`${getBase()}/api/chat/send`, {
       method: 'POST', headers: { 'Content-Type': 'application/json', Accept: 'text/event-stream', ...authHeaders() },
-      body: JSON.stringify({ thread: threadId, text, model: modelId, attachments, ...(extra?.inboxId ? { inboxId: extra.inboxId } : {}), ...(extra?.ref ? { ref: extra.ref } : {}) }),
+      body: JSON.stringify({ thread: threadId, text, model: modelId, attachments, ...(extra?.inboxId ? { inboxId: extra.inboxId } : {}), ...(extra?.ref ? { ref: extra.ref } : {}), ...(extra?.save ? { save: extra.save } : {}) }),
     });
     if (!r.ok) {
       const j = await r.json().catch(() => ({}));

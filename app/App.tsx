@@ -7,6 +7,7 @@ import { UpdateBanner } from './src/components/UpdateBanner';
 import { LangProvider } from './src/i18n';
 import { RootNavigator } from './src/navigation';
 import { StoreProvider } from './src/store';
+import { ThinkProvider } from './src/think/ThinkStore';
 import { ThemeProvider, useTheme } from './src/theme';
 
 function Shell() {
@@ -29,7 +30,9 @@ export default function App() {
         <LangProvider>
           <BannerProvider>
             <StoreProvider>
-              <Shell />
+              <ThinkProvider>
+                <Shell />
+              </ThinkProvider>
             </StoreProvider>
           </BannerProvider>
         </LangProvider>
