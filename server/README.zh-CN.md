@@ -169,6 +169,22 @@ python3 project_ctl.py conclude sc-1a2b3c4d --done "…" --learned "…"
 | `POST /api/projects/review` | 截止都过了的项目问「归档？」（日结用） |
 | `GET /api/sidechats` | 侧栏列表，每个项目也带上面那几个摘要字段 |
 
+## 看板、功能包和提醒
+
+每个 Agent 有自己的表，看板上的积木由它自己摆；app 只按服务端算好的数据画七种积木，不自己算。见 [`boards.py`](boards.py)、[`packs.py`](packs.py)、[`alerts.py`](alerts.py)，Agent 用 [`board_ctl.py`](board_ctl.py)。
+
+| 接口 | 做什么 |
+|---|---|
+| `GET /api/boards/{agent}` | 现在的看板：`blocks`（Agent 的积木和数据）、`sections`（内置看板各节的显示顺序，`{id, title, hidden}`）、`collections`、`strip`（Agent 改过、用户还没点「知道了」时的撤回条） |
+| `PUT /api/boards/{agent}` | 整份换一版 `{blocks, sections?, note, mode: apply / propose, by}`。`sections`（内置小节的顺序、藏没藏）不给就沿用现在的，Agent 加一块不会把用户挪过、藏过的冲掉 |
+| `GET /api/boards/proposal/{inboxId}` | 看板提案（kind `block`）的预览：改了的块，用现在的数据画 |
+| `POST /api/boards/plan`，`PUT` / `GET /api/boards/plan/{inboxId}` | 新 Agent 的方案 `{tables（可以带示例行）, blocks}`：在内存里校验、画出来，建 Agent 的卡在 Agent 还没建时就能看看板（`inbox_ctl.py add --board-file`） |
+| `GET /api/packs`，`GET /api/packs/{name}` | 功能包（`packs/<名字>/pack.json`：表 + 积木 + 提醒 + `GUIDE.md`），以及装在哪些 Agent 上 |
+| `POST /api/packs/{name}/install` | `{agent, mode: apply / propose / check}`：没有的表建上，已有的只补缺的字段和选项，看板上已经有的块不重复加；propose 走收件箱，预览是装好以后的看板。包里的提醒另外各出一张卡 |
+| `POST /api/packs/{name}/remove` | 看板上拿掉这个包的积木（表和数据留着） |
+| `GET /api/alerts/{agent}`，`POST /api/alerts/item/{id}` | 开着和暂停的提醒；暂停 / 恢复 / 删掉 |
+| `POST /api/alerts/{agent}/check`，`POST /api/alerts/{agent}/propose` | 一条提醒规则 `{id, title, source（和列表一样的查询）, row, message, at, days, level}`：check 看今天会推什么；propose 出一张 kind `push` 的收件箱卡（新推送一律要用户点头）。同意后服务端每 30 秒看一次，到点查出有东西就推一条（服务器没开着，3 小时内补推），点开进这个 Agent 的看板 |
+
 ## 推送
 
 三档：**ring** 响铃（有声音，interruptionLevel active）、**quiet** 静默（不出声，进通知中心，passive）、**none** 不推。`server.json` 的 `push.quiet_hours`（默认 `["23:00", "07:30"]`，按 `timezone`；`[]` = 不设）里 ring 自动降成 quiet。

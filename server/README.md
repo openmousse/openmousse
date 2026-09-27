@@ -169,6 +169,22 @@ python3 project_ctl.py conclude sc-1a2b3c4d --done "…" --learned "…"
 | `POST /api/projects/review` | Ask "archive?" for projects whose deadlines are all past (daily digest) |
 | `GET /api/sidechats` | The sidebar list, now with the same summary fields per project |
 
+## Boards, feature packs and reminders
+
+Each Agent has its own tables and a dashboard of blocks it lays out itself; the app draws seven block types from the server-computed data and never computes. See [`boards.py`](boards.py), [`packs.py`](packs.py), [`alerts.py`](alerts.py); Agents use [`board_ctl.py`](board_ctl.py).
+
+| Endpoint | What it does |
+|---|---|
+| `GET /api/boards/{agent}` | The live board: `blocks` (the Agent's blocks with their data), `sections` (the built-in dashboard's sections in display order, `{id, title, hidden}`), `collections`, and `strip` (undo strip after the Agent changed it) |
+| `PUT /api/boards/{agent}` | A whole new board `{blocks, sections?, note, mode: apply / propose, by}`. `sections` (order and hidden flags of the built-in sections) is kept from the current version when left out, so an Agent adding a block never undoes what the user moved or hid |
+| `GET /api/boards/proposal/{inboxId}` | Preview of a board proposal (kind `block`): the changed blocks drawn with today's data |
+| `POST /api/boards/plan`, `PUT` / `GET /api/boards/plan/{inboxId}` | A new Agent's plan `{tables (with optional sample rows), blocks}`: validated and drawn in an in-memory database, so the new-Agent card can show its board before the Agent exists (`inbox_ctl.py add --board-file`) |
+| `GET /api/packs`, `GET /api/packs/{name}` | Feature packs in `packs/<name>/pack.json` (tables + blocks + reminders + `GUIDE.md`), and where each is installed |
+| `POST /api/packs/{name}/install` | `{agent, mode: apply / propose / check}`: missing tables are created, existing ones only gain missing fields and choice options, blocks already on the board are not added twice; propose goes through the inbox with the finished board as preview. The pack's reminders are proposed separately |
+| `POST /api/packs/{name}/remove` | Takes the pack's blocks off the board (tables and data stay) |
+| `GET /api/alerts/{agent}`, `POST /api/alerts/item/{id}` | Reminders that are on or paused; pause / resume / delete |
+| `POST /api/alerts/{agent}/check`, `POST /api/alerts/{agent}/propose` | A reminder rule `{id, title, source (a list query), row, message, at, days, level}`: check shows what it would send today; propose makes an inbox card of kind `push` (a new notification always needs the user's OK). Once approved the server checks every 30 s and sends one push when the query returns rows (up to 3 hours late if the server was down); tapping it opens the Agent's board |
+
 ## Notifications
 
 Three levels: **ring** (sound, interruptionLevel active), **quiet** (no sound, goes to Notification Center, passive), **none** (not sent). During `push.quiet_hours` in `server.json` (default `["23:00", "07:30"]`, in `timezone`; `[]` turns it off) ring is downgraded to quiet.
