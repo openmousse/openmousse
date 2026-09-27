@@ -3,6 +3,10 @@
 
 - 线程：main + 现在所有的 Agent（服务的 /api/groups）+ 没归档的项目（/api/projects，发「日结（项目）」，按 project skill 更新项目卡）。
   当天（逻辑日 04:00 起）没有消息的线程跳过。最后调一次 /api/projects/review：截止都过了 3 天的项目问一次「归档？」（收件箱，静音）。
+- 日结里顺带：今天新知道的关于用户的事按世界树规则写进树（memory-tree skill）。
+- 都发完以后，今天只要有一个线程有过对话，就给 main 再发一条「日结提案」：它按 proposals skill 回看这一周的对话，
+  值得固定下来的做法提成 skill / Agent 交进收件箱（每晚最多 2 条，多数时候没有）。main 还在回就每 30 秒再试，
+  最多等 12 分钟，夜里那次最晚等到 03:58（04:00 会话重置，别挤进新的一天）。
 - 走服务端 /api/chat/trigger（origin=auto，level=none：回完不推送）。上一条还没回完（409）→ 等 60 秒再试一次。
 - 日志：~/.openmousse/data/daily_close.log
 用法：daily_close.py [--dry-run] [--thread <id>]
@@ -26,9 +30,11 @@ MARK = "【自动触发】"  # 协议标记：app 靠这个前缀认出系统消
 
 def trigger_text() -> str:
     return MARK + L(
-        "日结。按 AGENTS.md 的日结规则：把今天的结论写进 memory/今天.md 的「## 日结」和共享 digest，值得长期记住的进 MEMORY.md。回一行「日结好了」。",
+        "日结。按 AGENTS.md 的日结规则：把今天的结论写进 memory/今天.md 的「## 日结」和共享 digest，值得长期记住的进 MEMORY.md；"
+        "今天新知道的关于用户本人的事实、偏好、决定、近况，按世界树规则写进树（memory-tree skill，先 recall 查重，没有就不写）。回一行「日结好了」。",
         "Daily digest. Follow the daily digest rules in AGENTS.md: write today's conclusions under \"## Daily digest\" in today's "
-        "memory/YYYY-MM-DD.md and in the shared digest, and put anything worth keeping long-term into MEMORY.md. "
+        "memory/YYYY-MM-DD.md and in the shared digest, and put anything worth keeping long-term into MEMORY.md; new facts, preferences, "
+        "decisions and life updates about the user go into the memory tree per its rules (memory-tree skill; recall first, skip if nothing new). "
         "Reply with one line: \"Daily digest done\".",
     )
 
@@ -41,6 +47,35 @@ def project_text() -> str:
         "decisions with project_ctl.py, and append today's notes to memory/projects/<project id>.md (not today's memory file). "
         "Reply with one line: \"Daily digest done\".",
     )
+
+
+def proposal_text() -> str:
+    return MARK + L(
+        "日结提案。按 proposals skill：跑 `python3 ~/.openmousse/repo/server/proposals_ctl.py context` 回看这一周的对话，"
+        "有值得做成 skill 或 Agent 的就提（每晚最多 2 条，多数时候没有，不要硬凑）。回一行：提了什么，或者「今天没有要提的」。",
+        "Nightly proposals. Follow the proposals skill: run `python3 ~/.openmousse/repo/server/proposals_ctl.py context` to look back over "
+        "this week's conversations and propose what is worth turning into a skill or an Agent (at most 2 a night; most nights there is nothing, "
+        "don't force it). Reply with one line: what you proposed, or \"Nothing to propose today\".",
+    )
+
+
+PROPOSAL_DEADLINE = (3, 58)  # 用户时区：夜里那次过了这个点还没发出去就今天不提（04:00 会话重置）
+
+
+def propose_when_free() -> str:
+    """给 main 发「日结提案」：它还在回（多半是刚才的日结），每 30 秒再试；最多等 12 分钟，夜里那次最晚等到 PROPOSAL_DEADLINE。"""
+    start = user_now()
+    limit = start + timedelta(minutes=12)
+    reset = start.replace(hour=PROPOSAL_DEADLINE[0], minute=PROPOSAL_DEADLINE[1], second=0, microsecond=0)
+    if start < reset:
+        limit = min(limit, reset)
+    while True:
+        r = trigger("main", proposal_text())
+        if r != "busy":
+            return r
+        if user_now() >= limit:
+            return "skipped (main busy)"
+        time.sleep(30)
 
 
 def projects() -> list[str]:
@@ -115,6 +150,8 @@ def main() -> None:
         time.sleep(5)
     if not a.dry_run and not a.thread:
         results.append({"review": review()})
+        if any(r.get("msgs") for r in results):
+            results.append({"proposals": propose_when_free()})
     line = f"{now.strftime('%Y-%m-%d %H:%M')} daily_close {json.dumps(results, ensure_ascii=False)}"
     if not a.dry_run:
         log = db_path().parent / "daily_close.log"
