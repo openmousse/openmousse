@@ -14,6 +14,8 @@
 | 活动记录 | app 的 activity_log + Gateway 审计（`audit.activity.list`，只有元数据）+ 定时任务的运行记录 |
 | 基础档案 | L0 `~/.openclaw/shared/profile/USER.md`：改一条就写回，旧版本存 `grava/profile-history.md`（不在检索路径里） |
 | 记忆 | L1 各 agent 工作区的 `MEMORY.md`：忘记 = 删掉这一条，活动记录只留一行、不含内容 |
+| 世界树（我 → 世界树） | workspace 的 `scripts/memory_tree.py`（可选数据源 tree）：真身是 Obsidian 库 `世界树/` 里一条一篇的笔记，索引 `grava/tree_index.db`；确认 / 忘记 / 挪枝都经它做，活动记录由它写、不含内容（见 memtree.py） |
+| 连接（我 → 连接） | 服务器上的实测：密钥的名字在不在、缓存文件的时间、grava.db 里的健康同步时间和推送登记、systemd user 单元的状态、`openclaw channels status`（2 分钟缓存）；整份缓存 60 秒，不返回任何密钥或配置的值（见 connectors.py） |
 | 日志（Group 记忆页、我 → 日志） | grava.db `journal`（Grava 经 `scripts/grava_journal.py` 写） |
 | Agent 看板里的积木（Agent 自己的表、看板配置和版本） | grava.db `collections` / `records` / `boards`（Agent 经 `server/board_ctl.py` 写；提案走收件箱 kind block；见 boards.py） |
 | 日结提案（主对话每晚回看这一周，提「加一个 skill」「建一个 Agent」） | grava.db `proposals`（main 经 `server/proposals_ctl.py` 交；同意后服务端写 skills/、改 openclaw.json 的允许列表或建好 Agent；见 proposals.py） |

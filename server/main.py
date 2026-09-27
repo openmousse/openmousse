@@ -13,6 +13,8 @@
 - 学习台：/study 网页 + /api/study/*，课件和学习页按课程 / 模块浏览，问答走同一条对话通道（见 study.py）。
 - 日程和「要记得的」：/api/schedule（课表 + 自己的日程 + 当天的截止，能改）、/api/remember（作业、邮件、求职的 ddl，打勾），iPhone 日历订阅 /cal/<令牌>.ics（见 schedule.py）。
 - 目标：/api/goals（你和 Agent 都能改，每次改动能撤销）、/api/goals/trend（体重、体脂的读数：训记为主、Apple 健康对照）（见 goals.py）。
+- 世界树：/api/tree（各 AI 平台共用的记忆：枝和叶子，确认 / 忘记 / 挪枝；真源是 workspace 的 memory_tree.py，见 memtree.py）。
+- 连接：/api/connectors（助手接着的每样东西现在怎么样：数据来源、日程和邮件、文件和笔记、记忆、渠道和推送；见 connectors.py）。
 - 数据源可选（sources.py）：workspace 的 scripts/ 里没有对应脚本时，相关接口回 ok=false + missing_source，其它照常。
 """
 from __future__ import annotations
@@ -56,6 +58,8 @@ import alerts  # noqa: E402
 from alerts import router as alerts_router  # noqa: E402
 from packs import router as packs_router  # noqa: E402
 from proposals import router as proposals_router  # noqa: E402 — 顺带挂上 kind=skill / agent 的收件箱钩子（日结提案）
+from memtree import router as tree_router  # noqa: E402
+from connectors import router as connectors_router  # noqa: E402
 
 DIST = settings.dist
 settings.db.parent.mkdir(parents=True, exist_ok=True)  # 新实例第一次启动：数据目录还不存在
@@ -99,6 +103,8 @@ app.include_router(boards_router)
 app.include_router(projects_router)
 app.include_router(proposals_router)
 app.include_router(goals_router)
+app.include_router(tree_router)
+app.include_router(connectors_router)
 app.add_exception_handler(sources.NoSource, sources.no_source_handler)
 _whois: dict[str, tuple[float, str | None]] = {}
 _lock = threading.Lock()

@@ -28,6 +28,7 @@ server.json（都可选；没有哪一项，那一类就没有）
   "remember": {"mail": {"items": "条目 JSON 的路径", "cmd": ["python3", ".../mail_digest.py"],
                         "sources": {"来源键": "显示名，空字符串 = 「邮件」"}, "link": "原文链接模板，{thread_id} 换成邮件会话 id"}}
 iPhone 日历订阅的令牌和四类开关存 grava.db 的 settings（schedule_feed）；GET /cal/<令牌>.ics 在 /api 之外，不要认证，令牌就是密码。
+每次来取记下时间和粗分的日历种类（settings 的 schedule_feed_seen，「我 → 连接」据此看订阅通不通）。
 """
 from __future__ import annotations
 
@@ -43,7 +44,7 @@ import uuid
 from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, HTTPException, Query, Request
 from fastapi.responses import Response
 from pydantic import BaseModel
 
@@ -1077,7 +1078,28 @@ async def get_log(limit: int = 30):
 # —— iPhone 日历订阅 ————————————————————————————————————————————————————————
 
 FEED_KEY = "schedule_feed"
+FEED_SEEN_KEY = "schedule_feed_seen"  # 日历上次来取的时间和是哪种日历（「我 → 连接」看订阅通不通，见 connectors.py）
 FEED_DEFAULT = {"classes": False, "mine": True, "deadlines": True, "mail": True}
+
+
+def feed_client(ua: str) -> str:
+    """来取订阅的是哪种日历（按 User-Agent 粗分，只存这个词）：ios / mac / google / outlook / other。"""
+    u = ua.lower()
+    if "iphone" in u or "ipad" in u or "ios/" in u or "dataaccessd" in u:
+        return "ios"
+    if "macos" in u or "mac os" in u or "calendaragent" in u:
+        return "mac"
+    if "google" in u:
+        return "google"
+    if "microsoft" in u or "outlook" in u:
+        return "outlook"
+    return "other"
+
+
+def note_pickup(client: str) -> None:
+    with _lock, sdb() as conn:
+        conn.execute("CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT NOT NULL)")
+        conn.execute("INSERT OR REPLACE INTO settings(key, value) VALUES(?, ?)", (FEED_SEEN_KEY, json.dumps({"at": now_iso(), "client": client})))
 
 
 def feed_settings(create: bool = True) -> dict | None:
@@ -1198,10 +1220,11 @@ def build_ics(include: dict) -> str:
 
 
 @router.get("/cal/{token}.ics")
-async def ics_feed(token: str):
-    """iPhone 日历订阅（只读）。不在 /api 下、不要认证：链接里的令牌就是密码，app 里能换。"""
+async def ics_feed(token: str, request: Request):
+    """iPhone 日历订阅（只读）。不在 /api 下、不要认证：链接里的令牌就是密码，app 里能换。每次来取记下时间和是哪种日历。"""
     cur = await asyncio.to_thread(feed_settings, False)
     if not cur or not secrets.compare_digest(str(cur.get("token") or ""), token):
         raise HTTPException(404, "Not found")
     text = await asyncio.to_thread(build_ics, {**FEED_DEFAULT, **(cur.get("include") or {})})
+    await asyncio.to_thread(note_pickup, feed_client(request.headers.get("user-agent") or ""))
     return Response(text, media_type="text/calendar; charset=utf-8", headers={"Cache-Control": "no-store"})

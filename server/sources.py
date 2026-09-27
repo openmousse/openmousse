@@ -6,6 +6,7 @@
   workouts / meals / body   ← scripts/xunji.py（作者用的训记；换别的软件就写一个同名接口的适配器）
   calendar                  ← scripts/calendar_ics.py（ICS 链接）
   health                    ← scripts/apple_health.py（恢复分、热量缺口、体能趋势；原始数据由手机推到 /api/health/daily，不需要脚本）
+  tree                      ← scripts/memory_tree.py（世界树：各 AI 平台共用的记忆，真身是 Obsidian 库里的笔记；见 memtree.py）
 
 脚本目录在 server.json 的 `scripts`（默认 <workspace>/scripts）。
 """
@@ -41,6 +42,7 @@ def _load(name: str) -> ModuleType | None:
 xunji = _load("xunji")
 calendar_ics = _load("calendar_ics")
 apple_health = _load("apple_health")
+memory_tree = _load("memory_tree")
 
 AVAILABLE: dict[str, bool] = {
     "workouts": xunji is not None,
@@ -48,6 +50,7 @@ AVAILABLE: dict[str, bool] = {
     "body": xunji is not None,
     "calendar": calendar_ics is not None,
     "health": apple_health is not None,
+    "tree": memory_tree is not None,
 }
 
 
@@ -64,7 +67,7 @@ def xunji_name() -> str:
 def label(kind: str) -> str:
     """数据类型的显示名，按请求的语言（英文要能套进 "No {x} data connected yet"）。"""
     names = {"workouts": L("训练", "workout"), "meals": L("餐食", "meal"), "body": L("身体数据", "body"),
-             "calendar": L("日历", "calendar"), "health": L("健康指标", "health")}
+             "calendar": L("日历", "calendar"), "health": L("健康指标", "health"), "tree": L("世界树", "memory tree")}
     return names.get(kind, kind)
 
 
@@ -81,7 +84,13 @@ def require(kind: str) -> None:
         raise NoSource(kind)
 
 
+def hint(kind: str) -> str:
+    if kind == "tree":
+        return L("服务器的 scripts 目录里没有 memory_tree.py（世界树的脚本），接上以后这里就有了。",
+                 "memory_tree.py (the memory tree script) isn't in the server's scripts directory. Once it's there, this page fills in.")
+    return L(f"在 server.json 的 scripts 目录放一个提供{label(kind)}的脚本，或者直接在对话里记。",
+             f"Put a script that provides {label(kind)} data in the scripts directory set in server.json, or just log it in chat.")
+
+
 async def no_source_handler(_: Request, exc: NoSource) -> JSONResponse:
-    return JSONResponse({"ok": False, "error": str(exc), "missing_source": exc.kind,
-                         "hint": L(f"在 server.json 的 scripts 目录放一个提供{label(exc.kind)}的脚本，或者直接在对话里记。",
-                                   f"Put a script that provides {label(exc.kind)} data in the scripts directory set in server.json, or just log it in chat.")})
+    return JSONResponse({"ok": False, "error": str(exc), "missing_source": exc.kind, "hint": hint(exc.kind)})
