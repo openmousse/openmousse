@@ -245,6 +245,7 @@ python3 proposals_ctl.py agent --slug reading --name 读书 --purpose "…" --ic
 | 收件箱做完 / 没做成 | quiet |
 | 从 app 派的后台任务做完、没做成、到点停了；「改一下」的一轮做完（`tasks.notify_done`） | quiet（Telegram 派的由 OpenClaw 在 Telegram 里回；取消的不推） |
 | `/api/push/send`（起床报告、ddl 提醒……） | 请求里的 `level`，默认 ring |
+| 冥想时间里的以上任何一条 | 压住（返回 `held: true`），结束时进小结 |
 
 回复期间写了建议卡（`feed_items` 多了一行、group_id 是这个线程；main 认没挂 Agent 的卡）就推卡片（副标题是卡的类型，正文是「卡标题 · 第一条要点」），否则推回复的开头（去掉 Markdown，按句子截断）。`data` 带 `thread`（老版本 app 只认它）、`target`（`{type: thread | card | inbox | today, …}`）、`level`（算过静默时段后实际用的档位）、`kind`（reply / card / inbox / done / report）。角标 = 收件箱待你点头 + 给你的未读回复。`/api/push/send` 收 `{title, body, thread?, thread_id?, subtitle?, level?, category?, collapse?, target?}`。
 
@@ -279,6 +280,42 @@ app 里的「我 → 世界树」。你的各个 AI（Claude、ChatGPT、Gemini�
 ## 连接
 
 「我 → 连接」：助手接着的每一样东西，现在怎么样。`GET /api/connectors[?fresh=1]` → `{groups: [{id, title, items}], counts: {ok, warn, off}, checkedAt}`；每一项 `{id, name, icon, status: ok | warn | off, line, facts: [{label, value}], uses, fix, open}`（`open` = app 里能跳去的页）。整份结果按语言缓存 60 秒（`fresh=1` 跳过），聊天渠道的在线状态（`openclaw channels status`）缓存 2 分钟。每一项都是尽力而为，不返回任何密钥：只看密钥的名字在不在、文件的时间、条数和 systemd 单元的状态。你的机器上没有的（脚本、单元、目录）那一项就不出现；自带的功能还没用上的（Apple 健康、日历订阅、推送）显示「没接」。日历订阅（`/cal/<令牌>.ics`）现在会记下日历上次来取的时间和大致是哪种（iPhone / Mac / Google / Outlook）。见 [`connectors.py`](connectors.py)。
+
+## 思考空间和收藏
+
+app 的「思考」tab：想到什么先扔进来（一句话、几个 `#关键词`、语音、照片、文件、链接、长文），没有人回。勾几条点「聊聊」或「想完了」，模型才参与。「收藏」存别的 App 里的好东西（链接、文件、截图），同样不调模型，你决定怎么处理。「冥想时间」期间推送全压住，结束时一次给你。见 [`think.py`](think.py)、[`saves.py`](saves.py)。
+
+- **一条想法 = 一篇 Markdown 笔记。** `server.json` 配了 `think.vault`（例如 `"think": {"vault": "~/vault", "obsidian_vault": "库的名字"}`）就放进库的收件箱，Obsidian 里看得到，在那边改了也读得回来；没配放 `<data_dir>/think/`。文件夹名按语言默认（中文：收件箱 / 收件箱/已想完 / 收件箱/附件 / 笔记 / 写作；`think.inbox_dir`、`done_dir`、`attach_dir`、`notes_dir`、`writing_dir` 可改）。属性：`id, kind, created_at, source, keywords, tags, topics, note, files, url`；附件在正文末尾嵌成 `![[…]]`。在 Obsidian 里新建的笔记也收。文件按 mtime 和大小判断有没有变，1 秒内刚改的等下一轮（同步客户端不是原子写），写一律临时文件 + rename。删除 = 挪进库的 `.trash/`；想完的挪进「已想完」，不删。
+- **关键词** = 属性 `keywords` + 正文里的 `#词`（跟在中文后面也算）。关键词页列出带它的全部想法和收藏、用过它的主题、常一起出现的词。
+- **主题**（`think_topics`，id `tp-…`，也是对话线程和 OpenClaw 会话 `agent:main:grava:tp-…`）：「聊聊」先发一句「【自动触发】聊聊」，让模型先问、不急着下结论；每天第一句话、主题里的碎片变了以后，`chat.start_run` 把碎片和「陪你想」的规矩拼在消息前面（对话里不显示）。聊的时候「只记下」的一句不给模型看（`note: true`，对话里一行虚线，不发给 Gateway），想完了时一起用。「想完了」在另一个会话里后台整理草稿（标题、一句话、要点和出处、还没想清的、下一步、关键词、记进世界树的一句），你改完「存进库」：写进笔记或写作文件夹，碎片挪进已想完，要记的经 workspace 的 `memory_tree.py` 写一片世界树叶子。
+- **收藏**（`think_saves`，原件在 `<data_dir>/saves/`，`think.saves_dir` 可改）：原件不进库。存的时候抽一份正文（网页在后台抓，公众号文章也行，原文删了也还在；PDF / Word / 表格抽文字），抓不到就把原因记在链接旁边。之后你决定：带进主对话问（`/api/chat/send` 的 `save` 把正文给模型）、交给某个 Agent（在它的线程里安静地跑一轮）、放进思考变成一条想法、提炼成笔记、删掉（软删，能恢复）。
+- **搜索**在内存里按字面找想法、收藏、聊过的主题和存进库的笔记（中文两个字就能搜），结果带高亮分段，不调模型。**历史**按天数想法和收藏。
+- **冥想时间**（`think_focus`，25 / 45 / 90 分钟或不限 = 3 小时）：开始前 app 先列出这段时间里的日程；期间 `push.send_push` 一律不推，记进 `think_focus_held`；结束（点结束或到点）给小结：压住的按去处合并（同一个对话只留最新一条），加上等你点头的和接下来的日程。没人看过的小结，下次 `GET /api/think/focus` 还会给。
+
+| 接口 | 做什么 |
+|---|---|
+| `GET /api/think/stream?before=&limit=` | 想法（新的在前，只记下的不列）、在想的 `topics`（`count` = 碎片数，`notes` = 只记下的句数）、`savesNew`、`vault`、`folder`、`obsidianVault` |
+| `POST /api/think/fragments` | `{kind?, text?, title?, keywords?, url?, topic?}`；带 `topic` = 在这个主题里只记下 |
+| `POST /api/think/fragments/upload` | multipart：最多 10 个 `files`、`text`、`kind`（voice 转文字、原声留着）、`keywords`（JSON 数组）、`duration`、`title` |
+| `GET` / `PATCH` / `DELETE /api/think/fragments/{id}` | 一条想法；`{text?, title?, keywords?}` 改笔记本身；删 = 挪进库的回收站 |
+| `GET /api/think/file/{id}/{index}?thumb=1` | 附件（缩略图缓存在库外面） |
+| `POST /api/think/notes` | `{title, text, folder}`：长文直接存进写作（或笔记）文件夹 |
+| `POST /api/think/topics` / `GET /api/think/topics?status=` | 开一个主题 `{fragments, title?}` / 列出来 |
+| `GET` / `PATCH /api/think/topics/{id}` | 主题、它的碎片和草稿 / `{title?, add?, remove?, status: open?}` |
+| `POST /api/think/topics/{id}/talk` | 开始聊（模型先问） |
+| `POST /api/think/topics/{id}/done?fresh=` | 后台整理草稿（`draftStatus` running → ready / failed）；`fresh=1` 重新整理 |
+| `POST /api/think/topics/{id}/save` | `{title, oneLine, points, open, next, keywords, folder: notes / writing, tree?, branch?}` |
+| `GET /api/think/search?q=&scope=` | `scope`：all / idea / save / topic / note |
+| `GET /api/think/keywords` / `GET /api/think/keyword?k=` | 关键词按用得多排 / 一个关键词的页 |
+| `GET /api/think/days?month=` / `GET /api/think/day?day=` | 一个月每天的数 / 某一天的想法和收藏 |
+| `GET /api/think/focus`、`GET /api/think/focus/preview?minutes=` | 现在的冥想和没看过的小结 / 这段时间里的日程 |
+| `POST /api/think/focus/start` / `end` | `{minutes}`（0 = 不限）/ `{words?, notes?}` → 小结 |
+| `GET /api/think/focus/summary/{id}`、`POST /api/think/focus/seen/{id}` | 之前的小结 / 标成看过 |
+| `GET /api/think/saves?filter=` | `filter`：all / new / link / file / image / text，另给 `new` 数 |
+| `POST /api/think/saves` / `…/upload` / `…/from-message` | 存链接或一段字 `{url?, text?, title?, note?, source?, keywords?}` / 文件 / 对话里的一条消息 `{thread, id}` |
+| `GET` / `PATCH` / `DELETE /api/think/saves/{id}` | `?full=1` 给全文 / `{title?, note?, keywords?, seen?}` / 软删（`…/restore` 恢复） |
+| `GET /api/think/saves/{id}/file?thumb=1` | 原件 |
+| `POST /api/think/saves/{id}/give` / `…/to-idea` | 交给 Agent `{agent}` / 放进思考 |
 
 ## 数据源是可选的
 

@@ -245,6 +245,7 @@ Three levels: **ring** (sound, interruptionLevel active), **quiet** (no sound, g
 | An inbox item done / failed | quiet |
 | A background task started from the app finished, failed or hit its time limit; a revision round finished (`tasks.notify_done`) | quiet (tasks started on Telegram are answered there by OpenClaw; cancelled ones aren't pushed) |
 | `/api/push/send` (wake-up report, deadline reminders, …) | the request's `level`, default ring |
+| Anything above during focus time | held (the response says `held: true`) and handed over in the focus summary |
 
 If the reply wrote a card (a new `feed_items` row whose group_id is this thread; for main, cards without an Agent), the card is pushed (subtitle = the card type, body = "card title · first point"); otherwise the start of the reply (Markdown stripped, cut at a sentence boundary). `data` carries `thread` (all older app builds read), `target` (`{type: thread | card | inbox | today, …}`), `level` (the level actually used after quiet hours) and `kind` (reply / card / inbox / done / report). The badge is inbox items waiting for you plus unread replies to your own messages. `/api/push/send` takes `{title, body, thread?, thread_id?, subtitle?, level?, category?, collapse?, target?}`.
 
@@ -279,6 +280,42 @@ Me → Memory tree in the app. The memory your AI apps share (Claude, ChatGPT, G
 ## Connections
 
 Me → Connections: everything the assistant is connected to, and how it's doing. `GET /api/connectors[?fresh=1]` → `{groups: [{id, title, items}], counts: {ok, warn, off}, checkedAt}`; each item is `{id, name, icon, status: ok | warn | off, line, facts: [{label, value}], uses, fix, open}` (`open` = a screen in the app to jump to). The result is cached for 60 s per language (`fresh=1` skips it) and the chat channels' status (`openclaw channels status`) for 2 minutes. Every check is best effort and never returns a secret: only whether key names exist, file times, counts and systemd unit states. Checks for things your machine doesn't have (a script, a unit, a folder) are left out; built-ins you don't use yet (Apple Health, the calendar feed, push) show as not connected. The calendar feed (`/cal/<token>.ics`) now remembers when a calendar last picked it up, and roughly which kind (iPhone / Mac / Google / Outlook). See [`connectors.py`](connectors.py).
+
+## Thinking space and Saved
+
+The Think tab in the app: drop a thought the moment it comes (a sentence, a few `#keywords`, a voice note, a photo, a file, a link, a long piece of writing) and nothing answers. The model only joins when you pick a few thoughts and tap **Talk** or **Done thinking**. **Saved** keeps things from other apps (links, files, screenshots) for later, also without calling a model. **Focus time** holds every notification until it ends. See [`think.py`](think.py) and [`saves.py`](saves.py).
+
+- **A thought is a Markdown note.** With `think.vault` in `server.json` (e.g. `"think": {"vault": "~/vault", "obsidian_vault": "Vault name"}`) it goes into the vault's inbox folder, so Obsidian sees it and edits made there come back; without it, into `<data_dir>/think/`. Folder names default by language (zh: 收件箱 / 收件箱/已想完 / 收件箱/附件 / 笔记 / 写作; override with `think.inbox_dir`, `done_dir`, `attach_dir`, `notes_dir`, `writing_dir`). Properties: `id, kind, created_at, source, keywords, tags, topics, note, files, url`; attachments are embedded at the end as `![[…]]`. Notes you create in Obsidian show up too. Files are re-read only when their mtime or size changes, anything modified in the last second waits for the next read (sync clients don't write atomically), and every write is a temp file + rename. Deleting moves the note into the vault's `.trash/`; finished thoughts move to the done folder, never deleted.
+- **Keywords** = the `keywords` property plus `#words` in the text (after CJK text too). The keyword page lists every thought and saved item with it, the topics that used it and the words that often come with it.
+- **Topics** (`think_topics`, id `tp-…`, which is also the chat thread and the OpenClaw session `agent:main:grava:tp-…`): **Talk** sends "【自动触发】聊聊" so the model asks before it concludes; on the first message of each day, and whenever the topic's thoughts change, `chat.start_run` puts the thoughts and the "think with them" rules in front of the message (not shown in the chat). **Just note** in a topic saves a thought the model doesn't see (`note: true`, a dashed line in the chat, never sent to the Gateway); it is used when you finish. **Done thinking** drafts a note in the background in a separate session (title, one line, points with the thoughts they came from, still open, next steps, keywords, one line for the memory tree), you edit it, and **save** writes it into the notes or writing folder, moves the thoughts to the done folder and, if you keep it, adds a memory-tree leaf through the workspace's `memory_tree.py`.
+- **Saved** (`think_saves`, originals in `<data_dir>/saves/`, `think.saves_dir` to change): the originals stay out of the vault. The text is extracted once when saved (web pages in the background, WeChat articles included, so a deleted article survives; PDF / Word / spreadsheets); when a page can't be fetched the reason is kept next to the link. From there you choose: ask the main chat about it (`save` on `/api/chat/send` gives the model the text), hand it to an Agent (a quiet round in its thread), turn it into a thought, distil it into a note, or delete it (soft, restorable).
+- **Search** is literal and in memory over thoughts, saved items, talked topics and saved notes (two CJK characters are enough), with highlighted parts; no model call. **History** counts thoughts and saved items per day.
+- **Focus time** (`think_focus`, 25 / 45 / 90 minutes or open-ended = 3 hours): before it starts the app shows what's scheduled in that window; while it runs `push.send_push` sends nothing and records what it would have sent (`think_focus_held`); when it ends (tapped or timed out) the summary merges them by where they lead (one per chat thread, the latest), plus what's waiting in the inbox and what's next on the schedule. A summary nobody has seen comes back on the next `GET /api/think/focus`.
+
+| Endpoint | What it does |
+|---|---|
+| `GET /api/think/stream?before=&limit=` | Thoughts newest first (private notes left out), open `topics` (`count` = thoughts, `notes` = private notes), `savesNew`, `vault`, `folder`, `obsidianVault` |
+| `POST /api/think/fragments` | `{kind?, text?, title?, keywords?, url?, topic?}`; with `topic` it's a private note in that topic |
+| `POST /api/think/fragments/upload` | Multipart: up to 10 `files`, `text`, `kind` (voice is transcribed, the audio kept), `keywords` (JSON array), `duration`, `title` |
+| `GET` / `PATCH` / `DELETE /api/think/fragments/{id}` | One thought; `{text?, title?, keywords?}` rewrites the note; delete = vault trash |
+| `GET /api/think/file/{id}/{index}?thumb=1` | An attachment (thumbnails are cached outside the vault) |
+| `POST /api/think/notes` | `{title, text, folder}`: a long piece straight into the writing (or notes) folder |
+| `POST /api/think/topics` / `GET /api/think/topics?status=` | Open a topic `{fragments, title?}` / list them |
+| `GET` / `PATCH /api/think/topics/{id}` | The topic with its thoughts and draft / `{title?, add?, remove?, status: open?}` |
+| `POST /api/think/topics/{id}/talk` | Start talking (the model asks first) |
+| `POST /api/think/topics/{id}/done?fresh=` | Draft the note in the background (`draftStatus` running → ready / failed); `fresh=1` drafts again |
+| `POST /api/think/topics/{id}/save` | `{title, oneLine, points, open, next, keywords, folder: notes / writing, tree?, branch?}` |
+| `GET /api/think/search?q=&scope=` | `scope`: all / idea / save / topic / note |
+| `GET /api/think/keywords` / `GET /api/think/keyword?k=` | Keywords by use / one keyword's page |
+| `GET /api/think/days?month=` / `GET /api/think/day?day=` | Per-day counts for a month / one day's thoughts and saved items |
+| `GET /api/think/focus`, `GET /api/think/focus/preview?minutes=` | Current focus time and the unseen summary / what's scheduled in the window |
+| `POST /api/think/focus/start` / `end` | `{minutes}` (0 = open-ended) / `{words?, notes?}` → the summary |
+| `GET /api/think/focus/summary/{id}`, `POST /api/think/focus/seen/{id}` | An earlier summary / mark it seen |
+| `GET /api/think/saves?filter=` | `filter`: all / new / link / file / image / text, plus the `new` count |
+| `POST /api/think/saves` / `…/upload` / `…/from-message` | Save a link or text `{url?, text?, title?, note?, source?, keywords?}` / files / a chat message `{thread, id}` |
+| `GET` / `PATCH` / `DELETE /api/think/saves/{id}` | `?full=1` for the whole text / `{title?, note?, keywords?, seen?}` / soft delete (`…/restore` undoes) |
+| `GET /api/think/saves/{id}/file?thumb=1` | The original |
+| `POST /api/think/saves/{id}/give` / `…/to-idea` | Hand it to an Agent `{agent}` / turn it into a thought |
 
 ## Data sources are optional
 
