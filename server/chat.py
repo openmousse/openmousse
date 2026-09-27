@@ -26,7 +26,7 @@ from fastapi import APIRouter, HTTPException
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
-from config import TZ, settings  # noqa: E402
+from config import TZ, raw, settings  # noqa: E402
 from i18n import L  # noqa: E402
 
 OPENCLAW = settings.openclaw_json
@@ -81,9 +81,19 @@ def gateway_token() -> str:
 PREFIX_RELAY = "【主对话转来】"  # 每个 Group 一个独立 OpenClaw agent（2026-09-24，第 7 步）
 
 
+def study_agent() -> str | None:
+    """学习台（study-* 线程）归哪个 Agent：server.json 的 study.agent，没配或那个 Agent 不在就留在 main（2026-09-27）。"""
+    a = (raw().get("study") or {}).get("agent")
+    return a if a and a in settings.group_agents else None
+
+
 def agent_of(thread: str) -> str:
-    """线程归哪个 agent：main 和独立空间在 main，Group 各自一个。groups 表里有但配置里没建 agent 的先留在 main。"""
-    return thread if thread in settings.group_agents else "main"
+    """线程归哪个 agent：main 和独立空间在 main，Group 各自一个，学习台归 study.agent。groups 表里有但配置里没建 agent 的先留在 main。"""
+    if thread in settings.group_agents:
+        return thread
+    if thread.startswith("study-") and (a := study_agent()):
+        return a
+    return "main"
 
 
 def session_key(thread: str) -> str:
@@ -91,7 +101,7 @@ def session_key(thread: str) -> str:
         return "agent:main:main"
     if thread in settings.group_agents:
         return f"agent:{thread}:main"
-    return f"agent:main:grava:{thread}"
+    return f"agent:{agent_of(thread)}:grava:{thread}"
 
 
 def thread_of(key: str | None) -> str | None:
@@ -102,6 +112,8 @@ def thread_of(key: str | None) -> str | None:
         return "main"
     if len(parts) >= 4 and parts[:3] == ["agent", "main", "grava"]:
         return ":".join(parts[3:])
+    if len(parts) >= 4 and parts[0] == "agent" and parts[2] == "grava" and parts[1] in settings.group_agents:
+        return ":".join(parts[3:])  # 归到某个 Agent 的学习台线程
     if len(parts) == 3 and parts[0] == "agent" and parts[2] == "main" and parts[1] in settings.group_agents:
         return parts[1]
     return None

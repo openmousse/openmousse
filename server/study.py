@@ -570,9 +570,72 @@ def deadlines(refresh: int = 0):
         items = [{"due": str(x.get("due") or ""), "course": x.get("course"), "title": re.sub(r"_[A-Z]_$", "", str(x.get("title") or "")), "url": x.get("url")}
                  for x in (data if isinstance(data, list) else []) if isinstance(x, dict) and not x.get("submitted")]
         res = {"ok": True, "configured": True, "items": sorted(items, key=lambda x: x["due"]), "checked": chat.now_iso()}
+        sync_agent_deadlines(res["items"])
     _deadlines = (time.time(), res)
     return res
 
+
+
+# —— 学习秘书 Agent（server.json 的 study.agent，2026-09-27）：Canvas ddl 同步进它的「ddl」表，路线打勾记进「学习记录」 ——
+
+COURSE_SHORT = {"Corporate Strategy": "CS", "Business Economics": "BE", "Quantitative Data Analysis": "QDA"}
+
+
+def ddl_kind(title: str) -> str:
+    t = title.lower()
+    if "group" in t:
+        return "小组作业"
+    if "presentation" in t or "video" in t:
+        return "展示"
+    if "exam" in t:
+        return "考试"
+    return "作业"
+
+
+def sync_agent_deadlines(items: list[dict]) -> None:
+    """Canvas 未交作业 → 学习秘书的 ddl 表：新的加一行（按 Canvas 链接认），表里有、截止还没到、Canvas 上不再是未交的 → 标交了。"""
+    agent = chat.study_agent()
+    if not agent:
+        return
+    try:
+        import boards  # 延迟导入：boards 依赖 chat / data
+        have = {(r["data"].get("link") or ""): r for r in boards.list_rows(agent, "deadlines", limit=500)["rows"]}
+        live = set()
+        new = []
+        for x in items:
+            if "participation" in str(x.get("title") or "").lower() or not x.get("due"):
+                continue
+            url = x.get("url") or ""
+            live.add(url)
+            if url and url in have:
+                continue
+            title = str(x.get("title") or "").strip()
+            new.append({"title": title, "course": COURSE_SHORT.get(str(x.get("course") or "")), "kind": ddl_kind(title),
+                        "due": str(x["due"])[:16].replace(" ", "T"), "done": False, "link": url or None})
+        if new:
+            boards.add_rows(agent, "deadlines", boards.RowsIn(rows=new, by="agent"))
+        now = datetime.now(settings.tz).strftime("%Y-%m-%dT%H:%M")
+        for url, r in have.items():
+            d = r["data"]
+            if url.startswith("https://canvas.") and url not in live and not d.get("done") and str(d.get("due") or "") > now:
+                boards.patch_row(r["id"], boards.RowPatch(data={"done": True}, by="agent"))
+    except Exception:  # noqa: BLE001 — 同步不上只是看板少几行，学习台照常
+        pass
+
+
+def log_study_step(unit: dict, step: dict) -> None:
+    """学习路线打了一个勾 → 学习秘书的「学习记录」记一行（哪天、哪门课、哪一步、多久）。"""
+    agent = chat.study_agent()
+    if not agent:
+        return
+    try:
+        import boards
+        what = f"S{unit['session']} " if unit.get("session") else ""
+        boards.add_rows(agent, "study_log", boards.RowsIn(rows=[{
+            "date": chat.day_of(chat.now_iso()), "course": COURSE_SHORT.get(unit["course"]),
+            "what": (what + str(step.get("title") or ""))[:120], "minutes": int(step.get("minutes") or 0) or None}], by="agent"))
+    except Exception:  # noqa: BLE001
+        pass
 
 
 _refreshing = threading.Lock()
@@ -828,7 +891,7 @@ async def gen_job(key: str, unit: dict, kind: str) -> None:
         context = await asyncio.to_thread(context_for, unit, budget)
         thread = unit["thread"] + "-gen"
         # 每次一个新会话：前情很长，不能在同一个会话里越攒越多
-        run = await ask_agent(thread, shown, f"agent:main:grava:{thread}-{int(time.time())}", f"{context}\n\n{ask_text}")
+        run = await ask_agent(thread, shown, f"{chat.session_key(thread)}-{int(time.time())}", f"{context}\n\n{ask_text}")
         data = parse_json(run.text)
         if kind == "path":
             items = check_route(data, allowed)  # type: ignore[arg-type]
@@ -892,7 +955,7 @@ async def video_job(key: str, unit: dict, concept: str) -> None:
     try:
         context = await asyncio.to_thread(context_for, unit)
         thread = unit["thread"] + "-gen"
-        skey = f"agent:main:grava:{thread}-v{int(time.time())}"
+        skey = f"{chat.session_key(thread)}-v{int(time.time())}"
         run = await ask_agent(thread, L(f"生成视频：{concept}", f"Make a video: {concept}"), skey, f"{context}\n\n{video_prompt(concept)}")
         code = extract_code(run.text)
         work = gen_dir(unit["course"]) / "video" / time.strftime("%Y%m%d-%H%M%S")
@@ -1017,6 +1080,7 @@ def set_progress(body: ProgressBody):
     with _progress_lock:
         data = read_progress(body.course)
         done = set(done_steps(body.course, body.page, route, data))
+        newly = body.done and body.step not in done
         (done.add if body.done else done.discard)(body.step)
         data[body.page] = {"gen": route["generated"], "done": sorted(done), "updated": chat.now_iso()}  # type: ignore[index]
         target = progress_path(body.course)
@@ -1024,4 +1088,6 @@ def set_progress(body: ProgressBody):
         tmp = target.with_suffix(".tmp")
         tmp.write_text(json.dumps(data, ensure_ascii=False, indent=1), encoding="utf8")
         tmp.replace(target)
+    if newly:
+        log_study_step(unit, route["items"][body.step])  # type: ignore[index]
     return {"ok": True, "done": sorted(done), "total": n}
