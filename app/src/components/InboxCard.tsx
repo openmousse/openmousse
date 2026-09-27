@@ -4,7 +4,7 @@
 // 执行命令（OpenClaw 的审批）沿用「拒绝 / 这一次同意」：同意只放行这一次，不会变成长期授权。
 import React, { useState } from 'react';
 import { ActivityIndicator, Platform, Pressable, StyleSheet, Text, View } from 'react-native';
-import type { InboxAction, InboxItem, InboxKind, InboxStatus } from '../data/types';
+import type { InboxAction, InboxItem, InboxKind, InboxProposalInfo, InboxStatus } from '../data/types';
 import { L } from '../i18n';
 import { openThread } from '../navigation';
 import { useStore } from '../store';
@@ -173,6 +173,7 @@ function PendingCard({ item, chat }: { item: InboxItem; chat: boolean }) {
       </View>
       <T v="headline" style={chat ? styles.chatTitle : styles.title}>{item.title}</T>
       {item.why ? <T v="callout" color={t.ink2}>{item.why}</T> : null}
+      {item.skill || item.agent ? <ProposalPreview info={(item.skill ?? item.agent) as InboxProposalInfo} kind={item.kind} /> : null}
       {item.kind === 'block' ? <BoardPreview inboxId={item.id} />
         : item.kind === 'agent' ? <BoardPreview inboxId={item.id} plan />
           : item.kind === 'push' ? <AlertPreview inboxId={item.id} source={name} onShown={setAlertShown} /> : null}
@@ -254,6 +255,47 @@ function InboxReceipt({ item, chat }: { item: InboxItem; chat: boolean }) {
   );
 }
 
+/** 日结提案：它是从哪几次对话里看出来的（原话，默认三条），skill 的全文点开才看。 */
+function ProposalPreview({ info, kind }: { info: InboxProposalInfo; kind: InboxKind }) {
+  const t = useTheme();
+  const [allQuotes, setAllQuotes] = useState(false);
+  const [full, setFull] = useState(false);
+  const quotes = allQuotes ? info.evidence : info.evidence.slice(0, 3);
+  const more = info.evidence.length - 3;
+  return (
+    <>
+      {quotes.length ? (
+        <View style={[styles.box, { backgroundColor: t.bg, borderColor: t.line }]}>
+          <T v="caption" color={t.ink3} style={{ fontWeight: '600' }}>{L('这几次你是这么说的', 'What you said')}</T>
+          {quotes.map((e, i) => (
+            <View key={`${i}-${e.quote}`} style={styles.quote}>
+              <T v="callout" style={{ lineHeight: 20 }}>{L(`「${e.quote}」`, `"${e.quote}"`)}</T>
+              {e.date || e.thread ? <T v="caption" color={t.ink3}>{[e.date, e.thread].filter(Boolean).join(' · ')}</T> : null}
+            </View>
+          ))}
+          {more > 0 ? (
+            <Pressable onPress={() => setAllQuotes((v) => !v)} hitSlop={8} accessibilityRole="button" accessibilityState={{ expanded: allQuotes }} style={{ alignSelf: 'flex-start' }}>
+              <T v="caption" color={t.gold} style={{ fontWeight: '600', fontSize: 13 }}>{allQuotes ? L('收起', 'Show less') : L(`还有 ${more} 次`, `${more} more`)}</T>
+            </Pressable>
+          ) : null}
+        </View>
+      ) : null}
+      {kind === 'skill' && info.markdown ? (
+        <>
+          {full ? (
+            <View style={[styles.box, { backgroundColor: t.bg, borderColor: t.line }]}>
+              <Markdown text={info.markdown} color={t.ink2} compact />
+            </View>
+          ) : null}
+          <Pressable onPress={() => setFull((v) => !v)} hitSlop={8} accessibilityRole="button" accessibilityState={{ expanded: full }} style={{ alignSelf: 'flex-start' }}>
+            <T v="caption" color={t.gold} style={{ fontWeight: '600', fontSize: 13 }}>{full ? L('收起', 'Show less') : L('看这套做法的全文', 'Read the full steps')}</T>
+          </Pressable>
+        </>
+      ) : null}
+    </>
+  );
+}
+
 /** 开项目的提案：一张小项目卡——目标、截止、已定的、下一步。 */
 function ProjectPreview({ info }: { info: NonNullable<InboxItem['project']> }) {
   const t = useTheme();
@@ -294,5 +336,6 @@ const styles = StyleSheet.create({
   btn: { flexDirection: 'row', gap: 6, alignItems: 'center', justifyContent: 'center', borderRadius: radius.md, paddingHorizontal: space.lg, height: 44 },
   rcpt: { flexDirection: 'row', alignItems: 'center', gap: space.md, borderRadius: 14, paddingVertical: space.md, paddingHorizontal: 14 },
   prev: { flexDirection: 'row', alignItems: 'flex-start', gap: 10, paddingVertical: 8 },
+  quote: { gap: 1, paddingVertical: 2 },
   prevIcon: { width: 24, height: 24, borderRadius: 8, alignItems: 'center', justifyContent: 'center' },
 });

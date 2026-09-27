@@ -73,6 +73,9 @@ export interface InboxItem {
   fields?: { k: string; v: string }[];
   /** 只有 project 有（server/projects.py）：开项目的提案内容（预览），开好 / 要归档的那个项目（「去看看」） */
   project?: InboxProjectInfo;
+  /** 日结提案（server/proposals.py）：kind skill 的卡在 skill 字段、kind agent 的在 agent 字段，内容一样：给谁、这几次的原话、做法全文 / 职责 */
+  skill?: InboxProposalInfo;
+  agent?: InboxProposalInfo;
   status: InboxStatus;
   /** 「改一下」时写的意见 */
   note: string;
@@ -238,6 +241,16 @@ export type ChatCard = HandoffCard | TaskCardInfo | ScheduleChangeCard | Project
 export interface ThreadCards { cards: ChatCard[]; incoming: HandoffCard[] }
 
 /** 收件箱里 kind=project 的卡多带的：open 开项目（提案里的目标、截止、已定的、下一步）/ archive 归档；project = 开好的或要归档的那个。 */
+/** 日结提案的预览：它在哪几次对话里看出来的（依据），skill 给哪些 Agent、全文（去掉开头的 frontmatter），Agent 管什么。 */
+export interface InboxProposalInfo {
+  id: string;
+  name: string;
+  evidence: { date: string; thread: string; quote: string }[];
+  description?: string;
+  markdown?: string;
+  agents?: { id: string; name: string }[];
+  purpose?: string;
+}
 export interface InboxProjectInfo {
   action: 'open' | 'archive';
   goal?: string;

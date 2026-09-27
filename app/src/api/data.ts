@@ -1,6 +1,6 @@
 // app 其余页面的数据接口（server/data.py）。每一项的真源写在 data.py 顶部的表格里。
 import type {
-  ActivityEntry, AgentColor, ChatCard, DayInfo, HandoffCard, SearchHit, Application, Approval, AvatarConfig, FeedItem, Goal, Group, GroupIcon, InboxAction, InboxItem, InboxStatus, JournalEntry, MemoryItem, ModelsInfo, ProfileItem, SecurityInfo, SideChat, Task, TaskQuota, ThreadCards, UnreadSummary, UpcomingTask,
+  ActivityEntry, AgentColor, ChatCard, DayInfo, HandoffCard, SearchHit, Application, Approval, AvatarConfig, FeedItem, Goal, Group, GroupIcon, InboxAction, InboxItem, InboxProposalInfo, InboxStatus, JournalEntry, MemoryItem, ModelsInfo, ProfileItem, SecurityInfo, SideChat, Task, TaskQuota, ThreadCards, UnreadSummary, UpcomingTask,
 } from '../data/types';
 import { L } from '../lang';
 import { httpStatus, request } from './base';
@@ -21,6 +21,22 @@ const msgNum = (v: unknown): number | null => {
   return m ? Number(m[1]) : null;
 };
 const STATUSES: InboxStatus[] = ['pending', 'approved', 'rejected', 'revising', 'done', 'failed', 'withdrawn', 'expired'];
+/** 日结提案的预览（kind skill / agent 的卡才有）：字段缺了就当没有。 */
+function proposalInfo(raw: unknown): InboxProposalInfo | undefined {
+  if (!raw || typeof raw !== 'object') return undefined;
+  const r = raw as Partial<InboxProposalInfo>;
+  const str = (v: unknown) => (typeof v === 'string' ? v : '');
+  return {
+    id: str(r.id),
+    name: str(r.name),
+    evidence: Array.isArray(r.evidence) ? r.evidence.filter((e) => e && typeof e.quote === 'string').map((e) => ({ date: str(e.date), thread: str(e.thread), quote: e.quote })) : [],
+    description: str(r.description) || undefined,
+    markdown: str(r.markdown) || undefined,
+    agents: Array.isArray(r.agents) ? r.agents.filter((a) => a && typeof a.id === 'string').map((a) => ({ id: a.id, name: str(a.name) || a.id })) : undefined,
+    purpose: str(r.purpose) || undefined,
+  };
+}
+
 /** 服务器在另一边同时开发：字段缺了也别让界面崩。 */
 function normalizeInbox(raw: Partial<InboxItem> & { id: string }): InboxItem {
   const str = (v: unknown) => (typeof v === 'string' ? v : '');
@@ -45,6 +61,8 @@ function normalizeInbox(raw: Partial<InboxItem> & { id: string }): InboxItem {
     decidedAt: typeof raw.decidedAt === 'string' ? raw.decidedAt : null,
     whenText: raw.whenText,
     project: raw.project && typeof raw.project === 'object' ? raw.project : undefined,
+    skill: proposalInfo(raw.skill),
+    agent: proposalInfo(raw.agent),
   };
 }
 
