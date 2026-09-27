@@ -97,3 +97,10 @@ export { default as NotebookPen } from 'lucide-react-native/icons/notebook-pen';
 export { default as Bell } from 'lucide-react-native/icons/bell';
 export { default as BellOff } from 'lucide-react-native/icons/bell-off';
 export { default as PackagePlus } from 'lucide-react-native/icons/package-plus';
+// 世界树和「我 → 连接」（2026-09-27）
+export { default as TreeDeciduous } from 'lucide-react-native/icons/tree-deciduous';
+export { default as GitBranch } from 'lucide-react-native/icons/git-branch';
+export { default as Plug } from 'lucide-react-native/icons/plug';
+export { default as HardDrive } from 'lucide-react-native/icons/hard-drive';
+export { default as Notebook } from 'lucide-react-native/icons/notebook';
+export { default as CalendarSync } from 'lucide-react-native/icons/calendar-sync';

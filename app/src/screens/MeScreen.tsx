@@ -1,8 +1,8 @@
-import React from 'react';
+import React, { useEffect } from 'react';
 import { agentName } from '../brand';
 import { Pressable, ScrollView, View } from 'react-native';
 import { useNavigation } from '@react-navigation/native';
-import { Activity, BookOpen, Brain, CalendarDays, ClipboardList, Cpu, IdCard, Palette, Server, ShieldCheck } from '../components/icons';
+import { Activity, BookOpen, Brain, CalendarDays, ClipboardList, Cpu, IdCard, Palette, Plug, Server, ShieldCheck, TreeDeciduous } from '../components/icons';
 import { LensAvatar } from '../components/LensAvatar';
 import { Card, LargeHeader, ListRow, Pill, PullRefresh, Screen, SectionLabel, Segmented, T } from '../components/ui';
 import { L, useLang, type LangPref } from '../i18n';
@@ -12,15 +12,19 @@ import { space, useAppearance, useTheme } from '../theme';
 export function MeScreen() {
   const t = useTheme();
   const nav = useNavigation<any>();
-  const { avatar, profile, memories, activity, connected, booting, authFailed, appName, tasks, security, models, journal, reload } = useStore();
+  const { avatar, profile, memories, activity, connected, booting, authFailed, appName, tasks, security, models, journal, tree, connectors, reload } = useStore();
   const { appearance, setAppearance } = useAppearance();
   const { pref, setPref } = useLang();
   const warn = security?.facts.filter((f) => f.tone === 'warn') ?? [];
   const expired = models?.providers.filter((p) => p.subscription && p.status !== 'ok') ?? [];
   const running = tasks.filter((x) => x.status === '进行中').length;
+  const leaves = tree?.kind === 'ok' ? tree.data.counts : null;
+  const conn = connectors?.kind === 'ok' ? connectors.data.counts : null;
+  // 世界树和连接不在启动时读（见 store 的 STARTUP_KEYS）：第一次来「我」这一页时读，下面两行的小字要用
+  useEffect(() => { if (connected) reload('tree', 'connectors').catch(() => {}); }, [connected, reload]);
   return (
     <Screen>
-      <ScrollView contentContainerStyle={{ paddingBottom: space.xxl }} refreshControl={<PullRefresh onRefresh={() => reload('profile', 'memories', 'journal', 'activity', 'tasks', 'security', 'models')} />}>
+      <ScrollView contentContainerStyle={{ paddingBottom: space.xxl }} refreshControl={<PullRefresh onRefresh={() => reload('profile', 'tree', 'memories', 'journal', 'activity', 'tasks', 'security', 'models', 'connectors')} />}>
         <LargeHeader title={L('我', 'Me')} />
         <View style={{ paddingHorizontal: space.lg }}>
           <Pressable onPress={() => nav.navigate('Avatar')} accessibilityRole="button" accessibilityLabel={L(`定制 ${agentName()} 的形象`, `Customize ${agentName()}'s look`)}>
@@ -37,6 +41,9 @@ export function MeScreen() {
           <SectionLabel>{L(`${agentName()} 知道的`, `What ${agentName()} knows`)}</SectionLabel>
           <Card style={{ paddingVertical: space.xs }}>
             <ListRow icon={<IdCard size={20} color={t.cyan} />} title={L('基础档案', 'Profile')} sub={profile.length ? L(`${profile.length} 条，所有 agent 共用，可以直接改`, `${profile.length} items, shared by all agents, editable`) : L('所有 agent 共用', 'Shared by all agents')} onPress={() => nav.navigate('Identity')} />
+            <ListRow icon={<TreeDeciduous size={20} color={t.cyan} />} title={L('世界树', 'Memory tree')}
+              sub={leaves ? (leaves.pending ? L(`${leaves.total} 片叶子，${leaves.pending} 条等你确认`, `${leaves.total} leaves, ${leaves.pending} waiting for you`) : L(`${leaves.total} 片叶子，所有 AI 平台共用`, `${leaves.total} leaves, shared by all your AI apps`)) : L('所有 AI 平台共用的记忆', 'Memory shared by all your AI apps')}
+              onPress={() => nav.navigate('Tree')} />
             <ListRow icon={<Brain size={20} color={t.cyan} />} title={L('记忆', 'Memory')} sub={memories.length ? L(`长期记忆 ${memories.length} 条，可以逐条忘记`, `${memories.length} long-term memories, forget any of them`) : L('长期记忆，可以逐条忘记', 'Long-term memory, forget any item')} onPress={() => nav.navigate('Memory')} />
             <ListRow icon={<BookOpen size={20} color={t.cyan} />} title={L('日志', 'Journal')} sub={journal.length ? L(`${journal.length} 条感受、想法和决定`, `${journal.length} feelings, thoughts and decisions`) : L('感受、想法、决定，在对话里说就会记', 'Feelings, thoughts, decisions: say them in chat and they get logged')} onPress={() => nav.navigate('Journal')} last />
           </Card>
@@ -51,6 +58,9 @@ export function MeScreen() {
           <SectionLabel>{L('设置', 'Settings')}</SectionLabel>
           <Card style={{ paddingVertical: space.xs }}>
             <ListRow icon={<Server size={20} color={connected ? t.cyan : t.warn} />} title={L('服务器', 'Server')} sub={connected ? L(`已连接 · ${appName}`, `Connected · ${appName}`) : authFailed ? L('令牌不对，点这里改', 'Wrong token, tap to fix') : L('地址和接入令牌', 'Address and access token')} onPress={() => nav.navigate('Connect')} />
+            <ListRow icon={<Plug size={20} color={conn?.warn ? t.warn : t.cyan} />} title={L('连接', 'Connections')}
+              sub={conn ? [L(`${conn.ok} 个在用`, `${conn.ok} working`), conn.warn ? L(`${conn.warn} 个要注意`, `${conn.warn} need a look`) : ''].filter(Boolean).join(L('，', ', ')) : L(`${agentName()} 接着的各项服务，现在怎么样`, `What ${agentName()} is connected to, and how it's doing`)}
+              onPress={() => nav.navigate('Connectors')} />
             <ListRow icon={<CalendarDays size={20} color={t.cyan} />} title={L('日程', 'Schedule')} sub={L('在 iPhone 日历里看（订阅链接）', 'See it in your iPhone calendar (subscription)')} onPress={() => nav.navigate('ScheduleFeed')} />
             <ListRow icon={<Cpu size={20} color={expired.length ? t.warn : t.cyan} />} title={L('模型与计费', 'Models & billing')} sub={expired.length ? L(`${expired.map((p) => p.name).join('、')} 订阅登录已过期`, `Subscription login expired: ${expired.map((p) => p.name).join(', ')}`) : L('订阅、API、回退顺序', 'Subscriptions, API, fallback order')} onPress={() => nav.navigate('Models')} />
             <ListRow icon={<Palette size={20} color={t.cyan} />} title={L('形象', 'Look')} sub={L('光环样式和颜色', 'Halo style and color')} onPress={() => nav.navigate('Avatar')} last />

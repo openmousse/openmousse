@@ -19,6 +19,8 @@ import { TodayScreen } from './screens/TodayScreen';
 import { HistoryDayScreen, HistoryScreen } from './screens/HistoryScreen';
 import { ConnectScreen } from './screens/ConnectScreen';
 import { InboxScreen } from './screens/InboxScreen';
+import { TreeScreen } from './screens/TreeScreen';
+import { ConnectorsScreen } from './screens/ConnectorsScreen';
 import type { PushTarget } from './data/types';
 import { L } from './i18n';
 import { useStore } from './store';
@@ -139,6 +141,8 @@ export function RootNavigator() {
         <Stack.Screen name="NewGroup" component={NewGroupScreen} options={{ presentation: 'modal' }} />
         <Stack.Screen name="EditGroup" component={EditGroupScreen} options={{ presentation: 'modal' }} />
         <Stack.Screen name="Identity" component={IdentityScreen} />
+        <Stack.Screen name="Tree" component={TreeScreen} />
+        <Stack.Screen name="Connectors" component={ConnectorsScreen} />
         <Stack.Screen name="Memory" component={MemoryScreen} />
         <Stack.Screen name="Journal" component={JournalScreen} />
         <Stack.Screen name="Activity" component={ActivityScreen} />

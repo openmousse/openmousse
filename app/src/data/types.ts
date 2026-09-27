@@ -602,3 +602,80 @@ export interface ScheduleEntry {
 
 /** iPhone 日历订阅：链接路径（接在服务器地址后面）和四类开关。 */
 export interface ScheduleFeed { path: string; include: { classes: boolean; mine: boolean; deadlines: boolean; mail: boolean }; name: string }
+
+/**
+ * 世界树（server/memtree.py）：各 AI 平台共用的记忆。真身是 Obsidian 库「世界树」文件夹里一条一篇的笔记。
+ * 枝按层排好（先序：大枝后面跟着它的小枝）；leaves = 直接挂在这根枝上的，total = 连小枝一起的。
+ */
+export interface TreeBranch {
+  name: string;
+  /** 上一级的名字；大枝的上一级是主干（档案） */
+  parent: string;
+  /** 它管什么（枝笔记的第一行） */
+  about: string;
+  /** 1 = 大枝，2 = 小枝 */
+  depth: number;
+  leaves: number;
+  total: number;
+  /** 默认挂到这里的 Agent（它们写的记忆自动挂上来） */
+  agents: { id: string; name: string }[];
+}
+
+/** 一片叶子 = 一条记忆。kind：fact 事实 / preference 偏好 / decision 决定 / event 近况。 */
+export interface TreeLeaf {
+  id: string;
+  text: string;
+  kind: 'fact' | 'preference' | 'decision' | 'event';
+  /** 笔记里写的来源：claude / chatgpt / gemini / claude-code / notion / grava-<Agent> / leo（你在手机上写的）/ prune（每周修剪改写的） */
+  source: string;
+  sourceName: string;
+  /** 最早是哪里记下的（每周修剪改写过的，顺着找回原来的平台）；「按来源」按它分 */
+  origin: string;
+  originName: string;
+  /** origin 是某个 Agent 时它的 id（main = 助手自己），给颜色用 */
+  agent: string | null;
+  status: 'active' | 'pending';
+  /** 挂在哪根枝上；直接挂在主干上的是主干的名字（档案） */
+  branch: string;
+  tags: string[];
+  /** YYYY-MM-DD */
+  observedAt: string;
+  createdAt: string;
+}
+
+export interface TreeInfo {
+  trunk: { name: string; count: number };
+  branches: TreeBranch[];
+  leaves: TreeLeaf[];
+  counts: { total: number; pending: number; bySource: { source: string; name: string; agent: string | null; count: number }[] };
+  /** 库里格式有问题、先跳过了的笔记数 */
+  issues: number;
+}
+
+/** 世界树这一块的状态：ok 有数据 / missing 服务器上没接世界树 / unsupported 服务器版本还没有这个接口。 */
+export type TreeState = { kind: 'ok'; data: TreeInfo } | { kind: 'missing'; hint: string } | { kind: 'unsupported' };
+export type TreeAction = 'confirm' | 'forget' | 'move';
+
+/** 「我 → 连接」的一项（server/connectors.py）：现状一句话、几条事实、它用来做什么、不是 ok 时怎么修。 */
+export interface Connector {
+  id: string;
+  name: string;
+  /** 图标键（ConnectorsScreen 里对应到图标，认不出的用插头） */
+  icon: string;
+  status: 'ok' | 'warn' | 'off';
+  line: string;
+  facts: { label: string; value: string }[];
+  uses: string;
+  fix: string | null;
+  /** app 里能跳去的页（比如 iPhone 日历订阅 → 日程设置页） */
+  open: { screen: string; label: string } | null;
+}
+
+export interface ConnectorsInfo {
+  groups: { id: string; title: string; items: Connector[] }[];
+  counts: { ok: number; warn: number; off: number };
+  checkedAt: string;
+}
+
+/** 连接这一块：老服务器没有 /api/connectors 时是 unsupported。 */
+export type ConnectorsState = { kind: 'ok'; data: ConnectorsInfo } | { kind: 'unsupported' };

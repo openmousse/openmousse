@@ -103,10 +103,11 @@ export function fileUrl(path: string): string {
 }
 
 export class AuthError extends Error {}
-/** 服务器回了错误状态码。status 用来区分「这个接口老服务器上没有」（404 / 405）。 */
+/** 服务器回了错误状态码。status 用来区分「这个接口老服务器上没有」（404 / 405）；data 是回来的 JSON（比如 ok=false 时的 missing_source）。 */
 export class HttpError extends Error {
   status: number;
-  constructor(message: string, status: number) { super(message); this.status = status; }
+  data?: unknown;
+  constructor(message: string, status: number, data?: unknown) { super(message); this.status = status; this.data = data; }
 }
 /** 错误里带的 HTTP 状态码（不靠 instanceof：跨打包边界时不一定认得出子类）。 */
 export const httpStatus = (e: unknown): number | undefined => {
@@ -145,7 +146,7 @@ export async function request<T>(path: string, init?: { method?: string; body?: 
     });
     const j = await r.json().catch(() => ({}));
     if (r.status === 401) throw new AuthError(j.error || L('接入令牌不对', 'Wrong access token'));
-    if (!r.ok || j.ok === false) throw new HttpError((typeof j.detail === 'string' && j.detail) || j.error || `HTTP ${r.status}`, r.status);
+    if (!r.ok || j.ok === false) throw new HttpError((typeof j.detail === 'string' && j.detail) || j.error || `HTTP ${r.status}`, r.status, j);
     return j as T;
   } finally {
     clearTimeout(timer);

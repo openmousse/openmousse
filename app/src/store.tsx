@@ -16,10 +16,13 @@ import type {
   Application, JournalEntry, PendingFile,
   ActivityEntry, AgentColor, AvatarConfig, ChatCard, FeedItem, Goal, GoalChange, GoalMetric, GoalStatus, GoalTrend, Group, GroupIcon, GroupPatch, InboxAction, InboxItem, MemoryItem, Message, ModelsInfo, ProfileItem, PushTarget, Receipt,
   ProjectCard, ProjectChangeCard, ScheduleChangeCard, ScheduleEntry, SecurityInfo, SideChat, Task, TaskQuota, ThreadCards, UnreadSummary, UpcomingTask,
+  ConnectorsState, TreeAction, TreeState,
 } from './data/types';
 import * as sched from './api/schedule';
 import * as projectsApi from './api/projects';
 import * as goalsApi from './api/goals';
+import * as treeApi from './api/tree';
+import * as connectorsApi from './api/connectors';
 
 // 2026-09-23 起：界面上的每一项都来自服务器上的真实来源，没有示例数据。连不上服务器时各页显示"未连接"，不冒充。
 
@@ -100,13 +103,17 @@ interface State {
   avatar: AvatarConfig;
   /** 今天起没起（服务器判断；老服务器没有这个接口时是 null） */
   wake: WakeState | null;
+  /** 世界树（各 AI 平台共用的记忆）：null = 还没读过；服务器没接 / 版本太老时是 missing / unsupported */
+  tree: TreeState | null;
+  /** 我 → 连接：助手接着的每样东西现在怎么样。null = 还没读过 */
+  connectors: ConnectorsState | null;
   /** 哪几块正在读 */
   loading: Partial<Record<DataKey, boolean>>;
   /** 哪几块读失败了，原因是什么 */
   dataErrors: Partial<Record<DataKey, string>>;
 }
 
-export type DataKey = 'groups' | 'sideChats' | 'tasks' | 'inbox' | 'inboxRecent' | 'unread' | 'feed' | 'schedule' | 'remember' | 'upcoming' | 'goals' | 'weightTrend' | 'journal' | 'applications' | 'memories' | 'activity' | 'profile' | 'models' | 'security' | 'avatar' | 'wake';
+export type DataKey = 'groups' | 'sideChats' | 'tasks' | 'inbox' | 'inboxRecent' | 'unread' | 'feed' | 'schedule' | 'remember' | 'upcoming' | 'goals' | 'weightTrend' | 'journal' | 'applications' | 'memories' | 'activity' | 'profile' | 'models' | 'security' | 'avatar' | 'wake' | 'tree' | 'connectors';
 
 interface Actions {
   /** 重新探测服务器，读回全部数据和对话记录。 */
@@ -144,6 +151,10 @@ interface Actions {
   forget(id: string): Promise<void>;
   /** 改档案（L0）的一条；text 为 null 就删掉这条。 */
   editProfile(id: string, text: string | null): Promise<void>;
+  /** 世界树的一片叶子：确认（待确认 → 当前）/ 忘记 / 挪到别的枝（branch 写枝名，主干写档案）。做完重读世界树和活动记录。 */
+  treeAction(id: string, action: TreeAction, branch?: string): Promise<void>;
+  /** 连接页下拉刷新：让服务器跳过缓存重新查一遍。 */
+  refreshConnectors(): Promise<void>;
   addGroup(g: { name: string; purpose: string; icon: GroupIcon; color: AgentColor; modelId: string }): Promise<string>;
   /** 改 Agent 的名字 / 图标 / 颜色 / 职责 / 默认模型（只传改了的）。改名字或职责，服务器顺带改它自己的说明。 */
   updateGroup(id: string, patch: GroupPatch): Promise<void>;
@@ -268,10 +279,15 @@ const LOADERS: Record<DataKey, () => Promise<Partial<State>>> = {
   security: async () => ({ security: await dataApi.security() }),
   avatar: async () => { const a = await dataApi.avatar(); return a ? { avatar: a } : {}; },
   wake: async () => ({ wake: await loadWake() }),
+  tree: async () => ({ tree: await treeApi.load() }),
+  connectors: async () => ({ connectors: await connectorsApi.load() }),
 };
 const ALL_KEYS = Object.keys(LOADERS) as DataKey[];
-/** 连上时不跟大家一起读的：线程列表先读（对话记录要等它），未读等对话记录读完再读，「已处理」进那一页才读。 */
-const STARTUP_KEYS = ALL_KEYS.filter((k) => !['groups', 'sideChats', 'unread', 'inboxRecent'].includes(k));
+/**
+ * 连上时不跟大家一起读的：线程列表先读（对话记录要等它），未读等对话记录读完再读，「已处理」进那一页才读；
+ * 世界树和连接到「我」这一页或它们自己那页才读（连接第一次要问 Gateway，一秒多，别在启动时跟别的请求抢连接）。
+ */
+const STARTUP_KEYS = ALL_KEYS.filter((k) => !['groups', 'sideChats', 'unread', 'inboxRecent', 'tree', 'connectors'].includes(k));
 /** 后台轮询的：不亮「正在读」、读失败也不报错，没变化就不更新（不让整棵树白白重画）。 */
 const QUIET = new Set<DataKey>(['unread', 'wake']);
 /** 回到前台时：离上次同步健康数据超过这么久才再同步一次（起床判断要看最新的睡眠分段） */
@@ -336,6 +352,8 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
     security: null,
     avatar: { style: 'lens', ring: '#D9AE62', stream: '#5CCFE6' },
     wake: null,
+    tree: null,
+    connectors: null,
     loading: {},
     dataErrors: {},
   }));
@@ -943,6 +961,20 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
     editProfile: async (pid, text) => {
       await dataApi.editProfile(pid, text);
       await reload('profile', 'activity');
+    },
+    treeAction: async (lid, action, branch) => {
+      await treeApi.act(lid, action, branch);
+      await reload('tree');
+      reload('activity').catch(() => {});  // 活动记录要问 Gateway（几秒），不让弹层等它
+    },
+    refreshConnectors: async () => {
+      setS((st) => ({ ...st, loading: { ...st.loading, connectors: true } }));
+      try {
+        const c = await connectorsApi.load(true);
+        setS((st) => { const dataErrors = { ...st.dataErrors }; delete dataErrors.connectors; return { ...st, connectors: c, dataErrors, loading: { ...st.loading, connectors: false } }; });
+      } catch (e) {
+        setS((st) => ({ ...st, dataErrors: { ...st.dataErrors, connectors: errText(e) }, loading: { ...st.loading, connectors: false } }));
+      }
     },
     addGroup: async (g) => {
       const gid = await dataApi.createGroup({ name: g.name, purpose: g.purpose, icon: g.icon, color: g.color, model: g.modelId });
