@@ -267,8 +267,21 @@ python3 proposals_ctl.py agent --slug reading --name 读书 --purpose "…" --ic
 
 提问走和 app 同一条对话通道，每个学习页一个线程；每天第一个问题会带上学习页、课件全文、录播字幕和阅读材料（放得下的放全文，放不下的给路径），以及你正在做学习路线的第几步。闪卡、小测、学习路线也这样生成，存在学习页旁边。
 
+## 世界树
+
+app 里的「我 → 世界树」。你的各个 AI（Claude、ChatGPT、Gemini、Claude Code 和你自己的 Agent）共用的记忆放在 Obsidian 库里，一条记忆一篇笔记，挂在枝上。索引、写入、遗忘都归 workspace 的 `memory_tree.py` 管；这个服务只读它，再把三个动作转过去（可选数据源 `tree`：没有这个脚本时两个接口都回 `ok=false` + `missing_source: tree`）。见 [`memtree.py`](memtree.py)。
+
+| 接口 | 做什么 |
+|---|---|
+| `GET /api/tree` | `branches` 按先序排（大枝后面跟着它的小枝；`leaves` = 直接挂在上面的，`total` = 连小枝一起的，`agents` = 默认挂到这里的 Agent）、`leaves`（当前的：active 和 pending，不含档案要点；`source` 是笔记里写的，`origin` 是最早记下它的平台，每周修剪改写过的顺着 `supersedes` 找回去）、`trunk: {name, count}`（档案）、`counts: {total, pending, bySource}`（按 origin 数）、`issues`（格式不对、先跳过的笔记数） |
+| `POST /api/tree/{id}` | `{action: confirm}` 待确认 → 当前；`{action: forget}` 笔记掏空成只剩属性的空壳挪进归档，索引里删掉；`{action: move, branch}` 挪到别的枝（写主干的名字 = 直接挂主干）。活动记录由 `memory_tree.py` 写，不含记忆内容 |
+
+## 连接
+
+「我 → 连接」：助手接着的每一样东西，现在怎么样。`GET /api/connectors[?fresh=1]` → `{groups: [{id, title, items}], counts: {ok, warn, off}, checkedAt}`；每一项 `{id, name, icon, status: ok | warn | off, line, facts: [{label, value}], uses, fix, open}`（`open` = app 里能跳去的页）。整份结果按语言缓存 60 秒（`fresh=1` 跳过），聊天渠道的在线状态（`openclaw channels status`）缓存 2 分钟。每一项都是尽力而为，不返回任何密钥：只看密钥的名字在不在、文件的时间、条数和 systemd 单元的状态。你的机器上没有的（脚本、单元、目录）那一项就不出现；自带的功能还没用上的（Apple 健康、日历订阅、推送）显示「没接」。日历订阅（`/cal/<令牌>.ics`）现在会记下日历上次来取的时间和大致是哪种（iPhone / Mac / Google / Outlook）。见 [`connectors.py`](connectors.py)。
+
 ## 数据源是可选的
 
-看板要的训练 / 餐食 / 身体 / 日历 / 健康派生指标，各来自 `server.json` 的 `scripts` 目录（默认 `<workspace>/scripts`）里的一个脚本：`xunji.py`（训练 / 餐食 / 身体）、`calendar_ics.py`（日历）、`apple_health.py`（恢复分、热量缺口、体能趋势，还有起没起床：`/api/health/wake` 看手机推到 `/api/health/sleep` 的睡眠分段和 `/api/health/signal` 收到的起床信号）。脚本在就加载，不在就是「还没接」：`/api/health` 的 `sources` 告诉 app 哪些接了，没接的接口回 `ok=false` + `missing_source`，app 的看板显示空状态，其它功能照常。见 [`sources.py`](sources.py)。
+看板要的训练 / 餐食 / 身体 / 日历 / 健康派生指标，各来自 `server.json` 的 `scripts` 目录（默认 `<workspace>/scripts`）里的一个脚本：`xunji.py`（训练 / 餐食 / 身体）、`calendar_ics.py`（日历）、`apple_health.py`（恢复分、热量缺口、体能趋势，还有起没起床：`/api/health/wake` 看手机推到 `/api/health/sleep` 的睡眠分段和 `/api/health/signal` 收到的起床信号）。`memory_tree.py` 提供世界树（「我 → 世界树」）。脚本在就加载，不在就是「还没接」：`/api/health` 的 `sources` 告诉 app 哪些接了，没接的接口回 `ok=false` + `missing_source`，app 的看板显示空状态，其它功能照常。见 [`sources.py`](sources.py)。
 
 这三个脚本目前还是作者自己的数据源（训记、IC 日历、Apple 健康）的形状，正在拆成可选的功能包（packs/）：每个包只声明需要的数据类型，来源由你映射。
