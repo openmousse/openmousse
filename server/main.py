@@ -53,6 +53,7 @@ from projects import router as projects_router  # noqa: E402 — 顺带把 kind=
 import alerts  # noqa: E402
 from alerts import router as alerts_router  # noqa: E402
 from packs import router as packs_router  # noqa: E402
+from proposals import router as proposals_router  # noqa: E402 — 顺带挂上 kind=skill / agent 的收件箱钩子（日结提案）
 
 DIST = settings.dist
 settings.db.parent.mkdir(parents=True, exist_ok=True)  # 新实例第一次启动：数据目录还不存在
@@ -104,6 +105,7 @@ app.include_router(alerts_router)  # 在 boards 之前：/api/alerts/… 和看�
 app.include_router(packs_router)
 app.include_router(boards_router)
 app.include_router(projects_router)
+app.include_router(proposals_router)
 app.add_exception_handler(sources.NoSource, sources.no_source_handler)
 _whois: dict[str, tuple[float, str | None]] = {}
 _lock = threading.Lock()

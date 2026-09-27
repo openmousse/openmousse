@@ -185,6 +185,25 @@ Each Agent has its own tables and a dashboard of blocks it lays out itself; the 
 | `GET /api/alerts/{agent}`, `POST /api/alerts/item/{id}` | Reminders that are on or paused; pause / resume / delete |
 | `POST /api/alerts/{agent}/check`, `POST /api/alerts/{agent}/propose` | A reminder rule `{id, title, source (a list query), row, message, at, days, level}`: check shows what it would send today; propose makes an inbox card of kind `push` (a new notification always needs the user's OK). Once approved the server checks every 30 s and sends one push when the query returns rows (up to 3 hours late if the server was down); tapping it opens the Agent's board |
 
+## Nightly proposals
+
+After the nightly digest the main chat looks back over the week and turns what keeps coming up into a proposal: **add a skill** (a way of doing something, given to the Agents that need it) or, rarely, **create an Agent**. It lands in the inbox; nothing changes until the user approves. See [`proposals.py`](proposals.py); the main chat uses [`proposals_ctl.py`](proposals_ctl.py) and the `proposals` skill, and `packs/core/scripts/daily_close.py` sends the nightly trigger.
+
+| Endpoint | What it does |
+|---|---|
+| `GET /api/proposals/context?days=7` | The material to look back at: what the user said in every chat (with the start of each reply), existing skills and who has them, Agents, past proposals with the reasons they were declined, today's quota |
+| `POST /api/proposals` | `{kind: skill / agent, slug, title, why, evidence: [{date, thread, quote}], changes?, skill: {name, agents, markdown} / agent: {name, purpose, icon, color, board}}` → an inbox card of kind `skill` / `agent`. At most 2 a day (429); the same `slug` only once (409 while pending, done or declined; after the user asks for changes, the same slug updates the card in place); a skill name that already exists is 409 |
+| `GET /api/proposals`, `GET /api/proposals/{id or inboxId}` | Past proposals and their status (pending / installed / rejected / withdrawn / failed / expired) |
+
+Approving is done by the server itself (an inbox hook): a skill is written to `<workspace>/skills/<name>/SKILL.md` and added to those Agents' skill allowlists in `openclaw.json` (backed up, validated, restored on failure; an Agent without an allowlist can already use every skill), an Agent is created the same way as "New Agent" with its tables and starter board. The card turns into a receipt and the main chat only gets a note; if it fails, the card says why.
+
+```bash
+python3 proposals_ctl.py context
+python3 proposals_ctl.py skill --slug meal-swap --name meal-swap --agents diet --title "…" --why "Third time this week…" \
+    --evidence "9/24|Diet|how much can I eat if I swap in salmon?" --file SKILL.md
+python3 proposals_ctl.py agent --slug reading --name Reading --purpose "…" --icon book --board-file board.json --title "…" --why "…" --evidence "…"
+```
+
 ## Notifications
 
 Three levels: **ring** (sound, interruptionLevel active), **quiet** (no sound, goes to Notification Center, passive), **none** (not sent). During `push.quiet_hours` in `server.json` (default `["23:00", "07:30"]`, in `timezone`; `[]` turns it off) ring is downgraded to quiet.

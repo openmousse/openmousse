@@ -185,6 +185,25 @@ python3 project_ctl.py conclude sc-1a2b3c4d --done "…" --learned "…"
 | `GET /api/alerts/{agent}`，`POST /api/alerts/item/{id}` | 开着和暂停的提醒；暂停 / 恢复 / 删掉 |
 | `POST /api/alerts/{agent}/check`，`POST /api/alerts/{agent}/propose` | 一条提醒规则 `{id, title, source（和列表一样的查询）, row, message, at, days, level}`：check 看今天会推什么；propose 出一张 kind `push` 的收件箱卡（新推送一律要用户点头）。同意后服务端每 30 秒看一次，到点查出有东西就推一条（服务器没开着，3 小时内补推），点开进这个 Agent 的看板 |
 
+## 日结提案
+
+每晚日结之后，主对话回看这一周，把反复出现的事提成一条提案：**加一个 skill**（一套做法，给用得上的 Agent），偶尔**建一个 Agent**。提案进收件箱，用户点头之前什么都不变。见 [`proposals.py`](proposals.py)；主对话用 [`proposals_ctl.py`](proposals_ctl.py) 和 `proposals` skill，夜里的触发由 `packs/core/scripts/daily_close.py` 发。
+
+| 接口 | 做什么 |
+|---|---|
+| `GET /api/proposals/context?days=7` | 回看的材料：这几天用户在各个对话里说的话（配上回复的开头）、现有的 skills 和谁能用、各个 Agent、提过的提案和被拒的理由、今天还能提几条 |
+| `POST /api/proposals` | `{kind: skill / agent, slug, title, why, evidence: [{date, thread, quote}], changes?, skill: {name, agents, markdown} / agent: {name, purpose, icon, color, board}}` → 一张 kind `skill` / `agent` 的收件箱卡。每天最多 2 条（429）；同一个 `slug` 只提一次（还在等、做过、被拒都 409；用户引用卡片说了要改之后，同一个 slug 再交是原地改这张卡）；skill 重名 409 |
+| `GET /api/proposals`，`GET /api/proposals/{id 或 inboxId}` | 提过的提案和状态（pending / installed / rejected / withdrawn / failed / expired） |
+
+点了同意由服务端自己做（收件箱钩子）：skill 写进 `<workspace>/skills/<名字>/SKILL.md`，加进那几个 Agent 在 `openclaw.json` 里的 skills 允许列表（先备份、改完校验、不通过就恢复；没设允许列表的 Agent 本来就什么 skill 都能用）；Agent 和「新建 Agent」一样建好，连表和起步看板。卡片变成回执，主对话只收到一句知会；没做成就在卡片上写明原因。
+
+```bash
+python3 proposals_ctl.py context
+python3 proposals_ctl.py skill --slug meal-swap --name meal-swap --agents diet --title "…" --why "这周第 3 次……" \
+    --evidence "9/24|饮食记录|换成三文鱼能吃多少？" --file SKILL.md
+python3 proposals_ctl.py agent --slug reading --name 读书 --purpose "…" --icon book --board-file board.json --title "…" --why "…" --evidence "…"
+```
+
 ## 推送
 
 三档：**ring** 响铃（有声音，interruptionLevel active）、**quiet** 静默（不出声，进通知中心，passive）、**none** 不推。`server.json` 的 `push.quiet_hours`（默认 `["23:00", "07:30"]`，按 `timezone`；`[]` = 不设）里 ring 自动降成 quiet。

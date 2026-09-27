@@ -44,7 +44,8 @@ REJECTED_DAYS = 30  # 拒绝过的同一件事（dedupe 键）多久内不许再
 WAIT_BUSY_S = 15 * 60  # 同意 / 改一下时那个线程正在回复：最多等多久再把消息发进去
 _tasks: set[asyncio.Task] = set()  # 后台等待中的任务（留个引用，免得被回收）
 # kind → 点了同意 / 拒绝 / 撤回之后服务端自己先做的事。返回 {"result": …} = 已经做完了（条目直接标 done，Agent 只收到一句知会）；
-# None = 照常让 Agent 去做。boards.py 注册 block：同意就把提案那一版看板换上去，拒绝就把草稿作废。
+# {"failed": …} = 服务端动了手但没做成（条目标 failed、写明原因，不再让 Agent 去做）；None = 照常让 Agent 去做。
+# boards.py 注册 block：同意就把提案那一版看板换上去，拒绝就把草稿作废。proposals.py 注册 skill / agent：日结提案同意了就装好 / 建好。
 HOOKS: dict[str, Callable[[dict, str], Awaitable[dict | None]]] = {}
 # kind → 条目 JSON 里多给 app 的东西（在锁外调）。projects.py 注册 project：提案内容（预览）和开好的项目（「去看看」）。
 EXTRAS: dict[str, Callable[[str], dict | None]] = {}
@@ -486,7 +487,13 @@ async def act(iid: str, body: ActIn):
     hook = HOOKS.get(it["kind"]) if action != "revise" else None
     done = await hook(it, action) if hook else None
     out: dict = {"ok": True, "item": it}
-    if action == "approve" and done and done.get("result"):
+    if action == "approve" and done and done.get("failed"):
+        # 服务端自己动手没做成（比如 proposals.py 装 skill 时 openclaw.json 校验不过）：卡片标「没做成」写明原因，不再让 Agent 去做
+        log_activity(L(f"同意了{who}的「{title}」，没做成", f'Approved "{title}" from {who}, but it failed'), "failed")
+        with _lock, idb() as conn:
+            conn.execute("UPDATE inbox SET status='failed', result=?, updated_at=? WHERE id=?", (done["failed"], now_iso(), iid))
+        out["item"] = it = item(iid)
+    elif action == "approve" and done and done.get("result"):
         log_activity(L(f"同意了{who}的「{title}」", f'Approved "{title}" from {who}'), "approved")
         with _lock, idb() as conn:
             conn.execute("UPDATE inbox SET status='done', result=?, updated_at=? WHERE id=?", (done["result"], now_iso(), iid))
