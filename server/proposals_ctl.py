@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import signal
 import sys
 import urllib.error
 import urllib.parse
@@ -130,6 +131,7 @@ def print_context(c: dict) -> None:
 
 
 def main() -> None:
+    signal.signal(signal.SIGPIPE, signal.SIG_DFL)  # 接 | head 时安静退出，不打一屏 BrokenPipeError
     ap = argparse.ArgumentParser(description=description(), formatter_class=argparse.RawDescriptionHelpFormatter)
     sub = ap.add_subparsers(dest="cmd", required=True)
     c = sub.add_parser("context", help=L("回看的材料", "the material to look back at"))
