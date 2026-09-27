@@ -88,6 +88,10 @@ export function TrendLine({ points, secondary = [], band, from, to, height = 96,
   let lo = Math.min(...vals, ...edges);
   let hi = Math.max(...vals, ...edges);
   if (!Number.isFinite(lo) || !Number.isFinite(hi)) { lo = 0; hi = 1; }
+  // 纵轴至少撑开数值的 3%（最少 1 个单位）：体重 80.0–80.4 kg 这种小波动不画成大起大落
+  const mid = (lo + hi) / 2;
+  const minSpan = Math.max(Math.abs(mid) * 0.03, 1);
+  if (hi - lo < minSpan) { lo = mid - minSpan / 2; hi = mid + minSpan / 2; }
   const margin = (hi - lo || Math.abs(hi) || 1) * 0.12;
   lo -= margin; hi += margin;
   const d0 = dayNum(from);
