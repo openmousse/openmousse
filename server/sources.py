@@ -51,6 +51,16 @@ AVAILABLE: dict[str, bool] = {
 }
 
 
+def xunji_name() -> str:
+    """训练 / 饮食 / 身体数据的来源名（看板的小字、目标的读数来源）。适配器脚本可以自报 SOURCE_NAME（字符串，或 {"zh": ..., "en": ...}），没写就是训记。"""
+    name = getattr(xunji, "SOURCE_NAME", None) if xunji else None
+    if isinstance(name, dict):
+        return L(name.get("zh") or name.get("en") or "", name.get("en") or name.get("zh") or "")
+    if isinstance(name, str) and name:
+        return name
+    return L("训记", "Xunji")
+
+
 def label(kind: str) -> str:
     """数据类型的显示名，按请求的语言（英文要能套进 "No {x} data connected yet"）。"""
     names = {"workouts": L("训练", "workout"), "meals": L("餐食", "meal"), "body": L("身体数据", "body"),

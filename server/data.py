@@ -2,7 +2,8 @@
 
 | 页面 | 真源 |
 |---|---|
-| Groups、独立空间、目标、建议、形象设置、app 侧活动 | grava.db（记忆规范的 L4） |
+| Groups、独立空间、建议、形象设置、app 侧活动 | grava.db（记忆规范的 L4） |
+| 目标（你和 Agent 都能加、改、标完成、不做了，每次改动能撤销） | grava.db `goals` + `goal_log`（Agent 经 `server/goals_ctl.py` 写）；体重、体脂的当前值和趋势读训记（真源）+ Apple 健康 `health_metrics`（对照），不自动算体脂（见 goals.py） |
 | 编辑 Agent（`PATCH /api/groups/{id}`：名字 / 图标 / 颜色 / 职责 / 模型） | grava.db `groups`（color：NULL = 默认色）+ `threads.model`；名字、职责同时换掉 Agent 工作区 IDENTITY.md 里 `<!-- mousse:role -->` 那一段，模型同时写 openclaw.json 的 `agents.entries.<id>.model`（见 agents.py） |
 | 等你点头（收件箱） | grava.db `inbox`（各 Agent 经 `server/inbox_ctl.py` 写：要你同意才做的事、它们自己的提议；见 inbox.py）+ OpenClaw 执行审批队列（`openclaw approvals pending / resolve`，旧的 /api/approvals 仍在） |
 | 未读、「今天」页的新卡片、app 角标 | grava.db `read_marks` + `messages.origin` + `feed_items.seen_at`（见 unread.py） |
@@ -44,7 +45,7 @@ router = APIRouter()
 
 import agents  # noqa: E402
 import cards  # noqa: E402
-from config import settings as cfg  # noqa: E402（这个模块里 settings 是接口函数名）
+from config import settings as cfg  # noqa: E402 — 这个模块里 settings 是接口函数名
 from i18n import L, lang  # noqa: E402
 
 HOME = cfg.openclaw_home
@@ -458,50 +459,6 @@ async def delete_side_chat(sid: str):
         pass  # 从没发过消息的项目在 Gateway 里没有会话
     log_activity(L(f"删除了项目「{r['title']}」的对话记录", f'Deleted the chat history of the project "{r["title"]}"'), "deleted")
     return {"ok": True}
-
-
-# —— 目标 ——————————————————————————————————————————————————————
-
-def bodyfat_readings() -> list[dict]:
-    """体脂读数：训记最新一条 + Apple 健康按天的均值。按日期新到旧。"""
-    out = []
-    try:
-        from sources import xunji  # noqa: PLC0415 — 可选数据源，没接就是 None
-        data = xunji.call("body_query", {"include_latest": True, "include_records": False, "limit": 1, "offset": 0}, ttl=3600)
-        bf = ((data.get("res") or {}).get("latest") or {}).get("bodyfat") or {}
-        if bf.get("value") is not None:
-            out.append({"value": float(bf["value"]), "date": bf.get("datestr"), "source": L("训记", "Xunji")})
-    except Exception:  # noqa: BLE001
-        pass
-    with _lock, ddb() as conn:
-        try:
-            for r in conn.execute("SELECT date, avg FROM health_metrics WHERE metric='BodyFatPercentage' AND avg IS NOT NULL ORDER BY date DESC LIMIT 60"):
-                v = r["avg"] * 100 if r["avg"] <= 1 else r["avg"]
-                out.append({"value": round(v, 1), "date": r["date"], "source": L("Apple 健康", "Apple Health")})
-        except Exception:  # noqa: BLE001  health_metrics 还没建（从没同步过）
-            pass
-    return sorted(out, key=lambda x: x["date"] or "", reverse=True)
-
-
-@router.get("/api/goals")
-def goals():
-    with _lock, ddb() as conn:
-        rows = conn.execute("SELECT * FROM goals WHERE status='active' ORDER BY position, created_at").fetchall()
-    out = []
-    for r in rows:
-        g = {"id": r["id"], "category": r["category"], "title": r["title"], "detail": r["detail"] or "", "due": r["due"] or "",
-             "groupId": r["group_id"], "source": r["source"] or "", "unit": r["unit"], "targetLow": r["target_low"], "targetHigh": r["target_high"],
-             "current": None, "currentDate": None, "currentSource": None, "start": None, "stale": False}
-        if r["metric"] == "bodyfat":
-            reads = bodyfat_readings()
-            if reads:
-                cur = reads[0]
-                since = [x for x in reads if (x["date"] or "") >= r["created_at"][:10]]
-                g.update(current=cur["value"], currentDate=cur["date"], currentSource=cur["source"],
-                         start=since[-1]["value"] if since else cur["value"],
-                         stale=(date.today() - date.fromisoformat(cur["date"])).days > 30 if cur["date"] else True)
-        out.append(g)
-    return {"ok": True, "goals": out}
 
 
 # —— 日志（L4 journal，Grava 经 scripts/grava_journal.py 写） ——————————————————
