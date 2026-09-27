@@ -169,6 +169,34 @@ python3 project_ctl.py conclude sc-1a2b3c4d --done "…" --learned "…"
 | `POST /api/projects/review` | Ask "archive?" for projects whose deadlines are all past (daily digest) |
 | `GET /api/sidechats` | The sidebar list, now with the same summary fields per project |
 
+## Goals
+
+Long-term goals by area (health / study / career / finance: the category values are the Chinese words 健康 / 学业 / 职业 / 财务, the app translates them), editable by the user in the app and by the Agents from the command line. See [`goals.py`](goals.py).
+
+- **A goal** = a row in `goals`: title, note, due (`YYYY-MM-DD`, `YYYY-MM` or words like "fall 2027"), an optional number target (`targetLow` / `targetHigh` / `unit`, one end is enough), an optional `metric` the server reads by itself (`bodyfat`, `weight`), the Agent that keeps an eye on it (`groupId`), and `status`: active / done / dropped. Nothing is ever deleted: "drop it" is `dropped`, folded at the bottom of the page.
+- **Readings**: the body data source (`xunji.py`, one cached query for weight and body fat over 400 days, shared by `/api/goals` and the trend) comes first; Apple Health's daily averages (`health_metrics` BodyMass / BodyFatPercentage) are the cross-check. The current value is the latest of the two (the body source wins on the same day). Body fat is never calculated, only read. Progress runs from the start (the reading on or before the day the goal was set) to the target range, down or up; inside the range is 100 %. A reading older than 30 days is `stale`.
+- **Every change** writes a `goal_log` row (who, before / after) and an activity line. Undo restores only the fields that change touched and nobody changed since (`kept` lists the rest; all of them changed since = 409); undoing an add hides the goal. Changes by Agents in the last 24 hours that the user hasn't dismissed come back as `recent`: the app shows them at the top of the Goals page with Undo.
+- **Agents** use `goals_ctl.py` (`list`, `trend`, `log`, `add`, `update`, `done`, `drop`, `reopen`, `undo`; `--source` = who is changing it). The skill (`packs/core/skills/goals`): a change the user asked for is made at once; the Agent's own idea goes through the inbox first; no goals the user never stated.
+
+```bash
+python3 goals_ctl.py list [--all]
+python3 goals_ctl.py add --title "Back under 75 kg" --category health --metric weight --low 72 --high 75 --due 2026-12-31 --agent fitness
+python3 goals_ctl.py update bodyfat --low 14 --high 16
+python3 goals_ctl.py drop goal-1a2b3c
+python3 goals_ctl.py trend --metric weight
+python3 goals_ctl.py undo 12
+```
+
+| Endpoint | What it does |
+|---|---|
+| `GET /api/goals?fresh=` | `{goals (active, with current, currentDate, currentSource, start, progress, direction, state, stale, daysLeft), closed (done / dropped), recent (Agent changes to undo), metrics}`; the first fields of each goal are unchanged, so older apps keep working. `fresh=1` re-reads the body data source if its cache is over 90 s old |
+| `POST /api/goals` | Add `{title, category, detail?, due?, unit?, targetLow?, targetHigh?, metric?, groupId?, position?, source?}` |
+| `PATCH /api/goals/{id}` | Only the fields given (`null` clears detail / due / unit / targets / metric / groupId), plus `status` and `position` |
+| `POST /api/goals/undo/{log}` | Undo a change (`{redo: true}` to redo) |
+| `GET /api/goals/log?limit=&goal=` | Recent changes, newest first |
+| `POST /api/goals/seen` | `{ids}`: dismiss changes from the top of the Goals page |
+| `GET /api/goals/trend?metric=weight&days=180&fresh=` | `{series: [{date, value, source: body / health}], summary: {latest, avg7, change30: {value, since}, check}, sources}`; nothing connected = an empty series, not an error |
+
 ## Boards, feature packs and reminders
 
 Each Agent has its own tables and a dashboard of blocks it lays out itself; the app draws seven block types from the server-computed data and never computes. See [`boards.py`](boards.py), [`packs.py`](packs.py), [`alerts.py`](alerts.py); Agents use [`board_ctl.py`](board_ctl.py).

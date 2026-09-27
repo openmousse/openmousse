@@ -169,6 +169,34 @@ python3 project_ctl.py conclude sc-1a2b3c4d --done "…" --learned "…"
 | `POST /api/projects/review` | 截止都过了的项目问「归档？」（日结用） |
 | `GET /api/sidechats` | 侧栏列表，每个项目也带上面那几个摘要字段 |
 
+## 目标
+
+按领域分的长期目标（健康 / 学业 / 职业 / 财务，存的就是这四个中文词，app 按语言显示），用户在 app 里改，Agent 在命令行里改。见 [`goals.py`](goals.py)。
+
+- **一个目标** = `goals` 表一行：标题、说明、截止（`YYYY-MM-DD`、`YYYY-MM` 或「2027 秋」这样的说法）、可选的数字目标（`targetLow` / `targetHigh` / `unit`，可以只给一头）、可选的 `metric`（`bodyfat` 体脂、`weight` 体重：服务端自己读当前值）、归哪个 Agent 盯（`groupId`）、`status` active / done / dropped。从不删除：「不做了」= `dropped`，在页面最下面折起来。
+- **读数**：身体数据源（`xunji.py`，体重、体脂近 400 天一次查询、有缓存，`/api/goals` 和趋势共用）为主，Apple 健康的日均值（`health_metrics` 的 BodyMass / BodyFatPercentage）对照。当前值取两边最新的那次（同一天以身体数据源为准）。体脂从不自动算，只读记下的。进度从起点（设目标那天或之前最近的一次读数）到目标区间，往下往上都行，进了区间 = 100%；读数超过 30 天算 `stale`。
+- **每次改动**记一行 `goal_log`（谁、之前 / 之后）和一行活动记录。撤销只改回这次动过、之后没人再改过的字段（`kept` 是没动的那些；全都后来改过 = 409）；撤销「加了」= 把目标藏起来。Agent 24 小时内的改动、用户还没点「知道了」的，在 `recent` 里：app 目标页顶上一条，能撤销。
+- **Agent** 用 `goals_ctl.py`（`list`、`trend`、`log`、`add`、`update`、`done`、`drop`、`reopen`、`undo`；`--source` = 谁在改）。skill（`packs/core/skills/goals`）：用户让改的直接改；它自己的主意先交收件箱；用户没说过的目标不编。
+
+```bash
+python3 goals_ctl.py list [--all]
+python3 goals_ctl.py add --title "体重回到 75 kg 以下" --category 健康 --metric weight --low 72 --high 75 --due 2026-12-31 --agent fitness
+python3 goals_ctl.py update bodyfat --low 14 --high 16
+python3 goals_ctl.py drop goal-1a2b3c
+python3 goals_ctl.py trend --metric weight
+python3 goals_ctl.py undo 12
+```
+
+| 接口 | 做什么 |
+|---|---|
+| `GET /api/goals?fresh=` | `{goals（进行中的，带 current、currentDate、currentSource、start、progress、direction、state、stale、daysLeft）, closed（完成 / 不做了的）, recent（Agent 的改动，能撤销）, metrics}`；每个目标前面那些字段没变，老 app 照常能用。`fresh=1`：身体数据源的缓存超过 90 秒就重读 |
+| `POST /api/goals` | 加一个 `{title, category, detail?, due?, unit?, targetLow?, targetHigh?, metric?, groupId?, position?, source?}` |
+| `PATCH /api/goals/{id}` | 只改给了的字段（`null` 清掉说明 / 截止 / 单位 / 目标数字 / metric / groupId），外加 `status`、`position` |
+| `POST /api/goals/undo/{log}` | 撤销一次改动（`{redo: true}` 做回来） |
+| `GET /api/goals/log?limit=&goal=` | 最近的改动，新的在前 |
+| `POST /api/goals/seen` | `{ids}`：目标页顶上那条点了「知道了」 |
+| `GET /api/goals/trend?metric=weight&days=180&fresh=` | `{series: [{date, value, source: body / health}], summary: {latest, avg7, change30: {value, since}, check}, sources}`；哪边都没接 = series 为空，不算错 |
+
 ## 看板、功能包和提醒
 
 每个 Agent 有自己的表，看板上的积木由它自己摆；app 只按服务端算好的数据画七种积木，不自己算。见 [`boards.py`](boards.py)、[`packs.py`](packs.py)、[`alerts.py`](alerts.py)，Agent 用 [`board_ctl.py`](board_ctl.py)。
