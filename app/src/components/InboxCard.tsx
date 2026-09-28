@@ -4,7 +4,7 @@
 // 执行命令（OpenClaw 的审批）沿用「拒绝 / 这一次同意」：同意只放行这一次，不会变成长期授权。
 // 处理过的（回执、「已处理」列表的一行）点开是详情：做了什么、为什么、结果、时间；没做完可以「跟进」，带着这件事回到那个对话接着说。
 import React, { useCallback, useState } from 'react';
-import { ActivityIndicator, Platform, Pressable, StyleSheet, Text, View } from 'react-native';
+import { ActivityIndicator, Platform, Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
 import type { InboxAction, InboxItem, InboxKind, InboxProposalInfo, InboxStatus } from '../data/types';
 import { L } from '../i18n';
 import { navigationRef, openThread } from '../navigation';
@@ -61,6 +61,15 @@ const zh = (name: string, rest: string) => (/[A-Za-z0-9]$/.test(name) ? `${name}
 export function receiptText(item: InboxItem, name: string): { head: string; sub: string } {
   const exec = item.kind === 'exec';
   const title = item.title;
+  if (item.kind === 'social' && item.social?.ask === 'review') {
+    // Sentinel 扣下的一句（server/cardagent.py 的 release）：点了就已经送到对方那里
+    const peer = item.social.peer;
+    if (item.status === 'rejected') return { head: L(`没发 · ${title}`, `Not sent · ${title}`), sub: L(`告诉了 ${peer}「这个答不了」`, `Told ${peer} it can't be answered`) };
+    if (item.status === 'done' || item.status === 'approved') {
+      return { head: L(`${item.note ? '发了你改的' : '照发了'} · ${title}`, `${item.note ? 'Sent your words' : 'Sent as is'} · ${title}`), sub: item.result || '' };
+    }
+    if (item.status === 'failed') return { head: L(`没送到 · ${title}`, `Not delivered · ${title}`), sub: item.result || '' };
+  }
   if (item.kind === 'social') {
     // 名片 agent 的卡：点了就已经告诉对方了（server/cardagent.py 的 decide）
     if (item.status === 'revising') return { head: L(`换个时间 · ${title}`, `Another time · ${title}`), sub: L('已经告诉对方，等对方再提', 'Told them; waiting for another suggestion') };
@@ -162,12 +171,14 @@ function PendingCard({ item, chat }: { item: InboxItem; chat: boolean }) {
   const [busy, setBusy] = useState<InboxAction | null>(null);
   const [more, setMore] = useState(false);
   const [alertShown, setAlertShown] = useState(false);  // 提醒卡画出了通知预览：detail 是同一句的文字版，不再显示
+  const [rewrite, setRewrite] = useState<string | null>(null);  // Sentinel 扣下的那句：「改一下」时你写的话
   const exec = item.kind === 'exec';
-  const act = (action: InboxAction) => {
+  const review = item.kind === 'social' && item.social?.ask === 'review';
+  const act = (action: InboxAction, note?: string) => {
     if (busy) return;
     setBusy(action);
     // 成功后 store 把这张卡换成回执（「今天」和对话里同时）
-    decide(item.id, action).catch((e) => showError(L('没做成', "Didn't go through"), e)).finally(() => setBusy(null));
+    decide(item.id, action, note).catch((e) => showError(L('没做成', "Didn't go through"), e)).finally(() => setBusy(null));
   };
   // 有要改的：回到提这件事的对话，输入框上面带着「回复：标题」，直接说
   const talk = () => openThread(item.thread, groups.some((g) => g.id === item.thread), { inboxId: item.id, title: item.title });
@@ -230,6 +241,26 @@ function PendingCard({ item, chat }: { item: InboxItem; chat: boolean }) {
           <>
             <CardBtn kind="quiet" label={L('拒绝', 'Deny')} busy={busy === 'reject'} disabled={!!busy} onPress={() => act('reject')} />
             <CardBtn kind="primary" label={L('这一次同意', 'Allow once')} busy={busy === 'approve'} disabled={!!busy} onPress={() => act('approve')} />
+          </>
+        ) : review && rewrite != null ? (
+          // Sentinel 扣下的那句，「改一下」：写你要发的话，发出去替它那句（算你说的）
+          <View style={{ flex: 1, gap: space.sm }}>
+            <TextInput value={rewrite} onChangeText={setRewrite} multiline maxLength={400} autoFocus
+              placeholder={L(`写你想让 ${item.social?.peer ?? ''} 看到的那句`, `What ${item.social?.peer ?? 'they'} should see`)} placeholderTextColor={t.ink3}
+              accessibilityLabel={L('你要发的话', 'What to send')}
+              style={[type.body, styles.rewrite, { color: t.ink, borderColor: t.line, backgroundColor: t.bg }]} />
+            <View style={styles.actions}>
+              <CardBtn kind="quiet" label={L('算了', 'Back')} disabled={!!busy} onPress={() => setRewrite(null)} />
+              <CardBtn kind="primary" label={L('发这句', 'Send this')} icon={Check} busy={busy === 'revise'} disabled={!!busy || !rewrite.trim()}
+                onPress={() => act('revise', rewrite.trim())} />
+            </View>
+          </View>
+        ) : review ? (
+          // Sentinel 扣下的那句：不发（告诉对方答不了）/ 改一下 / 照发
+          <>
+            <CardBtn kind="quiet" label={L('不发', "Don't send")} busy={busy === 'reject'} disabled={!!busy} onPress={() => act('reject')} />
+            <CardBtn kind="quiet" label={L('改一下', 'Rewrite')} disabled={!!busy} onPress={() => setRewrite(item.social?.original ?? '')} />
+            <CardBtn kind="primary" label={item.approveLabel || L('照发', 'Send as is')} icon={Check} busy={busy === 'approve'} disabled={!!busy} onPress={() => act('approve')} />
           </>
         ) : item.kind === 'social' && item.social?.counter ? (
           // 名片 agent 替你约的：不去 / 换个时间（按你空着的晚上提一个）/ 同意（设计稿 SocAgents）
@@ -531,4 +562,5 @@ const styles = StyleSheet.create({
   prev: { flexDirection: 'row', alignItems: 'flex-start', gap: 10, paddingVertical: 8 },
   quote: { gap: 1, paddingVertical: 2 },
   prevIcon: { width: 24, height: 24, borderRadius: 8, alignItems: 'center', justifyContent: 'center' },
+  rewrite: { borderWidth: StyleSheet.hairlineWidth, borderRadius: radius.md, paddingHorizontal: space.md, paddingVertical: 10, minHeight: 72, textAlignVertical: 'top' },
 });

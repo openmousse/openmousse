@@ -38,7 +38,12 @@ export interface FriendMsg {
   review: 'pending' | 'ok' | 'edited' | 'revoked' | null;
   ts: string; edited: boolean;
   share?: SharedSnapshot; about?: string | null; used?: string[]; usedLabel?: string; defer?: boolean; outcome?: string; error?: string | null;
+  /** 我的名片 agent 的代答过 Sentinel 的结论（只在我这边） */
+  sentinel?: SentinelVerdict;
 }
+/** Sentinel（名片 agent 说出去之前再过一道）对一句的结论：pass 放行 / hold 扣下 / fail 复查不了（换成了固定的话）；
+ * released = 扣下后你放行的，owner = 你自己写的 */
+export interface SentinelVerdict { verdict: 'pass' | 'hold' | 'fail' | 'released' | 'owner' | string; reasons: { kind: string; detail: string }[]; via?: string; ms?: number }
 export interface FriendThread { friend: Friend; messages: FriendMsg[]; recent: FriendMsg[]; agent: boolean; canAsk: boolean }
 
 export interface CardSettings {
@@ -87,7 +92,8 @@ export const sendShare = (sid: string, b: { friends: string[]; ask: boolean; lin
 
 /** 名片 agent 出给你的一张卡（card_asks）：卡过了 7 天不在收件箱里，靠它还能写一行结果 */
 export interface CardAsk {
-  kind: 'decision' | 'private'; status: string; outcome: string; summary: string;
+  /** review = Sentinel 扣下的一句（照发 / 改一下 / 不发） */
+  kind: 'decision' | 'private' | 'review'; status: string; outcome: string; summary: string;
   proposal: { what?: string; date?: string; start?: string; end?: string; place?: string } | null;
 }
 /** 名片 agent 进出的一句（card_log）。by：them 对方说的 / agent 名片 agent 说的 / owner 你在卡上点了、它替你转告的 */
@@ -98,6 +104,8 @@ export interface CardLogItem {
   status: string; inboxId: string | null; ask: CardAsk | null; outcome: string;
   /** 对方要它做、它没照做的；blocked：服务端拦下了它原本要说的（原因），original 是原句（只给你看） */
   declined: string[]; blocked: string[]; original: string;
+  /** 说出去的：Sentinel 的结论；进来的：injection = 这句像是在指挥你的名片 agent */
+  sentinel: SentinelVerdict | null; injection: boolean;
 }
 /** 你的名片 agent 去问朋友的 agent（a2a_out）。outcome = 对方本人在卡上的决定 */
 export interface A2AOut {
@@ -112,7 +120,7 @@ export const cardLog = (peer: string) =>
       id: x.id ?? '', ts: x.ts ?? '', peer: x.peer ?? '', peerName: x.peerName ?? '', tier: x.tier ?? '', channel: 'a2a', ref: x.ref ?? '',
       dir: x.dir === 'in' ? 'in' : 'out', by: x.by ?? (x.dir === 'in' ? 'them' : 'agent'), text: x.text ?? '', used: x.used ?? [],
       usedLabel: x.usedLabel ?? '', status: x.status ?? '', inboxId: x.inboxId ?? null, ask: x.ask ?? null, outcome: x.outcome ?? '',
-      declined: x.declined ?? [], blocked: x.blocked ?? [], original: x.original ?? '',
+      declined: x.declined ?? [], blocked: x.blocked ?? [], original: x.original ?? '', sentinel: x.sentinel ?? null, injection: !!x.injection,
     })));
 const outOf = (x: Partial<A2AOut>, friend: string): A2AOut => ({
   id: x.id ?? '', friend: x.friend ?? friend, contextId: x.contextId ?? null, taskId: x.taskId ?? null, state: x.state ?? null,
@@ -134,6 +142,12 @@ export const a2aRefresh = (id: string, friend: string) =>
   request<{ item: Partial<A2AOut> }>(`/api/a2a/out/${encodeURIComponent(id)}/refresh`, { method: 'POST', timeoutMs: 40000 }).then((j) => outOf(j.item, friend));
 
 export const card = () => request<CardSettings>('/api/card');
+/** 名片 agent 走哪条路；sentinel：复查走哪条路（off = 只有规则）、今天查了几句 / 扣下几句 / 复查不了几句。老服务器没有 sentinel。 */
+export interface CardHealth {
+  backend: string; lastError: { at: string; backend: string; error: string } | null;
+  sentinel?: { backend: string; today: { checked: number; held: number; failed: number }; lastError: { at: string; error: string } | null };
+}
+export const cardHealth = () => request<CardHealth>('/api/card/health');
 export const patchCard = (b: { tiers?: Partial<Record<AnyTier, Partial<Record<ScopeKey, string>>>>; status?: string }) =>
   request<CardSettings>('/api/card', { method: 'PATCH', body: b });
 

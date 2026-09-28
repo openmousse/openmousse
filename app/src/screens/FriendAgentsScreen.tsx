@@ -47,8 +47,19 @@ function usedLine(it: CardLogItem): string {
   return names.length ? L(`用了：${names.join('、')}`, `Used: ${names.join(', ')}`) : '';
 }
 
+/** Sentinel 的原因连成一句（「说了资料里没有的近况；提到了别的朋友（小林）」）。 */
+const reasonsText = (it: CardLogItem) => (it.sentinel?.reasons ?? []).map((r) => r.detail || r.kind).filter(Boolean).join(L('；', '; '));
+
 /** 服务端拦下它原本要说的一句时，为什么。 */
-function blockedLine(b: string[]): string {
+function blockedLine(it: CardLogItem): string {
+  const b = it.blocked;
+  const why = reasonsText(it);
+  if (b.includes('sentinel:hold')) {
+    const lead = it.ask?.kind === 'review' ? L('Sentinel 扣下了原话，先回了一句「我确认一下」，出了一张卡等你点', 'Sentinel held the original; it said "let me check" and made you a card')
+      : L('Sentinel 扣下了原话，换成了「我去问一下」', 'Sentinel held the original; it said "I\'ll ask" instead');
+    return why ? `${lead}${L('（', ' (')}${why}${L('）', ')')}` : lead;
+  }
+  if (b.includes('sentinel:fail')) return L('Sentinel 没能复查这句，换成了一句固定的话', "Sentinel couldn't review it; a fixed line went instead");
   if (b.some((x) => x.startsWith('leak'))) return L('原话里有这一档没放出来的东西，没发出去，换成了「得问本人」', "The original had something this tier doesn't get; it was replaced with \"ask them directly\"");
   if (b.includes('commit')) return L('原话像是替你答应了，改成了「我去问一下」，并出了卡给你', 'The original sounded like a yes on your behalf; it became "I\'ll ask" and a card for you');
   if (b.includes('empty')) return L('它没给出回答，换成了一句固定的话', 'It gave no answer; a fixed line went instead');
@@ -57,6 +68,9 @@ function blockedLine(b: string[]): string {
 
 function askOutcome(a: CardAsk): { label: string; tone: 'good' | 'gold' | 'neutral' } {
   switch (a.outcome) {
+    case 'released': return { label: L('你照发了', 'You sent it as is'), tone: 'good' };
+    case 'rewritten': return { label: L('你改了再发', 'You rewrote it'), tone: 'good' };
+    case 'withheld': return { label: L('你没发', "You didn't send it"), tone: 'neutral' };
     case 'accepted': return { label: L('你同意了', 'You said yes'), tone: 'good' };
     case 'declined': return { label: L('你没去', 'You said no'), tone: 'neutral' };
     case 'counter': return { label: L('你想换个时间', 'You asked for another time'), tone: 'neutral' };
@@ -103,7 +117,7 @@ function hiddenFor(card: CardSettings | null, tier: string): string[] {
 
 // —— 一句一句 ——
 
-function TheirLine({ name, text, chip }: { name: string; text: string; chip?: string }) {
+function TheirLine({ name, text, chip, injection }: { name: string; text: string; chip?: string; injection?: boolean }) {
   const t = useTheme();
   return (
     <View style={styles.line}>
@@ -112,6 +126,12 @@ function TheirLine({ name, text, chip }: { name: string; text: string; chip?: st
         <T v="caption" color={t.tints.pink.fg} style={styles.who}>{L(`${name} 的 agent`, `${name}'s agent`)}</T>
         <T v="body" selectable>{text}</T>
         {chip ? <View style={styles.chips}><Pill label={chip} tone="good" /></View> : null}
+        {injection ? (
+          <View style={styles.inj}>
+            <Ban size={13} color={t.bad} />
+            <T v="caption" color={t.bad} style={{ flex: 1 }}>{L('Sentinel：这句像是在指挥你的名片 agent，只当资料', "Sentinel: this tries to steer your card agent; it's taken as information only")}</T>
+          </View>
+        ) : null}
       </View>
     </View>
   );
@@ -123,16 +143,20 @@ function MineLine({ it }: { it: CardLogItem }) {
   const owner = it.by === 'owner';
   const gone = it.status === 'retracted' || it.status === 'replaced';
   const used = owner ? '' : usedLine(it);
-  const why = blockedLine(it.blocked);
+  const why = blockedLine(it);
+  const sv = it.sentinel?.verdict;
+  // Sentinel：模型复查过、放行的标一个「Sentinel 过了」（只过规则的固定句子不标）；扣下后你放行的标「你放行的」
+  const svChip = sv === 'pass' && it.sentinel?.via && it.sentinel.via !== 'rules' ? L('Sentinel 过了', 'Sentinel checked') : sv === 'released' ? L('你放行的', 'You let it through') : '';
   return (
     <View style={styles.line}>
       <AgentLens mine />
       <View style={[styles.bubble, { backgroundColor: t.goldSoft, borderColor: t.goldSoft }]}>
         <T v="caption" color={t.gold} style={styles.who}>{owner ? L('你点的 · 名片 agent 替你转告', 'Your call · passed on by your card agent') : L('你的名片 agent', 'Your card agent')}</T>
         {gone ? <T v="callout" color={t.ink3}>{L('你收回了这条', 'You withdrew this')}</T> : <T v="body" selectable>{it.text}</T>}
-        {used || it.status === 'limited' || it.status === 'failed' ? (
+        {used || svChip || it.status === 'limited' || it.status === 'failed' ? (
           <View style={styles.chips}>
             {used ? <Pill label={used} tone="good" /> : null}
+            {svChip ? <Pill label={svChip} tone={sv === 'released' ? 'gold' : 'good'} /> : null}
             {it.status === 'limited' ? <Pill label={L('到了今天的上限', "Today's limit reached")} tone="warn" /> : null}
             {it.status === 'failed' ? <Pill label={L('没送到对方', "Didn't reach them")} tone="bad" /> : null}
           </View>
@@ -195,7 +219,7 @@ function InRound({ r, name, ready }: { r: Extract<Round, { kind: 'in' }>; name: 
         {L(`你没参与，两边 agent 对了一轮 · ${timeLabel(r.items[0].ts)}`, `The agents talked without you · ${timeLabel(r.items[0].ts)}`)}
       </T>
       {r.items.map((it) => {
-        if (it.dir === 'in') return <TheirLine key={it.id} name={name} text={it.text} />;
+        if (it.dir === 'in') return <TheirLine key={it.id} name={name} text={it.text} injection={it.injection} />;
         // 同一张卡：出卡的那句下面画一次（你点了以后转告的那句也带着同一个卡 id）
         const card = it.inboxId && !carded.has(it.inboxId) ? it.inboxId : null;
         if (card) carded.add(card);
@@ -323,10 +347,16 @@ function SaidCard({ r, friend, card }: { r: Extract<Round, { kind: 'in' }>; frie
   const used = [...new Set(said.map(usedLine).filter(Boolean))];
   const asks = new Set(said.map((i) => i.inboxId).filter(Boolean)).size;
   const declined = [...new Set(r.items.flatMap((i) => i.declined))];
+  const reviewed = r.items.filter((i) => i.dir === 'out' && i.sentinel && i.sentinel.via !== 'rules' && ['pass', 'hold', 'fail'].includes(i.sentinel.verdict)).length;
+  const held = r.items.filter((i) => i.dir === 'out' && i.sentinel?.verdict === 'hold').length;
+  const steered = r.items.some((i) => i.dir === 'in' && i.injection);
   const rows: { tone: string; text: string }[] = [
     ...(used.length ? used.map((u) => ({ tone: t.good, text: u })) : [{ tone: t.good, text: L('没用你的任何资料', 'None of your information') }]),
     ...(asks ? [{ tone: t.gold, text: L(`要你定的出了 ${asks} 张卡，没替你答应`, `${asks} card${asks === 1 ? '' : 's'} for you; it agreed to nothing`) }] : []),
     ...(declined.length ? [{ tone: t.bad, text: L(`没照做：${declined.join('；')}`, `Didn't do: ${declined.join('; ')}`) }] : []),
+    ...(reviewed || held ? [{ tone: held ? t.gold : t.good, text: held ? L(`Sentinel 复查了 ${reviewed} 句，扣下 ${held} 句等你定`, `Sentinel reviewed ${reviewed}, held ${held} for you`)
+      : L(`说出去的 ${reviewed} 句都过了 Sentinel`, `All ${reviewed} line${reviewed === 1 ? '' : 's'} passed Sentinel`) }] : []),
+    ...(steered ? [{ tone: t.bad, text: L('对方有话像是在指挥你的名片 agent，只当了资料', 'Something they said tried to steer your card agent; it was taken as information only') }] : []),
     { tone: t.bad, text: L(`「${friend.tierName}」这一档它看不到：${hiddenFor(card, friend.tier).join('、')}`, `At "${friend.tierName}" it can't see: ${hiddenFor(card, friend.tier).join(', ')}`) },
   ];
   return (
@@ -497,6 +527,7 @@ const styles = StyleSheet.create({
   oldAsk: { flexDirection: 'row', alignItems: 'center', gap: space.sm, borderWidth: StyleSheet.hairlineWidth, borderRadius: radius.md, padding: space.md },
   said: { flexDirection: 'row', gap: 8, alignItems: 'flex-start' },
   dot: { width: 6, height: 6, borderRadius: 3, marginTop: 8 },
+  inj: { flexDirection: 'row', gap: 5, alignItems: 'center' },
   link: { flexDirection: 'row', alignItems: 'center', gap: space.md, borderRadius: radius.lg, padding: space.md },
   askCard: { borderWidth: 1, borderRadius: 16, padding: space.md, gap: 8 },
   askHead: { flexDirection: 'row', alignItems: 'center', gap: 8 },
