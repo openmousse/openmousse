@@ -71,6 +71,7 @@ from live import router as live_router  # noqa: E402 — 实时活动（app 1.0.
 from widget import router as widget_router  # noqa: E402 — 小组件（app 1.0.5 起）
 from share import public_router as share_public_router, router as share_router  # noqa: E402 — 分享（社交第一层）
 import friends  # noqa: E402 — 朋友（社交第二层）：/api/friends…、/api/card；/f/… 只挂在公网小服务 public.py 上
+from a2a import router as a2a_router  # noqa: E402 — agent 之间（社交第三层）：/api/a2a…、/api/card…，顺带挂上收件箱 social 类的钩子
 
 DIST = settings.dist
 settings.db.parent.mkdir(parents=True, exist_ok=True)  # 新实例第一次启动：数据目录还不存在
@@ -128,6 +129,7 @@ app.include_router(think_router)
 app.include_router(share_router)
 app.include_router(share_public_router)  # /s/<令牌>：分享的链接页，公开（这里只在自己的设备上开得到；外网走 public.py）
 app.include_router(friends.router)  # 在 share 之后注册也行：/api/shares/{sid}/send 和 share 的路由不重叠
+app.include_router(a2a_router)
 app.add_exception_handler(sources.NoSource, sources.no_source_handler)
 _whois: dict[str, tuple[float, str | None]] = {}
 _lock = threading.Lock()

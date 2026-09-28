@@ -13,6 +13,7 @@ from fastapi import FastAPI, Request
 from fastapi.responses import PlainTextResponse
 
 import friends
+import a2a
 import share
 import social
 
@@ -20,6 +21,7 @@ app = FastAPI(docs_url=None, redoc_url=None, openapi_url=None)
 app.include_router(share.public_router)
 app.include_router(social.public_router)  # /f/card、/f/jwks.json（社交第二层）
 app.include_router(friends.public_router)  # /f/i/…（邀请落地页）、/f/hello、/f/msg
+app.include_router(a2a.public_router)  # /f/a2a、/f/a2a/agent-card.json、/f/a2a/push（第三层，名片 agent 之间）
 
 
 @app.middleware("http")
