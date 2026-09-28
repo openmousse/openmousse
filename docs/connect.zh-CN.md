@@ -93,7 +93,7 @@ bash ~/openmousse/check.sh
 输出是一段 JSON，里面有 `link`、`code`、`server`、`expires`。把 `link` 发给用户，连同这几步：
 
 1. 手机装 Tailscale app，登和这台机器同一个账号（第 3 步）。
-2. 装 OpenMousse app（TestFlight 链接在仓库的 README 里）。
+2. 装 OpenMousse app，怎么装见仓库 README 的「两种用法」。
 3. 点这个链接。app 会打开连接页，服务器地址和配对码都已经填好；看一眼地址，点「用配对码连接」。也可以把链接或 8 位码粘贴在那里。
 
 配对码只能用一次，10 分钟后过期，过期了就再出一个。别的什么都不用发：app 连上的时候，会从服务器拿到它自己的令牌。

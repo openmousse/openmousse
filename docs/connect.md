@@ -93,7 +93,7 @@ Everything should be ✓. For anything marked ✗, do what the line says.
 The output is JSON with `link`, `code`, `server` and `expires`. Send the user the `link` with these steps:
 
 1. Install the Tailscale app on the phone, signed in to the same account as this machine (step 3).
-2. Install the OpenMousse app (the TestFlight link is in the repository's README).
+2. Install the OpenMousse app. The repository's README says how, under "Two ways to get the app".
 3. Tap the link. The app opens its Connect page with the server and code filled in; check the server and tap **Connect with the code**. The user can also paste the link or the 8-character code there.
 
 The code works once and expires in 10 minutes. If it runs out, make a new one. Don't send anything else: the app gets its own token from the server when it connects.
