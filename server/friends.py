@@ -36,6 +36,7 @@ from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel
 
 import i18n
+import qr
 import share
 import social
 from chat import _lock, log_activity, now_iso
@@ -161,7 +162,9 @@ def create_invite(note: str, tier: str, days: int) -> dict:
         conn.execute("INSERT INTO friend_invites(id, token_hash, note, tier, created_at, expires_at) VALUES(?,?,?,?,?,?)",
                      (iid, token_hash(token), " ".join(str(note or "").split())[:80] or None, tier, now_iso(), exp))
         r = conn.execute("SELECT * FROM friend_invites WHERE id=?", (iid,)).fetchone()
-    return {**invite_json(r), "code": code_of(token)}
+    code = code_of(token)
+    rows = qr.matrix(code)
+    return {**invite_json(r), "code": code, "qr": {"size": len(rows) + 8, "path": qr.path(rows)}}
 
 
 def find_invite(token: str):
@@ -490,7 +493,8 @@ def hello_ok() -> bool:
 
 INVITE_CSS = """.code{font:14px/1.5 ui-monospace,SFMono-Regular,Menlo,monospace;background:var(--q);border-radius:12px;padding:12px 14px;word-break:break-all;user-select:all}
 .btn{display:inline-block;margin:8px 0 18px;padding:12px 18px;border-radius:12px;background:#D9AE62;color:#2A1E06;font-weight:700;text-decoration:none}
-ol{padding-left:1.3em}li{margin:.3em 0}.fp{font:15px ui-monospace,SFMono-Regular,Menlo,monospace;letter-spacing:.08em}"""
+ol{padding-left:1.3em}li{margin:.3em 0}.fp{font:15px ui-monospace,SFMono-Regular,Menlo,monospace;letter-spacing:.08em}
+.qr{display:flex;gap:16px;align-items:center;margin:8px 0 16px;color:var(--ink3);font-size:14px}.qr svg{flex-shrink:0;border-radius:8px}"""
 
 
 @public_router.get("/f/i/{token}/{x}")
@@ -511,9 +515,11 @@ async def invite_page(token: str, x: str, request: Request):
         steps = L("<ol><li>打开 OpenMousse</li><li>对话 → 朋友 → 加朋友</li><li>粘贴下面这个链接</li></ol>",
                   "<ol><li>Open OpenMousse</li><li>Chat → Friends → Add a friend</li><li>Paste the link below</li></ol>")
         fp = L("核对指纹", "Fingerprint")
+        scan = L("在电脑上看到的？用手机相机扫这个码，在手机上打开。", "On a computer? Scan this with your phone's camera to open it there.")
         body = (f"<p class=by>{html.escape(settings.app_name)}</p><h1>{html.escape(title)}</h1>"
                 f'<a class="btn" href="{html.escape(deep)}">{html.escape(L("在 app 里打开", "Open in the app"))}</a>'
                 f"{steps}<p class=code>{html.escape(code)}</p>"
+                f'<div class="qr">{qr.svg(code, 200, L("邀请码二维码", "Invite QR code"))}<p>{html.escape(scan)}</p></div>'
                 f"<p>{html.escape(fp)}：<span class=fp>{html.escape(me['fingerprint'])}</span></p>"
                 f"<footer>{html.escape(L('这个链接只能用一次，用过就失效。', 'This link works once.'))}</footer>")
         return share.page(title, body, head=f"<style>{INVITE_CSS}</style>")
