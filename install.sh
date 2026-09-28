@@ -83,9 +83,16 @@ if [ -f "$HOME/.openmousse/server.json" ]; then
   DEF_LANG="$(python3 -c 'import json, sys; print(json.load(open(sys.argv[1])).get("language") or "")' "$HOME/.openmousse/server.json" 2>/dev/null || true)"
 fi
 case "${DEF_LANG:-${LC_ALL:-${LANG:-}}}" in zh*|ZH*) DEF_LANG=zh ;; *) DEF_LANG=en ;; esac
-DEF_HOME="${OPENCLAW_STATE_DIR:-$HOME/.openclaw}"
-DEF_TZ="$(cat /etc/timezone 2>/dev/null || timedatectl show -p Timezone --value 2>/dev/null || echo UTC)"
-[ "$DEF_TZ" = "Etc/UTC" ] && DEF_TZ="UTC"
+# 再跑一遍（换 Tailscale 地址、更新）时一路回车不能把上次的答案改掉：OpenClaw 的位置、时区、助手名字都先用 server.json 里存下的
+DEF_HOME="$(saved "c.get('openclaw_home')")"
+[ -n "$DEF_HOME" ] || DEF_HOME="${OPENCLAW_STATE_DIR:-$HOME/.openclaw}"
+DEF_TZ="$(saved "c.get('timezone')")"
+if [ -z "$DEF_TZ" ]; then
+  DEF_TZ="$(cat /etc/timezone 2>/dev/null || timedatectl show -p Timezone --value 2>/dev/null || echo UTC)"
+  [ "$DEF_TZ" = "Etc/UTC" ] && DEF_TZ="UTC"
+fi
+DEF_NAME="$(saved "c.get('app_name')")"
+[ -n "$DEF_NAME" ] || DEF_NAME=Mousse
 say "几个问题 + 两个可以跳过的，直接回车用默认值 / a few questions + two optional ones, Enter keeps the default"
 ask MOUSSE_LANG "语言 / language (zh = 中文, en = English)" "$DEF_LANG"
 case "$(printf '%s' "$MOUSSE_LANG" | tr '[:upper:]' '[:lower:]')" in zh*|cn*|chinese*|中*) MOUSSE_LANG=zh ;; *) MOUSSE_LANG=en ;; esac
@@ -128,7 +135,7 @@ else
   if [ -n "$MOUSSE_CLAW_RULES" ]; then CLAW_ARGS+=(--claw-rules "$MOUSSE_CLAW_RULES"); fi
 fi
 ask MOUSSE_TZ "你的时区 / your timezone (IANA name)" "$DEF_TZ"
-ask MOUSSE_NAME "助手叫什么 / assistant name (shown in the app)" "Mousse"
+ask MOUSSE_NAME "助手叫什么 / assistant name (shown in the app)" "$DEF_NAME"
 if [ "$CLAW_KIND" = openclaw ] && [ ! -f "$MOUSSE_OPENCLAW_HOME/openclaw.json" ]; then
   die "$MOUSSE_OPENCLAW_HOME/openclaw.json 不存在 / not found. Install OpenClaw and run openclaw onboard first (or give another claw's OpenAI-compatible URL instead)."
 fi
@@ -140,7 +147,6 @@ OPTIONAL=()
 if [ -n "$MOUSSE_VAULT" ]; then OPTIONAL+=("--vault=$MOUSSE_VAULT"); fi
 if [ "$MOUSSE_TREE_PUBLIC" = yes ]; then OPTIONAL+=(--tree-public); fi
 
-say "配置 / configuring"
 exec "$VENV/bin/python" "$MOUSSE_DIR/packs/core/setup.py" --repo "$MOUSSE_DIR" --venv "$VENV" \
   --openclaw-home "${MOUSSE_OPENCLAW_HOME:-$DEF_HOME}" --tz "$MOUSSE_TZ" --name "$MOUSSE_NAME" --lang "$MOUSSE_LANG" --bind "${MOUSSE_BIND:-auto}" \
   ${CLAW_ARGS[@]+"${CLAW_ARGS[@]}"} ${OPTIONAL[@]+"${OPTIONAL[@]}"} "$@"

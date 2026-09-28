@@ -6,7 +6,9 @@
   1. ~/.openmousse/repo → 仓库（skills 里的命令都走这个固定路径）
   2. ~/.openmousse/server.json：名字、时区、语言、监听地址、OpenClaw 的位置、令牌（phone 给手机，local 给本机脚本）；
      --vault（服务器上已经在同步的 Obsidian 库）：think.vault = 库的文件夹、think.obsidian_vault = 库名（文件夹名），没设过才写
-  3. 主 agent 工作区的 skills/ 里软链 packs/core 的十一个 skill（handoff / agent-builder / journal / memory-tree / inbox / dispatch / project / board / proposals / goals / onboarding）；AGENTS.md 末尾追加 OpenMousse 的规则（按所选语言写）
+  3. 主 agent 工作区的 skills/ 里软链 packs/core 的十一个 skill（handoff / agent-builder / journal / memory-tree / inbox / dispatch / project / board / proposals / goals / onboarding）；AGENTS.md 末尾追加 OpenMousse 的规则（按所选语言写）；
+     刚 onboard 完的新工作区：BOOTSTRAP.md（OpenClaw 第一次对话的起名仪式，会抢走 app 的「带我走一遍」）挪进备份，IDENTITY.md 空着的名字填上，
+     USER.md 还是模板就换成档案的空架子（都先备份到 ~/.openmousse/backups/）
   4. openclaw.json（先备份，改完 openclaw config validate，不过就恢复）：
      - agents.defaults.skills 是列表的话追加主对话用的十个 skill（board 只给 Agent，写在 server.json 的 agent_default_skills；没有这个键 = 不限制，不动）
      - gateway.http.endpoints.chatCompletions.enabled = true（app 的对话走它）
@@ -35,6 +37,7 @@ import argparse
 import contextlib
 import json
 import os
+import re
 import secrets
 import shutil
 import sqlite3
@@ -358,6 +361,48 @@ def link_skills(workspace: Path, repo: Path, home: Path) -> None:
     install_skills(workspace / "skills", workspace / "AGENTS.md", repo, home, SKILLS, (AGENTS_RULES_ZH, AGENTS_RULES_EN))
 
 
+# OpenClaw 新工作区里的模板（2026.9 的 onboard 放的）：认出来才动，模板换了样子就原样不碰
+IDENTITY_EMPTY_NAME = re.compile(r"^(- \*\*Name:\*\*)[ \t]*\n[ \t]*_\(pick something you like\)_[ \t]*$", re.M)
+USER_TEMPLATE_MARKS = ("Replace the example below with a real directive", "- Prefer ...")
+
+
+def adopt_fresh_workspace(workspace: Path, name: str) -> None:
+    """OpenClaw 新工作区的三份模板交给 OpenMousse（原文件都先备份到 ~/.openmousse/backups/）：
+    - BOOTSTRAP.md 是 OpenClaw 的「出生仪式」：第一次对话先让用户给助手起名、选性格和表情。它会接走 app 里的「带我走一遍」，
+      可名字安装时已经问过了。挪走以后 OpenClaw 就当这个工作区配好了、不会再放回来，第一次对话由 onboarding skill 带。
+    - IDENTITY.md 的 Name 还空着：填上助手的名字（其余几项留着，以后聊出来再填）。
+    - USER.md 还是模板（一条示例指令「- Prefer ...」和一个文档链接）：换成档案的空架子，不然世界树和档案页会把示例当成你的信息。"""
+    backups = MOUSSE_HOME / "backups"
+    stamp = datetime.now().strftime("%Y%m%d-%H%M%S")
+
+    def backup(p: Path) -> Path:
+        backups.mkdir(parents=True, exist_ok=True)
+        dst = backups / f"{p.name}.{stamp}"
+        shutil.copy2(p, dst)
+        return dst
+
+    boot = workspace / "BOOTSTRAP.md"
+    if boot.is_file() and not boot.is_symlink():
+        dst = backup(boot)
+        boot.unlink()
+        say(L(f"BOOTSTRAP.md（OpenClaw 第一次对话的起名仪式）挪到了 {dst}：名字已经定了（{name}），第一次对话由 app 的「带我走一遍」来带",
+              f"Moved BOOTSTRAP.md (OpenClaw's first-conversation naming ritual) to {dst}: the name is already set ({name}), "
+              "and the app's \"Walk me through it\" leads the first conversation"))
+    ident = workspace / "IDENTITY.md"
+    text = ident.read_text(encoding="utf8") if ident.is_file() else ""
+    if IDENTITY_EMPTY_NAME.search(text):
+        backup(ident)
+        ident.write_text(IDENTITY_EMPTY_NAME.sub(lambda m: f"{m.group(1)} {name}", text, count=1), encoding="utf8")
+        say(L(f"IDENTITY.md：名字填了 {name}", f"IDENTITY.md: name set to {name}"))
+    user = workspace / "USER.md"
+    text = user.read_text(encoding="utf8") if user.is_file() else ""
+    if all(m in text for m in USER_TEMPLATE_MARKS):
+        dst = backup(user)
+        user.write_text(L("# USER.md\n\n## 基本信息\n", "# USER.md\n\n## Basics\n"), encoding="utf8")
+        say(L(f"USER.md 还是 OpenClaw 的模板，换成了档案的空架子（原文件 {dst}）",
+              f"USER.md was still OpenClaw's template; replaced it with an empty profile (original at {dst})"))
+
+
 def install_skills(sk: Path | None, agents_md: Path | None, repo: Path, home: Path, names: tuple[str, ...], rules: tuple[str, str]) -> None:
     """把 names 这些 skill 软链进 sk，规矩追加到 agents_md 末尾（已有「## OpenMousse」就不动）。别的 claw 没给文件夹 / 规则文件的那一样跳过。"""
     changed = False
@@ -565,6 +610,28 @@ def probe_claw(c: dict) -> tuple[bool, str]:
         return False, type(e).__name__
 
 
+def probe_gateway(url: str, oc_path: Path, wait: float = 0) -> tuple[bool, str]:
+    """OpenClaw Gateway 连不连得上（app 的对话走它）：GET <gateway>/v1/models，带 openclaw.json 里 Gateway 的令牌，不打印。
+    刚重启过的 Gateway 要二三十秒才起来：wait 秒内连不上就接着等。"""
+    import time
+    import urllib.error
+    import urllib.request
+    auth = ((load_json(oc_path).get("gateway") or {}).get("auth") or {}) if oc_path.exists() else {}
+    token = auth.get("token") if isinstance(auth.get("token"), str) else ""
+    req = urllib.request.Request(url.rstrip("/") + "/v1/models", headers={"Authorization": f"Bearer {token}"} if token else {})
+    deadline = time.time() + wait
+    while True:
+        try:
+            with urllib.request.urlopen(req, timeout=5) as r:  # noqa: S310 — 本机的 Gateway
+                return True, f"HTTP {r.status}"
+        except urllib.error.HTTPError as e:
+            return e.code not in (401, 403) and e.code < 500, f"HTTP {e.code}"
+        except (urllib.error.URLError, OSError, ValueError) as e:
+            if time.time() >= deadline:
+                return False, str(getattr(e, "reason", "") or type(e).__name__)[:120]
+            time.sleep(2)
+
+
 def setup_tree(venv: Path, cfg: dict, home: Path, no_systemd: bool, vault: Path | None = None, public: bool = False, openclaw: bool = True) -> list[str] | None:
     """→ --tree-public 还要用户手动跑的命令（[] = 都好了；None = 没要公网，或世界树没装）。"""
     exe = venv / "bin/mousse-tree"
@@ -585,8 +652,8 @@ def setup_tree(venv: Path, cfg: dict, home: Path, no_systemd: bool, vault: Path 
         changed = changed or added
     if openclaw:
         r = run([str(exe), "install-openclaw", "--openclaw-home", str(home)])
-        if r.returncode == 0:
-            say(tag + " / ".join(x.strip() for x in r.stdout.strip().splitlines()[:2]))
+        if r.returncode == 0:  # 只要第一行：它第二行叫你重启 Gateway，openclaw.json 改了的话安装器最后自己重启
+            say(tag + (r.stdout.strip().splitlines() or [""])[0].strip())
         else:
             say(L("世界树 install-openclaw 失败：", "Memory tree: install-openclaw failed: ") + (r.stderr or r.stdout).strip()[-300:])
     else:  # 别的 claw：它能连远程 MCP 的话，自己接上世界树（和 Claude.ai、ChatGPT 一样一个平台一个令牌）
@@ -708,12 +775,17 @@ def main() -> None:
                        GENERIC_SKILLS, (GENERIC_RULES_ZH, GENERIC_RULES_EN))
     else:
         link_skills(workspace, repo, home)
+        adopt_fresh_workspace(workspace, cfg["app_name"])
         print("openclaw.json")
         restart = patch_openclaw(oc_path, home, cfg.get("openclaw_bin") or "openclaw")
     public = None
     if not a.no_tree:
         print(L("世界树", "Memory tree"))
+        oc_before = oc_path.read_bytes() if not generic and oc_path.exists() else b""
         public = setup_tree(venv, cfg, home, a.no_systemd, vault, a.tree_public, openclaw=not generic)
+        if not generic and oc_path.exists() and oc_path.read_bytes() != oc_before:
+            restart = True  # 世界树往 extraPaths 里加了导出的文件夹
+    restarted = False
     if not a.no_systemd:
         print("systemd")
         install_systemd(repo, venv, cfg["timezone"])  # 没有 systemctl 它自己说怎么手动跑
@@ -723,11 +795,24 @@ def main() -> None:
             r = run(["systemctl", "--user", "is-active", "openclaw-gateway"])
             if r.stdout.strip() == "active":
                 run(["systemctl", "--user", "restart", "openclaw-gateway"])
+                restarted = True
                 say(L("openclaw-gateway 已重启（配置改了）", "Restarted openclaw-gateway (its config changed)"))
             else:
                 say(L("openclaw.json 改了，重启你的 Gateway 生效", "openclaw.json changed: restart your Gateway to apply it"))
     elif restart:
         say(L("openclaw.json 改了，重启你的 Gateway 生效", "openclaw.json changed: restart your Gateway to apply it"))
+    gw_line = ""
+    if not generic:  # app 的对话走 Gateway：这里就试一下连不连得上，别等手机上才发现
+        sys.path.insert(0, str(repo / "server"))
+        from config import gateway_default  # 只用标准库；和服务端同一个算法（server.json 没写 gateway 就按 openclaw.json 的端口）
+        gw = str(cfg.get("gateway") or gateway_default(oc_path))
+        if restarted:
+            say(L("等 Gateway 重启好（最多一分钟）…", "Waiting for the Gateway to come back (up to a minute)…"))
+        ok, detail = probe_gateway(gw, oc_path, wait=60 if restarted else 5)
+        gw_line = L(f"OpenClaw Gateway：{gw}" + ("，连得上 ✓" if ok else f"，现在连不上 ✗（{detail}）：`openclaw gateway status` 看它在不在跑；"
+                                                        "它不在这个地址的话，server.json 里写 \"gateway\": \"http://127.0.0.1:<端口>\" 再重启服务"),
+                    f"OpenClaw Gateway: {gw}" + (", reachable ✓" if ok else f", not reachable right now ✗ ({detail}): check `openclaw gateway status`; "
+                                                        "if it listens somewhere else, set \"gateway\": \"http://127.0.0.1:<port>\" in server.json and restart the server"))
 
     b = cfg["bind"]
     url = f"http://{b['host']}:{b['port']}"
@@ -738,6 +823,8 @@ def main() -> None:
         ok, detail = probe_claw(cfg.get("claw") or {})
         print(L(f"你的 claw：{cfg['claw'].get('name')}（{cfg['claw'].get('url')}）" + ("，接口连得上 ✓" if ok else f"，接口现在连不上 ✗（{detail}）：看它在不在跑、地址和令牌对不对，改 server.json 的 claw 段不用重启"),
                 f"Your claw: {cfg['claw'].get('name')} ({cfg['claw'].get('url')})" + (", API reachable ✓" if ok else f", API not reachable right now ✗ ({detail}): check it's running and the URL / token are right; editing the claw section of server.json needs no restart")))
+    else:
+        print(gw_line)
     if "phone" in new_tokens:
         print(L(f"手机令牌，只显示这一次：{new_tokens['phone']}", f"Phone token, shown only this once: {new_tokens['phone']}"))
     else:
@@ -745,14 +832,15 @@ def main() -> None:
                 "The phone token was generated earlier; for a new one: `~/.openmousse/venv/bin/python ~/.openmousse/repo/server/tokens.py add phone2`"))
     print()
     print(L("手机怎么连：", "Connecting the phone:"))
+    tok_zh, tok_en = ("上面的令牌", "the token above") if "phone" in new_tokens else ("手机令牌", "your phone token")
     if b["host"].startswith("100."):
-        print(L(f"  这台机器在 Tailscale 里：手机也装 Tailscale、登同一个账号，app 连接页填 {url} 和上面的令牌。",
-                f"  This machine is on Tailscale: install Tailscale on the phone (same account), then enter {url} and the token above in the app."))
+        print(L(f"  这台机器在 Tailscale 里：手机也装 Tailscale、登同一个账号，app 连接页填 {url} 和{tok_zh}。",
+                f"  This machine is on Tailscale: install Tailscale on the phone (same account), then enter {url} and {tok_en} in the app."))
     elif b["host"] in ("127.0.0.1", "localhost"):
         print(L("  现在只监听本机。装 Tailscale（`curl -fsSL https://tailscale.com/install.sh | sh && sudo tailscale up`）后再跑一遍安装器，",
                 "  Listening on this machine only. Install Tailscale (`curl -fsSL https://tailscale.com/install.sh | sh && sudo tailscale up`) and run the installer again,"))
-        print(L("  或者用 `tailscale serve` / Caddy / nginx 把 127.0.0.1:8080 反代成 HTTPS，app 里填那个地址。",
-                "  or reverse-proxy 127.0.0.1:8080 as HTTPS with `tailscale serve` / Caddy / nginx and enter that address in the app."))
+        print(L(f"  或者用 `tailscale serve` / Caddy / nginx 把 127.0.0.1:{b['port']} 反代成 HTTPS，app 里填那个地址。",
+                f"  or reverse-proxy 127.0.0.1:{b['port']} as HTTPS with `tailscale serve` / Caddy / nginx and enter that address in the app."))
     else:
         print(L(f"  app 连接页填 {url} 和令牌", f"  Enter {url} and the token in the app"))
     print(L("  app：作者的 TestFlight 链接（仓库 README），或自己构建 app/",
