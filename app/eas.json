@@ -24,6 +24,16 @@
       "env": {
         "MOUSSE_LOCAL": "app.local.openmousse.json"
       }
+    },
+    "simulator": {
+      "extends": "production",
+      "distribution": "internal",
+      "autoIncrement": false,
+      "channel": "simulator",
+      "ios": {
+        "simulator": true,
+        "resourceClass": "m-medium"
+      }
     }
   },
   "submit": {

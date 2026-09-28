@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { agentName } from '../brand';
 import { useNavigation } from '@react-navigation/native';
 import { Alert, Image, Linking, Platform, Pressable, ScrollView, StyleSheet, TextInput, View, type LayoutChangeEvent, type NativeScrollEvent, type NativeSyntheticEvent, type TextInputKeyPressEventData } from 'react-native';
@@ -12,7 +12,7 @@ import type { ChatQuote } from '../navigation';
 import { useStore } from '../store';
 import { radius, space, type, useTheme } from '../theme';
 import { LensAvatar } from './LensAvatar';
-import { useBottomInset } from './keyboard';
+import { ChatScroll, KeyboardSticky, dismissMode, useBottomInset } from './keyboard';
 import { modelOf } from './ModelPicker';
 import { useSheet } from './Sheet';
 import { PullRefresh, T } from './ui';
@@ -319,7 +319,10 @@ export function ChatView({ threadId, placeholder, empty, quote: quoteProp, quote
   const scroller = useRef<ScrollView>(null);
   const root = useRef<View>(null);
   const bottom = useBottomInset(root);
-  const list = useRef({ y: 0, content: 0, height: 0 });
+  // 滚动位置、内容高度、列表高度、键盘在列表底下垫出的高度（iOS 上 ChatScroll 按键盘加的 contentInset）
+  const list = useRef({ y: 0, content: 0, height: 0, inset: 0 });
+  // 回调不能每次渲染换一个：KeyboardChatScrollView 会跟着重新挂监听，打字时每个字都要做一遍
+  const setInset = useCallback((b: number) => { list.current.inset = b; }, []);
   const nav = useNavigation<any>();
   const busy = !!typing[threadId];
   const placed = useMemo(() => placeCards(allCards, msgs, busy), [allCards, msgs, busy]);
@@ -335,7 +338,7 @@ export function ChatView({ threadId, placeholder, empty, quote: quoteProp, quote
   useEffect(() => {
     const h = setTimeout(() => {
       scroller.current?.scrollToEnd({ animated: true });
-      list.current.y = Math.max(0, list.current.content - list.current.height);  // 滚动事件回来之前先按目标位置算
+      list.current.y = Math.max(0, list.current.content - list.current.height + list.current.inset);  // 滚动事件回来之前先按目标位置算
     }, 60);
     return () => clearTimeout(h);
   }, [msgs.length, busy, partial?.length, inboxCount, cardCount, cardState]);
@@ -360,15 +363,15 @@ export function ChatView({ threadId, placeholder, empty, quote: quoteProp, quote
     list.current.y = e.nativeEvent.contentOffset.y;
     list.current.content = e.nativeEvent.contentSize.height;
   };
-  // 消息区变矮（键盘升起、输入框变高）时内容跟着往上推，原来贴着输入栏的那条还贴着，不会被挡住；
-  // 变高（键盘收起）时位置不动，只在滚过了头时收回来，下面不留空白。
+  // 消息区变矮（输入框变高、带上附件）时内容跟着往上推，原来贴着输入栏的那条还贴着，不会被挡住；
+  // 变高时位置不动，只在滚过了头时收回来，下面不留空白。键盘升降不走这里：iOS 上 ChatScroll 自己逐帧把内容和键盘一起推。
   const keepBottom = (e: LayoutChangeEvent) => {
     const l = list.current;
     const h = e.nativeEvent.layout.height;
     const shrink = l.height ? l.height - h : 0;
     l.height = h;
     if (!shrink || l.y < 0) return;
-    const y = Math.min(shrink > 0 ? l.y + shrink : l.y, Math.max(0, l.content - h));
+    const y = Math.min(shrink > 0 ? l.y + shrink : l.y, Math.max(0, l.content - h + l.inset));
     if (Math.abs(y - l.y) > 1) { scroller.current?.scrollTo({ y, animated: true }); l.y = y; }
   };
 
@@ -519,12 +522,13 @@ export function ChatView({ threadId, placeholder, empty, quote: quoteProp, quote
   const secs = Math.floor((rec.durationMillis ?? 0) / 1000);
 
   return (
-    <View ref={root} onLayout={bottom.onLayout} style={{ flex: 1, paddingBottom: bottom.inset }}>
-      {/* 键盘开着时点消息区任何地方、或者往上划，都先收键盘（点到的消息不响应，再点一次才算）。
-          网页不开 on-drag：react-native-web 在任何滚动（包括新回复自动滚到底）时都会让输入框失焦。 */}
-      <ScrollView ref={scroller} style={{ flex: 1 }} contentContainerStyle={{ padding: space.lg, gap: space.lg }} keyboardShouldPersistTaps="never" keyboardDismissMode={Platform.OS === 'web' ? 'none' : 'on-drag'}
+    <View ref={root} onLayout={bottom.onLayout} style={{ flex: 1, paddingBottom: bottom.home }}>
+      {/* 键盘开着时点消息区任何地方先收键盘（点到的消息不响应，再点一次才算）；iOS 上往下拖，键盘跟着手指收下去，输入栏和内容一起落下。
+          网页不开：react-native-web 在任何滚动（包括新回复自动滚到底）时都会让输入框失焦。 */}
+      <ChatScroll ref={scroller} offset={bottom.offset} style={{ flex: 1 }} contentContainerStyle={{ padding: space.lg, gap: space.lg }} keyboardShouldPersistTaps="never" keyboardDismissMode={dismissMode}
         scrollToOverflowEnabled onLayout={keepBottom} onScroll={track} onScrollEndDrag={track} onMomentumScrollEnd={track} scrollEventThrottle={32}
         onContentSizeChange={(_w, h) => { list.current.content = h; }}
+        onInsetChange={setInset}
         refreshControl={<PullRefresh onRefresh={() => refreshThread(threadId)} />}>
         {connected && !hideHistoryLink ? (
           <Pressable onPress={() => nav.navigate('History', { thread: threadId })} accessibilityRole="button" style={{ alignSelf: 'center', paddingVertical: 2 }}>
@@ -554,8 +558,8 @@ export function ChatView({ threadId, placeholder, empty, quote: quoteProp, quote
           </View>
         ) : null}
         {busy ? <ChatTasks cards={liveTasks} onRevise={reviseCard} thread={threadId} /> : null}
-      </ScrollView>
-      <View style={[styles.composerWrap, { borderTopColor: t.line, backgroundColor: t.bg }]}>
+      </ChatScroll>
+      <KeyboardSticky offset={bottom.offset} style={[styles.composerWrap, { borderTopColor: t.line, backgroundColor: t.bg }]}>
         {composerTop}
         {quote ? (
           <View style={{ paddingHorizontal: space.md, paddingTop: space.sm }}>
@@ -624,7 +628,7 @@ export function ChatView({ threadId, placeholder, empty, quote: quoteProp, quote
             )}
           </View>
         )}
-      </View>
+      </KeyboardSticky>
     </View>
   );
 }

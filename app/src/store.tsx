@@ -5,7 +5,8 @@ import { loadAgentName, loadServerConfig, persistAgentName, serverConfigured } f
 import { agentName, setAgentName } from './brand';
 import { HttpApi, OfflineApi, timeNow, type GravaApi } from './api/client';
 import { dataApi, missing, resetServerSupport, serverSupport } from './api/data';
-import { healthSupported, loadWake, postSignal, syncHealth, type WakeState } from './api/health';
+import { healthSupported, loadWake, postSignal, startHealthBackground, syncHealth, type WakeState } from './api/health';
+import { flushShareOutbox, refreshWidget, shareConfig, startLive, syncLive } from './api/native';
 import { HEALTH_KEYS, loadHealthParts, loadLive, probe, type LiveData } from './api/live';
 import { onPushReceived, onPushResponse, registerCategories, registerPush, setAppBadge, type PushAction, type PushInfo } from './api/push';
 import { useBanner, type BannerSpec } from './components/Banner';
@@ -409,8 +410,9 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
   const syncHealthNow = useCallback(async (full = false) => {
     try {
       healthAt.current = Date.now();
-      await syncHealth(14, full);
+      await syncHealth(14, full, AppState.currentState === 'active');
       reload('wake').catch(() => {});
+      refreshWidget(true).catch(() => {});  // 恢复分可能变了
       const { patch, errors } = await loadHealthParts();
       setS((st) => {
         const liveErrors = { ...st.liveErrors, ...errors };
@@ -789,13 +791,22 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
       setAgentName(p.appName);
       persistAgentName(p.appName).catch(() => {});
       setS((st) => ({ ...st, configLoaded: true, needsServer: false, authFailed: false, appName: agentName(), sharedChannels: p.sharedChannels, connected: true, booting: false }));
+      // 原生扩展（1.0.5 起）：地址和令牌给分享 / 小组件扩展，补传分享扩展没传上去的，实时活动和小组件对一遍
+      const fg = AppState.currentState === 'active';  // 也可能是 iOS 在后台叫醒来同步健康数据的
+      shareConfig();
+      flushShareOutbox().catch(() => {});
+      startLive();
+      if (fg) syncLive().catch(() => {});
+      refreshWidget(true).catch(() => {});
+      startHealthBackground(() => { refreshWidget(true).catch(() => {}); });
       // 线程列表先到，对话记录才知道要读哪些；对话记录读完再读未读（第一次只记下现状）。其余各块并行读，谁先回来先显示。
       const lists = reload('groups', 'sideChats').then((got) => loadThreads(got)).then(() => reload('unread')).finally(() => flushRef.current());
       const rest = reload(...STARTUP_KEYS);
       const live = loadLive().then(({ data, errors }) => setS((st) => ({ ...st, live: data, liveErrors: errors, liveLoading: false })));
       await Promise.all([lists, rest, live]);
       // Apple 健康：每次连上都把最近两周重推一遍（服务端按天覆盖），推完刷新看板；然后告诉服务器手机有动静（起床判断用）。
-      (healthSupported() ? syncHealthNow(true) : Promise.resolve()).catch(() => {}).finally(() => { postSignal('foreground').catch(() => {}); });
+      // 后台被叫醒的那种启动不算动静，也不推全部指标。
+      (healthSupported() ? syncHealthNow(fg) : Promise.resolve()).catch(() => {}).finally(() => { if (fg) postSignal('foreground').catch(() => {}); });
       registerPush().catch(() => {});  // 推送 token 交给服务器（只在真机上）
     });
   }, [reload, loadThreads, syncHealthNow]);
@@ -814,6 +825,10 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
         // 起床判断：先把新的睡眠分段传上去，再报「手机有动静」，服务器看到的就是最新的
         const sync = healthSupported() && Date.now() - healthAt.current > HEALTH_RESYNC_MS ? syncHealthNow() : Promise.resolve();
         sync.catch(() => {}).finally(() => { postSignal('foreground').then(() => reload('wake')).catch(() => {}); });
+        // 分享扩展没传上去的补传；实时活动（新开的只能在前台开）和小组件对一遍
+        flushShareOutbox().catch(() => {});
+        syncLive().catch(() => {});
+        refreshWidget().catch(() => {});
       }
     });
     return () => sub.remove();

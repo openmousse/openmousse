@@ -2,6 +2,7 @@
 import React, { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
 import { AppState } from 'react-native';
 import * as api from '../api/think';
+import { syncLive } from '../api/native';
 import type { PendingFile } from '../data/types';
 import { useStore } from '../store';
 import { setMeditating } from './focus';
@@ -158,12 +159,14 @@ export function ThinkProvider({ children }: { children: React.ReactNode }) {
       const f = await api.focusStart(minutes);
       setMeditating(true);
       setS((cur) => ({ ...cur, focus: f, unseenFocus: null }));
+      syncLive().catch(() => {});  // 锁屏和灵动岛上的倒计时（服务器的 /api/live 里有这次冥想）
       return f;
     },
     endFocus: async (b) => {
       const sum = await api.focusEnd(b);
       setMeditating(false);
       setS((cur) => ({ ...cur, focus: null, unseenFocus: null }));
+      syncLive().catch(() => {});
       reload('unread', 'inbox', 'feed').catch(() => {});
       return sum;
     },

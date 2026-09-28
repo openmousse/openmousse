@@ -4,7 +4,7 @@
 import { fetch as expoFetch } from 'expo/fetch';
 import type { Attachment, ChatCard, Message, PendingFile } from '../data/types';
 import { L } from '../i18n';
-import { authHeaders, fileUrl, getBase } from './base';
+import { authHeaders, fileUrl, getBase, HttpError } from './base';
 
 export interface GravaApi {
   readonly connected: boolean;
@@ -106,7 +106,7 @@ export function xhrUpload(url: string, fd: FormData, timeoutMs = 10 * 60 * 1000)
       let j: any = {};
       try { j = JSON.parse(xhr.responseText || '{}'); } catch { /* 非 JSON */ }
       if (xhr.status >= 200 && xhr.status < 300) resolve(j);
-      else reject(new Error(j.detail ?? j.error ?? L(`上传失败 HTTP ${xhr.status}`, `Upload failed: HTTP ${xhr.status}`)));
+      else reject(new HttpError(j.detail ?? j.error ?? L(`上传失败 HTTP ${xhr.status}`, `Upload failed: HTTP ${xhr.status}`), xhr.status, j));  // 带状态码：补传分享时要分清「拒收」和「没连上」
     };
     xhr.onerror = () => reject(new Error(L('上传失败：网络不通', 'Upload failed: network error')));
     xhr.ontimeout = () => reject(new Error(L('上传超时', 'Upload timed out')));

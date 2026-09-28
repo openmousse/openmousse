@@ -7,6 +7,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import * as Haptics from 'expo-haptics';
 import { AudioModule, RecordingPresets, setAudioModeAsync, useAudioRecorder, useAudioRecorderState } from 'expo-audio';
 import { BellOff, ChevronRight, Clock, Inbox, Mic, Minimize2, Moon, Pencil, Square, TextIcon, Timer } from '../components/icons';
+import Reanimated from 'react-native-reanimated';
 import { useBottomInset } from '../components/keyboard';
 import { useSheet } from '../components/Sheet';
 import { Btn, Screen, SectionLabel, T, showError } from '../components/ui';
@@ -139,7 +140,7 @@ export function ThinkWriteScreen() {
   const bg = zen ? Z.bg : t.surface;
   const mm = `${Math.floor(left / 60)}:${String(left % 60).padStart(2, '0')}`;
   return (
-    <View ref={root} onLayout={bottom.onLayout} style={{ flex: 1, backgroundColor: bg, paddingTop: insets.top, paddingBottom: bottom.inset }}>
+    <Reanimated.View ref={root} onLayout={bottom.onLayout} style={[{ flex: 1, backgroundColor: bg, paddingTop: insets.top }, bottom.style]}>
       {zen ? <StatusBar barStyle="light-content" /> : null}
       {zen ? (
         <View style={{ paddingHorizontal: 20, paddingTop: 12, gap: 10 }}>
@@ -198,7 +199,7 @@ export function ThinkWriteScreen() {
           </>
         )}
       </View>
-    </View>
+    </Reanimated.View>
   );
 }
 

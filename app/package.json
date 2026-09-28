@@ -3,6 +3,7 @@
   "version": "1.0.0",
   "main": "index.ts",
   "dependencies": {
+    "@bacons/apple-targets": "^5.0.0",
     "@expo/metro-runtime": "~57.0.16",
     "@kingstinct/react-native-healthkit": "^16.0.0",
     "@react-navigation/bottom-tabs": "^7.19.2",
@@ -25,12 +26,15 @@
     "react": "19.2.3",
     "react-dom": "19.2.3",
     "react-native": "0.86.3",
+    "react-native-keyboard-controller": "1.21.9",
     "react-native-markdown-display": "^7.0.2",
     "react-native-nitro-modules": "^0.37.1",
+    "react-native-reanimated": "4.5.1",
     "react-native-safe-area-context": "~5.7.0",
     "react-native-screens": "~4.26.0",
     "react-native-svg": "15.15.4",
-    "react-native-web": "^0.21.2"
+    "react-native-web": "^0.21.2",
+    "react-native-worklets": "0.10.1"
   },
   "devDependencies": {
     "@types/react": "~19.2.2",
@@ -48,5 +52,10 @@
     "web:build": "expo export --platform web && node scripts/build-web.mjs",
     "lint": "expo lint"
   },
-  "private": true
+  "private": true,
+  "overrides": {
+    "@bacons/apple-targets": {
+      "@expo/prebuild-config": "~57.0.16"
+    }
+  }
 }

@@ -6,8 +6,8 @@
 // "哪一天"都按手机当地时区。
 import { Platform } from 'react-native';
 import {
-  CategoryValueSleepAnalysis, isHealthDataAvailable, queryCategorySamples, queryQuantitySamples, queryStateOfMindSamples,
-  queryStatisticsCollectionForQuantity, queryWorkoutSamples, requestAuthorization, WorkoutActivityType,
+  CategoryValueSleepAnalysis, configureBackgroundTypes, isHealthDataAvailable, queryCategorySamples, queryQuantitySamples, queryStateOfMindSamples,
+  queryStatisticsCollectionForQuantity, queryWorkoutSamples, requestAuthorization, subscribeToChanges, UpdateFrequency, WorkoutActivityType,
 } from '@kingstinct/react-native-healthkit';
 import { CATEGORY_TYPES, QUANTITY_TYPES } from '../data/healthTypes';
 import { L } from '../i18n';
@@ -238,19 +238,53 @@ async function post(path: string, body: object) {
 
 let metricsAt = 0;
 
-/** 读取并上传。恢复卡的 14 天和睡眠分段每次都推；全部指标一小时最多推一次（full 不管这个），平时推最近 30 天，服务器上还没有的时候补一年。 */
-export async function syncHealth(days = 14, full = false): Promise<number> {
+/** 读取并上传。恢复卡的 14 天和睡眠分段每次都推；全部指标一小时最多推一次（full 不管这个），平时推最近 30 天，服务器上还没有的时候补一年。
+ *  metrics = false：不推全部指标（后台被叫醒时只有几十秒，只推恢复卡和睡眠）。 */
+export async function syncHealth(days = 14, full = false, metrics = true): Promise<number> {
   await authorizeHealth();
   const { days: rows, sleep } = await readHealthDays(days);
   await post('/api/health/daily', { days: rows, source: 'healthkit' });
   await post('/api/health/sleep', { ...sleep, source: 'healthkit' }).catch(() => {});  // 老服务器没有这个接口
-  if (full || Date.now() - metricsAt > 3600_000) {
+  if (metrics && (full || Date.now() - metricsAt > 3600_000)) {
     const status = await fetch(`${getBase()}/api/health/metrics/status`, { headers: authHeaders() }).then((x) => x.json()).catch(() => ({ rows: 1 }));
     const metrics = await readAllMetrics(status.rows ? 30 : 365);
     for (let i = 0; i < metrics.length; i += 2000) await post('/api/health/metrics', { rows: metrics.slice(i, i + 2000), source: 'healthkit' });
     metricsAt = Date.now();
   }
   return rows.length;
+}
+
+// —— 后台同步（1.0.5 起：healthkit 插件开了 background，entitlement 里有 background-delivery） ——
+// 手表把睡眠、心率变异性、静息心率同步到手机后，iOS 在后台叫醒 app（app 没开、被划掉了也行，原生部分在启动时就注册了观察），
+// 这里只推恢复卡要的最近两天和睡眠分段（不推全部指标），推完刷新小组件。不报 foreground：后台同步不代表他在用手机。
+// 锁屏时健康数据读不到，要等解锁后才传；iOS 也可能合并、推迟这些唤醒。
+const BACKGROUND_TYPES = [
+  'HKCategoryTypeIdentifierSleepAnalysis',
+  'HKQuantityTypeIdentifierHeartRateVariabilitySDNN',
+  'HKQuantityTypeIdentifierRestingHeartRate',
+] as const;
+
+let bgStarted = false;
+let bgTimer: ReturnType<typeof setTimeout> | null = null;
+let bgRunning = false;
+
+/** app 启动（前台或被后台叫醒）连上服务器以后调一次；afterSync 在每次后台推完之后调（刷新小组件之类）。 */
+export function startHealthBackground(afterSync: () => void): void {
+  if (bgStarted || !healthSupported()) return;
+  bgStarted = true;
+  configureBackgroundTypes([...BACKGROUND_TYPES], UpdateFrequency.immediate).catch(() => {});
+  const run = () => {
+    bgTimer = null;
+    if (bgRunning) return;
+    bgRunning = true;
+    syncHealth(2, false, false).then(() => afterSync()).catch(() => {}).finally(() => { bgRunning = false; });
+  };
+  for (const id of BACKGROUND_TYPES) {
+    try {
+      // 同一次同步常常几种一起到：攒 2 秒推一次
+      subscribeToChanges(id, () => { if (!bgTimer) bgTimer = setTimeout(run, 2000); });
+    } catch { /* 这台机器没有这个类型 */ }
+  }
 }
 
 // —— 起床判断（服务器 /api/health/wake，算法在服务器上） ——

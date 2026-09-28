@@ -3,7 +3,8 @@ import React, { useCallback, useEffect, useState } from 'react';
 import { Linking, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
 import { useFocusEffect, useNavigation, useRoute } from '@react-navigation/native';
 import { CalendarDays, ChevronLeft, ChevronRight, Clock, Hash, Lightbulb, NotebookText, Search, X } from '../components/icons';
-import { useBottomInset } from '../components/keyboard';
+import Reanimated from 'react-native-reanimated';
+import { dismissMode, useBottomInset } from '../components/keyboard';
 import { useSheet } from '../components/Sheet';
 import { PullRefresh, Screen, SectionLabel, T, showError } from '../components/ui';
 import * as thinkApi from '../api/think';
@@ -238,9 +239,9 @@ export function ThinkKeywordScreen() {
       <BackBar title={`#${page?.k ?? k}`} onBack={() => nav.goBack()}
         sub={page ? L(`${page.ideas} 条想法 · ${page.saves} 条收藏${since ? ` · 从 ${since} 起` : ''}`, `${page.ideas} thoughts · ${page.saves} saved${since ? ` · since ${since}` : ''}`) : ''}
         icon={<View style={[styles.round, { backgroundColor: t.tints.cyan.soft }]}><Hash size={18} color={t.tints.cyan.fg} /></View>} />
-      <View ref={root} onLayout={bottom.onLayout} style={{ flex: 1, paddingBottom: bottom.inset }}>
+      <Reanimated.View ref={root} onLayout={bottom.onLayout} style={[{ flex: 1 }, bottom.style]}>
         <View style={{ flex: 1 }}>
-          <ScrollView contentContainerStyle={{ padding: space.lg, gap: 10, paddingBottom: 90 }} refreshControl={<PullRefresh onRefresh={load} />}>
+          <ScrollView contentContainerStyle={{ padding: space.lg, gap: 10, paddingBottom: 90 }} keyboardShouldPersistTaps="handled" keyboardDismissMode={dismissMode} refreshControl={<PullRefresh onRefresh={load} />}>
             {page?.co.length ? (
               <>
                 <T v="label" color={t.ink3} style={{ textTransform: 'uppercase' }}>{L('常一起出现', 'Often together')}</T>
@@ -286,7 +287,7 @@ export function ThinkKeywordScreen() {
           ) : null}
         </View>
         <CaptureBar keyword={page?.k ?? k} placeholder={L(`记一条 #${page?.k ?? k}`, `Note it #${page?.k ?? k}`)} onSaved={load} />
-      </View>
+      </Reanimated.View>
     </Screen>
   );
 }

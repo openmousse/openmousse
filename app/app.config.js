@@ -15,13 +15,16 @@ module.exports = ({ config }) => {
   const name = local.name || config.name;
   const slug = local.slug || config.slug;
   const icons = `./${(local.icons || 'assets').replace(/^\.?\//, '').replace(/\/$/, '')}`;
+  const bundleId = local.iosBundleId || config.ios.bundleIdentifier;
+  // 分享 / 小组件 / 通知三个扩展（targets/）和 app 共用一个 App Group：group.<bundle id>。扩展按自己的 bundle id 推出同一个名字。
+  const entitlements = { ...config.ios.entitlements, 'com.apple.security.application-groups': [`group.${bundleId}`] };
   const out = {
     ...config,
     name,
     slug,
     scheme: local.scheme || slug,
     icon: `${icons}/icon.png`,
-    ios: { ...config.ios, bundleIdentifier: local.iosBundleId || config.ios.bundleIdentifier, infoPlist: fillObj(config.ios.infoPlist, name) },
+    ios: { ...config.ios, bundleIdentifier: bundleId, infoPlist: fillObj(config.ios.infoPlist, name), entitlements },
     android: {
       ...config.android,
       package: local.androidPackage || config.android.package,

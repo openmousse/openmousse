@@ -5,7 +5,8 @@ import * as Clipboard from 'expo-clipboard';
 import { useFocusEffect, useNavigation, useRoute } from '@react-navigation/native';
 import { CalendarDays, Camera, ClipboardPaste, FileText, ImageIcon, Moon, Plus, Search, Timer } from '../components/icons';
 import { pickDocuments, pickMedia } from '../components/chatInput';
-import { useBottomInset } from '../components/keyboard';
+import Reanimated from 'react-native-reanimated';
+import { dismissMode, useBottomInset } from '../components/keyboard';
 import { useSheet } from '../components/Sheet';
 import { Btn, LargeHeader, PullRefresh, Screen, SectionLabel, T, showError } from '../components/ui';
 import * as thinkApi from '../api/think';
@@ -110,9 +111,9 @@ function Ideas() {
     } catch (e) { showError(L('没开成', "Couldn't start"), e); } finally { setBusy(false); }
   };
   return (
-    <View ref={root} onLayout={bottom.onLayout} style={{ flex: 1, paddingBottom: bottom.inset }}>
+    <Reanimated.View ref={root} onLayout={bottom.onLayout} style={[{ flex: 1 }, bottom.style]}>
       <View style={{ flex: 1 }}>
-        <ScrollView contentContainerStyle={{ paddingHorizontal: space.lg, paddingBottom: sel.length ? 90 : space.xl, gap: 10 }} keyboardShouldPersistTaps="handled" keyboardDismissMode={Platform.OS === 'web' ? 'none' : 'on-drag'}
+        <ScrollView contentContainerStyle={{ paddingHorizontal: space.lg, paddingBottom: sel.length ? 90 : space.xl, gap: 10 }} keyboardShouldPersistTaps="handled" keyboardDismissMode={dismissMode}
           refreshControl={<PullRefresh onRefresh={refresh} />}>
           {unseenFocus ? (
             <Pressable onPress={() => openZenSummary(nav, unseenFocus.id)} accessibilityRole="button" style={({ pressed }) => [styles.notice, { backgroundColor: t.lensField, opacity: pressed ? 0.85 : 1 }]}>
@@ -160,7 +161,7 @@ function Ideas() {
         ) : null}
       </View>
       <CaptureBar />
-    </View>
+    </Reanimated.View>
   );
 }
 

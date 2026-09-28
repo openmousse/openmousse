@@ -1,6 +1,6 @@
 // 想法页底下的输入栏：打字（句子里的 #xx 也算关键词）、# 键打关键词、录一段语音（原声留着、转成文字）、照片 / 文件、展开全屏写。
 // 发出去只是记下来：不发给模型。
-import React, { useMemo, useRef, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { Alert, Platform, Pressable, ScrollView, StyleSheet, Text, TextInput, View, type NativeSyntheticEvent, type TextInputKeyPressEventData } from 'react-native';
 import * as Haptics from 'expo-haptics';
 import { AudioModule, RecordingPresets, setAudioModeAsync, useAudioRecorder, useAudioRecorderState } from 'expo-audio';
@@ -8,6 +8,7 @@ import { useNavigation } from '@react-navigation/native';
 import { ArrowUp, Camera, FileText, Hash, ImageIcon, Maximize2, Mic, Paperclip, Square, X } from '../components/icons';
 import { MAX_FILES, pickDocuments, pickMedia } from '../components/chatInput';
 import { useSheet } from '../components/Sheet';
+import { editMenu, nativeReady } from '../api/native';
 import { T } from '../components/ui';
 import { loadDraft, saveDraft } from '../drafts';
 import type { PendingFile } from '../data/types';
@@ -37,6 +38,11 @@ export function CaptureBar({ keyword, placeholder, onSaved }: {
   const [token, setToken] = useState('');
   const [busy, setBusy] = useState<string | null>(null);
   const input = useRef<TextInput>(null);
+  // 回车直接记下，换行在长按菜单里（照微信）：要 1.0.5 起的原生菜单，没有的包上回车照旧是换行
+  const nativeMenu = Platform.OS === 'ios' && nativeReady();
+  const menuKey = `think-capture:${draftKey}`;
+  const latest = useRef({ text, sel: { start: 0, end: 0 } });
+  useEffect(() => { latest.current.text = text; }, [text]);
   const recorder = useAudioRecorder(SPEECH_PRESET);
   const rec = useAudioRecorderState(recorder, 250);
   const canRecord = Platform.OS !== 'web';
@@ -145,6 +151,27 @@ export function CaptureBar({ keyword, placeholder, onSaved }: {
   };
 
   const expand = () => nav.navigate('ThinkWrite', { text: text.trim() ? text : undefined, from: draftKey });
+
+  // 长按输入框的系统菜单里加「换行」「全屏写」。换行原生那边直接插进光标处；插不了（handled=false）就在这里按记下的光标位置插。
+  useEffect(() => {
+    if (!nativeMenu) return undefined;
+    const off = editMenu(menuKey, [
+      { id: 'newline', title: L('换行', 'New line'), icon: 'return' },
+      { id: 'full', title: L('全屏写', 'Full screen'), icon: 'arrow.up.left.and.arrow.down.right' },
+    ], (e) => {
+      const cur = latest.current.text;
+      if (e.id === 'full') {
+        nav.navigate('ThinkWrite', { text: cur.trim() ? cur : undefined, from: draftKey });
+      } else if (e.id === 'newline' && !e.handled) {
+        const { start, end } = latest.current.sel;
+        const a = Math.min(start, cur.length);
+        const next = `${cur.slice(0, a)}\n${cur.slice(Math.min(Math.max(end, a), cur.length))}`;
+        setText(next);
+        saveDraft(draftKey, next);
+      }
+    });
+    return () => { off?.(); };
+  }, [nativeMenu, menuKey, draftKey, nav]);
   const webEnter = Platform.OS === 'web' ? (e: NativeSyntheticEvent<TextInputKeyPressEventData>) => {
     const k = e.nativeEvent as unknown as KeyboardEvent;
     if (k.key !== 'Enter' || k.shiftKey || k.isComposing || k.keyCode === 229) return;
@@ -221,7 +248,9 @@ export function CaptureBar({ keyword, placeholder, onSaved }: {
           ) : (
             <View style={[styles.field, { backgroundColor: t.surface, borderColor: t.line }]}>
               <GrowInput ref={input} value={text} onChangeText={change} multiline placeholder={busy ?? placeholder ?? L('记下来，它不会看', "Jot it down. It won't read it.")} placeholderTextColor={t.ink3}
-                onKeyPress={webEnter} editable={!busy} accessibilityLabel={L('记一条想法', 'Jot down a thought')}
+                onKeyPress={webEnter} editable={!busy} accessibilityLabel={L('记一条想法', 'Jot down a thought')} testID={menuKey}
+                {...(nativeMenu ? { submitBehavior: 'submit' as const, returnKeyType: 'done' as const, onSubmitEditing: () => { submit(); } } : null)}
+                onSelectionChange={(e) => { latest.current.sel = e.nativeEvent.selection; }}
                 style={[type.body, { flex: 1, color: t.ink, paddingTop: 9, paddingBottom: 9, maxHeight: 120 }]} />
               <Pressable onPress={expand} hitSlop={6} accessibilityRole="button" accessibilityLabel={L('展开，全屏写', 'Expand to write full screen')} style={styles.expand}>
                 <Maximize2 size={17} color={t.ink2} />

@@ -7,6 +7,9 @@ app/dist/
 app/preview/
 docs/
 app/.expo/
+# 本地试 prebuild 生成的原生工程：EAS 看到它就不自己 prebuild 了（CNG），不能带上去
+app/ios/
+app/android/
 server/
 tree/
 packs/

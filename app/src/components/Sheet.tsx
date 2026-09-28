@@ -2,6 +2,7 @@ import React, { createContext, useCallback, useContext, useEffect, useMemo, useR
 import { Animated, Easing, Keyboard, Platform, Pressable, ScrollView, StyleSheet, View, useWindowDimensions } from 'react-native';
 import { L } from '../i18n';
 import { radius, space, useTheme } from '../theme';
+import Reanimated from 'react-native-reanimated';
 import { useBottomInset } from './keyboard';
 import { T } from './ui';
 
@@ -32,7 +33,7 @@ export function SheetProvider({ children }: { children: React.ReactNode }) {
 /** 升起 / 落下都有动画；落下走完才卸掉（onHidden），中途又被打开就接着升。 */
 function Panel({ spec, shown, close, onHidden }: { spec: SheetSpec; shown: boolean; close: () => void; onHidden: () => void }) {
   const t = useTheme();
-  const bottom = useBottomInset();  // 弹层里的输入框弹出键盘时，内容升到键盘上面；键盘收起时让出 Home 指示条
+  const bottom = useBottomInset();  // 弹层里的输入框弹出键盘时，内容升到键盘上面（底下的垫片）；键盘收起时让出 Home 指示条
   const screen = useWindowDimensions().height;
   const [p] = useState(() => new Animated.Value(0));  // 0 = 藏在屏幕下面，1 = 升起来
   // 位移按屏幕高度算、不按弹层自己的高度：键盘把弹层撑高时，正在走的动画不会跳。
@@ -48,11 +49,13 @@ function Panel({ spec, shown, close, onHidden }: { spec: SheetSpec; shown: boole
       <Animated.View style={[StyleSheet.absoluteFill, { backgroundColor: 'rgba(0,0,0,0.45)', opacity: p }]}>
         <Pressable style={StyleSheet.absoluteFill} onPress={close} accessibilityLabel={L('关闭', 'Close')} />
       </Animated.View>
-      <Animated.View style={[styles.panel, { backgroundColor: t.bg, paddingBottom: bottom.inset + space.lg, transform: [{ translateY: lift }] }]}>
+      <Animated.View style={[styles.panel, { backgroundColor: t.bg, paddingBottom: space.lg, transform: [{ translateY: lift }] }]}>
         <View style={[styles.grabber, { backgroundColor: t.line }]} />
         <T v="title" style={{ marginBottom: space.md }}>{spec.title}</T>
         {/* handled：键盘开着时点弹层里的按钮（比如「保存」）一次就生效，点空白处收键盘。 */}
         <ScrollView style={{ flexGrow: 0 }} showsVerticalScrollIndicator={false} keyboardShouldPersistTaps="handled">{spec.content(close)}</ScrollView>
+        {/* 垫片：键盘开着时和键盘一样高（逐帧跟着），收起时让出 Home 指示条 */}
+        <Reanimated.View style={bottom.spacer} />
       </Animated.View>
     </View>
   );

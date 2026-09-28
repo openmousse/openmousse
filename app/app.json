@@ -2,7 +2,7 @@
   "expo": {
     "name": "OpenMousse",
     "slug": "openmousse",
-    "version": "1.0.4",
+    "version": "1.0.5",
     "orientation": "portrait",
     "icon": "./assets/icon.png",
     "userInterfaceStyle": "automatic",
@@ -16,7 +16,8 @@
         },
         "NSHealthShareUsageDescription": "{name} 读取睡眠、心率变异性、静息心率等数据，用于每天的状态判断和训练建议。",
         "NSHealthUpdateUsageDescription": "{name} 不会向健康写入数据。",
-        "ITSAppUsesNonExemptEncryption": false
+        "ITSAppUsesNonExemptEncryption": false,
+        "NSSupportsLiveActivities": true
       },
       "entitlements": {
         "com.apple.developer.healthkit": true,
@@ -48,7 +49,7 @@
         {
           "NSHealthShareUsageDescription": "{name} 读取睡眠、心率变异性、静息心率等数据，用于每天的状态判断和训练建议。",
           "NSHealthUpdateUsageDescription": "{name} 不会向健康写入数据。",
-          "background": false
+          "background": true
         }
       ],
       [
@@ -71,7 +72,9 @@
           "color": "#D9AE62"
         }
       ],
-      "expo-secure-store"
+      "expo-secure-store",
+      "@bacons/apple-targets",
+      "./plugins/withExtensionVersions"
     ]
   }
 }

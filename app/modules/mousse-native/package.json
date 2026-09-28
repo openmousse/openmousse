@@ -1,0 +1,7 @@
+{
+  "name": "mousse-native",
+  "version": "1.0.0",
+  "private": true,
+  "description": "OpenMousse app's own native bits: share / widget / notification extension glue, Live Activities, the Think input's edit menu",
+  "main": "index.ts"
+}
