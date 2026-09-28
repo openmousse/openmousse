@@ -63,6 +63,7 @@ class Run:
     cards: dict = field(default_factory=dict)  # 这次回复里出的转交卡、任务卡（id → 最新的样子）：客户端重新接上时补发（见 cards.py）
     stopping: bool = False  # 用户点了「停」（/api/chat/stop）：断开到 Gateway 的连接，Gateway 就中止这一轮
     stream_task: asyncio.Task | None = None  # 流式读 Gateway 的那一段（停的时候取消它）
+    gw_run: str | None = None  # 走 WebSocket 对话通道时 Gateway 给这一轮的 runId（停、插话、断线后接着收都靠它）
 
     def publish(self, item: tuple[str, dict]) -> None:
         for q in list(self.queues):
@@ -85,6 +86,7 @@ class Queued:
 
 
 QUEUED: dict[str, list[Queued]] = {}
+STEERS: dict[str, asyncio.Future] = {}  # 插话那一条的 runId → 结果：None = 并进了正在跑的那一轮；Run = 变成了单独一轮（接管了）
 QUEUE_RESUME_MINUTES = 30  # 服务重启时库里还排着的：这么久以内的接着发，更早的标成没发出去
 
 
@@ -353,10 +355,87 @@ async def gateway_stream(run: Run, text: str | list, token: str) -> None:
                         run.publish(("delta", {"text": delta}))
 
 
-async def run_gateway(run: Run, text: str | list, token: str) -> None:
-    """后台把一条消息发给 Gateway，流式攒回复，结束后入库。不依赖任何客户端连接。text 可以是 OpenAI 的 content 数组（带图片）。
-    结束后把回复进行中排着的消息合成下一轮发出去（drain）。"""
-    run.stream_task = asyncio.create_task(gateway_stream(run, text, token))
+def transport() -> str:
+    """发消息走哪条路：server.json 的 chat.transport。"http"（默认）= OpenAI 兼容接口；"ws" = Gateway 的 WebSocket 对话通道（gateway_ws.py，能插话）。"""
+    return str((raw().get("chat") or {}).get("transport") or "http").lower()
+
+
+def ws_ok(content: str | list) -> bool:
+    """这一条能不能走 WebSocket：带图片的（content 数组）还走 HTTP（图片按 OpenAI 格式直接给模型，WebSocket 的附件格式没对过）。"""
+    return transport() == "ws" and isinstance(content, str)
+
+
+async def gateway_ws_stream(run: Run, text: str | None) -> None:
+    """经 Gateway 的对话通道：发出去（text 为 None = 接管一个已经在跑的 runId），按 runId 收 chat 事件攒进 run.text。
+    断过线：重连后这一轮还在跑就接着收，已经结束了就去 chat.history 补回回复。"""
+    import gateway_ws as gw_mod  # 延迟导入：只有 chat.transport = ws 时才用得到
+    c = gw_mod.client()
+    key = run.key or session_key(run.thread)
+    if text is not None:
+        run.gw_run = await c.send(key, text, queue_mode="followup", model=run.model)  # followup：别插进 Telegram 那边正在跑的一轮
+    else:
+        await c.subscribe(key)  # 接管已经在跑的一轮：先订阅这个会话，不然收不到它的事件
+    while True:
+        lost = False
+        async for p in c.events(run.gw_run):
+            st = p.get("state")
+            if st == "delta":
+                d = p.get("deltaText") or ""
+                if p.get("replace"):
+                    run.text = d
+                    run.publish(("text", {"text": d}))
+                elif d:
+                    run.text += d
+                    run.publish(("delta", {"text": d}))
+            elif st == "final":
+                final = gw_mod.message_text(p.get("message"))
+                if final and final != run.text:
+                    run.text = final
+                    run.publish(("text", {"text": final}))
+                return
+            elif st == "aborted":
+                run.status, run.level = "stopped", "none"
+                run.text = gw_mod.message_text(p.get("message")) or run.text
+                return
+            elif st == "error":
+                raise RuntimeError(p.get("errorMessage") or "Gateway error")
+            elif st == "lost":
+                lost = True
+        if not lost:
+            return
+        got = await recover_reply(key, run.gw_run, run.t0)
+        if got is not None:
+            run.text = got or run.text
+            return
+        # 还在跑：重连以后接着收
+
+
+async def recover_reply(key: str, gw_run: str | None, since: float) -> str | None:
+    """断线期间这一轮可能已经结束：chat.history 里它不在进行中了，就拿 since 之后最后一条助手回复的文字；还在跑返回 None。"""
+    import gateway_ws as gw_mod
+    try:
+        h = await gw_mod.client().history(key, 30)
+    except Exception:  # noqa: BLE001
+        return None
+    info = h.get("sessionInfo") or {}
+    active = info.get("activeRunIds") or []
+    if gw_run and gw_run in active:
+        return None
+    if not gw_run and info.get("hasActiveRun"):
+        return None
+    for m in reversed(h.get("messages") or []):
+        if m.get("role") == "assistant" and (m.get("timestamp") or 0) / 1000 >= since - 5:
+            t = gw_mod.message_text(m)
+            if t.strip():
+                return t
+    return ""
+
+
+async def run_gateway(run: Run, text: str | list | None, token: str) -> None:
+    """后台把一条消息发给 Gateway，流式攒回复，结束后入库。不依赖任何客户端连接。text 可以是 OpenAI 的 content 数组（带图片）；
+    None = 接管一个 Gateway 已经在跑的 runId（run.gw_run：插话变成了单独一轮、服务重启后接回来）。结束后把回复进行中排着的消息合成下一轮发出去（drain）。"""
+    use_ws = text is None or ws_ok(text)
+    run.stream_task = asyncio.create_task(gateway_ws_stream(run, text) if use_ws else gateway_stream(run, text, token))
     try:
         await run.stream_task
     except asyncio.CancelledError:
@@ -365,6 +444,9 @@ async def run_gateway(run: Run, text: str | list, token: str) -> None:
         run.status = "stopped"
         run.level = "none"  # 自己停的不用推
     except (httpx.HTTPError, RuntimeError, OSError) as e:  # noqa: BLE001
+        run.status = "error"
+        run.error = str(e)
+    except Exception as e:  # noqa: BLE001 — WebSocket 那条路的错（连不上、Gateway 拒了）：这一条记成没拿到回复
         run.status = "error"
         run.error = str(e)
     if run.status == "stopped":
@@ -634,6 +716,130 @@ async def queued_stream(thread: str, item: Queued) -> AsyncIterator[bytes]:
         yield chunk
 
 
+async def steer(thread: str, cur: Run, text: str, context: str | None) -> tuple[int, str, asyncio.Future]:
+    """插话：记下这一条（status steered，app 上标「插话」），经对话通道 chat.send queueMode steer。返回 (消息 id, 时间, 结果)。"""
+    import gateway_ws as gw_mod
+    content = f"{context}\n\n{text}" if context else text
+    ts = now_iso()
+    with _lock, db() as conn:
+        user_id = conn.execute("INSERT INTO messages(thread, role, text, model, ts, status, gw_text) VALUES(?,?,?,?,?,?,?)",
+                               (thread, "user", text, None, ts, "steered", content)).lastrowid
+    c = gw_mod.client()
+    rid = await c.send(cur.key or session_key(thread), content, queue_mode="steer")
+    fut = asyncio.get_running_loop().create_future()
+    STEERS[rid] = fut
+    asyncio.create_task(watch_steer(thread, cur.key, rid, user_id, ts, fut))
+    return user_id, ts, fut
+
+
+async def watch_steer(thread: str, key: str | None, rid: str, user_id: int, ts: str, fut: asyncio.Future) -> None:
+    """看插话那一条的 runId：只来一个空的 final = 并进了正在跑的那一轮；它自己开始出东西 = Gateway 没能插进去、排成了单独一轮，
+    等我们这边上一轮收完尾，接管它（记成这条消息的回复）。"""
+    import gateway_ws as gw_mod
+    c = gw_mod.client()
+    q = c.watch(rid)
+    first = None
+    try:
+        while first is None:
+            try:
+                p = await asyncio.wait_for(q.get(), 15 * 60)
+            except asyncio.TimeoutError:
+                break
+            st = p.get("state")
+            if st == "disconnected":
+                break
+            if st == "final" and not gw_mod.message_text(p.get("message")):
+                break  # 并进去了
+            first = p
+    finally:
+        c.unwatch(rid)
+        STEERS.pop(rid, None)
+    if first is None:
+        if not fut.done():
+            fut.set_result(None)
+        return
+    c.requeue(rid, first)  # 这一轮自己的事件：交给接管它的 run
+    while busy(thread):  # Gateway 是在我们上一轮结束后才开始这一轮的：等这边收完尾
+        await asyncio.sleep(0.2)
+    with _lock, db() as conn:
+        model = thread_model(conn, thread)
+    run = Run(thread=thread, model=model, user_id=user_id, started=ts, key=key, origin="user", feed_mark=feed_mark(),
+              inbox_mark=max_rowid("inbox"), handoff_mark=max_rowid("handoffs"), gw_run=rid)
+    RUNS[thread] = run
+    asyncio.create_task(run_gateway(run, None, ""))
+    if not fut.done():
+        fut.set_result(run)
+
+
+async def steered_stream(thread: str, user_id: int, ts: str, fut: asyncio.Future) -> AsyncIterator[bytes]:
+    """插话那一条的 SSE：先说插进去了；等知道结果——并进了正在跑的那一轮就接到它上面，变成了单独一轮就接那一轮。"""
+    yield sse("queued", {"userId": f"db{user_id}", "time": hhmm(ts), "steer": True})
+    got = await asyncio.shield(fut)
+    run = got if isinstance(got, Run) else RUNS.get(thread)
+    if run is None:
+        return
+    async for chunk in attach(run):
+        yield chunk
+
+
+async def resume_ws() -> None:
+    """服务启动时（走对话通道的）：最近 30 分钟里发出去还没拿到回复的，Gateway 那边的这一轮没被重启掐断——
+    还在跑就接管它（app 能接上看），已经回完了就从 chat.history 把回复补进来。"""
+    if transport() != "ws":
+        return
+    import gateway_ws as gw_mod
+    cutoff = (datetime.now(TZ) - timedelta(minutes=QUEUE_RESUME_MINUTES)).isoformat(timespec="seconds")
+    with _lock, db() as conn:
+        rows = conn.execute("""SELECT m.* FROM messages m JOIN (SELECT thread, MAX(id) id FROM messages GROUP BY thread) last ON last.id = m.id
+            WHERE m.role='user' AND m.status IN ('ok','steered') AND m.ts >= ?""", (cutoff,)).fetchall()
+    for r in rows:
+        thread = r["thread"]
+        if busy(thread):
+            continue
+        key = session_key(thread)
+        try:
+            h = await gw_mod.client().history(key, 30)
+        except Exception:  # noqa: BLE001
+            continue
+        info = h.get("sessionInfo") or {}
+        active = info.get("activeRunIds") or []
+        since = datetime.fromisoformat(r["ts"]).timestamp()
+        if not active and info.get("hasActiveRun"):  # 在跑、但 Gateway 没给 runId：隔几秒看一次，回完了补进来
+            asyncio.create_task(wait_reply(thread, key, since))
+            continue
+        if active:
+            with _lock, db() as conn:
+                model = thread_model(conn, thread)
+            run = Run(thread=thread, model=model, user_id=r["id"], started=r["ts"], origin="user", feed_mark=feed_mark(),
+                      inbox_mark=max_rowid("inbox"), handoff_mark=max_rowid("handoffs"), gw_run=str(active[0]))
+            RUNS[thread] = run
+            asyncio.create_task(run_gateway(run, None, ""))
+            continue
+        text = await recover_reply(key, None, since)
+        if text:
+            save_recovered(thread, text)
+
+
+async def wait_reply(thread: str, key: str, since: float, minutes: int = 15) -> None:
+    """重启后接不上的那一轮：每 5 秒看一次 chat.history，它回完了就把回复补进来。"""
+    end = time.time() + minutes * 60
+    while time.time() < end:
+        await asyncio.sleep(5)
+        text = await recover_reply(key, None, since)
+        if text is None:
+            continue
+        if text:
+            save_recovered(thread, text)
+        return
+
+
+def save_recovered(thread: str, text: str) -> None:
+    with _lock, db() as conn:
+        conn.execute("INSERT INTO messages(thread, role, text, model, ts, status, origin) VALUES(?,?,?,?,?,?,?)",
+                     (thread, "grava", text, None, now_iso(), "ok", "user"))
+    log_activity(L("服务重启时补回了一条回复", "Recovered a reply after a server restart"), "edit")
+
+
 def resume_queued() -> None:
     """服务启动时：库里还排着的（上次重启前没来得及发的）。QUEUE_RESUME_MINUTES 以内的按线程合成一轮接着发（附件只剩文字），更早的标成没发出去。"""
     cutoff = (datetime.now(TZ) - timedelta(minutes=QUEUE_RESUME_MINUTES)).isoformat(timespec="seconds")
@@ -674,7 +880,12 @@ async def send(body: SendBody):
     quote, quote_id = quote_context(body.thread, body.replyTo)  # 长按「引用」着发的：原话给模型
     if quote:
         context = f"{quote}\n\n{context}" if context else quote
-    if body.origin == "user" and (busy(body.thread) or QUEUED.get(body.thread)):
+    cur = RUNS.get(body.thread)
+    if body.origin == "user" and busy(body.thread) and cur and cur.gw_run and not body.attachments and not QUEUED.get(body.thread) and transport() == "ws":
+        # 走对话通道、它正在回我们的上一条：插话——Gateway 在这一轮的下一步把这句交给模型，还是同一条回复
+        user_id, ts, fut = await steer(body.thread, cur, text, context)
+        stream = steered_stream(body.thread, user_id, ts, fut)
+    elif body.origin == "user" and (busy(body.thread) or QUEUED.get(body.thread)):
         # 这个线程正在回复：不再 409，先记下、标「排队」，这条回完和排着的合成一轮发；连接等着接那一轮的回复
         item = enqueue(body.thread, text, body.attachments, context)
         user_id, stream = item.user_id, queued_stream(body.thread, item)
@@ -718,7 +929,14 @@ async def stop(body: StopBody):
     if not run or run.done:
         return {"ok": True, "stopped": False}
     run.stopping = True
-    if run.stream_task and not run.stream_task.done():
+    if run.gw_run:  # WebSocket 那条路：让 Gateway 中止这一轮（收到 aborted 事件这一轮就结束）；它不认再断连接
+        import gateway_ws as gw_mod
+        try:
+            await gw_mod.client().abort(run.key or session_key(run.thread), run.gw_run)
+        except Exception:  # noqa: BLE001
+            if run.stream_task and not run.stream_task.done():
+                run.stream_task.cancel()
+    elif run.stream_task and not run.stream_task.done():
         run.stream_task.cancel()
     log_activity(L("停掉了一条正在进行的回复", "Stopped a reply in progress"), "edit")
     return {"ok": True, "stopped": True}

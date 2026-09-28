@@ -89,6 +89,7 @@ python3 inbox_ctl.py list [--status recent]
 - 一个对话同一时间只有一条回复在跑。回复进行中你又发的（`/api/chat/send`）不再 409：先记进库（status `queued`，app 上标「排队」），SSE 先回一个 `queued` 事件，连接等着；这条回复一结束（包括被停掉），排着的几条合成一轮发给模型（编号列出，前面一句说明：分开回答时每段开头单独一行写 `> 「原话」`，app 把它画成引用、点了跳回那条），等着的连接都接到这一轮上。服务重启时库里还排着的：30 分钟以内的接着发，更早的标成没发出去。定时器、转交这类系统触发（`/api/chat/trigger`、`relay`）照旧遇忙 409。
 - `POST /api/chat/stop` `{thread}`：停掉正在进行的回复——断开到 Gateway 的连接，Gateway 就中止这一轮；已经说了的留着，末尾加「（停了）」，status `stopped`，不推送。排着的接着发。
 - 长按「引用」：`/api/chat/send` 带 `replyTo`（`db<id>`）。模型另外看到原话，这条记 `reply_to`，`/api/chat/history` 里带 `replyTo {id, role, text}`，app 在气泡上面显示。
+- 走 Gateway 的 WebSocket 对话通道（server.json `chat.transport: "ws"`，见 `gateway_ws.py`）时：回复进行中你又发的不排队，改成**插话**——`chat.send` 带 `queueMode: steer`，Gateway 在这一轮的下一步把这句交给模型，还是同一条回复（这条记 status `steered`，app 上标「插话」）；Gateway 没能插进去、排成了单独一轮的，接管它记成这条的回复。停止用 `chat.abort`。一轮由 Gateway 跑到底：服务重启时还没回完的，启动后接管或从 `chat.history` 补回回复。带图片的消息仍走 HTTP（照样排队）。第一次连会在本机回环地址自动配对，设备身份存 `<data_dir>/gateway-device.json`。
 - `GET /api/chat/busy` → `{running, queued, idle}`。要重启服务就用 `python3 safe_restart.py --unit <服务名>`：等没有进行中的回复、没有排着的消息再重启（最多等 10 分钟），重启会掐断进行中的回复。
 
 ## 转交卡和任务卡

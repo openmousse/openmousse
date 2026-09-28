@@ -35,6 +35,8 @@
   tasks             后台任务：{"daily_limit": 10, "max_minutes": 30, "notify_done": true}：每天几个、单个最长几分钟（给 Agent 看的额度，
                     tasks_ctl.py quota）、做完了要不要静默推一条（见 cards.py；每次读文件，不用重启）
   study             学习台：{materials, pages, courses, deadlines_cmd, video_cmd, readings, recordings}（见 study.py；每次读文件，不用重启）
+  chat              对话：{"transport": "http" | "ws"}。http（默认）走 Gateway 的 OpenAI 兼容接口；ws 走 Gateway 的 WebSocket 对话通道
+                    （gateway_ws.py：回复进行中能插话、停止用 chat.abort、服务重启不掐断回复），设备身份存 <data_dir>/gateway-device.json（每次读文件）
   wake              起床信号：{"notify_cmd": [...], "notify_hours": ["05:30", "13:00"]}：早上收到信号（快捷指令、app 回到前台、「我起来了」）
                     时跑一下这个命令，比如立刻跑一次出起床报告的定时脚本（见 health.py；每次读文件，不用重启）
 

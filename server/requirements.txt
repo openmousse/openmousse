@@ -9,3 +9,5 @@ openpyxl>=3
 python-pptx>=1
 Pillow>=10
 PyYAML>=6
+aiohttp>=3.9
+cryptography>=41

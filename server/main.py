@@ -20,6 +20,7 @@
 """
 from __future__ import annotations
 
+import asyncio
 import json
 import secrets
 import shutil
@@ -89,6 +90,7 @@ def meal_label(key: str) -> str:
 async def lifespan(_app: FastAPI):
     cards.start()  # 盯 OpenClaw 的任务台账：后台任务做完了静默推一条
     chat.resume_queued()  # 上次重启前还排着没发的消息：接着发
+    asyncio.create_task(chat.resume_ws())  # 走对话通道的：重启前发出去、还没拿到回复的，接回来或补回回复
     alerts.start()  # Agent 的提醒：到点查表，有东西就推
     yield
 
