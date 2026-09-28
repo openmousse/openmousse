@@ -373,6 +373,30 @@ Share a reply or a Done-thinking note as a link page or a clean image card: long
 | `GET /api/shares/{id}/card?style=clean\|link` | The card as a data URI; `/card.png` for the image itself |
 | `GET /s/{token}`, `/s/{token}/card.png` | Public: the link page and its preview image |
 
+## Friends
+
+Chat → Friends in the app. Your server and a friend's server talk directly: identity is an Ed25519 key per server (not the address), you become friends through a one-time invite, and every request between the two servers is signed. The protocol is [`../docs/social-protocol.md`](../docs/social-protocol.md); the code is [`social.py`](social.py) (identity, card, signatures, tables, tiers) and [`friends.py`](friends.py) (invites, chat, delivery, shares to friends, follow-up questions).
+
+- **Both sides need a public address.** Friends reach you through the small public app ([`public.py`](public.py)) under `/f`: point Tailscale Funnel or a reverse proxy at it (`tailscale funnel --bg --set-path /f http://127.0.0.1:<share.public_port>/f`) and set `share.public_url`. Without it, or without `user_name`, the app explains why you can't add friends yet. A reverse proxy must keep the `/f` prefix as it is (the path is signed).
+- **Invites.** An invite is a link `<your address>/f/i/<token>/<your public key>`: it works once, lasts 7 days by default, and only its hash is stored. Opening it in a browser shows a landing page (with a QR code for phones and an "Open in the app" link); the app pastes it, checks the other server's card against the key in the link and redeems it with a signed `POST /f/hello`. Fingerprints (10 characters) let two people compare on a call.
+- **Chat.** Each message is one signed `POST /f/msg`. Outgoing messages queue in `friend_messages` and a delivery loop sends them in order per friend, retrying for up to 3 days; edits, withdrawals, a changed name or address, and removing a friend travel as messages too. Blocking drops their messages silently.
+- **Sharing to friends.** On the Share page, pick friends: they get the snapshot with the same hidden bits (`▇▇▇`; the original never leaves the server). Without a link, the share's status is `friends` and `/s/` stays closed. Withdrawing a share withdraws every copy.
+- **Follow-up questions and your card agent.** Friends can ask about something you shared; when the share allows it and their tier's `shares` is `ask`, your card agent (`cardagent.py`, never the claw, no tools) answers within that tier and says what it used. You see every answer with Fine / Rewrite / Withdraw. Without a card agent, questions just wait for you. Tiers (close / friend / classmate / stranger) and your status line are set in Chat → Friends → My card agent (`/api/card`); health and the memory tree are never on offer.
+- **Push** for friends is a new kind of notification: off until `social.push` in `server.json` turns it on (`{"message": "ring", "answered": "quiet", "friend": "quiet"}`). Friends' messages count as unread and in the badge either way.
+- `social.allow_http: true` is for test servers on one machine (`http://127.0.0.1:<port>` addresses); never set it on a real server.
+
+| Endpoint | |
+|---|---|
+| `GET /api/friends` | Whether you can add friends (`ready`, `why`), your name and fingerprint, friends with their last message and unread count, open invites |
+| `POST /api/friends/invites`, `DELETE /api/friends/invites/{id}` | `{note?, tier, days?}` → the invite link and its QR code (an SVG path, shown once); withdraw an unused one |
+| `POST /api/friends/preview`, `POST /api/friends/accept` | `{code}` → who it is (checked against the key in the link); `{code, tier, alias?}` → redeem it |
+| `PATCH` / `DELETE /api/friends/{id}`, `POST /api/friends/{id}/block` | Tier and alias; remove (tells them); block / unblock |
+| `GET /api/friends/{id}/messages?after=`, `POST …/messages`, `POST …/ask`, `POST …/read` | The chat (with `recent` for status changes); send; ask about one of their shares; mark read |
+| `POST /api/friends/messages/{id}/review`, `…/revoke`, `…/retry` | `{action: ok \| edit \| revoke, text?}` on a card agent answer; withdraw your own message; retry a failed one |
+| `POST /api/shares/{id}/send` | `{friends, ask, link, text?}` |
+| `GET` / `PATCH /api/card` | Tiers and your status line |
+| `GET /f/card`, `/f/jwks.json`, `/f/i/{token}/{key}`; `POST /f/hello`, `/f/msg` | Public (on the small app only): the signed card, the key, the invite page; redeeming an invite and delivering a message (signed) |
+
 ## Data sources are optional
 
 The boards need workouts / meals / body / calendar / derived health metrics, each provided by one script in the `scripts` directory named in `server.json` (default `<workspace>/scripts`): `xunji.py` (workouts / meals / body), `calendar_ics.py` (calendar), `apple_health.py` (recovery score, energy balance, fitness trend, and whether you are up yet: `/api/health/wake` reads the raw sleep segments the phone pushes to `/api/health/sleep` and the wake signals posted to `/api/health/signal`). `memory_tree.py` provides the memory tree (Me → Memory tree). A script that is present gets loaded; a missing one means "not connected": `/api/health` reports `sources` so the app knows, the affected endpoints answer `ok=false` + `missing_source`, boards show an empty state, everything else works. See [`sources.py`](sources.py).

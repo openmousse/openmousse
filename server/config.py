@@ -43,6 +43,9 @@
                     "font": "…", "font_bold": "…"}。public_port 配了，run.py 就在 127.0.0.1 上另起一个只有 /s/ 的小服务（public.py），
                     给 Funnel / 反向代理指过去；public_url 是外面看到的地址，没配就只能发干净版卡片。private_words：还要挡的词。
                     每次读文件，不用重启（public_port 改了要重启）
+  social            朋友（社交第二层，见 social.py、friends.py、docs/social-protocol.zh-CN.md）：{"push": {"message": "ring", "answered": "quiet",
+                    "friend": "quiet"}（不写 = 朋友的事不推）, "allow_http": false（只给同一台机器上的测试服）}。要先有 share.public_url 和
+                    share.public_port（朋友经小服务的 /f 找到你）。每次读文件，不用重启
   wake              起床信号：{"notify_cmd": [...], "notify_hours": ["05:30", "13:00"]}：早上收到信号（快捷指令、app 回到前台、「我起来了」）
                     时跑一下这个命令，比如立刻跑一次出起床报告的定时脚本（见 health.py；每次读文件，不用重启）
 

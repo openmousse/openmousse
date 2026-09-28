@@ -837,6 +837,9 @@ def register_delivery() -> None:
 
 
 register_delivery()
+# 装了名片 agent（有 cardagent 模块）就在名片上写 "agent"：朋友那边显示「有 agent」。按装没装算、不按此刻能不能调模型，
+# 免得模型一时不通就改名片、给所有朋友发一遍 card。
+social.CARD_HOOKS.append(lambda: {"caps": ["agent"]} if cardagent_mod() is not None else {})
 
 
 # —— 给 app 的：朋友、邀请码 ——

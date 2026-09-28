@@ -372,6 +372,30 @@ app 的「思考」tab（2026-09-28 起界面上叫 **Zen**，代码和接口仍
 | `GET /api/shares/{id}/card?style=clean\|link` | 卡片图（data URI）；`/card.png` 是图本身 |
 | `GET /s/{token}`、`/s/{token}/card.png` | 公开的：链接页和预览图 |
 
+## 朋友
+
+app 里「对话 → 朋友」。你的服务器和朋友的服务器直接说话：身份是每台服务器一把 Ed25519 密钥（不是地址），加朋友靠一次性邀请码，两台服务器之间的每个请求都带签名。协议见 [`../docs/social-protocol.zh-CN.md`](../docs/social-protocol.zh-CN.md)；代码是 [`social.py`](social.py)（身份、名片、签名、表、档位）和 [`friends.py`](friends.py)（邀请码、聊天、投递、分享发给朋友、追问）。
+
+- **两边都要有公网地址**：朋友经小服务（[`public.py`](public.py)）的 `/f` 找到你：用 Tailscale Funnel 或反向代理指过去（`tailscale funnel --bg --set-path /f http://127.0.0.1:<share.public_port>/f`），再设 `share.public_url`。没有它、或者没设 `user_name`，app 会说为什么还不能加朋友。反向代理不许改写 `/f` 这一段（路径签在签名里）。
+- **邀请码**：一个链接 `<你的地址>/f/i/<令牌>/<你的公钥>`，只能用一次，默认 7 天，服务器只存令牌的哈希。浏览器打开是一页落地页（带给手机扫的二维码和「在 app 里打开」）；app 粘进来，用链接里的公钥核对对方服务器的名片，再签名 `POST /f/hello` 兑换。10 位指纹给两个人打电话时对一下。
+- **聊天**：一条消息一个签名的 `POST /f/msg`。发出去的先排进 `friend_messages`，投递循环按朋友依次发，失败重试最多 3 天；改、收回、名字或地址变了、删朋友也都是消息。拉黑 = 对方发的一律收下不存。
+- **分享发给朋友**：分享页选朋友，对方收到的是同一份挡过私事的快照（`▇▇▇`，原文不出服务器）。不开链接时这条分享 status = `friends`，`/s/` 打不开。收回分享 = 发出去的每一份都收回。
+- **追问和名片 agent**：朋友能对着你分享的东西追问；分享开着追问、对方那一档 `shares` 是 `ask` 时，你的名片 agent（`cardagent.py`，不经 claw，没有工具）按那一档代答，并说明用了什么。每条代答你都看得到：没问题 / 我来改 / 收回。没有名片 agent 时追问等你自己回。档位（亲近 / 朋友 / 同学 / 陌生）和近况在「对话 → 朋友 → 我的名片 agent」（`/api/card`）；健康和世界树哪一档都不给。
+- **推送**：朋友的推送是新的推送类型，`server.json` 的 `social.push` 开了才推（`{"message": "ring", "answered": "quiet", "friend": "quiet"}`）。朋友发来的照样算未读、算进角标。
+- `social.allow_http: true` 只给同一台机器上的测试服用（`http://127.0.0.1:<端口>` 这种地址），真服务器别开。
+
+| 接口 | |
+|---|---|
+| `GET /api/friends` | 能不能加朋友（`ready`、`why`）、你的名字和指纹、朋友和各自最后一句、未读、没用的邀请码 |
+| `POST /api/friends/invites`、`DELETE /api/friends/invites/{id}` | `{note?, tier, days?}` → 邀请链接和二维码（SVG path，只给这一次）；收回没用过的 |
+| `POST /api/friends/preview`、`POST /api/friends/accept` | `{code}` → 对方是谁（用链接里的公钥核对过）；`{code, tier, alias?}` → 兑换 |
+| `PATCH` / `DELETE /api/friends/{id}`、`POST /api/friends/{id}/block` | 档位、备注；删朋友（会告诉对方）；拉黑 / 解开 |
+| `GET /api/friends/{id}/messages?after=`、`POST …/messages`、`POST …/ask`、`POST …/read` | 聊天记录（`recent` 带状态变化）；发；对着对方的一条分享追问；标已读 |
+| `POST /api/friends/messages/{id}/review`、`…/revoke`、`…/retry` | 名片 agent 的代答：`{action: ok \| edit \| revoke, text?}`；收回自己发的；重发没送到的 |
+| `POST /api/shares/{id}/send` | `{friends, ask, link, text?}` |
+| `GET` / `PATCH /api/card` | 档位和近况 |
+| `GET /f/card`、`/f/jwks.json`、`/f/i/{token}/{key}`；`POST /f/hello`、`/f/msg` | 公开的（只在小服务上）：签名名片、公钥、邀请落地页；兑换邀请码、投消息（要签名） |
+
 ## 数据源是可选的
 
 看板要的训练 / 餐食 / 身体 / 日历 / 健康派生指标，各来自 `server.json` 的 `scripts` 目录（默认 `<workspace>/scripts`）里的一个脚本：`xunji.py`（训练 / 餐食 / 身体）、`calendar_ics.py`（日历）、`apple_health.py`（恢复分、热量缺口、体能趋势，还有起没起床：`/api/health/wake` 看手机推到 `/api/health/sleep` 的睡眠分段和 `/api/health/signal` 收到的起床信号）。`memory_tree.py` 提供世界树（「我 → 世界树」）。脚本在就加载，不在就是「还没接」：`/api/health` 的 `sources` 告诉 app 哪些接了，没接的接口回 `ok=false` + `missing_source`，app 的看板显示空状态，其它功能照常。见 [`sources.py`](sources.py)。
