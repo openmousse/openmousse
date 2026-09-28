@@ -13,7 +13,7 @@ export interface Fragment {
   source: string; save: string | null; chars: number; bad: boolean; path: string;
 }
 export interface TopicBrief {
-  id: string; title: string; count: number; /** 聊的时候「只记下」的几句（不算在 count 里） */ notes: number; status: 'open' | 'done'; createdAt: string; updatedAt: string; talked: number; lastLine: string;
+  id: string; title: string; count: number; /** 聊的时候「只记下」的几句（不算在 count 里） */ notes: number; status: 'open' | 'done' | 'deleted'; createdAt: string; updatedAt: string; talked: number; lastLine: string;
   lastAt: string | null; draftStatus: string | null; notePath: string | null;
 }
 export interface DraftPoint { text: string; from: string[] }
@@ -85,6 +85,7 @@ export const getTopic = (id: string) => request<{ topic: Topic }>(`/api/think/to
 export const listTopics = (status: 'open' | 'done' | 'all' = 'open') => request<{ topics: TopicBrief[] }>(`/api/think/topics?status=${status}`).then((j) => j.topics);
 export const patchTopic = (id: string, b: { title?: string; add?: string[]; remove?: string[]; status?: 'open' }) =>
   request<{ topic: Topic }>(`/api/think/topics/${id}`, { method: 'PATCH', body: b }).then((j) => ({ ...j.topic, fragments: j.topic.fragments.map(withUrls) }));
+export const deleteTopic = (id: string) => request(`/api/think/topics/${id}`, { method: 'DELETE' });
 export const talk = (id: string) => request(`/api/think/topics/${id}/talk`, { method: 'POST' });
 export const done = (id: string, fresh = false) => request<{ status: string }>(`/api/think/topics/${id}/done${fresh ? '?fresh=1' : ''}`, { method: 'POST' });
 export const saveTopic = (id: string, b: { title: string; oneLine: string; points: string[]; open: string[]; next: string[]; keywords: string[]; folder: 'notes' | 'writing'; tree?: string | null; branch?: string | null }) =>

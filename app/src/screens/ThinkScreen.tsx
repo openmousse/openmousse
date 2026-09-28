@@ -17,6 +17,7 @@ import { radius, space, type, useTheme } from '../theme';
 import { CaptureBar } from '../think/CaptureBar';
 import { FloatBtn, FloatClose, Floater, FragmentCard, GrowInput, SaveRow, TopicRow, dayLabel } from '../think/parts';
 import { FragmentSheet } from '../think/FragmentSheet';
+import { TopicActionsSheet } from '../think/TopicSheets';
 import { useThink } from '../think/ThinkStore';
 import { ZenStartSheet, openZenSummary } from '../think/Zen';
 
@@ -123,7 +124,8 @@ function Ideas() {
           {stream?.topics.length ? (
             <>
               <SectionLabel>{L('在想的', 'Thinking about')}</SectionLabel>
-              {stream.topics.map((tp) => <TopicRow key={tp.id} tp={tp} onPress={() => nav.navigate('ThinkTalk', { id: tp.id })} />)}
+              {stream.topics.map((tp) => <TopicRow key={tp.id} tp={tp} onPress={() => nav.navigate('ThinkTalk', { id: tp.id })}
+                onLongPress={() => sheet.open({ title: tp.title, content: (close) => <TopicActionsSheet key={tp.id} topic={tp} close={close} onDone={refresh} /> })} />)}
             </>
           ) : null}
           {days.map(([day, list]) => (

@@ -207,12 +207,12 @@ export function FragmentCard({ f, selected, onToggle, onPress, onKeyword, full, 
   );
 }
 
-export function TopicRow({ tp, onPress }: { tp: TopicBrief; onPress: () => void }) {
+export function TopicRow({ tp, onPress, onLongPress }: { tp: TopicBrief; onPress: () => void; onLongPress?: () => void }) {
   const t = useTheme();
   const g = t.tints.gold;
   const sub = [L(`${tp.count} 条碎片`, `${tp.count} thoughts`), tp.talked ? (tp.lastLine || L('聊过', 'Talked')) : L('还没聊', 'Not talked yet')].join(' · ');
   return (
-    <Pressable onPress={onPress} accessibilityRole="button" style={({ pressed }) => [styles.row, { backgroundColor: t.surface, opacity: pressed ? 0.8 : 1 }]}>
+    <Pressable onPress={onPress} onLongPress={onLongPress} accessibilityHint={onLongPress ? L('长按改名或删除主题', 'Long-press to rename or delete the topic') : undefined} accessibilityRole="button" style={({ pressed }) => [styles.row, { backgroundColor: t.surface, opacity: pressed ? 0.8 : 1 }]}>
       <View style={[styles.tile34, { backgroundColor: g.soft }]}><Lightbulb size={17} color={g.fg} /></View>
       <View style={{ flex: 1, gap: 1 }}>
         <T v="headline" numberOfLines={1}>{tp.title}</T>

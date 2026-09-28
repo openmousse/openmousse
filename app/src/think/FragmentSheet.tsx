@@ -11,10 +11,10 @@ import { FragmentCard, GrowInput } from './parts';
 import { navigationRef } from '../navigation';
 import { useThink } from './ThinkStore';
 
-export function FragmentSheet({ id, initial, close }: { id: string; initial: Fragment; close: () => void }) {
+export function FragmentSheet({ id, initial, close, topicId, onRemoved }: { id: string; initial: Fragment; close: () => void; topicId?: string; onRemoved?: () => void }) {
   const t = useTheme();
   const nav = navigationRef;  // 弹层画在导航容器外面，用不了 useNavigation
-  const { editFragment, removeFragment, openTopic, stream } = useThink();
+  const { editFragment, removeFragment, openTopic, stream, refresh } = useThink();
   const [f, setF] = useState(initial);
   const [editing, setEditing] = useState(false);
   const [text, setText] = useState(initial.text);
@@ -69,6 +69,15 @@ export function FragmentSheet({ id, initial, close }: { id: string; initial: Fra
             <Btn label={L('改一下', 'Edit')} kind="quiet" flex icon={<Pencil size={15} color={t.ink} />} onPress={() => setEditing(true)} />
             <Btn label={L('单独聊聊', 'Talk about it')} kind="quiet" flex icon={<MessageCircle size={15} color={t.ink} />} onPress={talkAlone} />
           </View>
+          {topicId ? <>
+            <Btn label={busy ? L('正在处理…', 'Working…') : L('移出这个主题', 'Remove from this topic')} kind="quiet" onPress={() => run(async () => {
+              await thinkApi.patchTopic(topicId, { remove: [id] });
+              onRemoved?.();
+              await refresh();
+              close();
+            })} />
+            <T v="caption" color={t.ink3}>{L('只移出当前主题，碎片仍在碎片流和库里。', 'Only removes it from this topic; the thought stays in the stream and vault.')}</T>
+          </> : null}
           {confirm
             ? <Btn label={L('确认删掉（挪进库的回收站）', 'Confirm: move to the vault trash')} kind="danger" icon={<Trash2 size={15} color={t.bad} />} onPress={() => run(async () => { await removeFragment(id); close(); })} />
             : <Btn label={L('删掉', 'Delete')} kind="danger" icon={<Trash2 size={15} color={t.bad} />} onPress={() => setConfirm(true)} />}

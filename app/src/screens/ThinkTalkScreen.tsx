@@ -14,6 +14,7 @@ import { L } from '../i18n';
 import { useStore, useThreadOnScreen } from '../store';
 import { radius, space, type, useTheme } from '../theme';
 import { FragmentSheet } from '../think/FragmentSheet';
+import { RenameSheet } from '../think/TopicSheets';
 import { GrowInput, KeywordChip, TypeTile } from '../think/parts';
 import { useThink } from '../think/ThinkStore';
 
@@ -43,7 +44,7 @@ export function ThinkTalkScreen() {
   const sheet = useSheet();
   const id = route.params?.id as string;
   const { refreshThread } = useStore();
-  const { capture, stream } = useThink();
+  const { capture, stream, refresh } = useThink();
   const [topic, setTopic] = useState<Topic | null>(null);
   const [open, setOpen] = useState(true);
   const [mode, setMode] = useState<'it' | 'note'>('it');
@@ -56,7 +57,7 @@ export function ThinkTalkScreen() {
   const finish = async () => {
     try { await thinkApi.done(id); nav.navigate('ThinkDone', { id }); } catch (e) { showError(L('没开始整理', "Couldn't start"), e); }
   };
-  const rename = () => sheet.open({ title: L('主题叫什么', 'Topic name'), content: (close) => <RenameSheet topic={topic} close={close} onDone={load} /> });
+  const rename = () => sheet.open({ title: L('主题叫什么', 'Topic name'), content: (close) => <RenameSheet key={id} topic={topic} close={close} onDone={() => { load(); refresh(); }} /> });
   const pullMore = () => sheet.open({ title: L('再拉几条进来', 'Add more thoughts'), content: (close) => <PullSheet id={id} have={topic?.fragments.map((f) => f.id) ?? []} options={stream?.fragments ?? []} close={close} onDone={load} /> });
   const reopen = () => thinkApi.patchTopic(id, { status: 'open' }).then(setTopic).catch((e) => showError(L('没打开', "Couldn't reopen"), e));
 
@@ -78,9 +79,9 @@ export function ThinkTalkScreen() {
     <Screen>
       <Header title={topic?.title ?? L('思考', 'Thinking')} sub={L(`主题 · ${talking.length} 条碎片 · 不进主对话`, `Topic · ${talking.length} thoughts · separate from the main chat`)}
         onBack={() => nav.goBack()} icon={<Pressable onPress={rename} accessibilityRole="button" accessibilityLabel={L('改主题名字', 'Rename the topic')} style={[styles.icon, { backgroundColor: t.tints.gold.soft }]}><Lightbulb size={18} color={t.tints.gold.fg} /></Pressable>}
-        right={<Pressable onPress={finish} accessibilityRole="button" style={({ pressed }) => [styles.doneBtn, { backgroundColor: t.goldFill, opacity: pressed ? 0.8 : 1 }]}>
+        right={<View style={{ flexDirection: 'row', alignItems: 'center', gap: space.sm }}><Pressable onPress={rename} hitSlop={8} accessibilityRole="button"><T v="callout" color={t.gold}>{L('改名', 'Rename')}</T></Pressable><Pressable onPress={finish} accessibilityRole="button" style={({ pressed }) => [styles.doneBtn, { backgroundColor: t.goldFill, opacity: pressed ? 0.8 : 1 }]}>
           <Check size={14} color={t.onGold} strokeWidth={3} /><Text style={[type.callout, { color: t.onGold, fontWeight: '700' }]}>{L('想完了', 'Done')}</Text>
-        </Pressable>} />
+        </Pressable></View>} />
       {topic?.status === 'done' ? (
         <View style={[styles.doneBar, { backgroundColor: t.goodSoft }]}>
           <NotebookText size={16} color={t.good} />
@@ -101,7 +102,7 @@ export function ThinkTalkScreen() {
           {open ? (
             <ScrollView style={{ maxHeight: 220 }} contentContainerStyle={{ paddingHorizontal: space.md, paddingBottom: 6 }}>
               {talking.map((f) => (
-                <Pressable key={f.id} onPress={() => sheet.open({ title: f.title || L('一条想法', 'A thought'), content: (close) => <FragmentSheet id={f.id} initial={f} close={close} /> })}
+                <Pressable key={f.id} onPress={() => sheet.open({ title: f.title || L('一条想法', 'A thought'), content: (close) => <FragmentSheet id={f.id} initial={f} close={close} topicId={id} onRemoved={load} /> })}
                   accessibilityRole="button" style={[styles.fragRow, { borderTopColor: t.line }]}>
                   <TypeTile kind={f.kind} />
                   <T v="callout" style={{ flex: 1 }} numberOfLines={2}>{f.kind === 'keywords' ? f.keywords.map((k) => `#${k}`).join(' ') : f.title ? `《${f.title}》${f.chars ? L(` · ${f.chars} 字`, ` · ${f.chars} chars`) : ''}` : f.text || f.files[0]?.name}</T>
@@ -119,18 +120,6 @@ export function ThinkTalkScreen() {
         placeholder={mode === 'it' ? L('跟它说…', 'Tell it…') : L('记下来，它不会看', "Jot it down. It won't see it.")}
         empty={L('它在读这几条碎片，马上先问你几个问题。', "It's reading these thoughts and will ask you a few questions first.")} />
     </Screen>
-  );
-}
-
-function RenameSheet({ topic, close, onDone }: { topic: Topic | null; close: () => void; onDone: () => void }) {
-  const t = useTheme();
-  const [v, setV] = useState(topic?.title ?? '');
-  if (!topic) return null;
-  return (
-    <View style={{ gap: space.md }}>
-      <TextInput value={v} onChangeText={setV} autoFocus accessibilityLabel={L('主题名字', 'Topic name')} style={[type.body, styles.input, { backgroundColor: t.surface, color: t.ink }]} />
-      <Btn label={L('改', 'Rename')} onPress={() => { if (v.trim()) thinkApi.patchTopic(topic.id, { title: v.trim() }).then(() => { onDone(); close(); }).catch((e) => showError(L('没改成', "Couldn't rename"), e)); }} />
-    </View>
   );
 }
 
