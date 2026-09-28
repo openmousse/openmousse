@@ -9,11 +9,13 @@
 - 状态：pending 等你点头 → approved 同意了 → done 做完 / failed 没做成；rejected 拒绝；revising 等它改；withdrawn 它自己撤回；expired 过了 expires_at。
 - 跟进：定下来以后（「已处理」里点「跟进」）在 Agent 的对话里引用这一条说话（/api/chat/send 带 inboxId）：记下 followed_at / follow_note，
   模型另外看到是哪一条、现在什么状态、怎么报结果；做完 / 没做成的改回 approved（在做），等它再用 done / fail 报。
-- kind 决定默认推送档位：task / write / send / spend / calendar 响铃，skill / agent / block / project / code / schedule / push / other 静默。
+- kind 决定默认推送档位：task / write / send / spend / calendar / egress 响铃，skill / agent / block / project / code / schedule / push / other 静默。
   exec 是虚拟的：OpenClaw 的执行审批（`openclaw approvals pending`），id 写成 exec:<审批 id>，同意 = allow-once，拒绝 = deny，不能「改一下」。
 - kind social：名片 agent（cardagent.py）要你表态、问你私事的卡。线程是虚拟的 card（不挂在任何对话里，app 看到的 thread 是空的，
   所以没有「去对话里说」「跟进」）；点了由钩子自己把话告诉对方，不往任何 Agent 的线程里发话：对方说的一个字都不进主 agent。
   Agent 用 inbox_ctl.py 列不出、读不到这类卡（请求带 X-Mousse-Client: ctl）。
+- kind egress：Sentinel 出口（egress.py）扣下的代办请求（在沙箱里提交表单、发信、用你的凭证……）。虚拟线程 sentinel，Agent 读不到；
+  点了由钩子直接告诉正在等的代理（放行 / 不放行 / 改一下的话），不往任何线程里发话。
 - 这是征得同意的界面，不是沙箱：不检查是谁提交的；真正拦住危险动作的是 OpenClaw 的执行审批和各 skill 自己的规则。
 """
 from __future__ import annotations
@@ -40,8 +42,8 @@ from config import TZ, settings
 from i18n import L, LS
 
 router = APIRouter()
-KINDS = ("task", "write", "send", "spend", "schedule", "push", "skill", "agent", "block", "project", "code", "calendar", "social", "other")
-RING_KINDS = {"task", "write", "send", "spend", "calendar"}  # 你让它做、它要动外面的东西：响铃；它自己的提议：静默
+KINDS = ("task", "write", "send", "spend", "schedule", "push", "skill", "agent", "block", "project", "code", "calendar", "social", "egress", "other")
+RING_KINDS = {"task", "write", "send", "spend", "calendar", "egress"}  # 你让它做、它要动外面的东西：响铃；它自己的提议：静默
 OPEN = ("pending", "revising")  # 还没定下来的
 CTL = Path(__file__).resolve().parent / "inbox_ctl.py"
 MARK = "【收件箱】"  # 发进 Agent 线程的系统消息的开头（协议标记，不翻译；inbox skill 按它认）
@@ -55,10 +57,12 @@ _tasks: set[asyncio.Task] = set()  # 后台等待中的任务（留个引用，�
 HOOKS: dict[str, Callable[[dict, str], Awaitable[dict | None]]] = {}
 # 这些 kind 的「改一下」也交给钩子（hook(it, "revise")，你写的话在 it["note"]），不往线程里发话。钩子回 {"silent": True}（可以带 result）
 # = 不往线程里发任何话：同意后不发「【收件箱】已同意…」，改一下直接算处理完。
-REVISE_BY_HOOK = {"social"}
+REVISE_BY_HOOK = {"social", "egress"}
 # 「改一下」必须写话的卡（别的 social 卡可以空着，比如「换个时间」）：fn(iid) -> bool，在锁外调。cardagent 注册：Sentinel 扣下的那句（kind review）。
 NEEDS_NOTE: list[Callable[[str], bool]] = []
-PRIVATE_KINDS = {"social"}  # 线程是虚拟的、Agent 读不到的
+PRIVATE_KINDS = {"social", "egress"}  # 线程是虚拟的、Agent 读不到的
+# 这些卡挂在哪个虚拟线程：social → card（名片 agent），egress → sentinel（Sentinel 出口扣下的代办请求，egress.py）
+VIRTUAL_THREADS = {"social": "card", "egress": "sentinel"}
 # kind → 条目 JSON 里多给 app 的东西（在锁外调）。projects.py 注册 project：提案内容（预览）和开好的项目（「去看看」）。
 EXTRAS: dict[str, Callable[[str], dict | None]] = {}
 
@@ -96,6 +100,7 @@ def kind_label(kind: str) -> str:
             "schedule": L("定时任务", "Schedule"), "push": L("推送", "Notification"), "skill": L("新技能", "New skill"),
             "agent": L("新 Agent", "New agent"), "block": L("看板", "Board"), "project": L("项目", "Project"), "code": L("改代码", "Code change"),
             "calendar": L("日历", "Calendar"), "social": L("朋友", "Friends"), "exec": L("运行命令", "Run a command"),
+            "egress": L("代办", "Errand"),
             "other": L("其他", "Other")}.get(kind, kind)
 
 
@@ -207,8 +212,9 @@ def check_expires(value: str | None) -> str | None:
 def check_thread(thread: str, kind: str = "") -> None:
     """同意之后要在这个线程里让 Agent 去做：只能是 main、某个 Agent 或某个独立空间（social 类是虚拟的 card）。"""
     if kind in PRIVATE_KINDS:
-        if thread != "card":
-            raise HTTPException(400, L("social 类的卡 thread 只能是 card", "social items must use thread card"))
+        want = VIRTUAL_THREADS[kind]
+        if thread != want:
+            raise HTTPException(400, L(f"{kind} 类的卡 thread 只能是 {want}", f"{kind} items must use thread {want}"))
         return
     if thread != "main" and thread not in names():
         raise HTTPException(400, L(f"没有「{thread}」这个线程：thread / source 写 main 或 Agent 的 id（agent_ctl.py list 能看到）",
@@ -504,7 +510,7 @@ async def add(body: ItemIn):
     check_level(body.level)
     level = body.level or default_level(kind)
     source = body.source.strip() or "main"
-    thread = (body.thread or "").strip() or ("card" if kind in PRIVATE_KINDS else source)
+    thread = (body.thread or "").strip() or VIRTUAL_THREADS.get(kind) or source
     check_thread(thread, kind)
     changes, expires, dedupe = clean_changes(body.changes), check_expires(body.expiresAt), body.dedupe.strip()
     fields = (kind, source, thread, title, body.why.strip(), changes, body.detail.strip(), body.approveLabel.strip(), level)
