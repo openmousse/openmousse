@@ -2,12 +2,12 @@
 
 想法（碎片）
 - 一句话、几个关键词、语音（转文字，原声留着）、照片、文件、链接、长文。只存，不发给模型：不花额度，也不进任何 Agent 的记忆。
-- 一条碎片 = 一篇 Markdown 笔记。server.json 的 think.vault 配了库（Leo：~/vault，Obsidian 双向同步）就放库的收件箱，
+- 一条碎片 = 一篇 Markdown 笔记。server.json 的 think.vault 配了库（比如 ~/vault，Obsidian 双向同步）就放库的收件箱，
   没配放 <data_dir>/think/。文件夹名按语言默认（中文：收件箱 / 收件箱/已想完 / 收件箱/附件 / 笔记 / 写作），think.* 可以改。
   属性：id / kind / created_at / source / keywords（原样）/ tags（去掉空格，给 Obsidian 的标签面板）/ topics / note / files / url …
   正文就是那段话；附件在正文末尾嵌成 ![[…]]，Obsidian 里看得到。Obsidian 里新建的（没有属性的）也收：id 按路径算。
 - 读：每次按文件的 mtime + 大小看有没有变，变了才重读（内存缓存）。obsidian-headless 落盘不是原子写，1 秒内刚改的等下一轮。
-  写：一律临时文件（. 开头）+ rename。别人的属性（Leo 在 Obsidian 里加的）原样保留。
+  写：一律临时文件（. 开头）+ rename。别人的属性（用户在 Obsidian 里加的）原样保留。
 - 想完的挪进「已想完」（不删）；删除 = 挪进库的 .trash/（Obsidian 自己的回收站）。
 - 关键词：属性 keywords + 正文里的 #xxx。点一个关键词看所有带它的想法和收藏（saves.py），还有常一起出现的词。
 
@@ -53,7 +53,7 @@ from pydantic import BaseModel
 import chat
 import config
 from chat import _lock, db, log_activity, now_iso
-from config import TZ, settings
+from config import TZ, settings, user_word
 from i18n import L, LS
 
 router = APIRouter()
@@ -428,7 +428,7 @@ def create_fragment(*, kind: str, text: str = "", keywords: list[str] | None = N
 
 
 def rewrite(f: dict, change) -> dict:
-    """改一篇碎片：change(meta, body) 就地改，返回新的碎片。Leo 自己加的属性不动。"""
+    """改一篇碎片：change(meta, body) 就地改，返回新的碎片。用户自己加的属性不动。"""
     with _scan_lock:
         path = frag_path(f)
         raw = path.read_text(encoding="utf8", errors="replace")
@@ -908,13 +908,14 @@ def context_for(thread: str) -> str | None:
     ids = json.loads(r["fragments"] or "[]")
     by_id = {f["id"]: f for f in scan()}
     frags = [by_id[i] for i in ids if i in by_id and not by_id[i]["note"]]
-    lines = [LS(f"【Zen 空间】这个对话是 Leo 在 Zen 空间（app 的 Zen tab，原来叫思考空间）里的一个主题「{r['title']}」（id {r['id']}）。下面是他扔进来的碎片：他自己想到的，"
+    u = user_word()
+    lines = [LS(f"【Zen 空间】这个对话是{u}在 Zen 空间（app 的 Zen tab，原来叫思考空间）里的一个主题「{r['title']}」（id {r['id']}）。下面是 TA 扔进来的碎片：TA 自己想到的，"
                 "以前没给你看过，现在叫你来一起想。每天第一句话、碎片变了以后自动带给你，对话里不显示。",
                 f"[Zen space] This chat is the user's topic \"{r['title']}\" (id {r['id']}) in the Zen space (the app's Zen tab, formerly the thinking space). Below are the thoughts "
                 "they dropped in: their own, never shown to you before; now they want you to think along. Attached to the first message "
                 "each day and after the thoughts change; not shown in the chat."),
-             LS("规矩：先追问，不急着下结论，一次两三个问题；用他的原话，不替他润色；可以翻库里的笔记和世界树（recall）对照他以前想过的，"
-                "引用时说出处；这里只聊，不派任务、不改日程、不写记忆，除非他明确让你做。他点「想完了」时 app 会另外让你整理成笔记。",
+             LS("规矩：先追问，不急着下结论，一次两三个问题；用 TA 的原话，不替 TA 润色；可以翻库里的笔记和世界树（recall）对照 TA 以前想过的，"
+                "引用时说出处；这里只聊，不派任务、不改日程、不写记忆，除非 TA 明确让你做。TA 点「想完了」时 app 会另外让你整理成笔记。",
                 "Rules: ask before concluding, two or three questions at a time; use their own words, don't polish them; you may check their "
                 "notes and memory tree (recall) for what they thought before, and say where it came from; this is for thinking only — no "
                 "tasks, schedule changes or memory writes unless they ask. When they tap \"done thinking\" the app asks you for a note separately."),
@@ -958,7 +959,7 @@ def transcript(tid: str, limit: int = 60) -> list[str]:
     out = []
     for r in reversed(rows):
         if r["role"] == "user":
-            out.append(LS("Leo：", "User: ") + r["text"][:1500])
+            out.append(LS(f"{user_word().strip()}：", "User: ") + r["text"][:1500])
         elif r["role"] == "grava":
             out.append(LS("你：", "You: ") + r["text"][:1500])
     return out
@@ -967,19 +968,20 @@ def transcript(tid: str, limit: int = 60) -> list[str]:
 def draft_prompt(r: sqlite3.Row, frags: list[dict]) -> str:
     talk_lines = transcript(r["id"])
     br = branches()
-    lines = [LS(f"【Zen 空间 · 想完了】Leo 想完了一个主题「{r['title']}」，请把下面的碎片（和你们聊过的）整理成一篇他自己的笔记草稿。",
+    u = user_word().strip()
+    lines = [LS(f"【Zen 空间 · 想完了】{u}{' ' if u.isascii() else ''}想完了一个主题「{r['title']}」，请把下面的碎片（和你们聊过的）整理成一篇 TA 自己的笔记草稿。",
                 f"[Zen space · done] The user finished thinking about \"{r['title']}\". Turn the thoughts below (and your talk, if any) "
                 "into a draft of their own note."),
              LS("规矩：", "Rules:"),
-             LS("- 尽量用他的原话，不替他润色，不加他没说过的观点；没想清的放进 open，别替他下结论。",
+             LS("- 尽量用 TA 的原话，不替 TA 润色，不加 TA 没说过的观点；没想清的放进 open，别替 TA 下结论。",
                 "- Use their own words; don't polish or add views they didn't express; unresolved things go in open — don't conclude for them."),
-             LS("- oneLine：他现在的结论，一两句。points：3–6 条要点，每条写 from（来自哪几条碎片的 id）。",
+             LS("- oneLine：TA 现在的结论，一两句。points：3–6 条要点，每条写 from（来自哪几条碎片的 id）。",
                 "- oneLine: their current conclusion in one or two sentences. points: 3–6 points, each with from (ids of the thoughts it comes from)."),
-             LS("- next：只写他说过要做的或明显该做的，0–3 条，有日子的写 date（YYYY-MM-DD）。",
+             LS("- next：只写 TA 说过要做的或明显该做的，0–3 条，有日子的写 date（YYYY-MM-DD）。",
                 "- next: only what they said they'd do or clearly should, 0–3 items, with date (YYYY-MM-DD) when there is one."),
              LS("- keywords：碎片上已有的关键词都留着；suggest：你另外建议的，最多 3 个，碎片里真有这个意思才建议。",
                 "- keywords: keep every keyword already on the thoughts; suggest: at most 3 more, only if the thoughts really say it."),
-             LS("- tree：如果有一条三个月后换个 AI 也用得上的「他怎么想」，写成一句第三人称（「Leo 认为……」）；没有就空。branch：挂哪根枝"
+             LS(f"- tree：如果有一条三个月后换个 AI 也用得上的「TA 怎么想」，写成一句第三人称（「{u}{' ' if u.isascii() else ''}认为……」）；没有就空。branch：挂哪根枝"
                 + (f"（从这些里选：{'、'.join(br)}）" if br else "") + "。",
                 "- tree: if there is one 'how they think' worth remembering across AIs for months, one third-person sentence; else empty. "
                 "branch: which branch" + (f" (one of: {', '.join(br)})" if br else "") + "."),

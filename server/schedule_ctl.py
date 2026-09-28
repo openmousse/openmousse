@@ -131,7 +131,7 @@ def show_remember(d: dict) -> None:
 
 def changed(r: dict) -> None:
     if "time" in (r.get("kept") or []):
-        print(L("注意：Leo 自己挪过这条的时间，时间按他的，没改。", "Note: Leo moved this one himself, so its time stays as he set it."))
+        print(L("注意：这条的时间是用户自己挪过的，按用户定的，没改。", "Note: the user moved this one themselves, so its time stays as they set it."))
     cards = r.get("cards") or ([r["card"]] if r.get("card") else [])
     if not cards:
         print(L("没有变化", "No change") if not r.get("id") else r["id"])

@@ -126,7 +126,7 @@ One timeline per day and one list of things to remember, both editable. See [`sc
 python3 schedule_ctl.py day [--date tomorrow] [--days 3]
 python3 schedule_ctl.py remember
 python3 schedule_ctl.py add --title "Workout · Push A" --date today --start 17:30 --end 18:30 --key fitness:training:2026-09-28
-python3 schedule_ctl.py skip "ics:2026-09-28T13:00|QDA Office Hours" --every-week
+python3 schedule_ctl.py skip "ics:2026-09-28T13:00|Office Hours" --every-week
 python3 schedule_ctl.py done "mail:1a0d…:todo"
 python3 schedule_ctl.py undo 42
 ```

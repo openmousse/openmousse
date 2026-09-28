@@ -38,7 +38,7 @@ from i18n import L, lang
 router = APIRouter()
 TTL = 60                 # 整份结果
 CHANNEL_TTL = 120        # 聊天渠道的在线状态（openclaw channels status，1 秒多）
-UNITS = ("grava-browser.service", "grava-mail.timer", "obsidian-sync.service", "grava-tree.service")
+UNITS = ("grava-browser.service", "grava-mail.timer", "obsidian-sync.service", "grava-tree.service", "mousse-tree.service")
 PLATFORMS = {"claude": "Claude", "chatgpt": "ChatGPT", "gemini": "Gemini", "claude-code": "Claude Code", "notion": "Notion"}
 _cache: dict[str, tuple[float, dict]] = {}
 _channels: tuple[float, dict | None] | None = None
@@ -547,7 +547,8 @@ def check_tree(state: dict[str, dict]) -> dict | None:
     with contextlib.suppress(Exception):  # noqa: BLE001
         port = int((mt.load_config() or {}).get("port") or 8787)  # tree.json 里只取端口
     health = mcp_health(port)
-    unit = state.get("grava-tree.service")
+    tree_unit = "grava-tree" if unit_loaded(state.get("grava-tree.service")) else "mousse-tree"  # 作者的实例叫 grava-tree，安装器装的叫 mousse-tree
+    unit = state.get(f"{tree_unit}.service")
     platforms = [p for p in (health or {}).get("platforms") or [] if isinstance(p, str)]
     shown = [p for p in PLATFORMS if p in platforms or p in last] + [p for p in platforms if p not in PLATFORMS]
     facts: list[tuple[str, str | None]] = [(L("当前的叶子", "Current leaves"), L(f"{current} 片", f"{current}") if current is not None else None)]
@@ -562,15 +563,15 @@ def check_tree(state: dict[str, dict]) -> dict | None:
     go = {"screen": "Tree", "label": L("打开世界树", "Open the memory tree")}
     if (unit_loaded(unit) and not unit_active(unit)) or health is None:
         return item("tree", name, icon, "warn", L("共享服务停了，别的 AI 平台暂时连不上", "The sharing service is down; other AI apps can't reach it"), facts, uses,
-                    L("在服务器上运行 systemctl --user restart grava-tree。", "On the server run systemctl --user restart grava-tree."), go)
+                    L(f"在服务器上运行 systemctl --user restart {tree_unit}。", f"On the server run systemctl --user restart {tree_unit}."), go)
     if issues:
         return item("tree", name, icon, "warn", L(f"有 {issues} 篇笔记格式不对，先跳过了", f"{issues} note(s) have a formatting problem and were skipped"), facts, uses,
                     L(f"跟 {app()} 说「检查世界树的笔记」，它会告诉你是哪篇、哪里不对。", f'Ask {app()} to "check the memory tree notes"; it will tell you which one and what\'s wrong.'), go)
-    writers = {k: parse_ts(v) for k, v in last.items() if k in PLATFORMS or k == "leo" or k == "grava" or k.startswith("grava-")}
+    writers = {k: parse_ts(v) for k, v in last.items() if k in PLATFORMS or k in ("leo", "owner") or k == "grava" or k.startswith("grava-")}
     newest = max((k for k in writers if writers[k]), key=lambda k: writers[k], default=None)  # 最近一次是谁写的（每周修剪不算）
     who = None
     if newest:
-        who = PLATFORMS.get(newest) or (L("你自己", "You") if newest == "leo" else L(f"{app()} 的 Agent", f"{app()}'s agent"))
+        who = PLATFORMS.get(newest) or (L("你自己", "You") if newest in ("leo", "owner") else L(f"{app()} 的 Agent", f"{app()}'s agent"))
     line = (L(f"{current} 片叶子", f"{current} leaves") if current is not None else L("共享服务在跑", "The sharing service is running")) + (
         L(f" · {who} {day_at(writers[newest])}写过", f" · {who} wrote {day_at(writers[newest])}") if who else "")
     return item("tree", name, icon, "ok", line, facts, uses, None, go)

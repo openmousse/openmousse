@@ -78,7 +78,7 @@ export function memoryDate(text: string): string | null {
   return hits[0].v;
 }
 
-/** 是不是你定的 / 你要求的：「Leo 2026-09-26 定」「Leo 明确要求」「（Leo 2026-09-26）」这类；助手自己的名字不算。 */
+/** 是不是你定的 / 你要求的：「Alex 2026-09-26 定」「Alex 明确要求」「（Alex 2026-09-26）」这类；助手自己的名字不算。 */
 export function memoryWho(text: string): 'decided' | 'asked' | null {
   // 助手自己、英文里句首的代词不算「你」
   const not = new Set([agentName(), 'The', 'This', 'That', 'It', 'We', 'They', 'He', 'She', 'Agent']);

@@ -126,7 +126,7 @@ python3 tasks_ctl.py list
 python3 schedule_ctl.py day [--date 明天] [--days 3]
 python3 schedule_ctl.py remember
 python3 schedule_ctl.py add --title "训练 · Push A" --date 今天 --start 17:30 --end 18:30 --key fitness:training:2026-09-28
-python3 schedule_ctl.py skip "ics:2026-09-28T13:00|QDA Office Hours" --every-week
+python3 schedule_ctl.py skip "ics:2026-09-28T13:00|Office Hours" --every-week
 python3 schedule_ctl.py done "mail:1a0d…:todo"
 python3 schedule_ctl.py undo 42
 ```

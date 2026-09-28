@@ -373,7 +373,7 @@ function RememberRow({ e, today, open, first, compact, onToggle, ticked, onTick 
   );
 }
 
-/** 课名缩写：Quantitative Data Analysis → QDA。 */
+/** 课名缩写：Machine Learning Systems → MLS。 */
 function short(name: string): string {
   const words = name.match(/[A-Za-z]+/g) ?? [];
   if (name.length <= 12 || words.length < 2) return name;
@@ -532,7 +532,7 @@ export function ItemEditor({ e, day, past, close, onChanged }: { e?: ScheduleEnt
           <T v="caption" color={t.ink3} style={{ flex: 1, fontSize: 13 }}>{L(`${who}会知道你改了什么。`, `${who} will see what you changed.`)}</T>
         </View>
       ) : null}
-      <TextInput value={title} onChangeText={setTitle} placeholder={L('做什么，比如「自习 · QDA」', 'What, e.g. "Study · QDA"')} placeholderTextColor={t.ink3}
+      <TextInput value={title} onChangeText={setTitle} placeholder={L('做什么，比如「自习 · 统计」', 'What, e.g. "Study · Stats"')} placeholderTextColor={t.ink3}
         accessibilityLabel={L('标题', 'Title')} style={[type.title, { color: t.ink, paddingVertical: 4 }]} />
       <View style={[styles.box, { backgroundColor: t.surface, paddingVertical: 0 }]}>
         <View style={[styles.field, { borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: t.line }]}>

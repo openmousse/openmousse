@@ -1,5 +1,6 @@
 {
   "app_name": "Mousse",
+  "user_name": "",
   "timezone": "Asia/Shanghai",
   "bind": {"host": "127.0.0.1", "port": 8080},
   "openclaw_home": "~/.openclaw",

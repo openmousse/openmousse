@@ -589,7 +589,7 @@ def set_status(conn: sqlite3.Connection, mid: str, status: str, actor: str) -> b
         return False
     base = root()
     with locked():
-        refresh(conn, force=True)  # 按最新状态找文件，Leo 可能刚改过名
+        refresh(conn, force=True)  # 按最新状态找文件，用户可能刚改过名
         row = _find(conn, mid)
         if not row or row["source"] == "profile":
             return False
@@ -614,7 +614,7 @@ def set_status(conn: sqlite3.Connection, mid: str, status: str, actor: str) -> b
 def edit(conn: sqlite3.Connection, mid: str, text: str, actor: str) -> bool:
     text = " ".join((text or "").split())
     with locked():
-        refresh(conn, force=True)  # 按最新状态找文件，Leo 可能刚改过名
+        refresh(conn, force=True)  # 按最新状态找文件，用户可能刚改过名
         row = _find(conn, mid)
         if not row or row["source"] == "profile" or row["status"] == "retracted" or not text:
             return False

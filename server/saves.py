@@ -28,7 +28,7 @@ from pydantic import BaseModel
 import chat
 import think
 from chat import _lock, db, log_activity, now_iso
-from config import settings
+from config import settings, user_word
 from i18n import L, LS
 
 router = APIRouter()
@@ -502,14 +502,14 @@ def save_context(sid: str, cap: int = 30_000) -> str:
     """把一条收藏给模型看（问 Grava、交给 Agent）：来源、链接、你的备注、抽出来的正文。"""
     r = row(sid)
     text = text_of(sid)
-    lines = [LS(f"【收藏】Leo 让你看他收藏的一条（id {sid}）。", f"[Saved item] The user wants you to look at something they saved (id {sid})."),
+    lines = [LS(f"【收藏】{user_word().lstrip()}让你看 TA 收藏的一条（id {sid}）。", f"[Saved item] The user wants you to look at something they saved (id {sid})."),
              LS(f"标题：{r['title']}", f"Title: {r['title']}")]
     if r["source"]:
         lines.append(LS(f"来自：{r['source']}", f"From: {r['source']}"))
     if r["url"]:
         lines.append(LS(f"链接：{r['url']}", f"Link: {r['url']}"))
     if r["note"]:
-        lines.append(LS(f"他写的备注：{r['note']}", f"Their note: {r['note']}"))
+        lines.append(LS(f"TA 写的备注：{r['note']}", f"Their note: {r['note']}"))
     kws = json.loads(r["keywords"] or "[]")
     if kws:
         lines.append(LS("关键词：", "Keywords: ") + " ".join("#" + k for k in kws))

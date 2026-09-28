@@ -578,7 +578,27 @@ def deadlines(refresh: int = 0):
 
 # —— 学习秘书 Agent（server.json 的 study.agent，2026-09-27）：Canvas ddl 同步进它的「ddl」表，路线打勾记进「学习记录」 ——
 
-COURSE_SHORT = {"Corporate Strategy": "CS", "Business Economics": "BE", "Quantitative Data Analysis": "QDA"}
+def course_code(agent: str, table: str, name: object) -> str | None:
+    """课程全名 → 学习秘书表里「课」那一列的写法：server.json 的 study.short（{"课程全名": "缩写"}）优先，没写就取首字母
+    （Machine Learning Systems → MLS）。那一列是选项的，只写选项里有的，别的留空（和以前一样，不认识的课不写）。"""
+    full = str(name or "").strip()
+    if not full:
+        return None
+    short = cfg().get("short")
+    if isinstance(short, dict) and short.get(full):
+        code = str(short[full])
+    else:
+        from schedule import course_short  # 延迟导入：schedule 也 import study
+        code = course_short(full)
+    try:
+        import boards
+        coll = next((c for c in boards.list_colls(agent)["collections"] if c.get("name") == table), None)
+        field = next((f for f in (coll or {}).get("fields") or [] if f.get("key") == "course"), None)
+    except Exception:  # noqa: BLE001 — 读不到表结构就照写，写不进去由 add_rows 报
+        field = None
+    if field and field.get("type") == "choice" and code not in (field.get("options") or []):
+        return None
+    return code
 
 
 def ddl_kind(title: str) -> str:
@@ -610,7 +630,7 @@ def sync_agent_deadlines(items: list[dict]) -> None:
             if url and url in have:
                 continue
             title = str(x.get("title") or "").strip()
-            new.append({"title": title, "course": COURSE_SHORT.get(str(x.get("course") or "")), "kind": ddl_kind(title),
+            new.append({"title": title, "course": course_code(agent, "deadlines", x.get("course")), "kind": ddl_kind(title),
                         "due": str(x["due"])[:16].replace(" ", "T"), "done": False, "link": url or None})
         if new:
             boards.add_rows(agent, "deadlines", boards.RowsIn(rows=new, by="agent"))
@@ -632,7 +652,7 @@ def log_study_step(unit: dict, step: dict) -> None:
         import boards
         what = f"S{unit['session']} " if unit.get("session") else ""
         boards.add_rows(agent, "study_log", boards.RowsIn(rows=[{
-            "date": chat.day_of(chat.now_iso()), "course": COURSE_SHORT.get(unit["course"]),
+            "date": chat.day_of(chat.now_iso()), "course": course_code(agent, "study_log", unit.get("course")),
             "what": (what + str(step.get("title") or ""))[:120], "minutes": int(step.get("minutes") or 0) or None}], by="agent"))
     except Exception:  # noqa: BLE001
         pass

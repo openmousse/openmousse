@@ -355,7 +355,7 @@ export function ScheduleChip({ card }: { card: ScheduleChangeCard }) {
 
 // —— 项目小卡 ————————————————————————————————————————————————————————
 
-/** Agent 改了项目卡：一行「已定的 +1 · Leo 讲财务那段」，右边「撤销」；开了项目的是「去看看」。在别的对话里（主对话改了某个项目）点整张进那个项目。 */
+/** Agent 改了项目卡：一行「已定的 +1 · 预算那段」，右边「撤销」；开了项目的是「去看看」。在别的对话里（主对话改了某个项目）点整张进那个项目。 */
 export function ProjectChip({ card, here }: { card: ProjectChangeCard; here: string }) {
   const t = useTheme();
   const { undoProjectCard } = useStore();

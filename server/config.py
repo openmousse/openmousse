@@ -4,6 +4,7 @@
 
 字段（都可省略）：
   app_name          界面上助手的名字（默认 OpenMousse）
+  user_name         你的称呼：给模型的中文说明里用它指你（默认「用户」）
   timezone          IANA 时区，逻辑日和时间显示都按它算
   language          "zh" 或 "en"：没带 Accept-Language 的请求、推送、定时器用的语言（默认 en；app 的请求按它自己的语言）
   bind              {"host", "port"}：服务监听地址。loopback 给反向代理 / Tailscale Serve；Tailscale 私网地址只给自己的设备
@@ -86,6 +87,7 @@ class Settings:
     def __init__(self) -> None:
         c = raw(fresh=True)
         self.app_name: str = c.get("app_name") or "OpenMousse"
+        self.user_name: str = str(c.get("user_name") or "").strip()
         self.timezone: str = c.get("timezone") or "UTC"
         self.tz = ZoneInfo(self.timezone)
         self.language: str = "zh" if str(c.get("language") or "en").lower().startswith("zh") else "en"
@@ -153,3 +155,11 @@ class Settings:
 
 settings = Settings()
 TZ = settings.tz
+
+
+def user_word() -> str:
+    """给模型的中文说明里怎么称呼用户：server.json 的 user_name（英文名两边带空格，排进中文句子里好看），没写就是「用户」。"""
+    n = settings.user_name
+    if not n:
+        return "用户"
+    return f" {n} " if n.isascii() else n

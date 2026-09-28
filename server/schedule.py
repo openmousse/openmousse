@@ -231,7 +231,7 @@ def canvas_rows() -> tuple[list[dict], str | None]:
 
 
 def course_short(name: str) -> str:
-    """课程名的缩写：Corporate Strategy → CS。本来就短的原样。"""
+    """课程名的缩写：Machine Learning Systems → MLS。本来就短的原样。"""
     name = (name or "").strip()
     words = re.findall(r"[A-Za-z]+", name)
     if len(name) <= 6 or len(words) < 2:
@@ -667,7 +667,7 @@ def clean_item(title: str | None, kind: str | None) -> tuple[str | None, str | N
 
 @router.post("/api/schedule")
 async def add_item(body: ItemIn):
-    """加一条。带 key 且已经有（没删的）= 改那一条（Agent 重排训练时用）；Leo 在 app 里挪过时间的，Agent 重排不改时间（kept 里写 time）。"""
+    """加一条。带 key 且已经有（没删的）= 改那一条（Agent 重排训练时用）；用户在 app 里挪过时间的，Agent 重排不改时间（kept 里写 time）。"""
     actor = actor_of(body.source)
     title, kind = clean_item(body.title, body.kind)
     d, s, e = check_date(body.date), check_time(body.start), check_time(body.end, "end")
@@ -685,7 +685,7 @@ async def add_item(body: ItemIn):
             before = dict(old)
             after = {**before, "title": title, "kind": kind, "date": d, "start": s, "end": e, "location": body.location.strip()[:200],
                      "note": body.note.strip()[:500], "updated_at": ts}
-            # Leo 自己挪过的时间，Agent 重排时不覆盖（改名字、备注照改）
+            # 用户自己挪过的时间，Agent 重排时不覆盖（改名字、备注照改）
             if actor != "leo" and (before["date"], before["start"], before["end"]) != (d, s, e) and conn.execute(
                     "SELECT 1 FROM schedule_log WHERE target=? AND actor='leo' AND action='move' AND undone_at IS NULL LIMIT 1",
                     (f"item:{old['id']}",)).fetchone():
