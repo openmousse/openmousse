@@ -11,6 +11,9 @@
   模型另外看到是哪一条、现在什么状态、怎么报结果；做完 / 没做成的改回 approved（在做），等它再用 done / fail 报。
 - kind 决定默认推送档位：task / write / send / spend / calendar 响铃，skill / agent / block / project / code / schedule / push / other 静默。
   exec 是虚拟的：OpenClaw 的执行审批（`openclaw approvals pending`），id 写成 exec:<审批 id>，同意 = allow-once，拒绝 = deny，不能「改一下」。
+- kind social：名片 agent（cardagent.py）要你表态、问你私事的卡。线程是虚拟的 card（不挂在任何对话里，app 看到的 thread 是空的，
+  所以没有「去对话里说」「跟进」）；点了由钩子自己把话告诉对方，不往任何 Agent 的线程里发话：对方说的一个字都不进主 agent。
+  Agent 用 inbox_ctl.py 列不出、读不到这类卡（请求带 X-Mousse-Client: ctl）。
 - 这是征得同意的界面，不是沙箱：不检查是谁提交的；真正拦住危险动作的是 OpenClaw 的执行审批和各 skill 自己的规则。
 """
 from __future__ import annotations
@@ -24,7 +27,7 @@ from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Awaitable, Callable
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 
@@ -37,7 +40,7 @@ from config import TZ, settings
 from i18n import L, LS
 
 router = APIRouter()
-KINDS = ("task", "write", "send", "spend", "schedule", "push", "skill", "agent", "block", "project", "code", "calendar", "other")
+KINDS = ("task", "write", "send", "spend", "schedule", "push", "skill", "agent", "block", "project", "code", "calendar", "social", "other")
 RING_KINDS = {"task", "write", "send", "spend", "calendar"}  # 你让它做、它要动外面的东西：响铃；它自己的提议：静默
 OPEN = ("pending", "revising")  # 还没定下来的
 CTL = Path(__file__).resolve().parent / "inbox_ctl.py"
@@ -50,6 +53,10 @@ _tasks: set[asyncio.Task] = set()  # 后台等待中的任务（留个引用，�
 # {"failed": …} = 服务端动了手但没做成（条目标 failed、写明原因，不再让 Agent 去做）；None = 照常让 Agent 去做。
 # boards.py 注册 block：同意就把提案那一版看板换上去，拒绝就把草稿作废。proposals.py 注册 skill / agent：日结提案同意了就装好 / 建好。
 HOOKS: dict[str, Callable[[dict, str], Awaitable[dict | None]]] = {}
+# 这些 kind 的「改一下」也交给钩子（hook(it, "revise")，你写的话在 it["note"]），不往线程里发话。钩子回 {"silent": True}（可以带 result）
+# = 不往线程里发任何话：同意后不发「【收件箱】已同意…」，改一下直接算处理完。
+REVISE_BY_HOOK = {"social"}
+PRIVATE_KINDS = {"social"}  # 线程是虚拟的、Agent 读不到的
 # kind → 条目 JSON 里多给 app 的东西（在锁外调）。projects.py 注册 project：提案内容（预览）和开好的项目（「去看看」）。
 EXTRAS: dict[str, Callable[[str], dict | None]] = {}
 
@@ -86,7 +93,8 @@ def kind_label(kind: str) -> str:
     return {"task": L("任务", "Task"), "write": L("写入", "Write"), "send": L("发送", "Send"), "spend": L("花钱", "Spend"),
             "schedule": L("定时任务", "Schedule"), "push": L("推送", "Notification"), "skill": L("新技能", "New skill"),
             "agent": L("新 Agent", "New agent"), "block": L("看板", "Board"), "project": L("项目", "Project"), "code": L("改代码", "Code change"),
-            "calendar": L("日历", "Calendar"), "exec": L("运行命令", "Run a command"), "other": L("其他", "Other")}.get(kind, kind)
+            "calendar": L("日历", "Calendar"), "social": L("朋友", "Friends"), "exec": L("运行命令", "Run a command"),
+            "other": L("其他", "Other")}.get(kind, kind)
 
 
 def names() -> dict[str, str]:
@@ -100,7 +108,14 @@ def names() -> dict[str, str]:
 def source_name(source: str | None, nm: dict[str, str]) -> str:
     if not source or source == "main":
         return settings.app_name
+    if source == "card":
+        return L("名片 agent", "Card agent")
     return nm.get(source) or source
+
+
+def actor_label(source: str) -> str:
+    """活动记录里谁提的：名片 agent 不是一个 Agent。"""
+    return L("名片 agent", "Card agent") if source == "card" else data.agent_label(source)
 
 
 def parse_time(value: str | None) -> datetime | None:
@@ -135,7 +150,8 @@ def clean_changes(items: list[str]) -> str:
 
 
 def item_json(r: sqlite3.Row, nm: dict[str, str]) -> dict:
-    return {"id": r["id"], "kind": r["kind"], "source": r["source"], "sourceName": source_name(r["source"], nm), "thread": r["thread"],
+    return {"id": r["id"], "kind": r["kind"], "source": r["source"], "sourceName": source_name(r["source"], nm),
+            "thread": "" if r["kind"] in PRIVATE_KINDS else r["thread"],
             "title": r["title"], "why": r["why"] or "", "changes": changes_of(r["changes"]), "detail": r["detail"] or "",
             "approveLabel": r["approve_label"] or "", "status": r["status"], "note": r["note"] or "", "result": r["result"] or "",
             "level": r["level"] or default_level(r["kind"]), "createdAt": r["created_at"], "updatedAt": r["updated_at"],
@@ -186,8 +202,12 @@ def check_expires(value: str | None) -> str | None:
     return dt.astimezone(TZ).isoformat(timespec="seconds")
 
 
-def check_thread(thread: str) -> None:
-    """同意之后要在这个线程里让 Agent 去做：只能是 main、某个 Agent 或某个独立空间。"""
+def check_thread(thread: str, kind: str = "") -> None:
+    """同意之后要在这个线程里让 Agent 去做：只能是 main、某个 Agent 或某个独立空间（social 类是虚拟的 card）。"""
+    if kind in PRIVATE_KINDS:
+        if thread != "card":
+            raise HTTPException(400, L("social 类的卡 thread 只能是 card", "social items must use thread card"))
+        return
     if thread != "main" and thread not in names():
         raise HTTPException(400, L(f"没有「{thread}」这个线程：thread / source 写 main 或 Agent 的 id（agent_ctl.py list 能看到）",
                                    f'No thread called "{thread}": thread / source must be main or an Agent id (see agent_ctl.py list)'))
@@ -293,7 +313,7 @@ def reply_context(iid: str) -> tuple[dict, str] | None:
         return None
     with _lock, idb() as conn:
         r = conn.execute("SELECT * FROM inbox WHERE id=?", (iid,)).fetchone()
-    if not r or r["status"] not in OPEN:
+    if not r or r["status"] not in OPEN or r["kind"] in PRIVATE_KINDS:
         return None
     it = item_json(r, names())
     t, i = it["title"], it["id"]
@@ -320,7 +340,7 @@ def follow_context(iid: str) -> tuple[dict, str] | None:
         return None
     with _lock, idb() as conn:
         r = conn.execute("SELECT * FROM inbox WHERE id=?", (iid,)).fetchone()
-    if not r or r["status"] not in FOLLOWABLE:
+    if not r or r["status"] not in FOLLOWABLE or r["kind"] in PRIVATE_KINDS:
         return None
     it = item_json(r, names())
     t, i, st, res = it["title"], it["id"], it["status"], it["result"]
@@ -401,8 +421,13 @@ def kick(thread: str, text: str) -> str:
 
 # —— 接口 ————————————————————————————————————————————————————————
 
+def from_ctl(request: Request | None) -> bool:
+    """请求是 inbox_ctl.py 发的（Agent 在用）：social 类的卡不给它看。"""
+    return bool(request and request.headers.get("x-mousse-client") == "ctl")
+
+
 @router.get("/api/inbox")
-async def list_items(status: str = "pending", thread: str | None = None):
+async def list_items(request: Request, status: str = "pending", thread: str | None = None):
     """pending：等你点头的（过期的先标成 expired）+ OpenClaw 执行审批；recent：最近 7 天定下来 / 做完的，最多 50 条。都是新的在前。
     thread=<线程>：这个线程的条目（对话里按时间线显示成卡片，挂在 messageId 那条回复下面）：等你点头的 + 最近 7 天定下来 / 做完的，
     旧的在前；不含 OpenClaw 执行审批（它们不属于哪条消息）。给了 thread 就不看 status。"""
@@ -423,7 +448,7 @@ async def list_items(status: str = "pending", thread: str | None = None):
         else:
             rows = conn.execute("SELECT * FROM inbox WHERE status!='pending' AND updated_at>=? ORDER BY updated_at DESC LIMIT ?",
                                 (since, RECENT_MAX)).fetchall()
-    items = [item_json(r, nm) for r in rows]
+    items = [item_json(r, nm) for r in rows if not (from_ctl(request) and r["kind"] in PRIVATE_KINDS)]
     out: dict = {"ok": True}
     if status == "pending":
         raw, err = await exec_pending(5)
@@ -436,7 +461,7 @@ async def list_items(status: str = "pending", thread: str | None = None):
 
 
 @router.get("/api/inbox/{iid}")
-async def get_item(iid: str):
+async def get_item(iid: str, request: Request):
     if iid.startswith("exec:"):
         raw, _ = await exec_pending(5)
         a = next((x for x in raw if str(x.get("id")) == iid[5:]), None)
@@ -445,7 +470,10 @@ async def get_item(iid: str):
         return {"ok": True, "item": exec_item(a, names())}
     with _lock, idb() as conn:
         expire(conn)
-    return {"ok": True, "item": item(iid)}
+    it = item(iid)
+    if from_ctl(request) and it["kind"] in PRIVATE_KINDS:
+        raise HTTPException(404, L("收件箱里没有这一条", "No such inbox item"))
+    return {"ok": True, "item": it}
 
 
 class ItemIn(BaseModel):
@@ -474,8 +502,8 @@ async def add(body: ItemIn):
     check_level(body.level)
     level = body.level or default_level(kind)
     source = body.source.strip() or "main"
-    thread = (body.thread or "").strip() or source
-    check_thread(thread)
+    thread = (body.thread or "").strip() or ("card" if kind in PRIVATE_KINDS else source)
+    check_thread(thread, kind)
     changes, expires, dedupe = clean_changes(body.changes), check_expires(body.expiresAt), body.dedupe.strip()
     fields = (kind, source, thread, title, body.why.strip(), changes, body.detail.strip(), body.approveLabel.strip(), level)
     ts = now_iso()
@@ -500,7 +528,7 @@ async def add(body: ItemIn):
                 created_at, updated_at, expires_at) VALUES(?,?,?,?,?,?,?,?,?,?,'pending',?,?,?,?)""", (*fields, iid, dedupe, ts, ts, expires))
     it = item(iid)
     log_activity(L(f"{'改了' if cur else '想做'}「{title}」，等你点头", f'{"Updated" if cur else "Wants to do"} "{title}", waiting for your OK'),
-                 "inbox", actor=data.agent_label(source))
+                 "inbox", actor=actor_label(source))
     await push_new(it, revised=bool(cur and cur["status"] == "revising"))
     return {"ok": True, "id": iid, **({"updated": True} if cur else {})}
 
@@ -530,8 +558,6 @@ async def act(iid: str, body: ActIn):
         raise HTTPException(400, L("action 只能是 approve / reject / revise", "action must be approve, reject or revise"))
     if iid.startswith("exec:"):
         return await act_exec(iid, action, note)
-    if action == "revise" and not note:
-        raise HTTPException(400, L("「改一下」要说怎么改", "Say what to change"))
     ts = now_iso()
     with _lock, idb() as conn:
         expire(conn)
@@ -540,14 +566,21 @@ async def act(iid: str, body: ActIn):
             raise HTTPException(404, L("收件箱里没有这一条", "No such inbox item"))
         if r["status"] != "pending":
             raise HTTPException(409, L(f"这一条已经不在等你点头了（{r['status']}）", f"This item isn't waiting for you anymore ({r['status']})"))
+        if action == "revise" and not note and r["kind"] not in REVISE_BY_HOOK:  # social 的「换个时间」可以不写：名片 agent 按空着的时间提一个
+            raise HTTPException(400, L("「改一下」要说怎么改", "Say what to change"))
         status = {"approve": "approved", "reject": "rejected", "revise": "revising"}[action]
         conn.execute("UPDATE inbox SET status=?, note=?, updated_at=?, decided_at=? WHERE id=?",
                      (status, (note or r["note"]) if action == "approve" else note, ts, None if action == "revise" else ts, iid))
     it = item(iid)
     who, title = it["sourceName"], it["title"]
-    hook = HOOKS.get(it["kind"]) if action != "revise" else None
+    hook = HOOKS.get(it["kind"]) if action != "revise" or it["kind"] in REVISE_BY_HOOK else None
     done = await hook(it, action) if hook else None
+    silent = bool(done and done.get("silent"))  # 钩子自己办完了，不往线程里发话（social：对方说的不能进 Agent 的线程）
     out: dict = {"ok": True, "item": it}
+    if action != "approve" and done and done.get("failed"):
+        with _lock, idb() as conn:  # 你的决定记下了，只是没办成（比如没能告诉对方）：写在结果里
+            conn.execute("UPDATE inbox SET result=?, updated_at=? WHERE id=?", (done["failed"], now_iso(), iid))
+        out["item"] = it = item(iid)
     if action == "approve" and done and done.get("failed"):
         # 服务端自己动手没做成（比如 proposals.py 装 skill 时 openclaw.json 校验不过）：卡片标「没做成」写明原因，不再让 Agent 去做
         log_activity(L(f"同意了{who}的「{title}」，没做成", f'Approved "{title}" from {who}, but it failed'), "failed")
@@ -559,15 +592,18 @@ async def act(iid: str, body: ActIn):
         with _lock, idb() as conn:
             conn.execute("UPDATE inbox SET status='done', result=?, updated_at=? WHERE id=?", (done["result"], now_iso(), iid))
         out["item"] = it = item(iid)
-        out["run"] = kick(it["thread"], done_text(it, note, done["result"]))
+        if not silent:
+            out["run"] = kick(it["thread"], done_text(it, note, done["result"]))
     elif action == "approve":
         log_activity(L(f"同意了{who}的「{title}」", f'Approved "{title}" from {who}'), "approved")
-        out["run"] = kick(it["thread"], approve_text(it, note))
+        if not silent:
+            out["run"] = kick(it["thread"], approve_text(it, note))
     elif action == "reject":
         log_activity(L(f"拒绝了{who}的「{title}」", f'Declined "{title}" from {who}'), "denied")
     else:
         log_activity(L(f"让{who}把「{title}」改一下", f'Asked {who} to revise "{title}"'), "edit")
-        out["run"] = kick(it["thread"], revise_text(it, note))
+        if not hook:
+            out["run"] = kick(it["thread"], revise_text(it, note))
     return out
 
 

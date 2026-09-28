@@ -56,7 +56,8 @@ def call(method: str, path: str, body: dict | None = None) -> dict:
     url = f"http://{settings.host}:{settings.port}{path}"
     data = json.dumps(body, ensure_ascii=False).encode("utf8") if body is not None else None
     # 服务回的文字（错误说明）和这个命令用同一种语言
-    headers = {"Content-Type": "application/json", "Accept": "application/json", "Accept-Language": "zh-CN" if lang() == "zh" else "en"}
+    headers = {"Content-Type": "application/json", "Accept": "application/json", "Accept-Language": "zh-CN" if lang() == "zh" else "en",
+               "X-Mousse-Client": "ctl"}  # 服务据此不给 Agent 看名片 agent 的卡（对方说的话不进 Agent）
     tokens = settings.tokens()
     if tokens:  # 本机跑，用第一个令牌；没令牌时靠 Tailscale 白名单 / trust_loopback
         headers["Authorization"] = f"Bearer {next(iter(tokens.values()))}"
