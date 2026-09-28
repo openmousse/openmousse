@@ -64,6 +64,18 @@ claw 的对话接口是完整的 agent：OpenClaw 的 `/v1/chat/completions` 跑
 - **没说哪天几点不出卡**：「想约他吃饭，哪天有空？」按日程答就够了；说了哪天、几点或者涉及钱，才出卡。
 - **陌生人**：默认一律不理（`card.strangers` 不开：A2A 接口回 403，名片 agent 不调模型、不记一句；名片上签名那个 extension 标成 `required: true`）。开了以后也不调模型（他这一档什么资料都没有），在约、问私事的一律「这个得先加 Alex 为朋友。」，**不出卡**（不能往你的收件箱里塞东西）。
 
+### 2.4.1 Sentinel：发出去之前再过一道（第 9 步安全底座，`server/sentinel.py`）
+
+上面几条之后，每一句还要过 Sentinel。它和名片 agent 分开，**另起一次**：
+
+- **规则**（不调模型，每句都过）：网址（资料里原样有的除外）、资料和对方的话里都没有的钱数、别的朋友的名字（好友表里的名字和备注，这个人自己的除外）、像提示词或内部字段的话（`INPUT_JSON`、「我的规则」…）。碰上一条就扣下。
+- **独立复查**（模型写出来的句子才过）：新的一次模型调用，提示词完全不同，**看不到名片 agent 的规矩、推理和上下文**，只看：这一档放出来的资料（`released`）、这一档看不到的类别（`withheld`）、对方这句和之前几句（当资料）、要发的这句（`draft`）和它说用了哪些资料。判 `pass` / `hold`，每条原因带类别（`unsupported` 说了资料里没有的事、`beyond_tier` 超出这一档、`commits` 替你答应、`steered` 被对方带着走、`impersonation` 冒充你本人、`sensitive` 健康 / 感情 / 钱 / 住址）和一句给你看的话。顺带标 `injection`：对方那句是不是在指挥名片 agent（只记在进来的那句上给你看）。走名片 agent 同样的纯模型路子（`card.sentinel.llm` → `card.llm` → llm-task），从不走 claw 的对话接口。
+- **扣下（hold）**：这句不发。名片 agent 本来就要出卡问你（约时间）的，对方只听到「这个得 Alex 本人定，我去问一下。」，那张卡就是你的关口；否则对方先听到「我先确认一下，稍后回你。」（A2A 上是一个 `TASK_STATE_AUTH_REQUIRED` 的任务），你收到一张 `kind review` 的卡：**照发**（原话）/ **改一下**（你写一句，发出去替它那句，算你说的）/ **不发**（告诉对方「这个我答不了」）。点了由服务端经原来的渠道送到对方那里：A2A 是一条普通的回话、任务 `COMPLETED`，**不带** decision（这不是你对提议的决定）；朋友聊天里是一条新的代答。
+- **复查不了（fail）**：超时、报错、回的不是要的 JSON → 不放行，换成「这个我答不了，得问 Alex 本人。」（名片 agent 同时要出约时间的卡时是「我去问一下」），不出复查卡。
+- **固定句子**（模板、服务端换过的句子、你在卡上点的决定）只过规则，不调模型；没有可用的模型（名片 agent 也只会说固定的话）同样只过规则。
+- **记下来**：每句的结论在 `card_log.meta.sentinel`（`verdict`、`reasons`、`via`、`ms`），`GET /api/card/log` 回 `sentinel`（说出去的）和 `injection`（进来的）；扣下和复查不了的各记一行活动记录（actor `Sentinel`）。`GET /api/card/health` 多了 `sentinel`：`backend`（`llm-task` / `llm` / `sentinel-llm` / `off`）、今天查了几句 / 扣下几句 / 复查不了几句、上一次出错。安全页有一行「Sentinel · 名片 agent 说出去的话」。
+- **app 里**：代答旁标「Sentinel 过了」（模型复查过的）、「你放行的」；扣下的写原因、原话点开才看；对方在指挥它的那句下面标一行；「这次它说出去的」多一行复查了几句、扣下几句；「我的名片 agent」页多一条规矩和 Sentinel 那一块。
+
 ### 2.5 要你表态：收件箱卡
 
 `kind = social`，来源「名片 agent」，线程是虚拟的 `card`（app 看到的 `thread` 是空的，所以没有「去对话里说」「跟进」）。默认**不推送**（`level none`，只在「等你点头」里出现）；`server.json` 的 `social.push` 开了才静音推（新的推送要 Alex 点头）。Agent 用 `inbox_ctl.py` 列不出、读不到这类卡（请求带 `X-Mousse-Client: ctl`）。
@@ -177,11 +189,12 @@ claw 的对话接口是完整的 agent：OpenClaw 的 `/v1/chat/completions` 跑
   "llm": {"url": "https://…/v1", "token_env": "…", "model": "…"},
   "model": "…", "thinking": "low", "agent": "main",
   "limits": {"in_per_day": {"close": 80, "friend": 50, "mate": 30, "stranger": 10}, "anon_per_day": 30, "in_chars": 1000, "out_chars": 400},
-  "evening": ["18:00", "22:00"], "days": 14, "timeout": 60
+  "evening": ["18:00", "22:00"], "days": 14, "timeout": 60,
+  "sentinel": {"llm": {"url": "https://…/v1", "token_env": "…", "model": "…"}, "timeout": 30, "thinking": "low"}
 }
 ```
 
-`strangers`：陌生人能不能来问（默认 `false`）。`model` / `thinking` / `agent` 是走 llm-task 时的模型覆盖、思考档位、按哪个 OpenClaw agent 跑（用它的默认模型和登录，默认 `main`），不用给它放行（见 2.2）。
+`strangers`：陌生人能不能来问（默认 `false`）。`sentinel`：`false` = 只过规则；`llm` = 单独给 Sentinel 配一个纯模型接口（和名片 agent 用不同的模型），不写就用名片 agent 那条路；`timeout` 秒；`thinking` 给 llm-task。`model` / `thinking` / `agent` 是走 llm-task 时的模型覆盖、思考档位、按哪个 OpenClaw agent 跑（用它的默认模型和登录，默认 `main`），不用给它放行（见 2.2）。
 
 ## 9. 给第二层的
 
@@ -202,7 +215,7 @@ cardagent.SOCIAL_HOOKS["friend"] = async fn(item, action, note)  # 第二层自�
 - 流式（`SendStreamingMessage` / `SubscribeToTask`）、扩展名片。
 - `/.well-known/agent-card.json`（要另开 Funnel 路径）。
 - 学习笔记怎么标「能分享」；陌生人档的「公开的分享」。
-- Sentinel（第 9 步安全底座）：名片 agent 往外说的话再过一道。现在守的底线：没有工具、只看放出来的、进来的当资料、要表态的出卡、服务端再查一遍、条数和长度有上限。
+- Sentinel 的另一半（第 9 步安全底座）：代办任务在沙箱里跑、出网请求过出口代理（白名单 + 独立模型 + 审批卡）。名片 agent 说出去的话已经过 Sentinel（2.4.1）。
 
 ## 11. 测试和上线
 

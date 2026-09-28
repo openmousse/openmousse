@@ -64,6 +64,18 @@ The rules go in the task instructions (llm-task's TASK / the system message); th
 - **No card without a concrete time**: "When is he free for dinner?" is answered from the calendar; a day, a time or money makes it a card.
 - **Strangers** are refused by default (with `card.strangers` off the A2A endpoint answers 403, the card agent makes no model call and logs nothing, and the signed-requests extension is marked `required: true` in the card). With it on there is still no model call (their tier has no material); proposals and private questions get "You'd need to be <you>'s friend for that." and **no card** (strangers can't put things in your inbox).
 
+### 2.4.1 Sentinel: one more check before anything leaves (step 9, the security base; `server/sentinel.py`)
+
+After the checks above, every line goes through Sentinel, which is separate from the card agent and runs **on its own**:
+
+- **Rules** (no model, every line): links (unless the exact link is in the material), amounts of money that are neither in the material nor in their message, other friends' names (names and aliases from the friends table, except this person's), and anything that looks like a prompt or internal field (`INPUT_JSON`, "my rules"…). One hit holds the line.
+- **Independent review** (only lines a model wrote): a new model call with a completely different prompt that **never sees the card agent's rules, reasoning or context**. It gets only this tier's released material (`released`), the categories this tier must not learn (`withheld`), their message and the lines before it (as data), the draft reply (`draft`) and the ids it claims to use. It answers `pass` or `hold`, each reason with a kind (`unsupported`, `beyond_tier`, `commits`, `steered`, `impersonation`, `sensitive`) and one line for you, and flags `injection` when their message tries to steer the card agent (noted on their line, for you). It uses the card agent's model-only paths (`card.sentinel.llm` → `card.llm` → llm-task), never the claw's chat endpoint.
+- **Held**: the line isn't sent. If the card agent was raising a card anyway (a time to meet), they only hear "That's Alex's call — I'll ask." and that card is your checkpoint. Otherwise they hear "Let me check on that and get back to you." (over A2A a task in `TASK_STATE_AUTH_REQUIRED`) and you get a `kind review` card: **Send as is**, **Rewrite** (your words replace it and count as yours) or **Don't send** (they're told it can't be answered). The server delivers your choice through the same channel: over A2A a plain reply that completes the task, **without** a decision part (it isn't your decision on a proposal); in a friend chat a new answer.
+- **Couldn't review** (timeout, error, not the JSON it asked for): nothing goes out as drafted; it becomes "I can't answer that — you'd need to ask Alex directly." ("I'll ask" when a card was being raised anyway), and no review card.
+- **Fixed lines** (templates, lines the server replaced, what you tapped on a card) only go through the rules; so does everything when no model is available (the card agent only says fixed lines then).
+- **Recorded**: each line's result is in `card_log.meta.sentinel` (`verdict`, `reasons`, `via`, `ms`); `GET /api/card/log` returns `sentinel` (outgoing lines) and `injection` (incoming ones). Held and unreviewable lines each get an Activity line (actor `Sentinel`). `GET /api/card/health` adds `sentinel`: `backend` (`llm-task` / `llm` / `sentinel-llm` / `off`), today's checked / held / failed counts and the last error. The security page has a row "Sentinel · what your card agent says".
+- **In the app**: answers carry "Sentinel checked" (model-reviewed) or "You let it through"; held lines say why, with the original behind a tap; their line that tried to steer it is marked; What it said this time adds how many were reviewed and held; My card agent gets a fourth rule and a Sentinel block.
+
 ### 2.5 Things that need you: inbox cards
 
 `kind = social`, from "Card agent", on a virtual thread `card` (the app gets an empty `thread`, so there is no "say it in chat" or "follow up"). **No push by default** (`level none`; it only shows under "Needs your OK"); with `social.push` on in `server.json` they push quietly (a new kind of notification needs your OK). Agents can't list or read these cards through `inbox_ctl.py` (its requests carry `X-Mousse-Client: ctl`).
@@ -177,11 +189,12 @@ When we ask someone (section 7), `configuration.taskPushNotificationConfig` carr
   "llm": {"url": "https://…/v1", "token_env": "…", "model": "…"},
   "model": "…", "thinking": "low", "agent": "main",
   "limits": {"in_per_day": {"close": 80, "friend": 50, "mate": 30, "stranger": 10}, "anon_per_day": 30, "in_chars": 1000, "out_chars": 400},
-  "evening": ["18:00", "22:00"], "days": 14, "timeout": 60
+  "evening": ["18:00", "22:00"], "days": 14, "timeout": 60,
+  "sentinel": {"llm": {"url": "https://…/v1", "token_env": "…", "model": "…"}, "timeout": 30, "thinking": "low"}
 }
 ```
 
-`strangers`: whether strangers may ask at all (default `false`). `model` / `thinking` / `agent` apply to llm-task: model override, thinking level, and which OpenClaw agent the invoke runs as (its default model and sign-in; `main` by default). That agent needs no allow entry (2.2).
+`strangers`: whether strangers may ask at all (default `false`). `sentinel`: `false` = rules only; `llm` = a separate model-only endpoint for Sentinel's review (a different model from the card agent's), otherwise it uses the card agent's path; `timeout` in seconds; `thinking` for llm-task. `model` / `thinking` / `agent` apply to llm-task: model override, thinking level, and which OpenClaw agent the invoke runs as (its default model and sign-in; `main` by default). That agent needs no allow entry (2.2).
 
 ## 9. For layer ②
 
@@ -202,7 +215,7 @@ Each `history` item is `{"from": "friend" | "owner" | "agent", "text"}`; `used` 
 - Streaming (`SendStreamingMessage` / `SubscribeToTask`), the extended card.
 - `/.well-known/agent-card.json` (another Funnel path).
 - How notes are marked shareable; "public shares" for strangers.
-- Sentinel (step 9, the security base): one more check on what the card agent says. Until then the floor is: no tools, only released material, incoming text is data, decisions become cards, the server checks every reply, and there are caps.
+- The other half of Sentinel (step 9): errands run in a sandbox and their outbound requests pass an egress proxy (allowlist + a separate model + approval cards). What the card agent says already goes through Sentinel (2.4.1).
 
 ## 11. Tests and going live
 

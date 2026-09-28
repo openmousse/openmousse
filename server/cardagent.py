@@ -14,6 +14,8 @@
 - 要你表态（定时间、花钱、答应什么）、问你私事的：出收件箱卡（kind social，默认不推送，server.json 的 social.push 开了才静音推）。
   你点了以后，服务端自己告诉对方（经注册的渠道 DELIVER：a2a / chat），同意的约会进日程。这类卡的钩子不往主 agent 的线程里发任何话。
 - 说出去的每一句都记下来（card_log + activity_log），每个人每天有条数上限、每条有长度上限。
+- 发出去之前还过 Sentinel（sentinel.py，第 9 步安全底座）：规则 + 另起一次的独立复查，觉得不妥就扣下（对方先听到「我确认一下」，
+  你收到一张 kind review 的卡：照发 / 改一下 / 不发），复查不了就换成固定句子。
 - 陌生人（不在好友表里的、签名认不出的、删掉的朋友）默认一律不理：server.json 的 card.strangers 是 true 才答（只有固定句子、不出卡）。
 
 表（grava.db）
@@ -47,6 +49,7 @@ import chat
 import claw
 import inbox
 import schedule
+import sentinel
 import share
 from chat import _lock, db, log_activity, now_iso
 from config import raw, settings
@@ -414,7 +417,7 @@ def task_input(peer: dict, mats: list[dict], history: list[dict], question: str)
             "conversation": history, "message": question}
 
 
-def parse_json(text: str) -> dict:
+def parse_json(text: str, need: str = "reply") -> dict:
     s = text.strip()
     m = re.match(r"^```(?:json)?\s*([\s\S]*?)\s*```$", s, re.I)
     if m:
@@ -426,12 +429,12 @@ def parse_json(text: str) -> dict:
         v = json.loads(s)
     except ValueError as e:
         raise CardLLMError("not JSON") from e
-    if not isinstance(v, dict) or not isinstance(v.get("reply"), str):
+    if not isinstance(v, dict) or not isinstance(v.get(need), str):
         raise CardLLMError("unexpected JSON")
     return v
 
 
-async def via_openai(llm: dict, prompt: str, input_: dict, timeout: float) -> tuple[dict, str]:
+async def via_openai(llm: dict, prompt: str, input_: dict, timeout: float, need: str = "reply") -> tuple[dict, str]:
     url = str(llm.get("url") or "").rstrip("/")
     if not url:
         raise CardLLMError("card.llm.url is not set")
@@ -456,14 +459,16 @@ async def via_openai(llm: dict, prompt: str, input_: dict, timeout: float) -> tu
         text = ((j.get("choices") or [{}])[0].get("message") or {}).get("content") or ""
     except (ValueError, AttributeError) as e:
         raise CardLLMError("bad response") from e
-    return parse_json(text), f"llm:{j.get('model') or llm.get('model') or ''}"
+    return parse_json(text, need), f"llm:{j.get('model') or llm.get('model') or ''}"
 
 
-async def via_llm_task(prompt: str, input_: dict, timeout: float) -> tuple[dict, str]:
-    """OpenClaw 的 llm-task（POST /tools/invoke）：TASK = 规矩，INPUT_JSON = 资料和对方的话，零工具、新会话，回来的 JSON 按 SCHEMA 校验过。"""
+async def via_llm_task(prompt: str, input_: dict, timeout: float, *, schema: dict | None = None, need: str = "reply",
+                       thinking: str | None = None) -> tuple[dict, str]:
+    """OpenClaw 的 llm-task（POST /tools/invoke）：TASK = 规矩，INPUT_JSON = 资料和对方的话，零工具、新会话，回来的 JSON 按 schema 校验过
+    （默认名片 agent 的 SCHEMA；Sentinel 传它自己的，need = 必须有的那个字符串键）。"""
     c = cfg()
-    args: dict = {"prompt": prompt, "input": input_, "schema": SCHEMA, "timeoutMs": int(timeout * 1000),
-                  "thinking": str(c.get("thinking") or "low")}
+    args: dict = {"prompt": prompt, "input": input_, "schema": schema or SCHEMA, "timeoutMs": int(timeout * 1000),
+                  "thinking": str(thinking or c.get("thinking") or "low")}
     if c.get("model"):
         args["model"] = str(c["model"])
     body = {"tool": "llm-task", "args": args, "agentId": str(c.get("agent") or "main")}
@@ -489,12 +494,12 @@ async def via_llm_task(prompt: str, input_: dict, timeout: float) -> tuple[dict,
     det = res.get("details") if isinstance(res, dict) else None
     if isinstance(det, dict) and isinstance(det.get("json"), dict):
         v = det["json"]
-        if not isinstance(v.get("reply"), str):
+        if not isinstance(v.get(need), str):
             raise CardLLMError("unexpected JSON")
         return v, f"llm-task:{det.get('provider') or ''}/{det.get('model') or ''}"
     content = res.get("content") if isinstance(res, dict) else None
     text = next((x.get("text") for x in content or [] if isinstance(x, dict) and x.get("type") == "text"), "")
-    return parse_json(text or ""), "llm-task"
+    return parse_json(text or "", need), "llm-task"
 
 
 def available() -> bool:
@@ -544,7 +549,8 @@ def say(key: str, lang: str, **kw) -> str:
           "declined": f"{who}这次去不了。", "counter_note": f"{lead}{who}不行。{who}说：「{kw.get('note', '')}」",
           "counter": f"{lead}{who}不行，{kw.get('alts', '')}可以吗？", "counter_none": f"{lead}{who}不行，改天再约吧。",
           "ack": f"{who}看到了，会自己回你。", "private_declined": f"这个{who}不方便说。",
-          "rejected_before": f"这件事{who}之前已经说过不行了。", "friends_only": f"这个得先加{who}为朋友。"}
+          "rejected_before": f"这件事{who}之前已经说过不行了。", "friends_only": f"这个得先加{who}为朋友。",
+          "hold": "我先确认一下，稍后回你。"}
     en = {"ask": f"That's {who}'s call — I'll ask.", "cant": f"I can't answer that — you'd need to ask {who} directly.",
           "limit": "Let's leave it here for today.", "free": f"{who} is free these evenings: {kw.get('days', '')}.",
           "busy": f"{who}'s evenings are all taken for now.", "accepted": f"{who} is in: {kw.get('when', '')}.",
@@ -552,7 +558,8 @@ def say(key: str, lang: str, **kw) -> str:
           "counter": f"{kw.get('when', '')} doesn't work for {who} — how about {kw.get('alts', '')}?",
           "counter_none": f"{kw.get('when', '')} doesn't work for {who}; let's find another time.",
           "ack": f"{who} has seen it and will reply personally.", "private_declined": f"{who} would rather not say.",
-          "rejected_before": f"{who} has already said no to this.", "friends_only": f"You'd need to be {who}'s friend for that."}
+          "rejected_before": f"{who} has already said no to this.", "friends_only": f"You'd need to be {who}'s friend for that.",
+          "hold": "Let me check on that and get back to you."}
     return spaced(zh[key]) if lang == "zh" else en[key]
 
 
@@ -668,6 +675,14 @@ def write_log(peer: dict, channel: str, ref: str, direction: str, text: str, sta
     return lid
 
 
+def set_meta(lid: str, **kv) -> None:
+    """给记下的一句补几个字段（进来的那句被 Sentinel 看出在指挥名片 agent：injection）。"""
+    with _lock, cdb() as conn:
+        r = conn.execute("SELECT meta FROM card_log WHERE id=?", (lid,)).fetchone()
+        if r:
+            conn.execute("UPDATE card_log SET meta=? WHERE id=?", (json.dumps({**jloads(r["meta"], {}), **kv}, ensure_ascii=False), lid))
+
+
 def say_log(peer: dict, text: str, label: str) -> None:
     """说出去的一句进活动记录（原文照记：这是你自己的记录）。"""
     tail = L(f"（{label}）", f" ({label})") if label else ""
@@ -719,7 +734,7 @@ async def answer(friend: dict | None, question: str, *, channel: str = "chat", m
     hist = [{"from": who_said(h.get("from")), "text": clean_text(str(h.get("text") or ""), 600)}
             for h in (history if history is not None else history_of(ref, lim["history"]))
             if str(h.get("text") or "").strip()][-lim["history"]:]
-    write_log(peer, channel, ref, "in", q, "received")
+    in_id = write_log(peer, channel, ref, "in", q, "received")
     scope = scopes(peer["tier"])
     mats, aux = build_material(scope, lang, material)
     if peer["tier"] == "stranger" and not mats:
@@ -730,22 +745,46 @@ async def answer(friend: dict | None, question: str, *, channel: str = "chat", m
     out, blocked = check(raw_out, q, mats, lang)
     if peer["tier"] == "stranger" and out["ask_owner"]:
         out["reply"], out["ask_owner"] = say("friends_only", lang), None  # 陌生人不能往你的收件箱里塞卡
+    # Sentinel：模型写的句子另起一次复查，固定句子只过规则（sentinel.py）
+    sv = await sentinel.review(peer, scope, mats, hist, q, out, model_written=via not in ("template", "limit", "refused") and not blocked)
+    held = None
+    if sv["verdict"] in ("hold", "fail"):
+        held = {"reply": out["reply"], "used": out["used"]}
+        if sv["verdict"] == "fail" or peer["tier"] == "stranger":
+            out["reply"] = say("ask", lang) if out["ask_owner"] else say("cant", lang)   # 复查不了 / 陌生人：不放行，也不出复查卡
+        elif out["ask_owner"]:
+            out["reply"] = say("ask", lang)   # 名片 agent 本来就要出卡问你（约时间）：那张卡就是你的关口
+        else:
+            out["reply"] = say("hold", lang)  # 先说「我确认一下」，你在卡上决定照发 / 改一下 / 不发
+            out["ask_owner"] = {"kind": "review", "summary": sentinel.reasons_line(sv), "proposal": None, "original": held["reply"],
+                                "used": held["used"], "reasons": sv["reasons"]}
+        out["used"] = []
+        blocked = blocked + [f"sentinel:{sv['verdict']}"]
+    if sv.get("injection"):
+        set_meta(in_id, injection=True)
     defer = None
     if out["ask_owner"]:
         defer = await ask_owner(peer, channel, ref, out["ask_owner"], q, lang, aux)
         if defer and defer.get("rejected_before"):
             out["reply"], defer = say("rejected_before", lang), None
     label = used_label(out["used"], mats, scope)
-    meta = {"via": via, "declined": out["declined"], "label": label, **({"blocked": blocked} if blocked else {}),
+    if held and out["ask_owner"] and out["ask_owner"].get("kind") == "review":
+        out["ask_owner"]["label"] = used_label(held["used"], mats, scope)
+    meta = {"via": via, "declined": out["declined"], "label": label, "sentinel": sv, **({"blocked": blocked} if blocked else {}),
             **({"original": clean_text(str(raw_out.get("reply") or ""), 600)} if blocked else {})}
     lid = write_log(peer, channel, ref, "out", out["reply"], "sent", out["used"], defer["inbox_id"] if defer else None, meta)
     say_log(peer, out["reply"], label)
+    if sv["verdict"] in ("hold", "fail"):
+        why = sentinel.reasons_line(sv)
+        log_activity(LZ(f"Sentinel 扣下了一句给{peer['name']}的话：{why}" if sv["verdict"] == "hold" else f"Sentinel 没能复查给{peer['name']}的一句，换成了固定的话",
+                        f"Sentinel held a reply to {peer['name']}: {why}" if sv["verdict"] == "hold" else f"Sentinel couldn't review a reply to {peer['name']}; a fixed line went instead"),
+                     "social", actor="Sentinel")
     if out["declined"]:
         log_activity(LZ(f"没照做（{peer['name']}）：" + "；".join(out["declined"]), f"Didn't do ({peer['name']}): " + "; ".join(out["declined"])),
                      "social", actor=L("名片 agent", "Card agent"))
     names = [next((m["label"] for m in mats if m["id"] == u), u) for u in out["used"]]
     return {"text": out["reply"], "used": out["used"], "usedNames": names, "usedLabel": label, "defer": defer, "declined": out["declined"],
-            "limited": False, "log_id": lid, "via": via}
+            "limited": False, "log_id": lid, "via": via, "sentinel": {"verdict": sv["verdict"], "reasons": sv["reasons"], "via": sv["via"]}}
 
 
 def retract(log_id: str, *, replaced: bool = False) -> bool:
@@ -804,6 +843,8 @@ def push_level() -> str:
 def dedupe_key(channel: str, ref: str, ask: dict) -> str:
     """收件箱卡的去重键。同一段对话里还有一张在等你的：用它的键（新的提议原地换掉旧的）；否则按「这件事」算：
     同一个时间你拒过的，30 天内再提会被挡回（对方听到「之前说过不行了」），换个时间就是一件新的事。"""
+    if ask["kind"] == "review":  # Sentinel 扣下的一句：每句一张，不顶掉同一段对话里在等你的约时间的卡
+        return f"card:{channel}:{ref or '-'}:review:{uuid.uuid4().hex[:10]}"
     if ref:
         with _lock, cdb() as conn:
             r = conn.execute("""SELECT i.dedupe FROM card_asks a JOIN inbox i ON i.id = a.inbox_id WHERE a.channel=? AND a.ref=?
@@ -830,6 +871,12 @@ async def ask_owner(peer: dict, channel: str, ref: str, ask: dict, question: str
         why = "；".join(x for x in (LZ(f"{name}（{tier_label(peer['tier'])}）那边提的", f"Proposed by {name} ({tier_label(peer['tier'])})"),
                                    conflicts(p)) if x)
         approve = L("同意", "Yes")
+    elif ask["kind"] == "review":
+        title = LZ(f"Sentinel 扣下了一句要给{name}的话", f"Sentinel held a reply to {name}")
+        why = LZ(f"{name}（{tier_label(peer['tier'])}）问：「{clean_line(question, 80)}」。扣下的原因：{ask['summary']}",
+                 f"{name} ({tier_label(peer['tier'])}) asked: \"{clean_line(question, 80)}\". Why it was held: {ask['summary']}")
+        changes = [LZ(f"照发这句：「{ask.get('original') or ''}」", f"Send it as is: \"{ask.get('original') or ''}\"")]
+        approve = L("照发", "Send as is")
     elif ask["kind"] == "decision":
         title = LZ(f"{name}约你：{ask['summary']}", f"{name} asks: {ask['summary']}")
         changes, why, approve = [L("回复对方：同意", "Reply: yes")], LZ(f"{name}（{tier_label(peer['tier'])}）", f"{name} ({tier_label(peer['tier'])})"), L("同意", "Yes")
@@ -848,7 +895,9 @@ async def ask_owner(peer: dict, channel: str, ref: str, ask: dict, question: str
         return {"rejected_before": True}
     iid = res["id"]
     ts = now_iso()
-    meta = {"evenings": aux.get("evenings") or [], "question": clean_line(question, 300)}
+    meta = {"evenings": aux.get("evenings") or [], "question": clean_line(question, 300),
+            **({"original": ask.get("original") or "", "used": ask.get("used") or [], "label": ask.get("label") or "",
+                "reasons": ask.get("reasons") or []} if ask["kind"] == "review" else {})}
     with _lock, cdb() as conn:
         conn.execute("""INSERT INTO card_asks(inbox_id, ts, peer, peer_name, tier, channel, ref, kind, summary, proposal, lang, status, meta, updated_at)
             VALUES(?,?,?,?,?,?,?,?,?,?,?,'open',?,?) ON CONFLICT(inbox_id) DO UPDATE SET kind=excluded.kind, summary=excluded.summary,
@@ -892,6 +941,8 @@ async def decide(it: dict, action: str, note: str = "") -> dict | None:
         return None
     lang, p = ask["lang"], ask["proposal"]
     peer = {"key": ask["peer"], "name": ask["peer_name"], "tier": ask["tier"]}
+    if ask["kind"] == "review":
+        return await release(it, ask, peer, action, note)
     when = when_text(p, lang).split("，")[0].split(",")[0] if p else ""
     sched_id = None
     if ask["kind"] == "private":
@@ -938,6 +989,37 @@ async def decide(it: dict, action: str, note: str = "") -> dict | None:
     return {"silent": True}
 
 
+async def release(it: dict, ask: dict, peer: dict, action: str, note: str) -> dict:
+    """Sentinel 扣下的一句，你点了：照发（原话）/ 改一下（发你写的，算你说的）/ 不发（告诉对方答不了）。都经原来的渠道送到对方那里。"""
+    lang, m = ask["lang"], ask["meta"]
+    if action == "approve":
+        text, outcome, by, used, label = str(m.get("original") or ""), "released", "agent", m.get("used") or [], str(m.get("label") or "")
+    elif action == "revise":
+        text, outcome, by, used, label = clean_text(note, limits()["out_chars"]), "rewritten", "owner", [], ""
+        if not text:
+            return {"failed": L("「改一下」要写你想发的那句", "Write what you want to send"), "silent": True}
+    else:
+        text, outcome, by, used, label = say("cant", lang), "withheld", "agent", [], ""
+    if not text:
+        text, outcome = say("cant", lang), "withheld"
+    ok = await deliver(ask, text, {"outcome": outcome, "by": by, "used": used, "label": label})
+    with _lock, cdb() as conn:
+        conn.execute("UPDATE card_asks SET status=?, outcome=?, updated_at=? WHERE inbox_id=?",
+                     ({"released": "approved", "rewritten": "revised", "withheld": "rejected"}[outcome], outcome, now_iso(), it["id"]))
+    write_log(peer, ask["channel"], ask["ref"], "out", text, "sent" if ok else "failed", used, it["id"],
+              {"outcome": outcome, "by": by, "label": label, "sentinel": {"verdict": "released" if outcome == "released" else "owner", "reasons": []}})
+    if ok:
+        say_log(peer, text, L("你放行的", "you let it through") if outcome == "released" else L("你写的", "your words") if outcome == "rewritten" else "")
+    else:
+        log_activity(LZ(f"没能把那句告诉{peer['name']}", f"Couldn't reach {peer['name']}"), "failed", actor=L("名片 agent", "Card agent"))
+        return {"failed": L("没能告诉对方（对方的服务器连不上）", "Couldn't reach them"), "silent": True}
+    if outcome == "released":
+        return {"result": L("照发了", "Sent as it was"), "silent": True}
+    if outcome == "rewritten":
+        return {"result": L("发了你改的那句", "Sent your words"), "silent": True, "status": "done"}
+    return {"result": L("没发，告诉对方这个答不了", "Not sent; told them it can't be answered"), "silent": True}
+
+
 async def social_hook(it: dict, action: str, note: str = "") -> dict | None:
     """inbox.HOOKS["social"]：按 dedupe 前缀分给这里（card:）或第二层（friend:）。"""
     with _lock, inbox.idb() as conn:
@@ -952,12 +1034,14 @@ def card_extra(iid: str) -> dict | None:
     ask = ask_row(iid)
     if not ask:
         return None
-    return {"ask": ask["kind"], "counter": ask["kind"] == "decision", "peer": ask["peer_name"], "channel": ask["channel"]}
+    return {"ask": ask["kind"], "counter": ask["kind"] == "decision", "peer": ask["peer_name"], "channel": ask["channel"],
+            **({"original": ask["meta"].get("original") or "", "reasons": ask["meta"].get("reasons") or []} if ask["kind"] == "review" else {})}
 
 
 SOCIAL_HOOKS["card"] = decide
 inbox.HOOKS["social"] = social_hook
 inbox.EXTRAS["social"] = card_extra
+inbox.NEEDS_NOTE.append(lambda iid: (ask_row(iid) or {}).get("kind") == "review")
 
 
 # —— app 看的 ————————————————————————————————————————————————————————
@@ -992,7 +1076,9 @@ async def get_log(peer: str | None = None, ref: str | None = None, channel: str 
                       "text": "" if gone else r["text"], "used": jloads(r["used"], []), "usedLabel": meta.get("label") or "",
                       "status": r["status"], "inboxId": r["inbox_id"], "ask": asks.get(r["inbox_id"]), "outcome": meta.get("outcome") or "",
                       "declined": meta.get("declined") or [], "blocked": meta.get("blocked") or [],
-                      "original": "" if gone else meta.get("original") or ""})
+                      "original": "" if gone else meta.get("original") or "",
+                      "sentinel": {k: v for k, v in (meta.get("sentinel") or {}).items() if k in ("verdict", "reasons", "via", "ms")} or None,
+                      "injection": bool(meta.get("injection"))})
     return {"ok": True, "items": items}
 
 
@@ -1000,4 +1086,4 @@ async def get_log(peer: str | None = None, ref: str | None = None, channel: str 
 async def health():
     """名片 agent 现在走哪条路、上一次模型出错是什么（「我的名片 agent」页顶上显示）。"""
     return {"ok": True, "backend": backend(), "lastError": {"at": _last_error[0], "backend": _last_error[1], "error": _last_error[2]}
-            if _last_error else None}
+            if _last_error else None, "sentinel": sentinel.health()}

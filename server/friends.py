@@ -300,6 +300,9 @@ def msg_json(r) -> dict:
         out["defer"] = bool(d.get("defer"))
         if d.get("outcome"):
             out["outcome"] = d["outcome"]
+        if r["dir"] == "out" and isinstance(d.get("sentinel"), dict):  # Sentinel 的结论（只给你看）
+            out["sentinel"] = {"verdict": str(d["sentinel"].get("verdict") or ""), "reasons": d["sentinel"].get("reasons") or [],
+                               "via": str(d["sentinel"].get("via") or "")}
     if r["dir"] == "out" and r["status"] == "failed":
         out["error"] = r["error"]
     return out
@@ -789,6 +792,7 @@ async def answer_ask(fid: str, ask_id: int) -> None:
         defer = res.get("defer") if isinstance(res.get("defer"), dict) else None
         data = {"used": [str(u)[:60] for u in (names or [])][:5], "usedLabel": str(res.get("usedLabel") or "")[:80],
                 "defer": bool(res.get("defer")), "log_id": res.get("log_id"), "declined": bool(res.get("declined")),
+                **({"sentinel": res["sentinel"]} if isinstance(res.get("sentinel"), dict) else {}),
                 "limited": bool(res.get("limited")), **({"inbox_id": defer.get("inbox_id")} if defer and defer.get("inbox_id") else {})}
         insert_out(fid, "answer", text, data=data, reply_to=ask["mid"], by="agent", review="pending")
         await notify(f, "answered", LS(f"{f['name']} 问了你的名片 agent，它答了", f"{f['name']} asked your card agent; it answered"))
@@ -826,9 +830,12 @@ async def deliver_chat(ask: dict, text: str, data: dict) -> bool:
                 about = None   # 那条分享收回了
     if about is None:
         return False
-    insert_out(fid, "answer", text, data={"used": [], "defer": False, "outcome": str((data or {}).get("outcome") or "")[:20],
+    owner = (data or {}).get("by") == "owner"  # 你在卡上自己写的（Sentinel 扣下后「改一下」）：算你说的
+    insert_out(fid, "answer", text, data={"used": [str(u)[:60] for u in ((data or {}).get("used") or [])][:5] if not owner else [],
+                                         "usedLabel": str((data or {}).get("label") or "")[:80], "defer": False,
+                                         "outcome": str((data or {}).get("outcome") or "")[:20],
                                          **({"inbox_id": ask["inbox_id"]} if ask.get("inbox_id") else {})},
-               reply_to=about, by="agent", review="ok")
+               reply_to=about, by="person" if owner else "agent", review="edited" if owner else "ok")
     return True
 
 

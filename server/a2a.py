@@ -378,12 +378,15 @@ async def deliver(ask: dict, text: str, data: dict) -> bool:
         return False
     task = row_dict(r)
     outcome = data.get("outcome")
+    # Sentinel 扣下的那句，你放行 / 改写 / 不发：就是一句普通的回话（不是本人对提议的决定），不带 decision
+    plain = outcome in ("released", "rewritten", "withheld")
     decision = {"outcome": outcome, **({"proposal": data["proposal"]} if data.get("proposal") else {}),
                 **({"note": data["note"]} if data.get("note") else {}), "by": "owner", "at": ts()}
-    msg = agent_message(text, task["context_id"], task["id"], data=decision)
+    msg = agent_message(text, task["context_id"], task["id"], data=None if plain else decision,
+                        used=(data.get("used") or []) if plain else None, label=str(data.get("label") or "") if plain else "")
     state = "TASK_STATE_INPUT_REQUIRED" if outcome == "counter" else "TASK_STATE_COMPLETED"
     arts = json.loads(task["artifacts"] or "[]")
-    if state == "TASK_STATE_COMPLETED":
+    if state == "TASK_STATE_COMPLETED" and not plain:
         arts.append({"artifactId": f"decision-{uuid.uuid4().hex[:8]}", "name": "decision",
                      "parts": [{"data": decision, "mediaType": DECISION_TYPE}, {"text": text, "mediaType": "text/plain"}]})
     now = ts()

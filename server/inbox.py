@@ -56,6 +56,8 @@ HOOKS: dict[str, Callable[[dict, str], Awaitable[dict | None]]] = {}
 # 这些 kind 的「改一下」也交给钩子（hook(it, "revise")，你写的话在 it["note"]），不往线程里发话。钩子回 {"silent": True}（可以带 result）
 # = 不往线程里发任何话：同意后不发「【收件箱】已同意…」，改一下直接算处理完。
 REVISE_BY_HOOK = {"social"}
+# 「改一下」必须写话的卡（别的 social 卡可以空着，比如「换个时间」）：fn(iid) -> bool，在锁外调。cardagent 注册：Sentinel 扣下的那句（kind review）。
+NEEDS_NOTE: list[Callable[[str], bool]] = []
 PRIVATE_KINDS = {"social"}  # 线程是虚拟的、Agent 读不到的
 # kind → 条目 JSON 里多给 app 的东西（在锁外调）。projects.py 注册 project：提案内容（预览）和开好的项目（「去看看」）。
 EXTRAS: dict[str, Callable[[str], dict | None]] = {}
@@ -558,6 +560,8 @@ async def act(iid: str, body: ActIn):
         raise HTTPException(400, L("action 只能是 approve / reject / revise", "action must be approve, reject or revise"))
     if iid.startswith("exec:"):
         return await act_exec(iid, action, note)
+    if action == "revise" and not note and any(f(iid) for f in NEEDS_NOTE):
+        raise HTTPException(400, L("「改一下」要写你想发的那句", "Write what you want to send"))
     ts = now_iso()
     with _lock, idb() as conn:
         expire(conn)
@@ -577,6 +581,11 @@ async def act(iid: str, body: ActIn):
     done = await hook(it, action) if hook else None
     silent = bool(done and done.get("silent"))  # 钩子自己办完了，不往线程里发话（social：对方说的不能进 Agent 的线程）
     out: dict = {"ok": True, "item": it}
+    if action == "revise" and done and done.get("status") == "done" and not done.get("failed"):
+        # 钩子按你写的话办完了（Sentinel 扣下的那句，你改了以后发出去了）：不用再等谁改，直接算处理完
+        with _lock, idb() as conn:
+            conn.execute("UPDATE inbox SET status='done', result=?, decided_at=?, updated_at=? WHERE id=?", (done.get("result") or "", now_iso(), now_iso(), iid))
+        out["item"] = it = item(iid)
     if action != "approve" and done and done.get("failed"):
         with _lock, idb() as conn:  # 你的决定记下了，只是没办成（比如没能告诉对方）：写在结果里
             conn.execute("UPDATE inbox SET result=?, updated_at=? WHERE id=?", (done["failed"], now_iso(), iid))

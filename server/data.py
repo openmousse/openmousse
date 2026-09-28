@@ -1173,6 +1173,26 @@ def channel_fact(name: str, c: dict) -> dict:
             "state": L("已满足", "OK") if ok else L("注意", "Review"), "tone": "good" if ok else "warn"}
 
 
+def sentinel_fact() -> dict | None:
+    """名片 agent 往外说的话过 Sentinel（第 9 步安全底座的第一块，sentinel.py）：装了名片 agent 才有这一行。"""
+    try:
+        import sentinel
+        h = sentinel.health()
+    except Exception:  # noqa: BLE001 — 没有名片 agent（没装社交那几层）：不显示
+        return None
+    t, b = h["today"], h["backend"]
+    how = {"llm-task": L("另起一次模型复查（OpenClaw llm-task，零工具，看不到名片 agent 的上下文）", "a separate model review (OpenClaw llm-task, no tools, none of the card agent's context)"),
+           "llm": L("另起一次模型复查（card.llm）", "a separate model review (card.llm)"),
+           "sentinel-llm": L("另一个模型复查（card.sentinel.llm）", "a review by a different model (card.sentinel.llm)"),
+           "off": L("规则（没有可用的模型，名片 agent 只说固定的话）", "rules only (no model; the card agent only says fixed lines)")}.get(b, b)
+    today = L(f"今天查了 {t['checked']} 句，扣下 {t['held']} 句" + (f"，复查不了 {t['failed']} 句" if t["failed"] else "") + "。",
+              f"Today: {t['checked']} checked, {t['held']} held" + (f", {t['failed']} couldn't be reviewed" if t["failed"] else "") + ".")
+    return {"title": L("Sentinel · 名片 agent 说出去的话", "Sentinel · what your card agent says"),
+            "sub": L(f"每一句发出去之前先过规则和{how}；不妥的先扣下，出卡等你点照发 / 改一下 / 不发，复查不了的换成固定的话。", 
+                     f"Every line goes through rules and {how} before it leaves; anything off is held for you to send, rewrite or drop, and a line that can't be reviewed becomes a fixed one. ") + today,
+            "state": L("开着", "On") if b != "off" else L("只有规则", "Rules only"), "tone": "good" if b != "off" else "warn"}
+
+
 @router.get("/api/security")
 async def security():
     c = config()
@@ -1227,6 +1247,7 @@ async def security():
          "sub": L(f"审批队列里现在有 {pending} 个动作等你决定。", f"{pending} {'action' if pending == 1 else 'actions'} in the approval queue waiting for your OK."),
          "state": str(pending), "tone": "neutral"},
     ]
+    sf = sentinel_fact()
     if not claw.is_openclaw():  # 别的 claw：上面那些读的是 openclaw.json，对它没有意义；只看 app 的认证和它的接口
         url = claw.base_url()
         host = url.split("://", 1)[-1].split("/", 1)[0].rsplit(":", 1)[0].strip("[]")
@@ -1236,11 +1257,14 @@ async def security():
                                      f"{url}; " + ("local or inside your tailnet. " if local_claw else "not local: make sure it uses HTTPS and a token. ") + ("Token set." if claw.token() else "No token.")),
                             "state": ok if local_claw or (url.startswith("https://") and claw.token()) else review,
                             "tone": "good" if local_claw or (url.startswith("https://") and claw.token()) else "warn"}]
+    if sf:
+        facts.append(sf)
     plan = [
         {"title": L("隔离执行环境", "Isolated execution"),
          "sub": L("浏览器、填表等代办任务在沙箱里跑，碰不到服务器上的密钥和文件。", "Errands like browsing and filling in forms run in a sandbox, away from the server's keys and files.")},
-        {"title": L("Sentinel 出网审批", "Sentinel egress approval"),
-         "sub": L("沙箱的出网请求先过一个独立模型；白名单外的转成审批卡。", "Outbound requests from the sandbox pass a separate model first; anything off the allowlist becomes an approval card.")},
+        {"title": L("Sentinel 出网审批（代办任务）", "Sentinel egress approval (errands)"),
+         "sub": L("沙箱的出网请求先过一个独立模型；白名单外的转成审批卡。名片 agent 说出去的话已经过 Sentinel（上面那一行）。",
+                  "Outbound requests from the sandbox pass a separate model first; anything off the allowlist becomes an approval card. What your card agent says already goes through Sentinel (above).")},
         {"title": L("凭证代位", "Credential stand-ins"),
          "sub": L("沙箱里只有占位 token，真实凭证在出口处才注入。", "The sandbox only holds placeholder tokens; real credentials are added on the way out.")},
     ]
