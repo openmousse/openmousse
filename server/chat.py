@@ -27,7 +27,7 @@ from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
 from config import TZ, raw, settings  # noqa: E402
-from i18n import L  # noqa: E402
+from i18n import L, LS  # noqa: E402
 
 OPENCLAW = settings.openclaw_json
 DB = settings.db
@@ -61,6 +61,8 @@ class Run:
     inbox_mark: int = 0  # 开跑时 inbox 的最大 rowid：回完把这之后这个线程新交的收件箱条目挂到这条回复下（created_at 只到秒，不够准）
     handoff_mark: int = 0  # 开跑时 handoffs 的最大 rowid：回完把这之后从这个线程转出去的挂到这条回复下（见 cards.py）
     cards: dict = field(default_factory=dict)  # 这次回复里出的转交卡、任务卡（id → 最新的样子）：客户端重新接上时补发（见 cards.py）
+    stopping: bool = False  # 用户点了「停」（/api/chat/stop）：断开到 Gateway 的连接，Gateway 就中止这一轮
+    stream_task: asyncio.Task | None = None  # 流式读 Gateway 的那一段（停的时候取消它）
 
     def publish(self, item: tuple[str, dict]) -> None:
         for q in list(self.queues):
@@ -69,6 +71,21 @@ class Run:
 
 RUNS: dict[str, Run] = {}
 RUN_KEEP_SECONDS = 15 * 60  # 回完的回复留一会儿：手机断线后重新接上还能拿到完整内容，不至于显示"没发出去"
+
+
+@dataclass
+class Queued:
+    """回复进行中用户又发来的一条（2026-09-28）：先记进库（status queued，app 上标「排队」），
+    这条回复结束后和同一批排着的合成一轮发给模型（drain）；future 拿到那一轮的 Run，等着的连接接上去看回复。"""
+    user_id: int
+    content: str | list  # 发给 Gateway 的这一条（前情、附件都拼好了）
+    gw_text: str
+    ts: str
+    future: asyncio.Future
+
+
+QUEUED: dict[str, list[Queued]] = {}
+QUEUE_RESUME_MINUTES = 30  # 服务重启时库里还排着的：这么久以内的接着发，更早的标成没发出去
 
 
 def gateway_token() -> str:
@@ -137,6 +154,8 @@ def db() -> sqlite3.Connection:
         conn.execute("ALTER TABLE messages ADD COLUMN gw_text TEXT")  # 实际发给 Gateway 的文字（含附件抽出的内容），撤回时用它找记录
     if "origin" not in cols:
         conn.execute("ALTER TABLE messages ADD COLUMN origin TEXT")  # 回复是被什么引出来的（user / auto / relay），未读里的「给你的」按它算
+    if "reply_to" not in cols:
+        conn.execute("ALTER TABLE messages ADD COLUMN reply_to INTEGER")  # 长按「引用」着发的：引的是哪条消息（app 在气泡上面显示原话）
     conn.execute("""CREATE TABLE IF NOT EXISTS activity_log (
         id INTEGER PRIMARY KEY AUTOINCREMENT, ts TEXT NOT NULL, actor TEXT NOT NULL, text TEXT NOT NULL, kind TEXT NOT NULL)""")
     return conn
@@ -182,6 +201,13 @@ def row_to_msg(r: sqlite3.Row) -> dict:
             "attachments": json.loads(att) if att else None}
 
 
+def with_quote(m: dict, ref: sqlite3.Row | None) -> dict:
+    """长按「引用」着发的那条：带上引的是哪条、原话（app 在气泡上面显示一行）。"""
+    if ref is not None:
+        m["replyTo"] = {"id": f"db{ref['id']}", "role": "user" if ref["role"] == "user" else "grava", "text": " ".join(ref["text"].split())[:200]}
+    return m
+
+
 def thread_model(conn: sqlite3.Connection, thread: str) -> str:
     r = conn.execute("SELECT model FROM threads WHERE id=?", (thread,)).fetchone()
     return (r["model"] if r and r["model"] else None) or DEFAULT_MODEL
@@ -205,9 +231,12 @@ def history(thread: str = "main", limit: int = 200, day: str | None = None, all:
             rows = conn.execute("SELECT * FROM messages WHERE thread=? AND ts>=? AND ts<? ORDER BY id DESC LIMIT 1000", (thread, lo, hi)).fetchall()
         else:
             rows = conn.execute("SELECT * FROM messages WHERE thread=? ORDER BY id DESC LIMIT ?", (thread, min(limit, 500))).fetchall()
+        quoted = {r["reply_to"] for r in rows if r["reply_to"]}
+        refs = {q["id"]: q for q in conn.execute(f"SELECT id, role, text FROM messages WHERE id IN ({','.join('?' * len(quoted))})",
+                                                 list(quoted)).fetchall()} if quoted else {}
         run = RUNS.get(thread)
         return {"ok": True, "thread": thread, "sessionKey": session_key(thread), "modelId": thread_model(conn, thread),
-                "messages": [row_to_msg(r) for r in reversed(rows)],
+                "messages": [with_quote(row_to_msg(r), refs.get(r["reply_to"])) for r in reversed(rows)],
                 "inFlight": {"text": run.text, "modelId": run.model, "time": hhmm(run.started)} if run and not run.done else None}
 
 
@@ -287,44 +316,59 @@ class SendBody(BaseModel):
     inboxId: str | None = None   # （/api/chat/send）引用收件箱里的一条回复：还没定下来的 = 「改一下」（改成 revising），定下来的 = 「跟进」；都给模型带上前情
     ref: str | None = None       # （/api/chat/send）说的是日程或「要记得的」里的哪一条（schedule.py 的 id）：模型另外看到是哪一条、怎么改
     save: str | None = None      # （/api/chat/send）问的是哪条收藏（saves.py 的 id）：模型另外看到它的来源、备注和正文
+    replyTo: str | None = None   # （/api/chat/send）长按「引用」着发的：引的是这个对话里哪条消息（"db<id>"），模型另外看到原话
 
 
 def sse(event: str, data: dict) -> bytes:
     return f"event: {event}\ndata: {json.dumps(data, ensure_ascii=False)}\n\n".encode()
 
 
+async def gateway_stream(run: Run, text: str | list, token: str) -> None:
+    """发给 Gateway、流式攒进 run.text。出错抛 httpx.HTTPError / RuntimeError / OSError；被「停」取消时连接一断，Gateway 就中止这一轮。"""
+    async with httpx.AsyncClient(timeout=httpx.Timeout(600, connect=10)) as client:
+        async with client.stream("POST", f"{GATEWAY}/v1/chat/completions",
+                                 headers={"Authorization": f"Bearer {token}", "Content-Type": "application/json",
+                                          "x-openclaw-model": run.model, "x-openclaw-session-key": run.key or session_key(run.thread),
+                                          "x-openclaw-agent-id": agent_of(run.thread)},
+                                 json={"model": f"openclaw/{agent_of(run.thread)}", "stream": True, "messages": [{"role": "user", "content": text}]}) as r:
+            if r.status_code != 200:
+                raw = (await r.aread()).decode("utf8", "replace")
+                raise RuntimeError(f"Gateway HTTP {r.status_code}: {raw[:300]}")
+            async for line in r.aiter_lines():
+                if not line.startswith("data:"):
+                    continue
+                payload = line[5:].strip()
+                if payload == "[DONE]":
+                    break
+                try:
+                    j = json.loads(payload)
+                except ValueError:
+                    continue
+                if "error" in j:
+                    raise RuntimeError(j["error"].get("message") or "Gateway error")
+                for ch in j.get("choices", []):
+                    delta = (ch.get("delta") or {}).get("content")
+                    if delta:
+                        run.text += delta
+                        run.publish(("delta", {"text": delta}))
+
+
 async def run_gateway(run: Run, text: str | list, token: str) -> None:
-    """后台把一条消息发给 Gateway，流式攒回复，结束后入库。不依赖任何客户端连接。text 可以是 OpenAI 的 content 数组（带图片）。"""
+    """后台把一条消息发给 Gateway，流式攒回复，结束后入库。不依赖任何客户端连接。text 可以是 OpenAI 的 content 数组（带图片）。
+    结束后把回复进行中排着的消息合成下一轮发出去（drain）。"""
+    run.stream_task = asyncio.create_task(gateway_stream(run, text, token))
     try:
-        async with httpx.AsyncClient(timeout=httpx.Timeout(600, connect=10)) as client:
-            async with client.stream("POST", f"{GATEWAY}/v1/chat/completions",
-                                     headers={"Authorization": f"Bearer {token}", "Content-Type": "application/json",
-                                              "x-openclaw-model": run.model, "x-openclaw-session-key": run.key or session_key(run.thread),
-                                              "x-openclaw-agent-id": agent_of(run.thread)},
-                                     json={"model": f"openclaw/{agent_of(run.thread)}", "stream": True, "messages": [{"role": "user", "content": text}]}) as r:
-                if r.status_code != 200:
-                    raw = (await r.aread()).decode("utf8", "replace")
-                    raise RuntimeError(f"Gateway HTTP {r.status_code}: {raw[:300]}")
-                async for line in r.aiter_lines():
-                    if not line.startswith("data:"):
-                        continue
-                    payload = line[5:].strip()
-                    if payload == "[DONE]":
-                        break
-                    try:
-                        j = json.loads(payload)
-                    except ValueError:
-                        continue
-                    if "error" in j:
-                        raise RuntimeError(j["error"].get("message") or "Gateway error")
-                    for ch in j.get("choices", []):
-                        delta = (ch.get("delta") or {}).get("content")
-                        if delta:
-                            run.text += delta
-                            run.publish(("delta", {"text": delta}))
+        await run.stream_task
+    except asyncio.CancelledError:
+        if not run.stopping:  # 不是用户点的「停」（服务关了之类）：照常往外抛
+            raise
+        run.status = "stopped"
+        run.level = "none"  # 自己停的不用推
     except (httpx.HTTPError, RuntimeError, OSError) as e:  # noqa: BLE001
         run.status = "error"
         run.error = str(e)
+    if run.status == "stopped":
+        run.text = (run.text.rstrip() + "\n\n" if run.text.strip() else "") + L("（停了）", "(Stopped)")
     if run.status == "error" and not run.text:
         run.text = L(f"（没拿到回复：{run.error}）", f"(Didn't get a reply: {run.error})")
     run.requested = run.model
@@ -347,6 +391,7 @@ async def run_gateway(run: Run, text: str | list, token: str) -> None:
         pass
     run.done = True
     run.publish(("done", done_payload(run)))
+    drain(run.thread)  # 回复进行中排着的：合成下一轮发出去
     import push as push_mod  # 延迟导入：push.py 依赖本模块
     await push_mod.notify_run(run)  # 按档位推：这次写了卡就推卡，否则推回复（level none 不推；推送失败不影响回复）
     try:
@@ -440,20 +485,8 @@ def start_run(thread: str, text: str, model: str | None, key: str | None = None,
     rows = files_mod.load_pending(thread, attachment_ids or [])
     role = "auto" if origin in ("auto", "relay") else "user"
     content, gw_text = files_mod.build_content(text, rows)
-    try:  # 项目：每天第一句话、项目卡改过以后，把项目卡带给模型（OpenClaw 每天重置会话，靠它接上；见 projects.py）
-        import projects as projects_mod  # 延迟导入：projects.py 依赖本模块
-        card = projects_mod.context_for(thread)
-    except Exception:  # noqa: BLE001 — 带不上只是模型少看一眼项目卡，消息照发
-        card = None
-    if card:
-        context = f"{card}\n\n{context}" if context else card
-    try:  # 思考主题：每天第一句话、碎片变了以后，把碎片和「陪你想」的规矩带给模型（见 think.py）
-        import think as think_mod  # 延迟导入：think.py 依赖本模块
-        topic = think_mod.context_for(thread)
-    except Exception:  # noqa: BLE001 — 带不上只是模型少看一眼碎片
-        topic = None
-    if topic:
-        context = f"{topic}\n\n{context}" if context else topic
+    if daily := daily_context(thread):
+        context = f"{daily}\n\n{context}" if context else daily
     if context:
         content, gw_text = with_context(context, content), f"{context}\n\n{gw_text}"
     with _lock, db() as conn:
@@ -469,6 +502,29 @@ def start_run(thread: str, text: str, model: str | None, key: str | None = None,
             conn.execute("UPDATE messages SET attachments=? WHERE id=?", (json.dumps(shown, ensure_ascii=False), user_id))
         log_activity(L(f"发了 {len(rows)} 个附件给 {settings.app_name}（{'、'.join(r['name'] for r in rows)[:80]}）",
                        f"Sent {len(rows)} attachment{'' if len(rows) == 1 else 's'} to {settings.app_name} ({', '.join(r['name'] for r in rows)[:80]})"), "upload")
+    return begin(thread, model, user_id, ts, content, token, key=key, origin=origin, level=level)
+
+
+def daily_context(thread: str) -> str | None:
+    """每天第一句话（和卡片变了以后）要带给模型的：思考主题的碎片和「陪你想」的规矩（think.py）、项目卡（projects.py）。
+    OpenClaw 每天重置会话，靠它接上。两个 context_for 都会记下「今天带过了」，所以只在真要发出去的时候调。"""
+    parts = []
+    try:
+        import think as think_mod  # 延迟导入：think.py 依赖本模块
+        parts.append(think_mod.context_for(thread))
+    except Exception:  # noqa: BLE001 — 带不上只是模型少看一眼碎片
+        pass
+    try:
+        import projects as projects_mod  # 延迟导入：projects.py 依赖本模块
+        parts.append(projects_mod.context_for(thread))
+    except Exception:  # noqa: BLE001 — 带不上只是模型少看一眼项目卡，消息照发
+        pass
+    return "\n\n".join(x for x in parts if x) or None
+
+
+def begin(thread: str, model: str, user_id: int, ts: str, content: str | list, token: str, key: str | None = None, origin: str = "user",
+          level: str | None = None) -> Run:
+    """开跑：记下这一轮，后台发给 Gateway。"""
     run = Run(thread=thread, model=model, user_id=user_id, started=ts, key=key, origin=origin, level=level, feed_mark=feed_mark(),
               inbox_mark=max_rowid("inbox"), handoff_mark=max_rowid("handoffs"))
     RUNS[thread] = run
@@ -479,6 +535,120 @@ def start_run(thread: str, text: str, model: str | None, key: str | None = None,
     except Exception:  # noqa: BLE001
         pass
     return run
+
+
+# —— 回复进行中又发来的：排队，回完合成一轮（2026-09-28）——————————————————————————
+
+BATCH_HEAD = ("（你刚才回复的时候，用户又接着发了 {n} 条，按顺序在下面。都看完再回：分开回答的话，每段开头单独一行写 `> 「他的原话」`"
+              "（长的截前 20 个字左右），app 会把它显示成引用、点了跳回那条；说的是一件事就不用引用。）",
+              "(While you were replying, the user sent {n} more messages, in order below. Read them all, then reply: when you answer them "
+              "separately, start each part with its own line `> 「their words」` (the first 20 or so characters of a long one); the app shows it "
+              "as a quote that jumps back to that message. No quote needed if it's all one thing.)")
+
+
+def busy(thread: str) -> bool:
+    cur = RUNS.get(thread)
+    return bool(cur and not cur.done)
+
+
+def enqueue(thread: str, text: str, attachment_ids: list[str], context: str | None) -> Queued:
+    """这个线程正在回复：记下这一条（status queued），附件先挂上（气泡里看得到），等这条回完再发。"""
+    import files as files_mod  # 延迟导入：files.py 依赖本模块
+    rows = files_mod.load_pending(thread, attachment_ids)
+    content, gw_text = files_mod.build_content(text, rows)
+    if context:
+        content, gw_text = with_context(context, content), f"{context}\n\n{gw_text}"
+    ts = now_iso()
+    with _lock, db() as conn:
+        user_id = conn.execute("INSERT INTO messages(thread, role, text, model, ts, status, gw_text) VALUES(?,?,?,?,?,?,?)",
+                               (thread, "user", text, None, ts, "queued", gw_text)).lastrowid
+        conn.execute("INSERT INTO threads(id, updated_at) VALUES(?,?) ON CONFLICT(id) DO UPDATE SET updated_at=excluded.updated_at", (thread, ts))
+    if rows:
+        shown = files_mod.bind(rows, user_id)
+        with _lock, db() as conn:
+            conn.execute("UPDATE messages SET attachments=? WHERE id=?", (json.dumps(shown, ensure_ascii=False), user_id))
+    item = Queued(user_id=user_id, content=content, gw_text=gw_text, ts=ts, future=asyncio.get_running_loop().create_future())
+    QUEUED.setdefault(thread, []).append(item)
+    return item
+
+
+def combine(items: list[Queued]) -> tuple[str | list, str]:
+    """排着的几条拼成一轮：一条就是它自己；几条就编号，前面一句说明（让模型分开回答时引用原话）。图片放在最后。"""
+    if len(items) == 1:
+        return items[0].content, items[0].gw_text
+    head = LS(*(h.format(n=len(items)) for h in BATCH_HEAD))
+    texts: list[str] = []
+    images: list = []
+    for i, it in enumerate(items, 1):
+        if isinstance(it.content, list):
+            first, *rest = it.content
+            texts.append(f"[{i}] {first.get('text', '')}")
+            images += rest
+        else:
+            texts.append(f"[{i}] {it.content}")
+    body = f"{head}\n\n" + "\n\n".join(texts)
+    gw = f"{head}\n\n" + "\n\n".join(f"[{i}] {it.gw_text}" for i, it in enumerate(items, 1))
+    return ([{"type": "text", "text": body}, *images] if images else body), gw
+
+
+def drain(thread: str) -> None:
+    """这个线程没在回复了：排着的全部合成一轮发出去，等着的连接都接到这一轮上。"""
+    items = QUEUED.get(thread) or []
+    if not items or busy(thread):
+        return
+    QUEUED.pop(thread, None)
+    ids = [it.user_id for it in items]
+    try:
+        token = gateway_token()
+        content, gw_text = combine(items)
+        if daily := daily_context(thread):
+            content, gw_text = with_context(daily, content), f"{daily}\n\n{gw_text}"
+        with _lock, db() as conn:
+            model = thread_model(conn, thread)
+            # 发出去了：去掉「排队」；gw_text 都记成这一轮实际发的（撤回任何一条都退到这一轮之前）
+            conn.execute(f"UPDATE messages SET status='ok', gw_text=? WHERE id IN ({','.join('?' * len(ids))})", (gw_text, *ids))
+        run = begin(thread, model, ids[-1], items[0].ts, content, token)
+    except Exception as e:  # noqa: BLE001 — 发不出去：记一条出错的回复，等着的连接都拿到它
+        run = failed_run(thread, ids, str(getattr(e, "detail", e)))
+    for it in items:
+        if not it.future.done():
+            it.future.set_result(run)
+
+
+def failed_run(thread: str, ids: list[int], error: str) -> Run:
+    ts = now_iso()
+    run = Run(thread=thread, model=DEFAULT_MODEL, user_id=ids[-1], started=ts, status="error", error=error, finished=ts, done=True,
+              text=L(f"（没发出去：{error}）", f"(Couldn't send: {error})"))
+    with _lock, db() as conn:
+        conn.execute(f"UPDATE messages SET status='ok' WHERE id IN ({','.join('?' * len(ids))})", ids)
+        run.reply_id = conn.execute("INSERT INTO messages(thread, role, text, model, ts, status, origin) VALUES(?,?,?,?,?,?,?)",
+                                    (thread, "grava", run.text, None, ts, "error", "user")).lastrowid
+    return run
+
+
+async def queued_stream(thread: str, item: Queued) -> AsyncIterator[bytes]:
+    """排队那一条的 SSE：先说排上了；等合成的那一轮开跑，接上去转发它的回复。客户端断了也不影响那一轮。"""
+    yield sse("queued", {"userId": f"db{item.user_id}", "time": hhmm(item.ts), "position": len(QUEUED.get(thread) or [])})
+    run = await asyncio.shield(item.future)
+    async for chunk in attach(run):
+        yield chunk
+
+
+def resume_queued() -> None:
+    """服务启动时：库里还排着的（上次重启前没来得及发的）。QUEUE_RESUME_MINUTES 以内的按线程合成一轮接着发（附件只剩文字），更早的标成没发出去。"""
+    cutoff = (datetime.now(TZ) - timedelta(minutes=QUEUE_RESUME_MINUTES)).isoformat(timespec="seconds")
+    with _lock, db() as conn:
+        rows = conn.execute("SELECT id, thread, text, gw_text, ts FROM messages WHERE status='queued' ORDER BY id").fetchall()
+        old = [r["id"] for r in rows if r["ts"] < cutoff]
+        if old:
+            conn.execute(f"UPDATE messages SET status='error' WHERE id IN ({','.join('?' * len(old))})", old)
+    loop = asyncio.get_running_loop()
+    for r in rows:
+        if r["ts"] >= cutoff:
+            QUEUED.setdefault(r["thread"], []).append(Queued(user_id=r["id"], content=r["gw_text"] or r["text"], gw_text=r["gw_text"] or r["text"],
+                                                             ts=r["ts"], future=loop.create_future()))
+    for thread in list(QUEUED):
+        drain(thread)
 
 
 @router.post("/api/chat/send")
@@ -501,12 +671,65 @@ async def send(body: SendBody):
     if body.save and not quoted:  # 收藏里点「问问」「翻译」带过来的
         import saves as saves_mod  # 延迟导入：saves.py 依赖本模块
         context = await asyncio.to_thread(saves_mod.save_context, body.save)
-    run = start_run(body.thread, text, body.model, attachment_ids=body.attachments, origin=body.origin, context=context)
+    quote, quote_id = quote_context(body.thread, body.replyTo)  # 长按「引用」着发的：原话给模型
+    if quote:
+        context = f"{quote}\n\n{context}" if context else quote
+    if body.origin == "user" and (busy(body.thread) or QUEUED.get(body.thread)):
+        # 这个线程正在回复：不再 409，先记下、标「排队」，这条回完和排着的合成一轮发；连接等着接那一轮的回复
+        item = enqueue(body.thread, text, body.attachments, context)
+        user_id, stream = item.user_id, queued_stream(body.thread, item)
+        drain(body.thread)  # 万一刚好回完了（只剩排着的）：现在就发
+    else:
+        run = start_run(body.thread, text, body.model, attachment_ids=body.attachments, origin=body.origin, context=context)
+        user_id, stream = run.user_id, attach(run)
+    if quote_id:
+        with _lock, db() as conn:
+            conn.execute("UPDATE messages SET reply_to=? WHERE id=?", (quote_id, user_id))
     if reply_to:
         inbox_mod.mark_revising(reply_to[0], text)
     elif follow:
         inbox_mod.mark_followed(follow[0], text)
-    return StreamingResponse(attach(run), media_type="text/event-stream", headers={"Cache-Control": "no-store", "X-Accel-Buffering": "no"})
+    return StreamingResponse(stream, media_type="text/event-stream", headers={"Cache-Control": "no-store", "X-Accel-Buffering": "no"})
+
+
+def quote_context(thread: str, ref: str | None) -> tuple[str | None, int | None]:
+    """长按「引用」着发的：引的是这个对话里哪条（"db<id>"）。返回 (只给模型看的前情, 消息 id)；找不到就 (None, None)。"""
+    if not ref or not ref.startswith("db") or not ref[2:].isdigit():
+        return None, None
+    with _lock, db() as conn:
+        r = conn.execute("SELECT id, role, text FROM messages WHERE id=? AND thread=?", (int(ref[2:]), thread)).fetchone()
+    if not r:
+        return None, None
+    snippet = " ".join(r["text"].split())
+    snippet = snippet[:120] + ("…" if len(snippet) > 120 else "")
+    mine = r["role"] == "user"
+    return LS(f"（这条是接着对话里{'他' if mine else '你'}之前的这句说的：「{snippet}」）",
+              f'(This message refers back to {"their" if mine else "your"} earlier line in this chat: "{snippet}")'), r["id"]
+
+
+class StopBody(BaseModel):
+    thread: str
+
+
+@router.post("/api/chat/stop")
+async def stop(body: StopBody):
+    """停掉这个线程正在进行的回复：断开到 Gateway 的连接（Gateway 就中止这一轮），已经说了的留着、末尾标「停了」。排着的消息接着发。"""
+    run = RUNS.get(body.thread)
+    if not run or run.done:
+        return {"ok": True, "stopped": False}
+    run.stopping = True
+    if run.stream_task and not run.stream_task.done():
+        run.stream_task.cancel()
+    log_activity(L("停掉了一条正在进行的回复", "Stopped a reply in progress"), "edit")
+    return {"ok": True, "stopped": True}
+
+
+@router.get("/api/chat/busy")
+def busy_threads():
+    """正在回复的线程和排着的消息数。safe_restart.py 等它们都没了再重启服务（重启会掐断进行中的回复）。"""
+    running = [t for t, r in RUNS.items() if not r.done]
+    queued = {t: len(v) for t, v in QUEUED.items() if v}
+    return {"ok": True, "running": running, "queued": queued, "idle": not running and not queued}
 
 
 LEVELS = ("ring", "quiet", "none")  # 推送档位：响铃 / 静默（进通知中心不出声）/ 不推

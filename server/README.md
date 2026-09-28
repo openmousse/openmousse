@@ -84,6 +84,13 @@ Following up: the same `inboxId` on an item that is already settled (Handled →
 
 Item: `{id, kind, source, sourceName, thread, title, why, changes: [], detail, approveLabel, fields?, status, note, result, level, createdAt, updatedAt, decidedAt, expiresAt, messageId}`. `messageId`: an item an Agent submits during a reply is attached to that reply (`messages.id`) when the reply finishes; items submitted outside a reply have null. kind: task / write / send / spend / schedule / push / skill / agent / block / code / calendar / other (exec only comes from OpenClaw and carries `fields`); status: pending / approved / rejected / revising / done / failed / withdrawn / expired. The old `/api/approvals` endpoints still work for older app builds.
 
+## Chat: queueing, stopping, quoting
+
+- A conversation has one reply running at a time. What you send while it's replying (`/api/chat/send`) no longer gets a 409: it's stored right away (status `queued`, shown as "Queued" in the app), the SSE answers with a `queued` event and the connection waits. When the reply ends (or is stopped), the queued messages go to the model as one turn (numbered, after a note asking it to start each separate answer with its own line `> 「their words」`; the app draws that as a quote that jumps back to the message), and every waiting connection attaches to that turn. On startup, messages still queued from before a restart are sent if they're under 30 minutes old, older ones are marked as not sent. System triggers (`/api/chat/trigger`, relays) still get a 409 when the thread is busy.
+- `POST /api/chat/stop` `{thread}` stops the reply in progress by closing the connection to the Gateway, which aborts the turn. What was already said stays, with "(Stopped)" appended, status `stopped`, no push. Queued messages go out next.
+- Long-press → Quote: `/api/chat/send` carries `replyTo` (`db<id>`). The model gets the quoted line as context, the message stores `reply_to`, and `/api/chat/history` returns `replyTo {id, role, text}` for the app to show above the bubble.
+- `GET /api/chat/busy` → `{running, queued, idle}`. To restart the server use `python3 safe_restart.py --unit <service>`: it waits until no reply is running and nothing is queued (up to 10 minutes), since a restart cuts off replies in progress.
+
 ## Handoff and task cards
 
 When the main chat hands a question to an Agent (`scripts/ask_agent.py` → `/api/chat/relay`) or starts a background task (OpenClaw `sessions_spawn`), the chat shows a card. See [`cards.py`](cards.py).

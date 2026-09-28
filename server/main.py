@@ -42,6 +42,7 @@ from sources import calendar_ics, xunji, xunji_name  # noqa: E402
 import study  # noqa: E402
 import cards  # noqa: E402
 import schedule  # noqa: E402
+import chat  # noqa: E402
 from chat import router as chat_router  # noqa: E402
 from cards import router as cards_router  # noqa: E402
 from health import router as health_router  # noqa: E402
@@ -87,6 +88,7 @@ def meal_label(key: str) -> str:
 @asynccontextmanager
 async def lifespan(_app: FastAPI):
     cards.start()  # 盯 OpenClaw 的任务台账：后台任务做完了静默推一条
+    chat.resume_queued()  # 上次重启前还排着没发的消息：接着发
     alerts.start()  # Agent 的提醒：到点查表，有东西就推
     yield
 

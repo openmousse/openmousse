@@ -84,6 +84,13 @@ python3 inbox_ctl.py list [--status recent]
 
 条目：`{id, kind, source, sourceName, thread, title, why, changes: [], detail, approveLabel, fields?, status, note, result, level, createdAt, updatedAt, decidedAt, expiresAt, messageId}`。`messageId`：Agent 在一次回复里交的条目，回复结束时挂到那条回复（`messages.id`）下面；不是在回复里交的是 null。kind：task / write / send / spend / schedule / push / skill / agent / block / code / calendar / other（exec 只来自 OpenClaw，带 `fields`）；status：pending / approved / rejected / revising / done / failed / withdrawn / expired。旧的 `/api/approvals` 接口还在，给老版本 app。
 
+## 对话：排队、停止、引用
+
+- 一个对话同一时间只有一条回复在跑。回复进行中你又发的（`/api/chat/send`）不再 409：先记进库（status `queued`，app 上标「排队」），SSE 先回一个 `queued` 事件，连接等着；这条回复一结束（包括被停掉），排着的几条合成一轮发给模型（编号列出，前面一句说明：分开回答时每段开头单独一行写 `> 「原话」`，app 把它画成引用、点了跳回那条），等着的连接都接到这一轮上。服务重启时库里还排着的：30 分钟以内的接着发，更早的标成没发出去。定时器、转交这类系统触发（`/api/chat/trigger`、`relay`）照旧遇忙 409。
+- `POST /api/chat/stop` `{thread}`：停掉正在进行的回复——断开到 Gateway 的连接，Gateway 就中止这一轮；已经说了的留着，末尾加「（停了）」，status `stopped`，不推送。排着的接着发。
+- 长按「引用」：`/api/chat/send` 带 `replyTo`（`db<id>`）。模型另外看到原话，这条记 `reply_to`，`/api/chat/history` 里带 `replyTo {id, role, text}`，app 在气泡上面显示。
+- `GET /api/chat/busy` → `{running, queued, idle}`。要重启服务就用 `python3 safe_restart.py --unit <服务名>`：等没有进行中的回复、没有排着的消息再重启（最多等 10 分钟），重启会掐断进行中的回复。
+
 ## 转交卡和任务卡
 
 主对话把问题转给某个 Agent（`scripts/ask_agent.py` → `/api/chat/relay`），或者派一个后台任务（OpenClaw 的 `sessions_spawn`），对话里都会出一张卡。见 [`cards.py`](cards.py)。
