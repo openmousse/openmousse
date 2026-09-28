@@ -710,7 +710,7 @@ async def make_suggestions(exclude: list[str]) -> list[dict]:
         f"你是{u}的播客搭档。从候选里挑 {SUGGEST_N} 个今天值得录一期的话题（来源尽量不重样），每个写成一个具体的问题或说法（像一期节目的名字，"
         "20 字以内，用 TA 的语言），配一种录法：host 有主持人（想不清、想聊开的）、feynman 费曼（只给学习台来的：用自己的话把一个概念讲给外行听）、"
         "solo 自己讲（想法已经比较清楚、想说出来的）。ref 是候选的序号。别挑和最近录过的重复的，也别挑 exclude 里的。"
-        "kind=person 的是朋友画像里的（在做的事、下次问问）：最多挑 1 个，写成约这个朋友聊（「约小林聊聊：实习找得怎么样了」），录法 friends。",
+        "kind=person 的是朋友画像里的（在做的事、下次问问）：最多挑 1 个，写成约这个朋友聊（「约小林聊聊：实习找得怎么样了」），录法 friends；提到人写名字，不写「他 / 她」。",
         f"You're {u}'s podcast partner. Pick {SUGGEST_N} topics worth an episode today from the candidates (mix the sources). Write each as a "
         "concrete question or claim (an episode title, under 12 words, in their language) and give it a mode: host (the AI host asks follow-ups; "
         "for things still unclear), feynman (only for study-desk items: explain one concept to a smart layperson), solo (they already know what "
@@ -718,9 +718,11 @@ async def make_suggestions(exclude: list[str]) -> list[dict]:
         "notes about friends (what they're up to, what to ask next): pick at most 1, written as recording with that friend "
         "(\"Catch up with Lin: how's the internship search?\"), mode friends.")
     prompt += shape('{"items": [{"ref": 3, "title": "…", "mode": "host"}]}')
-    got, _ = await llmjson.ask(prompt, {"candidates": [{"ref": i, "kind": c["kind"], "source": c["label"], "text": c["text"]} for i, c in enumerate(cands)],
-                                        "recent": recent, "exclude": exclude[:20]}, SUGGEST_SCHEMA, timeout=60,
-                               thinking=str(cfg().get("thinking") or "low"), model=cfg().get("model"))
+    items = [{"ref": i, "kind": c["kind"], "source": c["label"], "text": c["text"]} for i, c in enumerate(cands)]
+    got, _ = await llmjson.ask(prompt, {"candidates": items, "recent": recent, "exclude": exclude[:20]}, SUGGEST_SCHEMA, timeout=60,
+                               thinking=str(cfg().get("thinking") or "low"), model=cfg().get("model"),
+                               # 退回带工具的对话回合时不带朋友画像来的候选（ref 照旧是原来的序号）
+                               fallback_input={"candidates": [x for x in items if x["kind"] != "person"], "recent": recent, "exclude": exclude[:20]})
     if isinstance(got, list):  # 不带 schema 那次常直接回一个列表
         got = {"items": got}
     out, used = [], set()
@@ -793,7 +795,16 @@ async def create(body: EpisodeIn):
     if body.mode not in MODES:
         raise HTTPException(400, L("没有这种录法", "Unknown mode"))
     src = {k: str(v)[:200] for k, v in (body.source or {}).items() if k in ("kind", "label", "course", "page", "person", "name") and v}
-    present = [pid for pid, _ in (people.resolve(p) for p in (body.people or [])[:8] if not p.skip) if pid] if body.mode == "friends" else []
+    present: list[str] = []
+    for pick in (body.people or [])[:8] if body.mode == "friends" else []:
+        try:
+            pid, _ = people.resolve(pick)
+        except HTTPException as e:
+            if e.status_code == 404:  # 那个人删了（比如昨天挑的「约小林聊…」）：不算
+                continue
+            raise
+        if pid:
+            present.append(pid)
     eid = f"pe-{uuid.uuid4().hex[:8]}"
     with _lock, pdb() as conn:
         conn.execute("INSERT INTO pod_episodes (id, title, mode, source, status, created_at, updated_at, people) VALUES (?,?,?,?,?,?,?,?)",
@@ -1079,7 +1090,9 @@ async def ask(eid: str, body: AskIn):
            "asked": [{"q": a["text"], "status": a["status"]} for a in asked], "how": body.how, **({"people": ppl} if ppl else {})}
     if not sents:
         inp["note"] = "Nothing transcribed yet: ask an opening question about the topic."
-    inp, fallback = podmaterials.inputs(eid, inp, 6000)
+    # 约朋友录的：退回带工具的对话回合时不带逐字稿（里面有朋友的原话），主持人只按提纲问
+    fb = {**inp, "transcript": [], "note": "The transcript is withheld here: ask about the next outline point or the topic."} if r["mode"] == "friends" else None
+    inp, fallback = podmaterials.inputs(eid, inp, 6000, fallback=fb)
     try:
         got, _ = await llmjson.ask(prompt, inp, ASK_SCHEMA, timeout=45, thinking=str(cfg().get("thinking") or "low"), model=cfg().get("model"),
                                    fallback_input=fallback)
@@ -1171,6 +1184,13 @@ async def process(eid: str) -> None:
         if r["mode"] == "friends" and labels and not (labels <= set(who) and "@me" in who.values()):
             touch(eid, status="naming", error=None)  # 先让你认一下谁是谁（PATCH speakers 以后接着整理）
             return
+        friends = r["mode"] == "friends"
+        me_labels = {k for k, v in who.items() if v == "@me"}
+
+        def only_mine(xs: list[dict]) -> list[dict]:
+            """约朋友录的：我说的那几句（退回带工具的对话回合时只带这些，朋友的原话不进那种回合）。"""
+            return [x for x in xs if x.get("label") in me_labels] if friends else xs
+
         # 1. 校对：同音字、专有名词（只改转错的，不改说法）
         try:
             got, _ = await llmjson.ask(LS(
@@ -1181,7 +1201,8 @@ async def process(eid: str) -> None:
                 "fillers. `from` must appear verbatim in that sentence. Return an empty list if nothing needs fixing.")
                 + shape('{"fixes": [{"id": "0.3", "from": "…", "to": "…"}]}'),
                 {"vocabulary": vocab_terms(), "sentences": [{"id": x["id"], "text": x["text"]} for x in sents]},
-                FIX_SCHEMA, timeout=120, thinking=think_level, model=model)
+                FIX_SCHEMA, timeout=120, thinking=think_level, model=model,
+                fallback_input={"vocabulary": vocab_terms(), "sentences": [{"id": x["id"], "text": x["text"]} for x in only_mine(sents)]})
             apply_fixes(eid, (got or {}).get("fixes") or [] if isinstance(got, dict) else [])
             segs = segments_of(eid)
             sents = flat_sentences(segs, who)
@@ -1192,9 +1213,7 @@ async def process(eid: str) -> None:
         outline = jload(r["outline"], [])
         br = await asyncio.to_thread(think.branches)
         u = uw()
-        friends = r["mode"] == "friends"
-        me_labels = {k for k, v in who.items() if v == "@me"}
-        mine = [x for x in sents if x.get("label") in me_labels] if friends and me_labels else sents
+        mine = only_mine(sents) if me_labels else sents
         # 2. 整理
         prompt = LS(
             f"{u} 录完了一期播客「{r['title']}」。按逐字稿整理成 TA 自己的笔记草稿。规矩：\n"
@@ -1206,8 +1225,9 @@ async def process(eid: str) -> None:
             "branch：挂哪根枝" + (f"（从这些里选：{'、'.join(br)}）" if br else "") + "。\n"
             "- 主持人的问题只是帮你理解上下文，不算 TA 的话。"
             + ("\n- 这是和朋友一起录的：note 只写「我」说的；minutes 写每个人一份纪要 {说话人: [要点…]}（按各自说的）。"
-               "title、oneLine、quotes、open、keywords、suggest、tree 都只按「我」说的写：朋友的近况、计划、私事不进标题和关键词（这些会存进 TA 的库）。" if friends else "")
-            + "\n- materials 是 TA 放进这一期的素材，只帮你理解背景：quotes 只能从逐字稿里摘；朋友说的不写进 oneLine、open、tree；tree 只写 TA 自己的想法。",
+               "title、oneLine、quotes、open、keywords、suggest、tree 都只按「我」说的写：朋友的近况、计划、私事不进标题和关键词（这些会存进 TA 的库）；"
+               "title 按「我」说的重新起，不沿用原题。" if friends else "")
+            + "\n- materials 是 TA 放进这一期的素材，只帮你理解背景：quotes 只能从逐字稿里摘；朋友说的不写进 title、oneLine、open、keywords、suggest、tree；tree 只写 TA 自己的想法。",
             f"{u} finished recording the episode “{r['title']}”. Turn the transcript into a draft of their own note. Rules:\n"
             "- Use their own words; don't polish or add views they didn't express; unresolved things go in open — don't conclude for them.\n"
             "- title: what the episode was actually about (keep the original unless they drifted), under 12 words. oneLine: their current "
@@ -1218,16 +1238,17 @@ async def process(eid: str) -> None:
             + (f" (one of: {', '.join(br)})" if br else "") + ".\n- The host's questions are context only, not their words."
             + ("\n- Recorded with friends: the note is only what 'me' said; minutes gives each speaker their own summary {speaker: [points…]}. "
                "title, oneLine, quotes, open, keywords, suggest and tree come only from what 'me' said: friends' news, plans and private matters "
-               "stay out of the title and keywords (those go into their vault)." if friends else "")
-            + "\n- materials are what they put into this episode, for background only: quotes come from the transcript; nothing a friend said goes into oneLine, open or tree; tree is only their own view.")
+               "stay out of the title and keywords (those go into their vault); write a new title from what 'me' said, don't keep the original." if friends else "")
+            + "\n- materials are what they put into this episode, for background only: quotes come from the transcript; nothing a friend said goes into "
+              "title, oneLine, open, keywords, suggest or tree; tree is only their own view.")
         prompt += shape('{"title": "…", "oneLine": "…", "quotes": [{"id": "0.2", "text": "…"}], "open": ["…"], "keywords": ["…"], '
                         '"suggest": ["…"], "tree": "", "branch": ""' + (', "minutes": {"…": ["…"]}' if friends else "") + "}")
-        inp, fallback = podmaterials.inputs(eid, {"outline": [o["text"] for o in outline], "transcript": transcript_lines(sents if friends else mine, 60000),
-                                                  "hostQuestions": [f"[{clock(t['at'])}] {t['text']} ({t['status']})" for t in turns],
-                                                  **({"me": speaker_name("@me", who)} if friends else {})}, 24000)
+        base = {"outline": [o["text"] for o in outline], "transcript": transcript_lines(sents if friends else mine, 60000),
+                "hostQuestions": [f"[{clock(t['at'])}] {t['text']} ({t['status']})" for t in turns], **({"me": speaker_name("@me", who)} if friends else {})}
+        inp, fallback = podmaterials.inputs(eid, base, 24000, fallback={**base, "transcript": transcript_lines(mine, 60000)})
         got, _ = await llmjson.ask(prompt, inp, SUM_SCHEMA, timeout=180, thinking="medium" if think_level == "low" else think_level, model=model,
                                    fallback_input=fallback)
-        res = clean_result(got if isinstance(got, dict) else {}, sents, r["title"])
+        res = clean_result(got if isinstance(got, dict) else {}, mine, r["title"])  # 约朋友录的：「我的原话」只从我说的句子里摘
         if br and res["branch"] not in br:  # 编出来的枝不要：世界树写的时候自己挂
             res["branch"] = ""
         # 3. 跟以前的笔记比：想法变没变
@@ -1272,18 +1293,28 @@ async def process(eid: str) -> None:
 
 
 async def profile_people(eid: str, title: str, sents: list[dict], who: dict, sp: dict) -> list[dict]:
-    """一期整理完记画像：先撤掉这一期上次记的（重新整理不会记两遍），再每人一次 llm-task（同时发）。
-    → [{person, name, added, replaced, answered}]（录完那页顶上「小林的画像多了 3 条」）。"""
-    await asyncio.to_thread(people.revert_episode, eid)
+    """一期整理完记画像，每人一次 llm-task（同时发）：先存一份、撤掉这一期上次记的（重新整理不会记两遍），再记；记失败了原样放回去。
+    这一期以前对上过、这次不再对上的人，他从这一期记的撤掉。
+    → [{person, name, added, replaced, answered}] 或 [{person, name, error}]（录完那页顶上「小林的画像多了 3 条」）。"""
     by: dict[str, set[str]] = {}
     for label, pid in sp.items():
         by.setdefault(pid, set()).add(label)
+    for pid in await asyncio.to_thread(people.people_in_episode, eid):
+        if pid not in by:
+            await asyncio.to_thread(people.revert_episode, eid, pid)
     nm = people.names(by)
     lines = transcript_lines(sents, 40000)
-    jobs = [people.extract(eid, title, pid, nm[pid], lines, {x["id"]: x for x in sents if x.get("label") in labels})
-            for pid, labels in by.items() if pid in nm]
-    outs = await asyncio.gather(*jobs, return_exceptions=True)
-    return [o for o in outs if isinstance(o, dict)]
+
+    async def one(pid: str, labels: set[str]) -> dict:
+        snap = await asyncio.to_thread(people.snapshot, eid, pid)
+        await asyncio.to_thread(people.revert_episode, eid, pid)
+        try:
+            return await people.extract(eid, title, pid, nm[pid], lines, {x["id"]: x for x in sents if x.get("label") in labels})
+        except Exception as exc:  # noqa: BLE001 — 这一个人这次没记上：上次记的放回去，页面上说一句
+            await asyncio.to_thread(people.restore, eid, pid, snap)
+            return {"person": pid, "name": nm[pid], "error": str(exc)[:160]}
+
+    return list(await asyncio.gather(*(one(pid, labels) for pid, labels in by.items() if pid in nm)))
 
 
 def clean_result(j: dict, sents: list[dict], title: str) -> dict:

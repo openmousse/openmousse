@@ -263,7 +263,7 @@ def for_prompt(eid: str, budget: int, friends: bool = True) -> list[dict]:
             break
         meta = json.loads(r["meta"] or "{}")
         who = r["who"]
-        if who == "friend" and not friends:
+        if r["kind"] == "friend" and not friends:  # 朋友聊天整条不带（你的名片 agent 替你答的也常把朋友的话复述一遍）
             continue
         frm = ("me" if who == "me" else "assistant" if who == "assistant" else f"friend:{meta.get('friend') or ''}" if who == "friend"
                else "source")
@@ -273,9 +273,11 @@ def for_prompt(eid: str, budget: int, friends: bool = True) -> list[dict]:
     return out
 
 
-def inputs(eid: str, inp: dict, budget: int) -> tuple[dict, dict]:
-    """(资料, 退回用的资料)：两份都加上 materials，后一份不带朋友说的（给 llmjson.ask 的 fallback_input）。"""
-    return {**inp, "materials": for_prompt(eid, budget)}, {**inp, "materials": for_prompt(eid, budget, friends=False)}
+def inputs(eid: str, inp: dict, budget: int, fallback: dict | None = None) -> tuple[dict, dict]:
+    """(资料, 退回用的资料)：两份都加上 materials。后一份给 llmjson.ask 的 fallback_input（带工具的对话回合）：
+    不带朋友的聊天、不带朋友画像（people），fallback 给了就在它的基础上（调用方已经把别人的话拿掉了）。"""
+    base = {k: v for k, v in (fallback if fallback is not None else inp).items() if k != "people"}
+    return {**inp, "materials": for_prompt(eid, budget)}, {**base, "materials": for_prompt(eid, budget, friends=False)}
 
 
 def rules_line() -> str:
@@ -293,7 +295,8 @@ def rules_line() -> str:
 def mine_for_relates(eid: str) -> list[dict]:
     """「跟以前说的比」能拿来比的素材：只要你自己说的、写的（对话里你的话、想法、主题），不要朋友的、不要别人的文章。"""
     with _lock, mdb() as conn:
-        rows = conn.execute("SELECT * FROM pod_materials WHERE episode=? AND who='me' AND kind IN ('chat','friend','idea','topic') ORDER BY created_at DESC",
+        # 朋友聊天里你说的也不拿：比出来的话会原样写进库里的笔记（「跟以前想的」），和朋友的聊天只写「参考了」
+        rows = conn.execute("SELECT * FROM pod_materials WHERE episode=? AND who='me' AND kind IN ('chat','idea','topic') ORDER BY created_at DESC",
                             (eid,)).fetchall()
     return [{"path": f"material:{r['id']}", "title": r["title"], "snippet": clip(r["text"], 600)} for r in rows[:6]]
 
@@ -412,9 +415,16 @@ async def upload_materials(eid: str, files: list[UploadFile] = File(...)):
     need_episode(eid)
     added, failed = [], []
     for f in files[:10]:
+        if count(eid) >= MAT_MAX:  # 先查上限：满了就别再抽字、转写（转写要花钱）
+            failed.append({"name": f.filename, "error": L(f"一期最多放 {MAT_MAX} 条素材", f"At most {MAT_MAX} materials per episode")})
+            continue
+        m = None
         try:
-            added.append(add(eid, await file_material(eid, f)))
+            m = await file_material(eid, f)
+            added.append(add(eid, m))
         except HTTPException as e:
+            if m and m["meta"].get("file"):  # 存了文件却没放进来：文件也删掉
+                Path(m["meta"]["file"]).unlink(missing_ok=True)
             failed.append({"name": f.filename, "error": str(e.detail)[:160]})
     return {"ok": True, "items": listing(eid), "added": [a["id"] for a in added if a], "failed": failed}
 
@@ -449,10 +459,12 @@ async def pick(kind: str, friend: str | None = None, days: int = 7, limit: int =
                                 "AND text NOT LIKE '【%' AND (thread='main' OR thread LIKE 'sc-%' OR thread LIKE 'tp-%' "
                                 "OR thread IN (SELECT id FROM groups)) ORDER BY id DESC LIMIT ?", (since, limit)).fetchall()
         names: dict[str, str] = {}
+        for t in {r["thread"] for r in rows}:  # 每个线程只查一次名字（在线程池里，别卡住服务）
+            names[t] = L("主对话", "Main chat") if t == "main" else await asyncio.to_thread(thread_name, t)
         for r in rows:
             if not str(r["text"] or "").strip():
                 continue
-            where = names.setdefault(r["thread"], L("主对话", "Main chat") if r["thread"] == "main" else thread_name(r["thread"]))
+            where = names[r["thread"]]
             items.append({"kind": "chat", "ref": f"{r['thread']}:{r['id']}", "text": clip(r["text"], 240), "at": r["ts"], "who": "me", "where": where})
     elif kind == "friend":
         if not friend:

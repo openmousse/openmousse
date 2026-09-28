@@ -18,6 +18,7 @@ import { L } from '../i18n';
 import { radius, space, type, useTheme } from '../theme';
 
 const KIND_ORDER: NoteKind[] = ['ask', 'doing', 'care', 'view'];
+const NO_SEGMENTS: Episode['segments'] = [];  // 播放器的初始段落：每次渲染同一个数组（新数组会让它把 play 时给的段落冲掉）
 const kindName = (k: NoteKind) => ({ view: L('看法', 'Views'), doing: L('在做的事', 'Up to'), care: L('在意的', 'Cares about'), ask: L('下次问问', 'Ask next time') }[k]);
 
 function confirm(title: string, msg: string, yes: string, go: () => void) {
@@ -123,7 +124,7 @@ export function PersonScreen() {
   const [page, setPage] = useState<PersonPage | null>(null);
   const [err, setErr] = useState('');
   const [openOld, setOpenOld] = useState(false);
-  const player = usePodPlayer([]);
+  const player = usePodPlayer(NO_SEGMENTS);
   const eps = useRef<Record<string, Episode>>({});
   const load = useCallback(() => ppl.get(id).then((p) => { setPage(p); setErr(''); }).catch((e) => setErr(e instanceof Error ? e.message : String(e))), [id]);
   useEffect(() => { load(); }, [load]);

@@ -553,7 +553,7 @@ export function FriendChatScreen() {
     sheet.open({ title: m.dir === 'out' ? L('这条消息', 'This message') : L(`${friend?.name ?? ''}说的`, `${friend?.name ?? ''} said`), content: (close) => (
       <View style={{ gap: space.sm }}>
         <Action icon={Mic} label={L('放进播客', 'Add to a podcast')} note={m.dir === 'in'
-          ? L(`当一期播客的素材；${friend?.name ?? '朋友'}说的只在那一期里用，不原话进库和世界树`, `Use it in an episode; ${friend?.name ?? 'their'} words stay in that episode, never quoted into the vault or memory tree`)
+          ? L(`当一期播客的素材；${friend?.name ?? '朋友'}说的只在那一期里用，不原话进库和世界树`, `Use it in an episode; ${friend?.name ? `${friend.name}'s` : 'their'} words stay in that episode, never quoted into the vault or memory tree`)
           : L('当一期播客的素材：录前聊天、主持人追问、整理都参考', "Use it in an episode: prep, the host's questions and the note draw on it")}
           onPress={() => sheet.open({ title: L('放进哪一期', 'Which episode'), content: (c) => (
             <PutInPodcast kind="friend" target={`${id}:${m.id}`} close={c} onOpen={(e) => openEpisode(nav, e)} />

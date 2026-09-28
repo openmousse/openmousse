@@ -102,10 +102,11 @@ async def via_complete(prompt: str, input_: dict, schema: dict | None, timeout: 
 
 
 async def ask(prompt: str, input_: dict, schema: dict | None = None, *, timeout: float = 90, thinking: str = "low",
-              model: str | None = None, fallback_input: dict | None = None) -> tuple[object, str]:
+              model: str | None = None, fallback_input: dict | None = None, tool_free_only: bool = False) -> tuple[object, str]:
     """→ (JSON, 走的哪条路)。thinking：llm-task 的思考档位（Opus 5.5 不能关，最低 low）。
-    fallback_input：退回 think.complete（带工具的对话回合）时换用的资料：input 里有外人写的字（朋友的聊天）就给一份不带它的，
-    那种回合里模型能用工具，别人的一句话不能跟着进去。"""
+    fallback_input：退回 think.complete（带工具的对话回合）时换用的资料：input 里有别人的话（朋友的聊天、约朋友录的逐字稿、朋友画像）
+    就给一份不带它的，那种回合里模型能用工具，别人的一句话不能跟着进去。
+    tool_free_only：只许走 llm-task（整个 input 都是别人的话，比如给朋友记画像）；用不了就抛 LLMError，不退回。"""
     if claw.is_openclaw() and time.time() >= _no_task_until:
         try:
             return await via_llm_task(prompt, input_, schema, timeout, thinking, None)
@@ -117,4 +118,6 @@ async def ask(prompt: str, input_: dict, schema: dict | None = None, *, timeout:
                 except LLMError as e2:
                     if "not enabled" not in str(e2):
                         raise
+    if tool_free_only:
+        raise LLMError("needs llm-task (no tools); it isn't available")
     return await via_complete(prompt, input_ if fallback_input is None else fallback_input, schema, timeout)

@@ -17,7 +17,7 @@ export interface PodTurn { id: number; phase: 'prep' | 'rec'; role: 'host' | 'me
 export interface PodQuote { id: string; at: number; text: string }
 export interface PodRelate { path: string; title: string; then: string; now: string; at: number | null; changed: boolean }
 /** 这一期给某个人记的画像：多了几条、取代了几条、「下次问问」问过了几条。 */
-export interface PodPersonCount { person: string; name: string; added: number; replaced: number; answered: number }
+export interface PodPersonCount { person: string; name: string; added?: number; replaced?: number; answered?: number; /** 这次没记上（比如没有 llm-task）：上次记的原样留着 */ error?: string }
 export interface PodResult {
   title: string; oneLine: string; quotes: PodQuote[]; open: string[]; keywords: string[]; suggest: string[]; tree: string; branch: string; relates: PodRelate[];
   minutes?: Record<string, string[]>; people?: PodPersonCount[];

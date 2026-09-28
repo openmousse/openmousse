@@ -7,10 +7,12 @@ import { CalendarDays, ChevronRight, GraduationCap, Lightbulb, MessageCircle, Mi
 import { useSheet } from '../components/Sheet';
 import { Btn, PullRefresh, T, showError } from '../components/ui';
 import * as pod from '../api/podcast';
-import type { PodBrief, PodHome, PodMode, PodSource, PodSuggestion } from '../api/podcast';
+import type { PodBrief, PodHome, PodMode, PodSegment, PodSource, PodSuggestion } from '../api/podcast';
 import { L } from '../i18n';
 import { radius, space, type, useTheme, type Theme } from '../theme';
 import { usePodPlayer } from './podAudio';
+
+const NO_SEGMENTS: PodSegment[] = [];  // 播放器的初始段落用同一个数组：每次渲染给新数组，播整期时它会把 play 给的段落冲掉，只放得完第一段
 
 export const modeName = (m: PodMode) => ({ solo: L('自己讲', 'Solo'), host: L('有主持人', 'With a host'), friends: L('约朋友', 'With friends'), feynman: L('费曼', 'Feynman') }[m]);
 
@@ -59,7 +61,7 @@ export function Podcast() {
   const [pickError, setPickError] = useState<string | null>(null);
   const [mode, setMode] = useState<PodMode>('host');
   const [busy, setBusy] = useState<string | null>(null);
-  const player = usePodPlayer([]);
+  const player = usePodPlayer(NO_SEGMENTS);
 
   const pick = useCallback(async (exclude: string[] = []) => {
     setPicking(true);

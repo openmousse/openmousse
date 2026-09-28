@@ -109,7 +109,7 @@ export function PodPrepScreen() {
       setTimeout(() => scroller.current?.scrollToEnd({ animated: true }), 80);
     } catch (err) { showError(L('没听清', "Didn't catch that"), err); } finally { setBusy(null); }
   };
-  const record = () => nav.replace('PodRec', { id });
+  const record = () => nav.replace('PodRec', { id, ...(route.params?.host === false ? { host: false } : {}) });  // 约朋友时关掉的主持人别绕一圈又开了
 
   const turns = e?.turns.filter((x) => x.phase === 'prep') ?? [];
   const outline = e?.outline ?? [];
@@ -393,7 +393,7 @@ export function PodRecScreen() {
 
           {/* 约朋友的也能先聊几句：选了谁在的，提纲能接上他们上次说的（朋友画像） */}
           {!outline.length && phase === 'idle' && !committed ? (
-            <Pressable onPress={() => nav.replace('PodPrep', { id })} accessibilityRole="button" style={[styles.qBox, { backgroundColor: D.panel2, borderColor: D.panel2, flexDirection: 'row', alignItems: 'center', gap: 10 }]}>
+            <Pressable onPress={() => nav.replace('PodPrep', { id, host: hostOn })} accessibilityRole="button" style={[styles.qBox, { backgroundColor: D.panel2, borderColor: D.panel2, flexDirection: 'row', alignItems: 'center', gap: 10 }]}>
               <TextAlignStart size={18} color={D.gold} />
               <View style={{ flex: 1, gap: 2 }}>
                 <Text style={{ color: D.ink, fontSize: 15, fontWeight: '600' }}>{L('先聊几句，出一张提纲', 'Talk it through first, get an outline')}</Text>
@@ -573,7 +573,9 @@ export function PodDoneScreen() {
             style={({ pressed }) => [styles.okRow, { backgroundColor: t.tints.pink.soft, opacity: pressed ? 0.7 : 1 }]}>
             <User size={16} color={t.tints.pink.fg} />
             <View style={{ flex: 1, gap: 1 }}>
-              <T v="callout" color={t.tints.pink.fg} style={{ fontWeight: '600' }}>{x.added ? L(`${x.name}的画像多了 ${x.added} 条`, `${x.added} new notes about ${x.name}`) : L(`${x.name}的画像没有新的`, `Nothing new about ${x.name}`)}</T>
+              <T v="callout" color={t.tints.pink.fg} style={{ fontWeight: '600' }}>{x.error ? L(`${x.name}的画像这次没记上`, `No new notes about ${x.name} this time`)
+                : x.added ? L(`${x.name}的画像多了 ${x.added} 条`, `${x.added} new notes about ${x.name}`) : L(`${x.name}的画像没有新的`, `Nothing new about ${x.name}`)}</T>
+              {x.error ? <T v="caption" color={t.tints.pink.fg} style={{ fontWeight: '400' }} numberOfLines={2}>{L(`上次记的都还在。原因：${x.error}`, `Earlier notes are unchanged. Why: ${x.error}`)}</T> : null}
               {x.replaced || x.answered ? (
                 <T v="caption" color={t.tints.pink.fg} style={{ fontWeight: '400' }}>
                   {[x.replaced ? L(`更新了 ${x.replaced} 条旧说法`, `${x.replaced} updated`) : null, x.answered ? L(`下次问问的问过了 ${x.answered} 条`, `${x.answered} follow-ups answered`) : null].filter(Boolean).join(' · ')}
@@ -732,7 +734,8 @@ export function PodDoneScreen() {
                 <Block label={L('跟你以前说的', 'COMPARED WITH BEFORE')}>
                   {e.result.relates.map((x, i) => (
                     <View key={i} style={[styles.rel, { backgroundColor: t.bg }]}>
-                      <T v="caption" color={t.ink3}>{L(`《${x.title}》 · 库 › ${x.path.split('/')[0]}`, `“${x.title}” · Vault › ${x.path.split('/')[0]}`)}</T>
+                      <T v="caption" color={t.ink3}>{x.path.startsWith('material:') ? L(`${x.title} · 这一期的素材`, `${x.title} · a material of this episode`)
+                        : L(`《${x.title}》 · 库 › ${x.path.split('/')[0]}`, `“${x.title}” · Vault › ${x.path.split('/')[0]}`)}</T>
                       <T v="body" style={{ fontSize: 15 }}>{x.then}</T>
                       <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
                         <View style={[styles.src, { backgroundColor: x.changed ? t.goldSoft : t.surface2, marginTop: 0 }]}><Text style={[type.caption, { color: x.changed ? t.gold : t.ink2 }]}>{x.changed ? L('想法变了', 'Changed your mind') : L('还是这么想', 'Same view')}</Text></View>
@@ -912,7 +915,7 @@ function Naming({ e, onDone, play, playing }: { e: Episode; onDone: (e: Episode)
   });
   const nameOf = (w: Who | undefined) => (w && (w.k === 'person' || w.k === 'friend' || w.k === 'new') ? w.name.trim() : '');
   const named = (w: Who | undefined) => !!w && (w.k === 'me' || !!nameOf(w));
-  const ready = !!me && labels.every((k) => named(who[k]));
+  const ready = !!me;  // 别的声音可以空着：分人时偶尔多分出一个（杂音、同一个人），空着的只留「A」「B」这样的记号、不记画像
   const go = async () => {
     if (busy || !ready) return;
     setBusy(true);
@@ -922,7 +925,7 @@ function Naming({ e, onDone, play, playing }: { e: Episode; onDone: (e: Episode)
       for (const k of labels) {
         const w = who[k];
         if (w.k === 'me') { speakers[k] = '@me'; continue; }
-        if (w.k !== 'person' && w.k !== 'friend' && w.k !== 'new') continue;
+        if (!named(w) || (w.k !== 'person' && w.k !== 'friend' && w.k !== 'new')) { speakers[k] = k; continue; }
         speakers[k] = w.name.trim();
         if (!hasPeople) continue;
         people[k] = skip[k] ? { name: w.name.trim(), skip: true } : w.k === 'person' ? { id: w.id } : w.k === 'friend' ? { friend: w.friend, name: w.name } : { name: w.name.trim() };
@@ -985,7 +988,8 @@ function Naming({ e, onDone, play, playing }: { e: Episode; onDone: (e: Episode)
           </View>
         );
       })}
-      <Btn label={busy ? L('正在整理…', 'Organizing…') : !me ? L('先标出哪个是你', 'Mark which one is you') : ready ? L('认好了，接着整理', 'Done, organize it') : L('每个声音都选一下是谁', 'Say who each voice is')} onPress={go} />
+      {labels.length > 2 ? <T v="caption" color={t.ink3} style={{ fontWeight: '400' }}>{L('认不出的声音可以空着（有时同一个人会被分成两个）：空着的不记画像。', "Leave a voice empty if you can't tell (one person is sometimes split in two): empty ones get no notes.")}</T> : null}
+      <Btn label={busy ? L('正在整理…', 'Organizing…') : !me ? L('先标出哪个是你', 'Mark which one is you') : L('认好了，接着整理', 'Done, organize it')} onPress={go} />
     </View>
   );
 }
