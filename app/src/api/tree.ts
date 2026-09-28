@@ -1,6 +1,6 @@
 // 世界树（server/memtree.py）：各 AI 平台共用的记忆，枝和叶子；确认 / 忘记 / 挪到别的枝。
 // 服务器没接世界树（missing_source=tree）或者版本太老（404）时不算出错，页面显示对应的空状态。
-import type { TreeAction, TreeBranch, TreeInfo, TreeLeaf, TreeState } from '../data/types';
+import type { TreeAction, TreeBranch, TreeConnect, TreeInfo, TreeLeaf, TreePlatform, TreeState, TreeStorage } from '../data/types';
 import { httpStatus, request } from './base';
 
 const KINDS: TreeLeaf['kind'][] = ['fact', 'preference', 'decision', 'event'];
@@ -26,7 +26,14 @@ function norm(j: Partial<TreeInfo>): TreeInfo {
     trunk, branches, leaves,
     counts: { total: leaves.length, pending: leaves.filter((l) => l.status === 'pending').length, bySource },
     issues: num(j.issues),
+    branchable: j.branchable !== false,
+    storage: normStorage(j.storage),
   };
+}
+
+function normStorage(s: Partial<TreeStorage> | undefined): TreeStorage {
+  const kind = s?.kind === 'markdown' || s?.kind === 'sqlite' ? s.kind : 'unknown';
+  return { kind, path: typeof s?.path === 'string' ? s.path : '' };
 }
 
 export async function load(): Promise<TreeState> {
@@ -44,3 +51,35 @@ export async function load(): Promise<TreeState> {
 /** 确认（待确认 → 当前）/ 忘记（笔记掏空、挪进归档）/ 挪到别的枝（branch 写枝名，主干写档案）。 */
 export const act = (id: string, action: TreeAction, branch?: string) =>
   request<{ ok: boolean; changed?: boolean; branch?: string }>(`/api/tree/${encodeURIComponent(id)}`, { method: 'POST', body: branch ? { action, branch } : { action } });
+
+/** 「接到你的 AI」：每个平台的地址、怎么接、要贴的那句指令。服务器太老（404）→ null，这一块不显示。 */
+export async function loadConnect(): Promise<TreeConnect | null> {
+  try {
+    const j = await request<Partial<TreeConnect>>('/api/tree/connect');
+    const str = (v: unknown) => (typeof v === 'string' ? v : '');
+    const platforms: TreePlatform[] = (Array.isArray(j.platforms) ? j.platforms : []).filter((p) => p && typeof p.id === 'string').map((p) => ({
+      id: p.id, name: str(p.name) || p.id, auth: p.auth === 'header' ? 'header' : 'path',
+      steps: Array.isArray(p.steps) ? p.steps.map(String) : [], lastWrote: typeof p.lastWrote === 'string' ? p.lastWrote : null,
+      url: typeof p.url === 'string' ? p.url : null, token: typeof p.token === 'string' ? p.token : null,
+    }));
+    return {
+      storage: normStorage(j.storage), public: typeof j.public === 'string' ? j.public : null,
+      funnel: Array.isArray(j.funnel) ? j.funnel.map(String) : null, restartable: j.restartable === true,
+      instruction: str(j.instruction), platforms,
+      presets: (Array.isArray(j.presets) ? j.presets : []).filter((p) => p && typeof p.id === 'string').map((p) => ({ id: p.id, name: str(p.name) || p.id })),
+    };
+  } catch (e) {
+    const s = httpStatus(e);
+    if (s === 404 || s === 405) return null;
+    throw e;
+  }
+}
+
+/** 加一个平台（发一个新令牌，服务器重启世界树服务）；已经有就不动。restarted = false：得手动重启世界树服务才生效。 */
+export const addPlatform = (name: string) =>
+  request<{ ok: boolean; id: string; changed: boolean; restarted?: boolean }>('/api/tree/platforms', { method: 'POST', body: { name } });
+
+/** 删掉一个平台：它的地址立即作废。 */
+export const removePlatform = (id: string) =>
+  request<{ ok: boolean; changed: boolean; restarted?: boolean }>(`/api/tree/platforms/${encodeURIComponent(id)}`, { method: 'DELETE' });
+

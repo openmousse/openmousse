@@ -663,6 +663,41 @@ export interface TreeInfo {
   counts: { total: number; pending: number; bySource: { source: string; name: string; agent: string | null; count: number }[] };
   /** 库里格式有问题、先跳过了的笔记数 */
   issues: number;
+  /** 有没有枝：开源版世界树没有，挪枝不可用（老服务器不给 = 有） */
+  branchable: boolean;
+  /** 真身放在哪：markdown = 一条一篇的笔记文件夹，sqlite = 服务器上的 tree.db */
+  storage: TreeStorage;
+}
+
+export interface TreeStorage { kind: 'markdown' | 'sqlite' | 'unknown'; path: string }
+
+/** 「接到你的 AI」的一个平台（server/memtree.py）：地址带令牌，只在自己的 app 里看。 */
+export interface TreePlatform {
+  id: string;
+  name: string;
+  /** path = 令牌在地址里（Claude.ai、ChatGPT 这类）；header = 地址 /m/mcp，令牌放请求头（Notion） */
+  auth: 'path' | 'header';
+  /** 怎么接，一步一句；{url} 换成地址 */
+  steps: string[];
+  lastWrote: string | null;
+  /** 没开公网时是 null */
+  url: string | null;
+  token: string | null;
+}
+
+export interface TreeConnect {
+  storage: TreeStorage;
+  /** 公网地址（https://…）；没开是 null */
+  public: string | null;
+  /** 没开公网时，开公网要跑的命令 */
+  funnel: string[] | null;
+  /** 服务器能自己重启世界树服务（加 / 删平台后立即生效） */
+  restartable: boolean;
+  /** 贴进各平台自定义指令的那一句 */
+  instruction: string;
+  platforms: TreePlatform[];
+  /** 还没加的常见平台（加一个平台时的快捷选项） */
+  presets: { id: string; name: string }[];
 }
 
 /** 世界树这一块的状态：ok 有数据 / missing 服务器上没接世界树 / unsupported 服务器版本还没有这个接口。 */

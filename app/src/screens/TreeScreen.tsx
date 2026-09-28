@@ -1,17 +1,20 @@
 // 我 → 世界树（server/memtree.py）：你在 Claude、ChatGPT、Gemini 和各个 Agent 那里说过的关于你的事，一条一片叶子，挂在枝上。
 // 顶上是等你确认的（逐条确认 / 忘记）；下面按枝看（主干 = 档案 → 大枝 → 小枝，点开看叶子）或按来源看。
 // 点一片叶子：弹层标题是「类型 · 挂在哪根枝」，里面是全文、来源 · 日期、标签，确认 / 挪到别的枝 / 忘记。
-// 真身是 Obsidian 库里的「世界树」文件夹，这里只是看和整理（server/memtree.py 经 workspace 的 memory_tree.py 改笔记）。
-import React, { useEffect, useState } from 'react';
+// 真身是笔记文件夹（作者的实例：Obsidian 库里的「世界树」；开源版可以是笔记文件夹或服务器上的 tree.db），这里只是看和整理。
+// 开源版世界树没有枝：不显示「按枝」和挪枝，只按来源看。最上面是「接到你的 AI」（components/TreeConnect.tsx）。
+import React, { useCallback, useEffect, useState } from 'react';
 import { Pressable, ScrollView, StyleSheet, View } from 'react-native';
 import { useNavigation } from '@react-navigation/native';
+import { loadConnect } from '../api/tree';
 import { agentName } from '../brand';
 import { Check, ChevronRight, GitBranch, IdCard, Trash2 } from '../components/icons';
 import { clean, memoryTitle } from '../components/memoryText';
 import { useSheet } from '../components/Sheet';
 import { SourcePill } from '../components/SourceBadge';
+import { ConnectSection } from '../components/TreeConnect';
 import { Btn, Card, Disclosure, NavHeader, Pill, PullRefresh, Screen, SectionLabel, Segmented, T, showError } from '../components/ui';
-import type { TreeBranch, TreeInfo, TreeLeaf } from '../data/types';
+import type { TreeBranch, TreeConnect, TreeInfo, TreeLeaf, TreeStorage } from '../data/types';
 import { L, lang } from '../i18n';
 import { useStore } from '../store';
 import { radius, space, useTheme } from '../theme';
@@ -92,7 +95,8 @@ function useLeafSheet() {
 function LeafSheet({ leaf, close }: { leaf: TreeLeaf; close: () => void }) {
   const t = useTheme();
   const sheet = useSheet();
-  const { treeAction } = useStore();
+  const { tree, treeAction } = useStore();
+  const branchable = tree?.kind === 'ok' ? tree.data.branchable : true;
   const [busy, setBusy] = useState(false);
   const meta = [leaf.originName, longDate(leaf.observedAt)].filter(Boolean).join(' · ');
   const confirm = () => {
@@ -116,8 +120,8 @@ function LeafSheet({ leaf, close }: { leaf: TreeLeaf; close: () => void }) {
         </>
       ) : null}
       <View style={{ flexDirection: 'row', gap: space.sm }}>
-        <Btn flex kind="quiet" label={L('挪到别的枝', 'Move')} icon={<GitBranch size={16} color={t.ink} />}
-          onPress={() => sheet.open({ title: L('挪到哪根枝？', 'Move it to which branch?'), content: (c) => <MoveSheet leaf={leaf} close={c} /> })} />
+        {branchable ? <Btn flex kind="quiet" label={L('挪到别的枝', 'Move')} icon={<GitBranch size={16} color={t.ink} />}
+          onPress={() => sheet.open({ title: L('挪到哪根枝？', 'Move it to which branch?'), content: (c) => <MoveSheet leaf={leaf} close={c} /> })} /> : null}
         <Btn flex kind="danger" label={L('忘记', 'Forget')} icon={<Trash2 size={16} color={t.bad} />}
           onPress={() => sheet.open({ title: L('忘记这一条？', 'Forget this?'), content: (c) => <ForgetSheet leaf={leaf} close={c} /> })} />
       </View>
@@ -127,14 +131,18 @@ function LeafSheet({ leaf, close }: { leaf: TreeLeaf; close: () => void }) {
 
 function ForgetSheet({ leaf, close }: { leaf: TreeLeaf; close: () => void }) {
   const t = useTheme();
-  const { treeAction } = useStore();
+  const { tree, treeAction } = useStore();
   const [busy, setBusy] = useState(false);
+  const notes = tree?.kind === 'ok' && tree.data.storage.kind !== 'sqlite';
   return (
     <View style={{ gap: space.md }}>
       <T v="body" color={t.ink2}>{L(`「${leaf.text}」`, `"${leaf.text}"`)}</T>
-      <T v="callout" color={t.ink3}>{L(
-        '内容会从库里删掉，只在归档里留一个空壳，哪个平台都不会再读到它。Obsidian 同步的版本历史里最长还留 1 个月。',
-        "The text is deleted from your vault, leaving only an empty shell in the archive, and no app will read it again. Obsidian Sync's version history keeps it for up to a month.",
+      <T v="callout" color={t.ink3}>{notes ? L(
+        '内容会从笔记里删掉，只在归档里留一个空壳，哪个平台都不会再读到它。笔记文件夹要是有同步（Obsidian Sync、iCloud、git），它们的版本历史里可能还留着旧版。',
+        "The text is deleted from the note, leaving only an empty shell in the archive, and no app will read it again. If the folder is synced (Obsidian Sync, iCloud, git), their version history may still hold the old copy.",
+      ) : L(
+        '内容会删掉，只留一个没有正文的空壳（记着哪天忘的），哪个平台都不会再读到它。',
+        'The text is deleted, leaving only an empty shell that records when it was forgotten, and no app will read it again.',
       )}</T>
       <View style={{ flexDirection: 'row', gap: space.sm }}>
         <Btn flex kind="quiet" label={L('留着', 'Keep')} onPress={close} />
@@ -332,6 +340,33 @@ function BySource({ data }: { data: TreeInfo }) {
 
 // —— 页面 ————————————————————————————————————————————————————————————
 
+/** 真身放在哪：一句话。 */
+function storageLine(s: TreeStorage): string {
+  if (s.kind === 'sqlite') return L('真身存在你服务器上的一个数据库文件里（tree.db）。', ' The real copy is a database file on your server (tree.db).');
+  if (s.kind === 'markdown') {
+    const folder = s.path.split('/').filter(Boolean).pop() || s.path;
+    return L(`真身是「${folder}」文件夹里的笔记，一条一篇，直接改笔记也行。`, ` The real copy is the notes in the "${folder}" folder, one per memory; you can edit them directly.`);
+  }
+  return '';
+}
+
+/** 没有枝的树（开源版）：主干（档案）一行，点开基础档案。 */
+function TrunkLink({ data }: { data: TreeInfo }) {
+  const t = useTheme();
+  const nav = useNavigation<any>();
+  return (
+    <Card style={{ paddingVertical: space.xs, marginTop: space.lg }}>
+      <Pressable onPress={() => nav.navigate('Identity')} accessibilityRole="button" accessibilityLabel={L(`${trunkLabel(data.trunk.name)}，${data.trunk.count} 条，打开基础档案`, `${trunkLabel(data.trunk.name)}, ${data.trunk.count} items, opens your profile`)}
+        style={({ pressed }) => [styles.branch, { opacity: pressed ? 0.6 : 1 }]}>
+        <IdCard size={18} color={t.cyan} />
+        <T v="body" style={[{ flex: 1 }, styles.bigName]}>{trunkLabel(data.trunk.name)}</T>
+        <T v="callout" color={t.ink2} style={styles.count}>{L(`${data.trunk.count} 条`, `${data.trunk.count}`)}</T>
+        <View style={{ width: 18, alignItems: 'flex-end' }}><ChevronRight size={16} color={t.ink3} /></View>
+      </Pressable>
+    </Card>
+  );
+}
+
 function Note({ children, tone }: { children: React.ReactNode; tone?: 'bad' }) {
   const t = useTheme();
   return <Card style={{ marginTop: space.md, gap: 4 }}>{typeof children === 'string' ? <T v="callout" color={tone === 'bad' ? t.bad : t.ink2}>{children}</T> : children}</Card>;
@@ -342,7 +377,10 @@ export function TreeScreen() {
   const nav = useNavigation<any>();
   const { tree, connected, booting, loading, dataErrors, reload } = useStore();
   const [view, setView] = useState<'branch' | 'source'>('branch');
-  useEffect(() => { if (connected) reload('tree').catch(() => {}); }, [connected, reload]);  // 每次打开都按库的最新状态读
+  const [connect, setConnect] = useState<TreeConnect | null>(null);
+  // 「接到你的 AI」不进全局 store：只有这一页用，每次打开 / 下拉 / 加删平台后重读
+  const loadAi = useCallback(() => loadConnect().then(setConnect).catch(() => setConnect(null)), []);
+  useEffect(() => { if (connected) { reload('tree').catch(() => {}); loadAi(); } }, [connected, reload, loadAi]);  // 每次打开都按库的最新状态读
   const data = tree?.kind === 'ok' ? tree.data : null;
   const pending = data?.leaves.filter((l) => l.status === 'pending') ?? [];
   let state: React.ReactNode = null;
@@ -363,24 +401,34 @@ export function TreeScreen() {
   return (
     <Screen>
       <NavHeader title={L('世界树', 'Memory tree')} onBack={() => nav.goBack()} />
-      <ScrollView contentContainerStyle={{ padding: space.lg, paddingBottom: space.xxl }} refreshControl={<PullRefresh onRefresh={() => reload('tree')} />}>
+      <ScrollView contentContainerStyle={{ padding: space.lg, paddingBottom: space.xxl }} refreshControl={<PullRefresh onRefresh={() => Promise.all([reload('tree'), loadAi()])} />}>
         <T v="callout" color={t.ink2}>{L(
-          `你在 Claude、ChatGPT、Gemini 和 ${agentName()} 里说过的关于你的事，都长在这棵树上。真身是 Obsidian 库里的「世界树」文件夹。`,
-          `What you've told Claude, ChatGPT, Gemini and ${agentName()} about yourself grows on this tree. The real copy is the "世界树" folder in your Obsidian vault.`,
-        )}</T>
+          `你在各个 AI 和 ${agentName()} 里说过的关于你的事，都长在这棵树上。`,
+          `What you've told your AI apps and ${agentName()} about yourself grows on this tree.`,
+        )}{data ? storageLine(data.storage) : ''}</T>
         {state}
         {data ? (
           <>
             {pending.length ? <PendingCard leaves={pending} /> : null}
-            <View style={{ marginTop: space.lg, marginBottom: view === 'branch' ? space.md : 0 }}>
-              <Segmented value={view} onChange={setView} options={[{ value: 'branch', label: L('按枝', 'By branch') }, { value: 'source', label: L('按来源', 'By source') }]} />
-            </View>
-            {view === 'branch' ? <ByBranch data={data} /> : <BySource data={data} />}
-            {view === 'source' && !data.leaves.length ? <Note>{L('还没有叶子。在哪个平台说起你自己的事，它记下来就会长在这里。', "No leaves yet. When an app saves something about you, it grows here.")}</Note> : null}
-            <T v="caption" color={t.ink3} style={styles.foot}>{L(
-              `一共 ${data.counts.total} 片叶子。在 Obsidian 里直接改、加笔记也行，这里跟着变。`,
-              `${data.counts.total} leaves in all. You can also edit or add notes in Obsidian; this page follows.`,
-            )}{data.issues ? L(` 有 ${data.issues} 篇笔记格式不对，先跳过了。`, ` ${data.issues} note(s) have a formatting problem and were skipped.`) : ''}</T>
+            {connect ? <ConnectSection info={connect} onChanged={loadAi} /> : null}
+            {data.branchable ? (
+              <>
+                <View style={{ marginTop: space.lg, marginBottom: view === 'branch' ? space.md : 0 }}>
+                  <Segmented value={view} onChange={setView} options={[{ value: 'branch', label: L('按枝', 'By branch') }, { value: 'source', label: L('按来源', 'By source') }]} />
+                </View>
+                {view === 'branch' ? <ByBranch data={data} /> : <BySource data={data} />}
+              </>
+            ) : (
+              <>
+                <TrunkLink data={data} />
+                <BySource data={data} />
+              </>
+            )}
+            {(view === 'source' || !data.branchable) && !data.leaves.length ? <Note>{L('还没有叶子。在哪个 AI 说起你自己的事，它记下来就会长在这里。', "No leaves yet. When an app saves something about you, it grows here.")}</Note> : null}
+            <T v="caption" color={t.ink3} style={styles.foot}>{L(`一共 ${data.counts.total} 片叶子。`, `${data.counts.total} leaves in all.`)}{data.storage.kind === 'markdown' ? L(
+              '直接改、加笔记也行，这里跟着变。',
+              ' You can also edit or add notes directly; this page follows.',
+            ) : ''}{data.issues ? L(` 有 ${data.issues} 篇笔记格式不对，先跳过了。`, ` ${data.issues} note(s) have a formatting problem and were skipped.`) : ''}</T>
           </>
         ) : null}
       </ScrollView>
