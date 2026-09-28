@@ -893,6 +893,9 @@ def main() -> None:
         print(L("  ~/.openmousse/venv/bin/mousse-tree urls      # 世界树接各平台的地址" + ("" if exposed else "（先开公网：再跑一遍安装器，「让 AI 平台连世界树」答 y）"),
                 "  ~/.openmousse/venv/bin/mousse-tree urls      # memory tree URLs for AI platforms"
                 + ("" if exposed else " (open it up first: run the installer again and answer y to letting AI platforms connect)")))
+    if (repo / "check.sh").exists():
+        print(L(f"  bash {repo}/check.sh   # 自检：每一块通不通、怎么修；输出里没有令牌，可以整段发给帮你的人",
+                f"  bash {repo}/check.sh   # self-check: what works, what doesn't and how to fix it; no tokens in the output, so you can send all of it to whoever helps"))
     print(L("再跑一遍安装器是安全的，只补缺的。", "Rerunning the installer is safe; it only fills in what is missing."))
 
 

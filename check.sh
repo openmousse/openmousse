@@ -305,10 +305,19 @@ if is_openclaw:
     ws = ((agents.get("entries") or {}).get("main") or {}).get("workspace") or (agents.get("defaults") or {}).get("workspace")
     ws = Path(str(cfg.get("workspace") or ws or oc_home / "workspace")).expanduser()
     broken = [s for s in SKILLS if not (ws / "skills" / s / "SKILL.md").exists()]
+    # OpenClaw 不加载指到工作区外面的 skill 软链（Gateway 日志 reason=symlink-escape），除非目标在 skills.load.allowSymlinkTargets 里
+    allowed = [Path(str(p)).expanduser().resolve() for p in ((oc.get("skills") or {}).get("load") or {}).get("allowSymlinkTargets") or []]
+    root = (ws / "skills").resolve()
+    blocked = [s for s in SKILLS if s not in broken and (ws / "skills" / s).is_symlink()
+               and not (ws / "skills" / s).resolve().is_relative_to(root)
+               and not any((ws / "skills" / s).resolve().is_relative_to(a) for a in allowed)]
     if broken:
         bad("skills", L(f"{len(broken)} 个没装好：{', '.join(broken)}", f"{len(broken)} missing: {', '.join(broken)}"), L("再跑一遍安装命令", "run the installer again"))
+    elif blocked:
+        bad("skills", L(f"{len(blocked)} 个是软链，OpenClaw 不加载（Gateway 日志里是 symlink-escape）", f"{len(blocked)} are symlinks OpenClaw won't load (symlink-escape in the Gateway log)"),
+            L("再跑一遍安装命令（新版会把它们的目录加进 skills.load.allowSymlinkTargets）", "run the installer again (newer versions add their folder to skills.load.allowSymlinkTargets)"))
     else:
-        ok("skills", L(f"{len(SKILLS)} 个都在 {ws}/skills", f"all {len(SKILLS)} in {ws}/skills"))
+        ok("skills", L(f"{len(SKILLS)} 个都在 {ws}/skills，OpenClaw 能加载", f"all {len(SKILLS)} in {ws}/skills, loadable by OpenClaw"))
     agents_md = ws / "AGENTS.md"
     if not (agents_md.exists() and "## OpenMousse" in agents_md.read_text(encoding="utf8", errors="replace")):
         warn(L("AGENTS.md 里没有 OpenMousse 的规则", "AGENTS.md has no OpenMousse rules"), fix=L("再跑一遍安装命令", "run the installer again"))
