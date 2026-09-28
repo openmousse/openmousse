@@ -17,6 +17,10 @@
   想法变没变 → 费曼：对照学习台这一节的课件和录播，讲对 / 讲错 / 漏了），app 轮询。你改完「存进库」= 写进 笔记/ 写作/ 或 学习/<课>/，
   世界树不点不记；费曼讲错和漏了的可以一键加进学习台复习（study.py 的复习）。原声和逐字稿留在服务器上，不进库。
 模型一律走 llmjson.py（OpenClaw 的 llm-task：零工具、不进任何对话；没开就临时会话一问一答）。
+- 素材（podmaterials.py）：一期可以放进主对话里说的话、和朋友的聊天、文件、Zen 的想法和收藏；录前聊天、主持人追问、录完整理、费曼对照都参考。
+  朋友说的只在这一期里用：存进库的笔记只写「参考了和 X 的聊天」。
+- 朋友画像（people.py）：约朋友录的，开录前可以选谁在，认人时对上人（已有的人 / 朋友 / 新建）；整理完给每个人记几条（只有你看得到）。
+  和同一个人再录，主持人和录前聊天能接上以前说的；「今天聊点什么」也从「下次问问」里挑。
 
 配置（server.json 的 podcast，全部可选）：dir 原声放哪（默认 <data_dir>/podcast）、text_model（默认 gpt-transcribe）、
 time_model（默认 whisper-1，填 "" 不要逐句时间）、thinking（默认 low）、model（llm-task 的模型覆盖）。转写用 transcribe_url 和 OPENAI_API_KEY。
@@ -44,12 +48,17 @@ from pydantic import BaseModel
 import config
 import files as files_mod
 import llmjson
+import people
+import podmaterials
+from people import PersonPick
 import think
 from chat import _lock, db, log_activity, now_iso
 from config import settings, user_word
 from i18n import L, LS
 
 router = APIRouter()
+router.include_router(podmaterials.router)
+router.include_router(people.router)
 
 MODES = ("solo", "host", "feynman", "friends")
 ID_RE = re.compile(r"^pe-[0-9a-f]{8}$")
@@ -93,6 +102,10 @@ def pdb() -> sqlite3.Connection:
         CREATE TABLE IF NOT EXISTS pod_vocab (term TEXT PRIMARY KEY, source TEXT NOT NULL, created_at TEXT NOT NULL);
         CREATE TABLE IF NOT EXISTS pod_suggest (day TEXT PRIMARY KEY, items TEXT NOT NULL, created_at TEXT NOT NULL);
         """)
+        cols = {r[1] for r in conn.execute("PRAGMA table_info(pod_episodes)")}
+        if "people" not in cols:  # 朋友画像（people.py）：people = 开录前选的谁在 [人的 id]，speaker_people = 认人时对上的 {声音: 人的 id}
+            conn.execute("ALTER TABLE pod_episodes ADD COLUMN people TEXT")
+            conn.execute("ALTER TABLE pod_episodes ADD COLUMN speaker_people TEXT")
         _ready = True
     return conn
 
@@ -564,18 +577,25 @@ def brief(r: sqlite3.Row) -> dict:
             "createdAt": r["created_at"], "updatedAt": r["updated_at"], "source": jload(r["source"], {}), "chip": chip_of(r)}
 
 
+def present_people(r: sqlite3.Row) -> list[str]:
+    """这一期有谁（人的 id）：开录前选的 + 认人时对上的。"""
+    return list(dict.fromkeys(jload(r["people"], []) + list(jload(r["speaker_people"], {}).values())))
+
+
 def episode_json(eid: str) -> dict:
     r = load(eid)
     with _lock, pdb() as conn:
         turns = conn.execute("SELECT * FROM pod_turns WHERE episode=? ORDER BY id", (eid,)).fetchall()
+    who = people.names(present_people(r))
     return {**brief(r), "outline": jload(r["outline"], []), "cur": r["cur"], "error": r["error"],
+            "people": [{"id": k, "name": v} for k, v in who.items()], "speakerPeople": jload(r["speaker_people"], {}),
             "segments": segments_of(eid), "speakers": jload(r["speakers"], {}),
             "turns": [{"id": t["id"], "phase": t["phase"], "role": t["role"], "text": t["text"], "at": t["at"], "voice": t["voice"],
                        "status": t["status"], "createdAt": t["created_at"]} for t in turns],
             "result": jload(r["result"], {}) or None, "feynman": jload(r["feynman"], {}) or None,
             "saved": {"path": r["saved_path"], "folder": r["saved_folder"], "at": r["saved_at"], "tree": r["tree"],
                       "obsidian": obsidian_url(r["saved_path"])} if r["saved_path"] else None,
-            "reviewAt": r["review_at"]}
+            "reviewAt": r["review_at"], "materials": podmaterials.count(eid)}
 
 
 def obsidian_url(rel_path: str | None) -> str | None:
@@ -674,7 +694,7 @@ def candidates() -> list[dict]:
     cands: list[dict] = []
     for tp in think.topics_open()[:6]:
         cands.append({"kind": "open", "text": tp["title"], "label": L("Zen 里还没想完的", "unfinished in Zen")})
-    cands += open_questions() + study_units() + deadline_items(now) + tree_items()
+    cands += open_questions() + study_units() + deadline_items(now) + tree_items() + people.suggest_candidates()
     return cands
 
 
@@ -689,11 +709,14 @@ async def make_suggestions(exclude: list[str]) -> list[dict]:
     prompt = LS(
         f"你是{u}的播客搭档。从候选里挑 {SUGGEST_N} 个今天值得录一期的话题（来源尽量不重样），每个写成一个具体的问题或说法（像一期节目的名字，"
         "20 字以内，用 TA 的语言），配一种录法：host 有主持人（想不清、想聊开的）、feynman 费曼（只给学习台来的：用自己的话把一个概念讲给外行听）、"
-        "solo 自己讲（想法已经比较清楚、想说出来的）。ref 是候选的序号。别挑和最近录过的重复的，也别挑 exclude 里的。",
+        "solo 自己讲（想法已经比较清楚、想说出来的）。ref 是候选的序号。别挑和最近录过的重复的，也别挑 exclude 里的。"
+        "kind=person 的是朋友画像里的（在做的事、下次问问）：最多挑 1 个，写成约这个朋友聊（「约小林聊聊：实习找得怎么样了」），录法 friends。",
         f"You're {u}'s podcast partner. Pick {SUGGEST_N} topics worth an episode today from the candidates (mix the sources). Write each as a "
         "concrete question or claim (an episode title, under 12 words, in their language) and give it a mode: host (the AI host asks follow-ups; "
         "for things still unclear), feynman (only for study-desk items: explain one concept to a smart layperson), solo (they already know what "
-        "they think). ref is the candidate's index. Skip anything close to the recent episodes or in exclude.")
+        "they think). ref is the candidate's index. Skip anything close to the recent episodes or in exclude. kind=person items come from "
+        "notes about friends (what they're up to, what to ask next): pick at most 1, written as recording with that friend "
+        "(\"Catch up with Lin: how's the internship search?\"), mode friends.")
     prompt += shape('{"items": [{"ref": 3, "title": "…", "mode": "host"}]}')
     got, _ = await llmjson.ask(prompt, {"candidates": [{"ref": i, "kind": c["kind"], "source": c["label"], "text": c["text"]} for i, c in enumerate(cands)],
                                         "recent": recent, "exclude": exclude[:20]}, SUGGEST_SCHEMA, timeout=60,
@@ -715,9 +738,13 @@ async def make_suggestions(exclude: list[str]) -> list[dict]:
         mode = mode if mode in ("solo", "host", "feynman") else "host"
         if mode == "feynman" and c["kind"] != "study":
             mode = "host"
+        if c["kind"] == "person":  # 朋友画像来的：约他一起录（一期最多一个）
+            if any(o["source"].get("kind") == "person" for o in out):
+                continue
+            mode = "friends"
         title = re.sub(r"\s+", " ", str(it.get("title") or c["text"])).strip()[:TITLE_MAX]
         used.add(ref)
-        out.append({"title": title, "mode": mode, "source": {k: c[k] for k in ("kind", "label", "course", "page") if c.get(k)}})
+        out.append({"title": title, "mode": mode, "source": {k: c[k] for k in ("kind", "label", "course", "page", "person", "name") if c.get(k)}})
     return out[:SUGGEST_N]
 
 
@@ -729,7 +756,8 @@ async def home():
         eps = conn.execute("SELECT * FROM pod_episodes ORDER BY created_at DESC LIMIT 40").fetchall()
     import study
     return {"ok": True, "suggestions": jload(s["items"], []) if s else None, "suggestedAt": s["created_at"] if s else None,
-            "episodes": [brief(r) for r in eps], "study": bool(study.courses())}
+            "episodes": [brief(r) for r in eps], "study": bool(study.courses()),
+            "materials": True, "people": True}  # app 看这两个决定显不显示长按「放进播客」、我 → 朋友画像（老服务器没有）
 
 
 class SuggestIn(BaseModel):
@@ -754,6 +782,7 @@ class EpisodeIn(BaseModel):
     title: str
     mode: str = "host"
     source: dict | None = None
+    people: list[PersonPick] | None = None   # 约朋友：开录前选的谁在（主持人拿他们的画像）
 
 
 @router.post("/api/podcast/episodes")
@@ -763,11 +792,12 @@ async def create(body: EpisodeIn):
         raise HTTPException(400, L("先说这期聊什么", "Say what this episode is about"))
     if body.mode not in MODES:
         raise HTTPException(400, L("没有这种录法", "Unknown mode"))
-    src = {k: str(v)[:200] for k, v in (body.source or {}).items() if k in ("kind", "label", "course", "page") and v}
+    src = {k: str(v)[:200] for k, v in (body.source or {}).items() if k in ("kind", "label", "course", "page", "person", "name") and v}
+    present = [pid for pid, _ in (people.resolve(p) for p in (body.people or [])[:8] if not p.skip) if pid] if body.mode == "friends" else []
     eid = f"pe-{uuid.uuid4().hex[:8]}"
     with _lock, pdb() as conn:
-        conn.execute("INSERT INTO pod_episodes (id, title, mode, source, status, created_at, updated_at) VALUES (?,?,?,?,?,?,?)",
-                     (eid, title, body.mode, json.dumps(src, ensure_ascii=False), "prep", now_iso(), now_iso()))
+        conn.execute("INSERT INTO pod_episodes (id, title, mode, source, status, created_at, updated_at, people) VALUES (?,?,?,?,?,?,?,?)",
+                     (eid, title, body.mode, json.dumps(src, ensure_ascii=False), "prep", now_iso(), now_iso(), json.dumps(list(dict.fromkeys(present)))))
     return {"ok": True, "episode": episode_json(eid)}
 
 
@@ -792,12 +822,25 @@ class EpisodePatch(BaseModel):
     done: list[int] | None = None      # 提纲里讲完了的（自己讲的时候点一下划掉）
     cur: int | None = None
     speakers: dict[str, str] | None = None  # 坐一起录的：{"A": "@me", "B": "小林"}（@me = 你自己）
+    people: dict[str, PersonPick] | None = None  # 认人时对上的人 {"B": {id} | {friend} | {name} | {name, skip}}：名字跟着人走
 
 
 @router.patch("/api/podcast/episodes/{eid}")
 async def patch_episode(eid: str, body: EpisodePatch):
     r = load(eid)
     cols: dict = {}
+    if body.people is not None:  # 对上人：名字用人的名字，记下 {声音: 人}（skip 的只留名字）
+        spk = dict(body.speakers if body.speakers is not None else jload(r["speakers"], {}))
+        sp = {}
+        for label, pick in list(body.people.items())[:8]:
+            if spk.get(label) == "@me":
+                continue
+            pid, name = people.resolve(pick)
+            spk[label] = name
+            if pid:
+                sp[str(label)[:4]] = pid
+        body.speakers = spk
+        cols["speaker_people"] = json.dumps(sp)
     if body.title is not None and body.title.strip():
         cols["title"] = re.sub(r"\s+", " ", body.title).strip()[:TITLE_MAX]
     if body.mode is not None:
@@ -833,12 +876,15 @@ async def delete_episode(eid: str):
     job = _jobs.pop(eid, None)
     if job:
         job.cancel()
+    podmaterials.drop_episode(eid)
+    people.revert_episode(eid)  # 从这一期记的画像一起撤掉（你改过的留着）
     shutil.rmtree(audio_root() / eid, ignore_errors=True)
     with _lock, pdb() as conn:
         for tbl in ("pod_segments", "pod_turns"):
             conn.execute(f"DELETE FROM {tbl} WHERE episode=?", (eid,))  # noqa: S608
         conn.execute("DELETE FROM pod_episodes WHERE id=?", (eid,))
-    log_activity(L(f"删了一期播客「{r['title']}」（原声和逐字稿；存进库的笔记还在）", f"Deleted the episode “{r['title']}” (audio and transcript; any saved note stays)"), "edit")
+    log_activity(L(f"删了一期播客「{r['title']}」（原声、逐字稿、素材和从这期记的画像；存进库的笔记还在）",
+                   f"Deleted the episode “{r['title']}” (audio, transcript, materials and the friend notes from it; any saved note stays)"), "edit")
     return {"ok": True}
 
 
@@ -865,7 +911,7 @@ async def prep_reply(r: sqlite3.Row, turns: list[sqlite3.Row], ask_outline: bool
         "第一条是开头，最后一条是收尾），"
         "reply 用一句话引出（比如「那这期就从「…」讲起。按你刚才的话，排了一张提纲：」）。TA 的话太少才再追问一次。\n"
         "- 已经有提纲、TA 又说了要改：按 TA 说的改，回改好的整张 outline。\n"
-        "- 费曼：提纲是讲给外行听的顺序（先讲是什么、再讲为什么、举个例子、容易搞混的地方）。",
+        "- 费曼：提纲是讲给外行听的顺序（先讲是什么、再讲为什么、举个例子、容易搞混的地方）。" + podmaterials.rules_line(),
         f"You're the producer of a personal podcast, chatting with {u} before recording to find the thread of this episode, then drafting "
         f"an outline card. Episode: “{r['title']}”{source_note(jload(r['source'], {}))}, mode: {mode}. Rules:\n"
         "- One or two sentences at a time, conversational, in their language; no script, don't answer for them, no lecturing.\n"
@@ -873,11 +919,15 @@ async def prep_reply(r: sqlite3.Row, turns: list[sqlite3.Row], ask_outline: bool
         "- Once they've answered once or twice: draft outline (3–5 items, each under 10 words, the points THEY will make, in their words; "
         "the first opens, the last closes), with reply as one line introducing it. Only ask again if they said almost nothing.\n"
         "- If there is an outline and they ask for changes: return the whole revised outline.\n"
-        "- Feynman: order the outline the way you'd teach a layperson (what it is, why, an example, what people confuse).")
+        "- Feynman: order the outline the way you'd teach a layperson (what it is, why, an example, what people confuse)." + podmaterials.rules_line())
+    ppl = people.for_prompt(present_people(r)) if r["mode"] == "friends" else []
+    if ppl:
+        prompt += people.rules_line()
     prompt += shape('{"reply": "…", "outline": ["…", "…"]}  ' + LS("（还没到排提纲就不写 outline）", "(leave outline out until it's time)"))
     talk = [{"who": "you" if t["role"] == "host" else "them", "text": t["text"]} for t in turns]
-    got, _ = await llmjson.ask(prompt, {"talk": talk, "outline": outline, "wantOutline": ask_outline}, PREP_SCHEMA, timeout=60,
-                               thinking=str(cfg().get("thinking") or "low"), model=cfg().get("model"))
+    inp, fallback = podmaterials.inputs(r["id"], {"talk": talk, "outline": outline, "wantOutline": ask_outline, **({"people": ppl} if ppl else {})}, 8000)
+    got, _ = await llmjson.ask(prompt, inp, PREP_SCHEMA, timeout=60, thinking=str(cfg().get("thinking") or "low"), model=cfg().get("model"),
+                               fallback_input=fallback)
     if not isinstance(got, dict):
         raise llmjson.LLMError("unexpected JSON")
     return got
@@ -1017,17 +1067,22 @@ async def ask(eid: str, body: AskIn):
     prompt = role + LS(
         "\n- 一次只问一个，一句话，中文 30 字以内（英文 20 词以内），用 TA 说话的语言。\n- 别重复问过的；TA 跳过的那类别再问。"
         + ("\n- how=again：把最后那个问题换个问法（更具体、换个角度），意思不变。" if body.how == "again" else "")
-        + "\n- covered：提纲里 TA 已经讲过的条目（从 0 数）；cur：TA 现在在讲第几条。",
+        + "\n- covered：提纲里 TA 已经讲过的条目（从 0 数）；cur：TA 现在在讲第几条。" + podmaterials.rules_line(),
         "\n- One question, one sentence, under 20 words, in their language.\n- Don't repeat earlier questions; avoid the kind they skipped."
         + ("\n- how=again: rephrase the last question (more concrete, another angle), same meaning." if body.how == "again" else "")
-        + "\n- covered: outline items they've already covered (0-based); cur: the item they're on now.")
+        + "\n- covered: outline items they've already covered (0-based); cur: the item they're on now." + podmaterials.rules_line())
+    ppl = people.for_prompt(present_people(r)) if r["mode"] == "friends" else []
+    if ppl:
+        prompt += people.rules_line()
     prompt += shape('{"question": "…", "covered": [0, 1], "cur": 2}')
     inp = {"outline": [o["text"] for o in outline], "transcript": transcript_lines(sents, 12000),
-           "asked": [{"q": a["text"], "status": a["status"]} for a in asked], "how": body.how}
+           "asked": [{"q": a["text"], "status": a["status"]} for a in asked], "how": body.how, **({"people": ppl} if ppl else {})}
     if not sents:
         inp["note"] = "Nothing transcribed yet: ask an opening question about the topic."
+    inp, fallback = podmaterials.inputs(eid, inp, 6000)
     try:
-        got, _ = await llmjson.ask(prompt, inp, ASK_SCHEMA, timeout=45, thinking=str(cfg().get("thinking") or "low"), model=cfg().get("model"))
+        got, _ = await llmjson.ask(prompt, inp, ASK_SCHEMA, timeout=45, thinking=str(cfg().get("thinking") or "low"), model=cfg().get("model"),
+                                   fallback_input=fallback)
     except llmjson.LLMError as e:
         raise HTTPException(502, L(f"它没问出来：{e}", f"No question: {e}")) from e
     q = str((got or {}).get("question") or "").strip()[:300] if isinstance(got, dict) else ""
@@ -1150,7 +1205,9 @@ async def process(eid: str) -> None:
             f"- tree：如果有一条三个月后换个 AI 也用得上的「TA 怎么想」，写成一句第三人称（「{u}{' ' if u.isascii() else ''}认为……」）；没有就空。"
             "branch：挂哪根枝" + (f"（从这些里选：{'、'.join(br)}）" if br else "") + "。\n"
             "- 主持人的问题只是帮你理解上下文，不算 TA 的话。"
-            + ("\n- 这是和朋友一起录的：note 只写「我」说的；minutes 写每个人一份纪要 {说话人: [要点…]}（按各自说的）。" if friends else ""),
+            + ("\n- 这是和朋友一起录的：note 只写「我」说的；minutes 写每个人一份纪要 {说话人: [要点…]}（按各自说的）。"
+               "title、oneLine、quotes、open、keywords、suggest、tree 都只按「我」说的写：朋友的近况、计划、私事不进标题和关键词（这些会存进 TA 的库）。" if friends else "")
+            + "\n- materials 是 TA 放进这一期的素材，只帮你理解背景：quotes 只能从逐字稿里摘；朋友说的不写进 oneLine、open、tree；tree 只写 TA 自己的想法。",
             f"{u} finished recording the episode “{r['title']}”. Turn the transcript into a draft of their own note. Rules:\n"
             "- Use their own words; don't polish or add views they didn't express; unresolved things go in open — don't conclude for them.\n"
             "- title: what the episode was actually about (keep the original unless they drifted), under 12 words. oneLine: their current "
@@ -1159,19 +1216,24 @@ async def process(eid: str) -> None:
             "part of it, no word changes).\n- open: 0–4 things still unclear to them, as questions they'd ask themselves, no bracketed notes. keywords: 3–6; suggest: at most 2 more.\n"
             "- tree: one third-person sentence about how they think, worth remembering across AIs for months, or empty. branch: which branch"
             + (f" (one of: {', '.join(br)})" if br else "") + ".\n- The host's questions are context only, not their words."
-            + ("\n- Recorded with friends: the note is only what 'me' said; minutes gives each speaker their own summary {speaker: [points…]}." if friends else ""))
+            + ("\n- Recorded with friends: the note is only what 'me' said; minutes gives each speaker their own summary {speaker: [points…]}. "
+               "title, oneLine, quotes, open, keywords, suggest and tree come only from what 'me' said: friends' news, plans and private matters "
+               "stay out of the title and keywords (those go into their vault)." if friends else "")
+            + "\n- materials are what they put into this episode, for background only: quotes come from the transcript; nothing a friend said goes into oneLine, open or tree; tree is only their own view.")
         prompt += shape('{"title": "…", "oneLine": "…", "quotes": [{"id": "0.2", "text": "…"}], "open": ["…"], "keywords": ["…"], '
                         '"suggest": ["…"], "tree": "", "branch": ""' + (', "minutes": {"…": ["…"]}' if friends else "") + "}")
-        got, _ = await llmjson.ask(prompt, {"outline": [o["text"] for o in outline], "transcript": transcript_lines(sents if friends else mine, 60000),
-                                            "hostQuestions": [f"[{clock(t['at'])}] {t['text']} ({t['status']})" for t in turns],
-                                            **({"me": speaker_name("@me", who)} if friends else {})},
-                                   SUM_SCHEMA, timeout=180, thinking="medium" if think_level == "low" else think_level, model=model)
+        inp, fallback = podmaterials.inputs(eid, {"outline": [o["text"] for o in outline], "transcript": transcript_lines(sents if friends else mine, 60000),
+                                                  "hostQuestions": [f"[{clock(t['at'])}] {t['text']} ({t['status']})" for t in turns],
+                                                  **({"me": speaker_name("@me", who)} if friends else {})}, 24000)
+        got, _ = await llmjson.ask(prompt, inp, SUM_SCHEMA, timeout=180, thinking="medium" if think_level == "low" else think_level, model=model,
+                                   fallback_input=fallback)
         res = clean_result(got if isinstance(got, dict) else {}, sents, r["title"])
         if br and res["branch"] not in br:  # 编出来的枝不要：世界树写的时候自己挂
             res["branch"] = ""
         # 3. 跟以前的笔记比：想法变没变
         try:
             notes = await asyncio.to_thread(related_notes, res["keywords"] + res["suggest"] + [r["title"]], eid)
+            notes = podmaterials.mine_for_relates(eid)[:3] + notes  # 你放进这一期的、你自己说过的话，也拿来比
             if notes:
                 rel_got, _ = await llmjson.ask(LS(
                     f"这是 {u} 刚录的一期播客的要点，和库里 TA 以前写的几篇笔记。找出 TA 以前说过、这期又说到的想法（最多 2 条）：then = 以前笔记里的原话，"
@@ -1189,6 +1251,14 @@ async def process(eid: str) -> None:
                                   for x in ((rel_got or {}).get("relates") or [] if isinstance(rel_got, dict) else []) if x.get("path") in paths][:2]
         except llmjson.LLMError:
             pass
+        # 3b. 朋友画像：认人时对上了人的，每人记几条（只有你看得到）；每人纪要末尾说一句会记进画像
+        sp = jload(r["speaker_people"], {})
+        if friends and sp:
+            res["people"] = await profile_people(eid, res["title"], sents, who, sp)
+            linked = {speaker_name(label, who) for label in sp}
+            for k, pts in (res.get("minutes") or {}).items():
+                if k in linked:
+                    pts.append(people.minutes_note())
         touch(eid, result=json.dumps(res, ensure_ascii=False))
         # 4. 费曼：对照学习台这一节
         if r["mode"] == "feynman":
@@ -1199,6 +1269,21 @@ async def process(eid: str) -> None:
         raise
     except Exception as exc:  # noqa: BLE001 — 页面上说，能重试
         touch(eid, status="failed", error=str(exc)[:300])
+
+
+async def profile_people(eid: str, title: str, sents: list[dict], who: dict, sp: dict) -> list[dict]:
+    """一期整理完记画像：先撤掉这一期上次记的（重新整理不会记两遍），再每人一次 llm-task（同时发）。
+    → [{person, name, added, replaced, answered}]（录完那页顶上「小林的画像多了 3 条」）。"""
+    await asyncio.to_thread(people.revert_episode, eid)
+    by: dict[str, set[str]] = {}
+    for label, pid in sp.items():
+        by.setdefault(pid, set()).add(label)
+    nm = people.names(by)
+    lines = transcript_lines(sents, 40000)
+    jobs = [people.extract(eid, title, pid, nm[pid], lines, {x["id"]: x for x in sents if x.get("label") in labels})
+            for pid, labels in by.items() if pid in nm]
+    outs = await asyncio.gather(*jobs, return_exceptions=True)
+    return [o for o in outs if isinstance(o, dict)]
 
 
 def clean_result(j: dict, sents: list[dict], title: str) -> dict:
@@ -1265,6 +1350,10 @@ async def feynman(r: sqlite3.Row, sents: list[dict], turns: list, think_level: s
             where = f"{src['course']} · {unit['title']}"
         except Exception:  # noqa: BLE001 — 学习页挪了、删了：按常识对照
             material = ""
+    extra = podmaterials.files_for_feynman(r["id"], 40000)
+    if extra:  # 你放进这一期的文件（课件、讲义）也拿来对照，出处写文件名
+        material = (material + "\n\n" if material else "") + LS("【你放进这一期的材料】\n", "[Materials you added to this episode]\n") + extra
+        where = where or LS("你放进这一期的材料", "the materials you added")
     u = uw()
     prompt = LS(
         f"{u} 用费曼法讲了一遍「{r['title']}」（讲给外行听）。" + (f"对照下面这一节（{where}）的课件、学习页和录播字幕：" if material else
@@ -1399,7 +1488,10 @@ def save_sync(eid: str, body: SaveIn) -> dict:
     if rels:
         lines = []
         for x in rels:
-            link = f"[[{str(x['path'])[:-3] if str(x['path']).endswith('.md') else x['path']}|{x.get('title') or Path(str(x['path'])).stem}]]"
+            if str(x["path"]).startswith("material:"):  # 你放进这一期的素材：没有库里的笔记可以链
+                link = str(x.get("title") or LS("素材", "material"))
+            else:
+                link = f"[[{str(x['path'])[:-3] if str(x['path']).endswith('.md') else x['path']}|{x.get('title') or Path(str(x['path'])).stem}]]"
             arrow = LS("想法变了：", "changed: ") if x.get("changed") else LS("还是这么想：", "same view: ")
             lines.append(f"- {link}：{LS('以前', 'before')}「{x.get('then') or ''}」→ {arrow}「{x.get('now') or ''}」")
         parts.append(f"## {LS('跟以前想的', 'Compared with before')}\n" + "\n".join(lines))
@@ -1412,6 +1504,9 @@ def save_sync(eid: str, body: SaveIn) -> dict:
     opens = [x.strip() for x in body.open if x.strip()]
     if opens:
         parts.append(f"## {LS('还没想清的', 'Still open')}\n" + "\n".join(f"- {x}" for x in opens))
+    refs = podmaterials.note_lines(eid)  # 和朋友的聊天只写「参考了和 X 的聊天」，不写朋友的原话
+    if refs:
+        parts.append(f"## {LS('参考了', 'Drew on')}\n" + "\n".join(f"- {x}" for x in refs))
     mode_name = {"solo": LS("自己讲", "solo"), "host": LS("有主持人", "with a host"), "feynman": LS("费曼", "Feynman"), "friends": LS("和朋友", "with friends")}
     parts.append("---\n" + LS(f"原声和逐字稿在服务器上：播客「{r['title']}」（{clock(r['duration'])}，{mode_name[r['mode']]}）",
                               f"Audio and transcript stay on the server: episode “{r['title']}” ({clock(r['duration'])}, {mode_name[r['mode']]})"))

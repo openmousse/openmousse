@@ -376,16 +376,18 @@ app 的「思考」tab（2026-09-28 起界面上叫 **Zen**，代码和接口仍
 - **一段一段录**：app 每停一次就传一段，服务器马上转写：`gpt-transcribe` 出文字（带词表、每个词的置信度，低的标「听不准」），`whisper-1` 出逐句时间，两边按字对齐，点一句播一句。词表 = 你改过的词 + `transcribe_prompt` 里的常见词 + 课名、Agent 名、项目名、世界树的枝（档案里的人名、住址不进词表）。逐字稿里改一句，改掉的词自动进词表。
 - **录完整理**（后台，app 轮询）：校对同音字和专有名词 → 标题、一句话、你的原话（带时间点）、还没想清的、关键词（建议的点了才加）、要不要记世界树 → 跟库里以前的笔记比想法变没变 → 费曼对照。
 - **模型**一律走 [`llmjson.py`](llmjson.py)：OpenClaw 的 `llm-task`（零工具、不进任何对话；主持人一个追问两三秒），没开就用一个用完即删的会话一问一答。转写要 `OPENAI_API_KEY`（和语音输入同一个）：`gpt-transcribe` 约 $0.0045 / 分钟、`whisper-1` 约 $0.006 / 分钟。
+- **素材**：一期可以放进已有的东西：任何对话里的一条（长按 →「放进播客」，或者在这一期里挑）、和朋友的聊天（两边说的都行）、文件（PDF、Word、Excel、PPT、文本；录音转成文字）、Zen 的想法和主题、收藏。放进来时抽成文字存下（每条最多 12000 字、每期最多 40 条），录前聊天、主持人追问、录完整理（新的在前，8000 / 6000 / 24000 字）、跟以前的笔记比（只拿你自己说的）、费曼对照（文件当课件）都参考。朋友说的只在这一期里用：不原话引用、不进标题和世界树，存进库的笔记「参考了」那一节只写「参考了和小林的聊天」。`llm-task` 用不了、退回普通对话回合（带工具）时，朋友说的不带进去（`llmjson.ask` 的 `fallback_input`）。见 [`podmaterials.py`](podmaterials.py)。
+- **朋友画像**（约朋友录的）：开录前选谁在；认人时给每个声音对上一个人（以前一起录过的、朋友、或者新名字；也可以只写名字、不记画像）。整理完给每个对上的人记 3–8 条（看法 / 在做的事 / 在意的 / 下次问问），每条落在这个人说的一句上（点一下听原话）。说的还是那件事就不再写；变了的写新的一条、旧的留作以前的说法；「下次问问」有了答案的标成问过了。重新整理、删掉一期会撤回这一期记的（你改过的留着）。只有你看得到：主持人和录前聊天能接上以前说的（「上次小林说……」），「今天聊点什么」能出「约小林聊……」；别的都不读——名片 agent 哪一档都不用，主对话和 Agent 不用，也不进库和世界树。会告诉朋友：约朋友那页说会记画像，每人纪要最后一句也写着。约朋友录的，标题、一句话、关键词只按你说的写（它们会存进库）。见 [`people.py`](people.py)。
 - **远程一起录还没做，接口先留着**：以后（可能是 app 里直接打电话）每个人一条音轨，按 `track`（谁）和开录时的时间（对齐）传进同一期，整理时按音轨分人，不用再猜声音。现在的分段是一条时间线接着一条。
 
 `server.json` 的 `podcast`（全部可选）：`dir`、`text_model`（默认 `gpt-transcribe`）、`time_model`（默认 `whisper-1`，`""` = 不要逐句时间）、`thinking`（默认 `low`）。
 
 | 接口 | 做什么 |
 |---|---|
-| `GET /api/podcast` | 今天挑好的话题（还没挑是 `null`）、最近 40 期（`chip` = 列表上那个小标签）、`study`（配了学习台没有） |
+| `GET /api/podcast` | 今天挑好的话题（还没挑是 `null`；`mode: friends` + `source.person` = 约某个朋友聊）、最近 40 期（`chip` = 列表上那个小标签）、`study`（配了学习台没有）、`materials` / `people`（这台服务器有素材、朋友画像） |
 | `POST /api/podcast/suggest` | `{exclude?}` 挑 4 个（换一批时把现在的传进来） |
-| `POST /api/podcast/episodes` | `{title, mode: solo / host / feynman / friends, source?}` 建一期 |
-| `GET` / `PATCH` / `DELETE /api/podcast/episodes/{id}` | 一期的全部（提纲、每段的句子和时间、问过的、整理结果、费曼、存到哪）/ `{title?, mode?, outline?, done?, cur?, speakers?}`（坐一起录的认人：`{"A": "@me", "B": "小林"}`）/ 删原声和逐字稿（存进库的笔记还在） |
+| `POST /api/podcast/episodes` | `{title, mode: solo / host / feynman / friends, source?, people?}` 建一期（约朋友：谁在，`[{id} \| {friend} \| {name}]`） |
+| `GET` / `PATCH` / `DELETE /api/podcast/episodes/{id}` | 一期的全部（提纲、每段的句子和时间、问过的、整理结果（带 `people` 画像多了几条）、费曼、存到哪、`materials` 素材条数、`people` / `speakerPeople`）/ `{title?, mode?, outline?, done?, cur?, speakers?, people?}`（坐一起录的认人：`{"A": "@me", "B": "小林"}`；`people: {"B": {id} \| {friend} \| {name} \| {name, skip}}` 给声音对上人，名字跟着人走）/ 删原声、逐字稿、素材和这一期记的画像（存进库的笔记、你改过的画像还在） |
 | `POST /api/podcast/episodes/{id}/prep` | 录前聊：`{}` 它先问 / `{text}` 你答 / `{outline: true}` 现在排提纲；`…/prep/voice`（multipart `file`、`duration`）说一段 |
 | `POST /api/podcast/episodes/{id}/segments` | multipart `file`、`idx`（从 0 数；同一个 idx 再传 = 重传）、`duration`：传一段，马上开始转写 |
 | `POST /api/podcast/episodes/{id}/ask` | `{how: next / again / skip}`：等这段转完问一个 / 换个问法 / 跳过 |
@@ -394,6 +396,15 @@ app 的「思考」tab（2026-09-28 起界面上叫 **Zen**，代码和接口仍
 | `POST /api/podcast/episodes/{id}/save` | `{folder: notes / writing / study, title, oneLine, quotes, open, keywords, relates, explain?, tree?, branch?}`：写进库（再存一次覆盖同一篇），`tree` 给了才记世界树 |
 | `POST /api/podcast/episodes/{id}/review` | 费曼讲错和漏了的加进学习台复习 |
 | `GET /api/podcast/episodes/{id}/audio/{idx}` | 一段原声（支持 Range；网页版可以用 `?token=`） |
+| `GET` / `POST /api/podcast/episodes/{id}/materials` | 这一期的素材 / `{items: [{kind: chat / friend / idea / topic / save, ref}]}` 放进几条（同一条不重复放） |
+| `POST /api/podcast/episodes/{id}/materials/upload` | multipart `files`（最多 10 个、每个 25 MB）：抽文字，录音转写；原件留在这一期的目录里 |
+| `DELETE /api/podcast/episodes/{id}/materials/{mid}` | 拿掉一条 |
+| `GET /api/podcast/pick?kind=chat\|friend\|idea\|topic\|save[&friend=][&days=]` | 挑素材的候选：对话里你说的、朋友列表 → 某个朋友的聊天、Zen、收藏 |
+| `POST /api/podcast/materials/quick` | `{kind, ref, episode?}`：长按一条「放进播客」，放进某一期或者新开一期（朋友说的不拿来当标题） |
+| `GET` / `POST /api/people` | 人（每人几条）和还没对上人的朋友 / `{name, friend?}` 加一个 |
+| `GET` / `PATCH` / `DELETE /api/people/{id}` | 一个人：画像（每条的出处是哪一期哪一句、取代了哪条）、一起录过的几期 / `{name?, friend?}` / 连画像一起删 |
+| `POST /api/people/{id}/notes` | `{kind: view / doing / care / ask, text}` 自己加一条 |
+| `PATCH` / `DELETE /api/people/notes/{nid}` | `{text?, kind?, status?: active / done}` / 删一条（删的是新说法，旧的那条回来） |
 
 ## 分享
 

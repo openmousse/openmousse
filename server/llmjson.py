@@ -102,8 +102,10 @@ async def via_complete(prompt: str, input_: dict, schema: dict | None, timeout: 
 
 
 async def ask(prompt: str, input_: dict, schema: dict | None = None, *, timeout: float = 90, thinking: str = "low",
-              model: str | None = None) -> tuple[object, str]:
-    """→ (JSON, 走的哪条路)。thinking：llm-task 的思考档位（Opus 5.5 不能关，最低 low）。"""
+              model: str | None = None, fallback_input: dict | None = None) -> tuple[object, str]:
+    """→ (JSON, 走的哪条路)。thinking：llm-task 的思考档位（Opus 5.5 不能关，最低 low）。
+    fallback_input：退回 think.complete（带工具的对话回合）时换用的资料：input 里有外人写的字（朋友的聊天）就给一份不带它的，
+    那种回合里模型能用工具，别人的一句话不能跟着进去。"""
     if claw.is_openclaw() and time.time() >= _no_task_until:
         try:
             return await via_llm_task(prompt, input_, schema, timeout, thinking, None)
@@ -115,4 +117,4 @@ async def ask(prompt: str, input_: dict, schema: dict | None = None, *, timeout:
                 except LLMError as e2:
                     if "not enabled" not in str(e2):
                         raise
-    return await via_complete(prompt, input_, schema, timeout)
+    return await via_complete(prompt, input_ if fallback_input is None else fallback_input, schema, timeout)
