@@ -63,18 +63,22 @@ def agent_names() -> dict[str, str]:
     return {**names, "main": settings.app_name}
 
 
+AGENT_PREFIXES = ("grava-", "openclaw-")  # 作者的实例写 grava-<id>；开源版的 memory-tree skill 写 openclaw-<id>
+
+
 def agent_of(source: str) -> str | None:
-    """grava-<id> → 那个 Agent 的 id（grava / grava-main → main）；别的来源不是 Agent。"""
+    """grava-<id> / openclaw-<id> → 那个 Agent 的 id（grava / grava-main / openclaw-main → main）；别的来源不是 Agent。"""
     if source == "grava":
         return "main"
-    return (source.removeprefix("grava-") or "main") if source.startswith("grava-") else None
+    prefix = next((p for p in AGENT_PREFIXES if source.startswith(p)), None)
+    return (source.removeprefix(prefix) or "main") if prefix else None
 
 
 def source_name(source: str, agents: dict[str, str]) -> str:
     """来源的显示名：AI 平台、Agent 名、你自己（手机上直接写的笔记）、每周修剪（修剪时合并 / 改写出来的）。"""
     if source in PLATFORMS:
         return PLATFORMS[source]
-    if source == "leo":
+    if source in ("leo", "owner"):  # 手机上直接写的笔记（作者的实例）/ mousse-tree 管理页、命令行（开源版）
         return L("你自己", "You")
     if source == "prune":
         return L("每周修剪", "Weekly pruning")

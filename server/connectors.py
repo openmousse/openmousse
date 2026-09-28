@@ -568,7 +568,7 @@ def check_tree(state: dict[str, dict]) -> dict | None:
     if issues:
         return item("tree", name, icon, "warn", L(f"有 {issues} 篇笔记格式不对，先跳过了", f"{issues} note(s) have a formatting problem and were skipped"), facts, uses,
                     L(f"跟 {app()} 说「检查世界树的笔记」，它会告诉你是哪篇、哪里不对。", f'Ask {app()} to "check the memory tree notes"; it will tell you which one and what\'s wrong.'), go)
-    writers = {k: parse_ts(v) for k, v in last.items() if k in PLATFORMS or k in ("leo", "owner") or k == "grava" or k.startswith("grava-")}
+    writers = {k: parse_ts(v) for k, v in last.items() if k in PLATFORMS or k in ("leo", "owner") or k == "grava" or k.startswith(("grava-", "openclaw-"))}
     newest = max((k for k in writers if writers[k]), key=lambda k: writers[k], default=None)  # 最近一次是谁写的（每周修剪不算）
     who = None
     if newest:
