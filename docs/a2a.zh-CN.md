@@ -41,7 +41,7 @@
 claw 的对话接口是完整的 agent：OpenClaw 的 `/v1/chat/completions` 跑的是带工具、带 USER.md、带记忆检索的 agent，而且共享令牌调用算「主人亲口说的」。所以名片 agent 调模型只走这三条，按顺序：
 
 1. `server.json` 的 `card.llm`：任何 OpenAI 兼容的**纯模型**接口（`{"url": ".../v1", "token" | "token_env", "model", "headers"}`），不带 tools。
-2. OpenClaw 的 **llm-task** 插件（`POST <gateway>/tools/invoke`，`tool: "llm-task"`）：只有提示词、零工具、每次新会话，JSON 按 schema 校验；做不到零工具就直接报错，不会退回成普通 agent 回合。要在 `openclaw.json` 开 `plugins.entries.llm-task` 并允许这个工具（上线前问 Leo）。
+2. OpenClaw 的 **llm-task** 插件（`POST <gateway>/tools/invoke`，`tool: "llm-task"`）：只有提示词、零工具、每次新会话，JSON 按 schema 校验；做不到零工具就直接报错，不会退回成普通 agent 回合。只要在 `openclaw.json` 开 `plugins.entries.llm-task`（Gateway 热重载，不用重启）。不要把 llm-task 放进任何 agent 的 `tools.allow` / `alsoAllow`：`/tools/invoke` 按名字点的插件工具自己就放行（OpenClaw 2026.9.5），OpenClaw 的 llm-task 说明里那一步放行是给要在自己回合里调它的 agent 的，名片 agent 用不着。
 3. 都没有：固定模板（问空不空就按日程答，说了具体时间的去问本人，其余「得问他本人」）。
 
 `cardagent.available()` 告诉第二层现在有没有模型（没有就不自动代答分享的追问）。`GET /api/card/health` 给 app 看走的哪条路、上一次出了什么错。
@@ -177,7 +177,7 @@ claw 的对话接口是完整的 agent：OpenClaw 的 `/v1/chat/completions` 跑
 }
 ```
 
-`strangers`：陌生人能不能来问（默认 `false`）。`model` / `thinking` / `agent` 是走 llm-task 时的模型覆盖、思考档位、按哪个 OpenClaw agent 的工具策略（那个 agent 要放行 llm-task：`agents.entries.<id>.tools.alsoAllow`）。
+`strangers`：陌生人能不能来问（默认 `false`）。`model` / `thinking` / `agent` 是走 llm-task 时的模型覆盖、思考档位、按哪个 OpenClaw agent 跑（用它的默认模型和登录，默认 `main`），不用给它放行（见 2.2）。
 
 ## 9. 给第二层的
 
@@ -205,4 +205,4 @@ cardagent.SOCIAL_HOOKS["friend"] = async fn(item, action, note)  # 第二层自�
 
 - 本机两套测试服当两个人（`~/openmousse-wt/tools/mk-test-env.py`）：第三层用 8124 / 8125（A = Leo）、8126 / 8127（B = 朋友），`share.public_url` 填 `http://127.0.0.1:<公网端口>`，`social.allow_http: true`。
 - 回归：假模型（OpenAI 兼容，按剧本回）跑「约饭」全程和各种边角；官方 a2a-sdk 当别家：解析名片、按 proto 来回转后验签、客户端发 `SendMessage`、存下的任务按 proto 解析；真模型抽查守不守规矩。
-- 上线要 Leo 点头的：开 Funnel `/f`（和第二层一起）；开 OpenClaw 的 llm-task（改 `openclaw.json`、重启 Gateway）；社交卡要不要推送（`social.push`）；陌生人能不能来问（Leo 9/28 定：不让，`card.strangers` 保持 false）。
+- 上线要 Leo 点头的：开 Funnel `/f`（和第二层一起）；开 OpenClaw 的 llm-task（`openclaw.json` 的 `plugins.entries.llm-task`，热重载不用重启）；社交卡要不要推送（`social.push`）；陌生人能不能来问（Leo 9/28 定：不让，`card.strangers` 保持 false）。

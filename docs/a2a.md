@@ -41,7 +41,7 @@ The tier table belongs to layer ② (`social.tier_scopes(tier)`, edited under "M
 A claw's chat API is a whole agent: OpenClaw's `/v1/chat/completions` runs an agent with tools, USER.md and memory search, and a shared-token call counts as the owner speaking. So the card agent only uses these, in order:
 
 1. `server.json` → `card.llm`: any OpenAI-compatible **plain model** API (`{"url": ".../v1", "token" | "token_env", "model", "headers"}`), sent without tools.
-2. OpenClaw's **llm-task** plugin (`POST <gateway>/tools/invoke`, `tool: "llm-task"`): prompt only, zero tools, a fresh session every time, JSON checked against a schema; if a zero-tool call isn't possible it fails instead of falling back to an agent turn. Needs `plugins.entries.llm-task` enabled and the tool allowed in `openclaw.json`.
+2. OpenClaw's **llm-task** plugin (`POST <gateway>/tools/invoke`, `tool: "llm-task"`): prompt only, zero tools, a fresh session every time, JSON checked against a schema; if a zero-tool call isn't possible it fails instead of falling back to an agent turn. Needs only `plugins.entries.llm-task` enabled in `openclaw.json` (the Gateway reloads it without a restart). Don't add llm-task to any agent's `tools.allow` / `alsoAllow`: `/tools/invoke` lets through a plugin tool it is asked for by name (OpenClaw 2026.9.5), and the allow entry in OpenClaw's llm-task guide is for agents that call it in their own turns, which the card agent doesn't need.
 3. Neither: fixed templates (availability from the calendar, "I'll ask" for concrete proposals, otherwise "you'd need to ask them").
 
 `cardagent.available()` tells layer ② whether a model is there (if not, follow-up questions are left for you). `GET /api/card/health` shows the app which path is in use and the last error.
@@ -177,7 +177,7 @@ When we ask someone (section 7), `configuration.taskPushNotificationConfig` carr
 }
 ```
 
-`strangers`: whether strangers may ask at all (default `false`). `model` / `thinking` / `agent` apply to llm-task: model override, thinking level, and whose OpenClaw tool policy the invoke goes through (that agent must allow llm-task: `agents.entries.<id>.tools.alsoAllow`).
+`strangers`: whether strangers may ask at all (default `false`). `model` / `thinking` / `agent` apply to llm-task: model override, thinking level, and which OpenClaw agent the invoke runs as (its default model and sign-in; `main` by default). That agent needs no allow entry (2.2).
 
 ## 9. For layer ②
 
@@ -205,4 +205,4 @@ Each `history` item is `{"from": "friend" | "owner" | "agent", "text"}`; `used` 
 
 - Two test servers on one machine act as two people (`~/openmousse-wt/tools/mk-test-env.py`): layer ③ uses 8124 / 8125 (A) and 8126 / 8127 (B), `share.public_url` = `http://127.0.0.1:<public port>`, `social.allow_http: true`.
 - Regression: a fake model (OpenAI-compatible, scripted) runs dinner end to end plus the edge cases; the official a2a-sdk plays another vendor: parses the card, checks its signature after the proto round trip, sends `SendMessage`, and stored tasks parse as proto `Task`; a real model is spot-checked on the rules.
-- Going live needs the owner's OK for: the Funnel path `/f` (together with layer ②); OpenClaw's llm-task (an `openclaw.json` change and a Gateway restart); pushes for social cards (`social.push`); whether strangers may ask at all (the owner chose no on 2026-09-28: `card.strangers` stays false).
+- Going live needs the owner's OK for: the Funnel path `/f` (together with layer ②); OpenClaw's llm-task (`plugins.entries.llm-task` in `openclaw.json`, reloaded without a restart); pushes for social cards (`social.push`); whether strangers may ask at all (the owner chose no on 2026-09-28: `card.strangers` stays false).

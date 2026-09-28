@@ -367,18 +367,20 @@ def used_label(used: list[str], mats: list[dict], scope: dict) -> str:
 
 # —— 模型 ——————————————————————————————————————————————————————————
 
+# 不写 additionalProperties: false：llm-task 按 schema 严格校验，模型多带一个键（真模型把 summary 放到了最外层）整句就作废、退回固定模板；
+# 多出来的键没有害处，check() 只读这几个字段、逐个再查一遍
 SCHEMA = {
-    "type": "object", "additionalProperties": False, "required": ["reply", "used", "ask_owner", "declined"],
+    "type": "object", "required": ["reply", "used", "ask_owner", "declined"],
     "properties": {
         "reply": {"type": "string"},
         "used": {"type": "array", "items": {"type": "string"}},
         "ask_owner": {"anyOf": [{"type": "null"}, {
-            "type": "object", "additionalProperties": False, "required": ["kind", "summary"],
+            "type": "object", "required": ["kind", "summary"],
             "properties": {
                 "kind": {"enum": ["decision", "private"]},
                 "summary": {"type": "string"},
                 "proposal": {"anyOf": [{"type": "null"}, {
-                    "type": "object", "additionalProperties": False,
+                    "type": "object",
                     "properties": {k: {"type": "string"} for k in ("what", "date", "start", "end", "place")}}]}}}]},
         "declined": {"type": "array", "items": {"type": "string"}},
     },
