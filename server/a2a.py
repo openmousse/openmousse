@@ -17,6 +17,7 @@
 - a2a_tasks：别人问我们、要你表态的任务（id、context、谁、状态、状态消息、结果、历史、收件箱卡、推送设置）。
 - a2a_seen：(谁, messageId) → 当时的回应：同一条消息再发一遍，回一样的东西（A2A 3.3.1 幂等）。
 - a2a_out：我们问别人（经 /api/a2a/send）：对方的任务 id、context、状态，推回来的进展也记这里。
+- a2a_cards：卡 → 任务。一个任务可以同时挂几张等你点的卡（约时间的、Sentinel 扣下的）：都点完（或过期）任务才结束。
 """
 from __future__ import annotations
 
@@ -91,6 +92,9 @@ def adb() -> sqlite3.Connection:
     conn.execute("""CREATE TABLE IF NOT EXISTS a2a_out (id TEXT PRIMARY KEY, friend_id TEXT NOT NULL, context_id TEXT, task_id TEXT,
         state TEXT, text TEXT NOT NULL, reply TEXT, push_token TEXT, data TEXT, created_at TEXT NOT NULL, updated_at TEXT NOT NULL)""")
     conn.execute("CREATE INDEX IF NOT EXISTS a2a_out_task ON a2a_out(friend_id, task_id)")
+    conn.execute("""CREATE TABLE IF NOT EXISTS a2a_cards (inbox_id TEXT PRIMARY KEY, task_id TEXT NOT NULL, kind TEXT NOT NULL DEFAULT '',
+        created_at TEXT NOT NULL)""")
+    conn.execute("CREATE INDEX IF NOT EXISTS a2a_cards_task ON a2a_cards(task_id)")
     return conn
 
 
@@ -207,40 +211,48 @@ def task_row(tid: str, peer_key: str) -> sqlite3.Row:
         r = conn.execute("SELECT * FROM a2a_tasks WHERE id=?", (tid,)).fetchone()
     if not r or r["peer"] != peer_key:
         raise RpcError(E_NOT_FOUND, "Task not found", taskId=tid)
-    if r["state"] == "TASK_STATE_AUTH_REQUIRED" and r["inbox_id"] and card_status(r["inbox_id"]) in ("expired", "withdrawn") \
-            and not open_cards(task_ref(r)):
+    if r["state"] == "TASK_STATE_AUTH_REQUIRED" and not open_cards(r["id"]) and \
+            any(c["status"] in ("expired", "withdrawn") for c in task_cards(r["id"])):
         expire_task(dict(r))
         with _lock, adb() as conn:
             r = conn.execute("SELECT * FROM a2a_tasks WHERE id=?", (tid,)).fetchone()
     return r
 
 
-def open_cards(ref: str, *, but: str | None = None) -> list[str]:
-    """这段对话（card_asks.ref = a2a:<谁>:<context>）里还在等你点的卡：约时间的、Sentinel 扣下的，可能不止一张。"""
-    with _lock, inbox.idb() as conn:
+def task_cards(task_id: str) -> list[sqlite3.Row]:
+    """这个任务挂过的卡（a2a_cards；老任务只有 a2a_tasks.inbox_id 那一张）和它们现在的状态、种类。"""
+    with _lock, adb() as conn:
         inbox.expire(conn)
-        rows = conn.execute("""SELECT a.inbox_id FROM card_asks a JOIN inbox i ON i.id = a.inbox_id
-            WHERE a.channel='a2a' AND a.ref=? AND i.status IN ('pending','revising')""", (ref,)).fetchall()
-    return [r["inbox_id"] for r in rows if r["inbox_id"] != but]
+        rows = conn.execute("""SELECT c.inbox_id, c.kind, i.status FROM a2a_cards c JOIN inbox i ON i.id = c.inbox_id WHERE c.task_id=?
+            UNION SELECT t.inbox_id, '', i.status FROM a2a_tasks t JOIN inbox i ON i.id = t.inbox_id WHERE t.id=?
+            AND t.inbox_id NOT IN (SELECT inbox_id FROM a2a_cards)""", (task_id, task_id)).fetchall()
+    return rows
 
 
-def task_ref(t: dict | sqlite3.Row) -> str:
-    return f"a2a:{t['peer']}:{t['context_id']}"
+def open_cards(task_id: str, *, but: str | None = None) -> list[str]:
+    """这个任务里还在等你点的卡（只算 pending：「换个时间」以后那张卡等的是对方，不是你）。"""
+    return [r["inbox_id"] for r in task_cards(task_id) if r["status"] == "pending" and r["inbox_id"] != but]
 
 
-def card_status(inbox_id: str) -> str | None:
-    with _lock, inbox.idb() as conn:
-        inbox.expire(conn)
-        r = conn.execute("SELECT status FROM inbox WHERE id=?", (inbox_id,)).fetchone()
-    return r["status"] if r else None
+def last_decision(task: dict) -> str:
+    """这个任务里最近一次本人的决定（accepted / declined / counter …），没有就是空的。"""
+    for m in reversed(json.loads(task.get("history") or "[]")):
+        for p in m.get("parts") or [] if isinstance(m, dict) else []:
+            if isinstance(p, dict) and p.get("mediaType") == DECISION_TYPE and isinstance(p.get("data"), dict):
+                return str(p["data"].get("outcome") or "")
+    return ""
 
 
 def expire_task(task: dict) -> None:
     """你一直没点（约的那天都过了）：任务结束，告诉对方这次先算了（不说原因）。"""
-    ask = cardagent.ask_row(task["inbox_id"]) or {}
+    cards = task_cards(task["id"])
+    gone = [c for c in cards if c["status"] in ("expired", "withdrawn")]
+    ask = cardagent.ask_row((gone or cards)[-1]["inbox_id"]) if (gone or cards) else None
+    ask = ask or cardagent.ask_row(task["inbox_id"] or "") or {}
     lang = ask.get("lang") or settings.language
     who = settings.user_name or settings.app_name
-    if ask.get("kind") == "review":  # Sentinel 扣下的那句一直没人放行：一句普通的「答不了」，不是本人的决定
+    if gone and all((cardagent.ask_row(c["inbox_id"]) or {}).get("kind") == "review" for c in gone):
+        # 过期的只有 Sentinel 扣下的那句（一直没人放行）：一句普通的「答不了」，不是本人的决定
         msg = agent_message(cardagent.say("cant", lang), task["context_id"], task["id"])
     else:
         text = cardagent.spaced(f"{who}没来得及回，这次先算了。") if lang == "zh" else f"{who} didn't get to this in time; let's leave it."
@@ -322,16 +334,23 @@ async def send_message(peer: social.Peer, params: dict) -> dict:
         return json.loads(seen["result"])
     k = (key, m["messageId"])
     if k in _inflight:  # 第一次还在跑（名片 agent + Sentinel 可能要一分多钟）：等它，回一样的
-        return await asyncio.wait_for(asyncio.shield(_inflight[k]), timeout=120)
+        try:
+            return await asyncio.wait_for(asyncio.shield(_inflight[k]), timeout=120)
+        except TimeoutError:
+            raise RpcError(E_INTERNAL, "Still answering this message; retry later") from None
     fut: asyncio.Future = asyncio.get_running_loop().create_future()
     _inflight[k] = fut
     try:
         res = await handle_message(peer, params, m, text, key)
         fut.set_result(res)
         return res
-    except BaseException as e:
+    except RpcError as e:
         fut.set_exception(e)
         fut.exception()  # 没人等的话别报「从没取过的异常」
+        raise
+    except BaseException:  # 被取消、别的错：等着的重发方收到一个按协议可以重试的错误
+        fut.set_exception(RpcError(E_INTERNAL, "Interrupted; retry"))
+        fut.exception()
         raise
     finally:
         _inflight.pop(k, None)
@@ -374,7 +393,7 @@ async def handle_message(peer: social.Peer, params: dict, m: dict, text: str, ke
         reply["taskId"] = task["id"]
         user_msg["taskId"] = task["id"]
     hist = json.loads(task["history"] or "[]") + [user_msg, reply]
-    waiting = defer or open_cards(ref)
+    waiting = defer or open_cards(task["id"])
     state = "TASK_STATE_AUTH_REQUIRED" if waiting else "TASK_STATE_INPUT_REQUIRED"  # 等本人点头 / 轮到对方说
     push = push_of(peer, (params.get("configuration") or {}).get("taskPushNotificationConfig")) or \
         (json.loads(task["push"]) if task.get("push") else None)
@@ -383,6 +402,9 @@ async def handle_message(peer: social.Peer, params: dict, m: dict, text: str, ke
                 updated_at=now_iso(), status_at=now)
     save_task(task)
     with _lock, adb() as conn:
+        if defer and defer.get("inbox_id"):
+            conn.execute("INSERT OR REPLACE INTO a2a_cards(inbox_id, task_id, kind, created_at) VALUES(?,?,?,?)",
+                         (defer["inbox_id"], task["id"], str(defer.get("kind") or ""), now_iso()))
         r = conn.execute("SELECT * FROM a2a_tasks WHERE id=?", (task["id"],)).fetchone()
     conf = params.get("configuration") if isinstance(params.get("configuration"), dict) else {}
     result = {"task": task_json(r, int_param(conf, "historyLength", 0, 100))}
@@ -404,7 +426,8 @@ def remember(key: str, mid: str, result: dict) -> None:
 async def deliver(ask: dict, text: str, data: dict) -> bool:
     """你在收件箱卡上点了：把对应任务改成新状态（对方 GetTask 就能看到），有推送地址就推过去。"""
     with _lock, adb() as conn:
-        r = conn.execute("SELECT * FROM a2a_tasks WHERE inbox_id=? ORDER BY updated_at DESC LIMIT 1", (ask["inbox_id"],)).fetchone()
+        r = conn.execute("SELECT t.* FROM a2a_cards c JOIN a2a_tasks t ON t.id = c.task_id WHERE c.inbox_id=?", (ask["inbox_id"],)).fetchone() \
+            or conn.execute("SELECT * FROM a2a_tasks WHERE inbox_id=? ORDER BY updated_at DESC LIMIT 1", (ask["inbox_id"],)).fetchone()
         ref = str(ask.get("ref") or "")
         if (not r or r["state"] in TERMINAL) and ref.startswith("a2a:") and ref.count(":") >= 2:
             _, pk, ctx = ref.split(":", 2)
@@ -414,14 +437,16 @@ async def deliver(ask: dict, text: str, data: dict) -> bool:
         return False
     task = row_dict(r)
     outcome = data.get("outcome")
-    others = open_cards(task_ref(task), but=ask["inbox_id"])  # 同一段对话里还有卡在等你：先别结束任务
+    others = open_cards(task["id"], but=ask["inbox_id"])  # 这个任务里还有卡在等你：先别结束任务
     # Sentinel 扣下的那句，你放行 / 改写 / 不发：就是一句普通的回话（不是本人对提议的决定），不带 decision
     plain = outcome in ("released", "rewritten", "withheld")
     decision = {"outcome": outcome, **({"proposal": data["proposal"]} if data.get("proposal") else {}),
                 **({"note": data["note"]} if data.get("note") else {}), "by": "owner", "at": ts()}
     msg = agent_message(text, task["context_id"], task["id"], data=None if plain else decision,
                         used=(data.get("used") or []) if plain else None, label=str(data.get("label") or "") if plain else "")
-    state = "TASK_STATE_AUTH_REQUIRED" if others else "TASK_STATE_INPUT_REQUIRED" if outcome == "counter" else "TASK_STATE_COMPLETED"
+    # 普通回话（放行 / 改写 / 不发）不改变约时间那件事的进度：之前本人说了「换个时间」就还是轮到对方再提
+    counter = outcome == "counter" or (plain and last_decision(task) == "counter")
+    state = "TASK_STATE_AUTH_REQUIRED" if others else "TASK_STATE_INPUT_REQUIRED" if counter else "TASK_STATE_COMPLETED"
     arts = json.loads(task["artifacts"] or "[]")
     if not plain and outcome != "counter":
         arts.append({"artifactId": f"decision-{uuid.uuid4().hex[:8]}", "name": "decision",
@@ -535,7 +560,7 @@ async def dispatch(peer: social.Peer, method: str, params: dict):
             raise RpcError(E_NOT_CANCELABLE, "Task is not cancelable", taskId=r["id"])
         r.update(state="TASK_STATE_CANCELED", updated_at=now_iso(), status_at=ts())
         save_task(r)
-        for iid in open_cards(task_ref(r)):  # 对方不约了：这段对话里等你的卡都撤掉
+        for iid in open_cards(r["id"]):  # 对方不约了：这个任务里等你的卡都撤掉
             try:
                 await inbox.withdraw(iid)
             except HTTPException:
@@ -726,14 +751,14 @@ async def push_in(request: Request):
 
 
 def store_update(conn: sqlite3.Connection, rows: list[sqlite3.Row], state: str, text: str, data: dict, dec) -> None:
-    """一个任务的新进展记进我们问过的那几条：状态和对方本人的决定是整个任务的（每条都记，决定一直留着，后面的普通回话不会把它冲掉），
-    对方那句话记在最近那一条。"""
-    old = next((jloads(r["data"]).get("decision") for r in reversed(rows) if isinstance(jloads(r["data"]).get("decision"), dict)), None)
-    blob = json.dumps({**data, **({"decision": dec if isinstance(dec, dict) else old} if (dec or old) else {})}, ensure_ascii=False)[:20000]
+    """一个任务的新进展记进我们问过的那几条：状态是整个任务的（每条都改）；对方那句话和这次的结果记在最近那一条，
+    本人的决定留在最近那一条上（后面的普通回话不冲掉它）。前面几条自己的回话、「用了什么」不动。"""
     ids = [r["id"] for r in rows]
-    conn.execute(f"UPDATE a2a_out SET state=?, data=?, updated_at=? WHERE id IN ({','.join('?' * len(ids))})", (state, blob, now_iso(), *ids))
-    if text:
-        conn.execute("UPDATE a2a_out SET reply=? WHERE id=?", (text[:4000], ids[-1]))
+    conn.execute(f"UPDATE a2a_out SET state=?, updated_at=? WHERE id IN ({','.join('?' * len(ids))})", (state, now_iso(), *ids))
+    old = jloads(rows[-1]["data"]).get("decision")
+    keep = dec if isinstance(dec, dict) else old if isinstance(old, dict) else None
+    blob = json.dumps({**data, **({"decision": keep} if keep else {})}, ensure_ascii=False)[:20000]
+    conn.execute("UPDATE a2a_out SET data=?" + (", reply=?" if text else "") + " WHERE id=?", (blob, *([text[:4000]] if text else []), ids[-1]))
 
 
 def jloads(s: str | None) -> dict:

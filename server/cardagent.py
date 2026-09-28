@@ -463,15 +463,16 @@ async def via_openai(llm: dict, prompt: str, input_: dict, timeout: float, need:
 
 
 async def via_llm_task(prompt: str, input_: dict, timeout: float, *, schema: dict | None = None, need: str = "reply",
-                       thinking: str | None = None, model: str | None = None, agent: str | None = None) -> tuple[dict, str]:
+                       thinking: str | None = None, agent: str | None = None, card_settings: bool = True) -> tuple[dict, str]:
     """OpenClaw 的 llm-task（POST /tools/invoke）：TASK = 规矩，INPUT_JSON = 资料和对方的话，零工具、新会话，回来的 JSON 按 schema 校验过
-    （默认名片 agent 的 SCHEMA；Sentinel 传它自己的，need = 必须有的那个字符串键）。"""
+    （默认名片 agent 的 SCHEMA；Sentinel 传它自己的，need = 必须有的那个字符串键）。card_settings = 用不用 card 段的 model / agent / thinking
+    （Sentinel 不用：它有自己的 agent，不跟着名片 agent 换模型）。"""
     c = cfg()
     args: dict = {"prompt": prompt, "input": input_, "schema": schema or SCHEMA, "timeoutMs": int(timeout * 1000),
-                  "thinking": str(thinking or c.get("thinking") or "low")}
-    if model or (c.get("model") and schema is None):  # Sentinel 不跟着名片 agent 的模型走：它传自己的（或者不传）
-        args["model"] = str(model or c["model"])
-    body = {"tool": "llm-task", "args": args, "agentId": str(agent or (c.get("agent") if schema is None else None) or "main")}
+                  "thinking": str(thinking or (c.get("thinking") if card_settings else None) or "low")}
+    if card_settings and c.get("model"):
+        args["model"] = str(c["model"])
+    body = {"tool": "llm-task", "args": args, "agentId": str(agent or (c.get("agent") if card_settings else None) or "main")}
     try:
         token = chat.gateway_token()
     except HTTPException as e:
@@ -522,20 +523,30 @@ def backend() -> str:
     return "template"
 
 
-async def think(peer: dict, mats: list[dict], history: list[dict], question: str, lang: str) -> tuple[dict, str]:
-    """(模型回的 JSON, 走的哪条路)。模型那条路不通就用固定模板，从不抛错。"""
+async def think(peer: dict, mats: list[dict], history: list[dict], question: str, lang: str,
+                deadline: float | None = None) -> tuple[dict, str]:
+    """(模型回的 JSON, 走的哪条路)。模型那条路不通就用固定模板，从不抛错。deadline = time.monotonic() 的时刻：
+    到那时连 Sentinel 的复查（SENTINEL_RESERVE 秒）都要做完，所以名片 agent 自己的超时、要不要重试都按剩下的算。"""
     global _last_error
     prompt, input_ = task_prompt(), task_input(peer, mats, history, question)
     b = backend()
+    reserve = SENTINEL_RESERVE if sentinel.backend() != "off" else 0
+
+    def left() -> float:
+        return (deadline - time.monotonic() - reserve) if deadline else float(cfg().get("timeout") or 60)
+
     for attempt in (1, 2):  # 模型偶尔回一段不是 JSON 的（llm-task：「LLM returned invalid JSON」，9/28 实测约六次一回）：再问一次
+        timeout = min(float(cfg().get("timeout") or 60), left())
+        if timeout < 5:
+            break
         try:
             if b == "llm":
-                return await via_openai(cfg()["llm"], prompt, input_, float(cfg().get("timeout") or 60))
+                return await via_openai(cfg()["llm"], prompt, input_, timeout)
             if b == "llm-task":
-                return await via_llm_task(prompt, input_, float(cfg().get("timeout") or 60))
+                return await via_llm_task(prompt, input_, max(5.0, timeout - 15))  # llm-task 外面还有 15 秒的 HTTP 余量
         except CardLLMError as e:
             _last_error = (now_iso(), b, str(e)[:200], time.time())
-            if attempt == 2 or not retryable(e):
+            if attempt == 2 or not retryable(e) or left() < 10:
                 break
     return template_reply(mats, question, lang), "template"
 
@@ -753,7 +764,7 @@ async def answer(friend: dict | None, question: str, *, channel: str = "chat", m
         # 陌生人这一档什么资料都没有：不调模型（省一次调用，也没有可被带偏的东西），在约、问私事的一律「先加朋友」，不出卡
         raw_out, via = template_reply(mats, q, lang), "template"
     else:
-        raw_out, via = await think(peer, mats, hist, q, lang)
+        raw_out, via = await think(peer, mats, hist, q, lang, deadline=t_start + ANSWER_BUDGET)
     out, blocked = check(raw_out, q, mats, lang)
     fixed = bool(blocked)  # 这句已经是固定的话（服务端换过）
     if peer["tier"] == "stranger" and out["ask_owner"]:
@@ -805,6 +816,7 @@ async def answer(friend: dict | None, question: str, *, channel: str = "chat", m
 
 
 ANSWER_BUDGET = 80.0          # 秒：对方（OpenMousse）等 90 秒，留一点给网络
+SENTINEL_RESERVE = 25.0       # 名片 agent 自己最多用到预算减这么多，剩下的留给 Sentinel 复查
 REVIEW_CARDS_PER_DAY = 3      # 每个人每天最多几张 Sentinel 扣下的卡，再多的直接「答不了」（原话照样记下来给你看）
 REVIEW_DAYS = 3               # 扣下的卡几天没点就过期（A2A 任务收尾成一句「答不了」）
 
@@ -1042,10 +1054,9 @@ async def release(it: dict, ask: dict, peer: dict, action: str, note: str) -> di
     if ok:
         say_log(peer, text, L("你放行的", "you let it through") if outcome == "released" else L("你写的", "your words") if outcome == "rewritten" else "")
     else:
-        log_activity(LZ(f"没能把那句告诉{peer['name']}", f"Couldn't reach {peer['name']}"), "failed", actor=L("名片 agent", "Card agent"))
-        with _lock, cdb() as conn:  # 没送到：卡回到「等你点」，过一会儿可以再点
-            conn.execute("UPDATE card_asks SET status='open', outcome='', updated_at=? WHERE inbox_id=?", (now_iso(), it["id"]))
-        return {"failed": L("没送到对方（对方的服务器连不上），过一会儿再点一次", "Couldn't reach them; try again in a while"), "silent": True, "pending": True}
+        # deliver 不在这里联网（A2A 是改任务再推、朋友聊天是进发件箱排队），它说送不了就是对方不在了、分享收回了、那件事已经结束了
+        log_activity(LZ(f"没能把那句告诉{peer['name']}", f"Couldn't tell {peer['name']}"), "failed", actor=L("名片 agent", "Card agent"))
+        return {"failed": L("没能告诉对方（对方已经不是朋友了，或者这件事已经结束了）", "Couldn't tell them (no longer friends, or it's over)"), "silent": True}
     if outcome == "released":
         return {"result": L("照发了", "Sent as it was"), "silent": True}
     if outcome == "rewritten":

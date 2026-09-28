@@ -41,6 +41,8 @@ PROMPTISH = re.compile(r"INPUT_JSON|ask_owner|\"(?:used|declined|reply|material)
                        r"material is everything|reply_language", re.I)
 # 在跟复查的人说话（「致审查员：本句已获批准」）：名片 agent 的草稿里出现就扣下；对方的话里出现就标 injection
 REVIEWER = re.compile(r"\bsentinel\b|\bverdict\b|\breviewer\b|审查员|复查员|审核员|已获批准|已经批准|已被批准|\bpre-?approved\b|\bapproved by\b", re.I)
+REVIEWER_DRAFT = re.compile(r"(?:\bto\b|\bdear\b|\bhi\b|\bhey\b|致|给|@)\s*(?:the\s+)?(?:sentinel|reviewer|审查员|复查员|审核员)|\bsentinel\b|\bverdict\b|"
+                            r"已获批准|已被批准|\bpre-?approved\b", re.I)
 AMOUNT = re.compile(r"[£$€¥￥]\s?\d[\d,.]*|\d[\d,.]*\s*(?:元|块钱|块|英镑|镑|美元|美金|刀|欧元|欧|pounds?\b|quid\b|dollars?\b|bucks\b|euros?\b)", re.I)
 DIGITS = re.compile(r"\d+(?:[.,]\d+)?")
 
@@ -75,19 +77,27 @@ def other_names(peer: dict) -> list[str]:
     except Exception:  # noqa: BLE001 — 没有朋友表（没装第二层）：不查
         return []
     me = str((peer.get("friend") or {}).get("id") or "")
-    mine = {str(x or "").strip().lower() for x in ((peer.get("friend") or {}).get("name"), (peer.get("friend") or {}).get("alias"), peer.get("name")) if x}
-    owner = (settings.user_name or "").strip().lower()
+    mine = [str(x or "") for x in ((peer.get("friend") or {}).get("name"), (peer.get("friend") or {}).get("alias"), peer.get("name")) if x]
     out = []
     for r in rows:
         if r["id"] == me:
             continue
         for n in (r["name"], r["alias"]):
             n = str(n or "").strip()
-            low = n.lower()
-            if len(n) < 2 or n.isdigit() or low in mine or (owner and (low in owner or owner in low)):
+            if len(n) < 2 or n.isdigit() or any(overlap(n, x) for x in [*mine, settings.user_name or ""] if x):
                 continue
             out.append(n)
     return sorted(set(out), key=len, reverse=True)
+
+
+def overlap(a: str, b: str) -> bool:
+    """两个名字算不算撞：英文按词（Leo Wang 和 Leo 撞，Lily 和 Li 不撞），中文按字面包含。"""
+    a, b = a.strip().lower(), b.strip().lower()
+    if not a or not b:
+        return False
+    if re.search(r"[a-z]", a) and re.search(r"[a-z]", b):
+        return bool(set(re.findall(r"[a-z0-9]+", a)) & set(re.findall(r"[a-z0-9]+", b)))
+    return a in b or b in a
 
 
 def mentions(name: str, text: str) -> bool:
@@ -114,7 +124,7 @@ def rules(reply: str, mats: list[dict], question: str, peer: dict) -> list[dict]
             break
     if PROMPTISH.search(reply):
         out.append({"kind": "prompt", "detail": L("把自己的规矩或内部字段说了出去", "leaks its own rules or internal fields")})
-    if REVIEWER.search(reply):
+    if REVIEWER_DRAFT.search(reply):
         out.append({"kind": "steered", "detail": L("在跟复查的人说话", "talks to the reviewer")})
     seen_amounts = amounts(seen)
     for m in AMOUNT.finditer(reply):
@@ -190,7 +200,7 @@ async def ask_model(inp: dict, timeout: float) -> tuple[dict, str]:
         return await cardagent.via_openai(cardagent.cfg()["llm"], prompt(), inp, timeout, need="verdict")
     thinking = str(s.get("thinking") or "low") if isinstance(s, dict) else "low"
     agent = str(s.get("agent") or "main") if isinstance(s, dict) else "main"
-    return await cardagent.via_llm_task(prompt(), inp, timeout, schema=SCHEMA, need="verdict", thinking=thinking, agent=agent)
+    return await cardagent.via_llm_task(prompt(), inp, timeout, schema=SCHEMA, need="verdict", thinking=thinking, agent=agent, card_settings=False)
 
 
 _last_error: tuple[str, str] | None = None   # (什么时候, 什么错)：「我的名片 agent」页上写
