@@ -163,11 +163,17 @@ def write_server_json(a: argparse.Namespace, oc: dict, home: Path, workspace: Pa
     if a.lang:
         cfg["language"] = a.lang
     setdefault("language", UI_LANG)
+    b0 = cfg.get("bind") or {}
     if a.bind and a.bind != "auto":
-        cfg["bind"] = {"host": a.bind, "port": int(cfg.get("bind", {}).get("port") or 8080)}
-    if not cfg.get("bind"):
+        cfg["bind"] = {"host": a.bind, "port": int(b0.get("port") or 8080)}
+    elif not b0:
+        cfg["bind"] = {"host": tailscale_ip() or "127.0.0.1", "port": 8080, "auto": True}
+    elif b0.get("auto"):
+        # 安装器自己选的地址：第一次装时还没有 Tailscale 就只听本机，装好 Tailscale 再跑一遍改听 Tailscale 地址（最后的提示就是这么说的）。
+        # 手动指定过的（--bind 或自己改的 server.json，没有 auto）不动。
         ts = tailscale_ip()
-        cfg["bind"] = {"host": ts or "127.0.0.1", "port": 8080}
+        if ts and b0.get("host") != ts:
+            cfg["bind"] = {**b0, "host": ts}
     setdefault("openclaw_home", str(home))
     setdefault("workspace", str(workspace))
     setdefault("data_dir", str(MOUSSE_HOME / "data"))
@@ -333,8 +339,10 @@ def install_systemd(repo: Path, venv: Path, tz: str) -> None:
         text = (HERE / "systemd" / fn).read_text(encoding="utf8").replace("{repo}", str(repo)).replace("{venv}", str(venv)).replace("{tz}", tz)
         (unit_dir / fn).write_text(text, encoding="utf8")
     run(["systemctl", "--user", "daemon-reload"])
-    for unit in ("openmousse-server.service", "openmousse-daily-close.timer"):
-        r = run(["systemctl", "--user", "enable", "--now", unit])
+    # 服务用 restart：再跑一遍安装器（更新代码、换监听地址）要重启才生效；定时器 enable --now 就够
+    for unit, cmd in (("openmousse-server.service", "restart"), ("openmousse-daily-close.timer", "start")):
+        run(["systemctl", "--user", "enable", unit])
+        r = run(["systemctl", "--user", cmd, unit])
         ok = r.returncode == 0
         say(L(f"{unit}：{'已启动' if ok else '启动失败 ' + (r.stderr or r.stdout).strip()[-200:]}",
               f"{unit}: {'started' if ok else 'failed to start ' + (r.stderr or r.stdout).strip()[-200:]}"))
