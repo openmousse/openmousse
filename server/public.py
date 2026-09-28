@@ -12,12 +12,14 @@ import uvicorn
 from fastapi import FastAPI, Request
 from fastapi.responses import PlainTextResponse
 
+import friends
 import share
 import social
 
 app = FastAPI(docs_url=None, redoc_url=None, openapi_url=None)
 app.include_router(share.public_router)
 app.include_router(social.public_router)  # /f/card、/f/jwks.json（社交第二层）
+app.include_router(friends.public_router)  # /f/i/…（邀请落地页）、/f/hello、/f/msg
 
 
 @app.middleware("http")

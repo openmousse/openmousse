@@ -70,6 +70,7 @@ from saves import router as saves_router  # noqa: E402 — 收藏
 from live import router as live_router  # noqa: E402 — 实时活动（app 1.0.5 起）
 from widget import router as widget_router  # noqa: E402 — 小组件（app 1.0.5 起）
 from share import public_router as share_public_router, router as share_router  # noqa: E402 — 分享（社交第一层）
+import friends  # noqa: E402 — 朋友（社交第二层）：/api/friends…、/api/card；/f/… 只挂在公网小服务 public.py 上
 
 DIST = settings.dist
 settings.db.parent.mkdir(parents=True, exist_ok=True)  # 新实例第一次启动：数据目录还不存在
@@ -97,6 +98,7 @@ async def lifespan(_app: FastAPI):
     chat.resume_queued()  # 上次重启前还排着没发的消息：接着发
     asyncio.create_task(chat.resume_ws())  # 走对话通道的：重启前发出去、还没拿到回复的，接回来或补回回复
     alerts.start()  # Agent 的提醒：到点查表，有东西就推
+    friends.start()  # 朋友聊天的投递循环：发出去的消息排队发、失败重试；名片变了告诉朋友
     yield
 
 
@@ -125,6 +127,7 @@ app.include_router(widget_router)
 app.include_router(think_router)
 app.include_router(share_router)
 app.include_router(share_public_router)  # /s/<令牌>：分享的链接页，公开（这里只在自己的设备上开得到；外网走 public.py）
+app.include_router(friends.router)  # 在 share 之后注册也行：/api/shares/{sid}/send 和 share 的路由不重叠
 app.add_exception_handler(sources.NoSource, sources.no_source_handler)
 _whois: dict[str, tuple[float, str | None]] = {}
 _lock = threading.Lock()

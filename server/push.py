@@ -34,7 +34,7 @@ from i18n import L
 
 router = APIRouter()
 EXPO_PUSH = "https://exp.host/--/api/v2/push/send"
-TARGETS = ("thread", "card", "inbox", "today", "board")  # 点开去哪（board：某个 Agent 的看板，Agent 的提醒用；老版本 app 不认，按 thread 进它的对话）
+TARGETS = ("thread", "card", "inbox", "today", "board", "friend")  # 点开去哪（board：某个 Agent 的看板，Agent 的提醒用；friend：和一个朋友的对话；老版本 app 不认，按 thread 走）
 QUIET_DEFAULT = ("23:00", "07:30")
 BODY_MAX = 180  # 通知正文的字数上限（整条推送的 payload 限 4 KB）
 PREVIEW_WIDTH = 110  # 回复预览的显示宽度（汉字算 2）：锁屏上两三行

@@ -10,6 +10,7 @@
   再用 Tailscale Funnel（或别的反向代理）把 /s 指过去；share.public_url 是外面看到的地址（https://<机器>.<tailnet>.ts.net）。
   没配 public_url 时 app 只给图，不给链接。主服务上也挂着 /s/（只在自己的设备上能开，不算浏览次数）。
 - 收回：链接页变成「已经收回了」，快照正文清空（标题留着，你的列表里还看得到）；卡片缓存删掉。草稿 7 天没发就删。
+- 状态：draft 草稿 / live 链接能打开 / friends 只发给了朋友（社交第二层，见 friends.py；/s/ 打不开）/ revoked 收回了。
 - 不调模型，不花额度。
 """
 from __future__ import annotations
@@ -41,6 +42,8 @@ from i18n import L
 
 router = APIRouter()          # 给自己的：/api/shares…（要令牌）
 public_router = APIRouter()   # 给别人的：/s/<令牌>（不要令牌；主服务和 public.py 的小服务都挂它）
+REVOKE_HOOKS: list = []       # 收回一条发出去过的分享时调 fn(分享 id)：朋友那边的也收回（friends.py 挂）
+JSON_HOOKS: list = []         # share_json 补字段：fn(行) -> dict（friends.py 挂 sentTo：发给过哪些朋友）
 
 SHARE_RE = re.compile(r"^sh-[0-9a-f]{8}$")
 TOKEN_RE = re.compile(r"^[A-Za-z0-9_-]{16,40}$")
@@ -456,6 +459,11 @@ def share_json(r: sqlite3.Row, full: bool = False) -> dict:
            "blocked": sum(1 for m in masks if m["id"] not in rel), "maskCount": len(masks),
            "url": link_of(r), "path": f"/s/{r['token']}" if r["status"] == "live" else None, "canLink": bool(public_url()),
            "source": json.loads(r["source"] or "{}")}
+    for hook in JSON_HOOKS:
+        try:
+            out.update(hook(r) or {})
+        except Exception:  # noqa: BLE001 — 补不上就不补
+            pass
     if full:
         out["masks"] = [{"id": m["id"], "kind": m["kind"], "label": m["label"], "text": body[m["start"]:m["end"]],
                          "before": " ".join(body[max(0, m["start"] - 16):m["start"]].split()),
@@ -745,7 +753,7 @@ def public_page(r: sqlite3.Row, request: Request) -> HTMLResponse:
 @public_router.get("/s/{token}")
 async def open_share(token: str, request: Request):
     r = await asyncio.to_thread(row_by_token, token)
-    if not r or r["status"] == "draft":
+    if not r or r["status"] in ("draft", "friends"):  # 只发给了朋友的，链接不开
         return gone_page(False)
     if r["status"] == "revoked":
         return gone_page(True)
@@ -787,7 +795,7 @@ def _prune_drafts() -> None:
 @router.get("/api/shares")
 async def list_shares(status: str = "all"):
     await asyncio.to_thread(_prune_drafts)
-    q = "SELECT * FROM shares" + {"live": " WHERE status='live'", "all": " WHERE status IN ('live','revoked')"}.get(status, "") + \
+    q = "SELECT * FROM shares" + {"live": " WHERE status IN ('live','friends')", "all": " WHERE status IN ('live','friends','revoked')"}.get(status, "") + \
         " ORDER BY COALESCE(published_at, created_at) DESC LIMIT 300"
     with _lock, sdb() as conn:
         rows = conn.execute(q).fetchall()
@@ -841,10 +849,10 @@ async def publish_share(sid: str):
     r = row(sid)
     if r["status"] == "revoked":
         raise HTTPException(409, L("这条已经收回了，再分享一次会是新的链接", "This share was withdrawn; share again for a new link"))
-    if r["status"] == "draft":
+    if r["status"] in ("draft", "friends"):  # friends：先只发给了朋友，现在开链接
         ts = now_iso()
         with _lock, sdb() as conn:
-            conn.execute("UPDATE shares SET status='live', published_at=?, updated_at=? WHERE id=?", (ts, ts, sid))
+            conn.execute("UPDATE shares SET status='live', published_at=COALESCE(published_at, ?), updated_at=? WHERE id=?", (ts, ts, sid))
         await asyncio.to_thread(log_activity, L(f"分享了「{mask_title(r)}」", f"Shared \"{mask_title(r)}\""), "share")
     return {"ok": True, "share": share_json(row(sid), full=True)}
 
@@ -863,8 +871,10 @@ async def revoke_share(sid: str):
                 conn.execute("UPDATE shares SET status='revoked', revoked_at=?, updated_at=?, title=?, title_src='', body='', masks='[]', "
                              "released='[]', quote=NULL WHERE id=?", (ts, ts, title, sid))
         await asyncio.to_thread(drop_cards, sid)
-        if r["status"] == "live":
+        if r["status"] in ("live", "friends"):
             await asyncio.to_thread(log_activity, L(f"收回了分享「{title}」", f"Withdrew the share \"{title}\""), "share")
+            for hook in REVOKE_HOOKS:  # 发给过朋友的：那边也收回
+                await asyncio.to_thread(hook, sid)
     return {"ok": True}
 
 
