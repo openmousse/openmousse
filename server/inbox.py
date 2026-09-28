@@ -241,8 +241,10 @@ async def push_new(it: dict, revised: bool = False) -> None:
     kl = kind_label(it["kind"])
     why = it["why"]
     body = it["title"] + (f"\n{why}" if why and push.width(why) <= 90 else "")
+    # 通知长按展开的卡（app 1.0.5 的通知内容扩展）：要做的事、为什么、会改什么
+    card = {"k": kl, "t": push.clip(it["title"], 60), "l": ([push.cut(why, 90)] if why else []) + [push.cut(c, 70) for c in it["changes"][:4]]}
     try:
-        await push.send_push(it["sourceName"], body, {"thread": "today", "target": {"type": "inbox", "id": it["id"]}}, thread_id="inbox",
+        await push.send_push(it["sourceName"], body, {"thread": "today", "target": {"type": "inbox", "id": it["id"]}, "card": card}, thread_id="inbox",
                              subtitle=L(f"改好了 · {kl}", f"Revised · {kl}") if revised else L(f"要你点头 · {kl}", f"Needs your OK · {kl}"),
                              level=it["level"], category="inbox", collapse=f"inbox:{it['id']}", kind="inbox")
     except Exception:  # noqa: BLE001 — 推送失败不影响收件箱本身

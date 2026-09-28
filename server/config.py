@@ -29,6 +29,8 @@
   backup_dir        改 openclaw.json 前的备份目录（默认 <data_dir>/backups）
   push              推送：{"quiet_hours": ["23:00", "07:30"]}：静默时段（HH:MM，按 timezone，可以跨午夜），这段时间里
                     「响铃」的推送自动降成「静默」（照样进通知中心，只是不出声不亮屏）；null 或 [] = 不设。每次读文件，不用重启（见 push.py）
+  apns              实时活动直推苹果（app 1.0.5 起，见 live.py）：{"key_file": "APNs 的 .p8", "key_id": "…", "team_id": "…", "topic": "app 的 bundle id",
+                    "sandbox": false}。不配也行：app 打开时自己开实时活动，只是 app 没开时开不了、改不了。每次读文件，不用重启
   tasks             后台任务：{"daily_limit": 10, "max_minutes": 30, "notify_done": true}：每天几个、单个最长几分钟（给 Agent 看的额度，
                     tasks_ctl.py quota）、做完了要不要静默推一条（见 cards.py；每次读文件，不用重启）
   study             学习台：{materials, pages, courses, deadlines_cmd, video_cmd, readings, recordings}（见 study.py；每次读文件，不用重启）

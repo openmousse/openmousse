@@ -63,6 +63,8 @@ from memtree import router as tree_router  # noqa: E402
 from connectors import router as connectors_router  # noqa: E402
 from think import router as think_router  # noqa: E402 — 思考空间、冥想时间
 from saves import router as saves_router  # noqa: E402 — 收藏
+from live import router as live_router  # noqa: E402 — 实时活动（app 1.0.5 起）
+from widget import router as widget_router  # noqa: E402 — 小组件（app 1.0.5 起）
 
 DIST = settings.dist
 settings.db.parent.mkdir(parents=True, exist_ok=True)  # 新实例第一次启动：数据目录还不存在
@@ -109,6 +111,8 @@ app.include_router(goals_router)
 app.include_router(tree_router)
 app.include_router(connectors_router)
 app.include_router(saves_router)  # 在 think 之前：/api/think/saves/… 不能被 think 的路由先接走
+app.include_router(live_router)
+app.include_router(widget_router)
 app.include_router(think_router)
 app.add_exception_handler(sources.NoSource, sources.no_source_handler)
 _whois: dict[str, tuple[float, str | None]] = {}

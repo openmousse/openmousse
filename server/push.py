@@ -447,6 +447,70 @@ def card_line(kind: str | None, body: str, data) -> str:
     return first_line(body) or str(d.get("why") or d.get("summary") or "")
 
 
+# —— 通知展开成卡片（app 1.0.5 的通知内容扩展，targets/notify）———————————————————————
+# data.card 只放画卡片要的几样，键名很短（整条推送 4 KB）：k 类型、t 标题、s 数字 [[标签, 值], …]（最多 3 个）、
+# r 进度环 [值, 满值, 标签]、l 要点（最多 5 条）、f 脚注、c 颜色（Agent 的颜色名或 #RRGGBB）。老版本 app 不认这个字段，照旧。
+
+def _num(v) -> str:
+    try:
+        f = float(v)
+    except (TypeError, ValueError):
+        return str(v)
+    return str(int(f)) if f == int(f) else f"{f:.1f}"
+
+
+def rich_card(card: dict, tint: str | None = None) -> dict:
+    """一张建议卡 → 通知展开时画的卡。认得三餐建议和训练建议，其余用正文的前几行。"""
+    kind = card.get("kind")
+    d = card.get("data") if isinstance(card.get("data"), dict) else {}
+    out: dict = {"k": card_label(kind), "t": clip(str(card.get("title") or ""), 60)}
+    lines: list[str] = []
+    stats: list[list[str]] = []
+    if kind == "meal_plan":
+        for m in (d.get("meals") or [])[:4]:
+            if not isinstance(m, dict):
+                continue
+            names = L("、", ", ").join(str(i["name"]) for i in (m.get("items") or [])[:3] if isinstance(i, dict) and i.get("name"))
+            head = " ".join(str(x) for x in (m.get("label"), m.get("time")) if x)
+            tail = L(f"（{m['kcal']} kcal）", f" ({m['kcal']} kcal)") if m.get("kcal") else ""
+            lines.append(cut(f"{head} · {names or m.get('note') or ''}".strip(" ·") + tail, 60))
+        tot = d.get("totals") if isinstance(d.get("totals"), dict) else {}
+        if tot.get("kcal"):
+            stats.append([L("合计", "Total"), f"{_num(tot['kcal'])} kcal"])
+        if tot.get("protein"):
+            stats.append([L("蛋白质", "Protein"), f"{_num(tot['protein'])} g"])
+        if d.get("vs_target"):
+            out["f"] = cut(str(d["vs_target"]), 70)
+    elif kind == "training_plan":
+        for label, key in ((L("练什么", "Session"), "session"), (L("时间", "Time"), "time"), (L("决定", "Call"), "decision")):
+            if d.get(key):
+                stats.append([label, clip(str(d[key]), 16)])
+        lines += [cut(str(x), 60) for x in (d.get("focus") or [])[:3]]
+        if d.get("why"):
+            lines.append(cut(str(d["why"]), 70))
+    if not lines:
+        paras = [ln for ln in (re.sub(r"\s+", " ", x).strip() for x in md_lines(card.get("body") or "", headings=False)) if width(ln) >= 4]
+        lines = [cut(x, 70) for x in paras[:4]]
+    if stats:
+        out["s"] = stats[:3]
+    if lines:
+        out["l"] = lines[:5]
+    if tint:
+        out["c"] = tint
+    return out
+
+
+def group_tint(thread: str) -> str | None:
+    if thread == "main":
+        return None
+    try:
+        with _lock, db() as conn:
+            r = conn.execute("SELECT color FROM groups WHERE id=?", (thread,)).fetchone()
+        return r["color"] if r and r["color"] else "cyan"
+    except sqlite3.Error:
+        return None
+
+
 def new_card(run: Run) -> dict | None:
     """这次回复期间这个线程新写的最新一张卡：feed_items 里 rowid 比开跑时大、没被划掉、group_id 是这个线程（main 认没挂 Group 的卡）。"""
     main = run.thread == "main"
@@ -470,6 +534,12 @@ def new_card(run: Run) -> dict | None:
 async def notify_run(run: Run) -> None:
     """回复结束后推一条（按 run_level 的档位）：出错 → 原来的出错提示；这次写了卡 → 推卡片；否则推回复开头。推送失败不影响回复本身。"""
     level = run_level(run)
+    card = new_card(run) if run.status == "ok" else None
+    try:  # 实时活动：练后餐倒计时（不管推不推送，见 live.py）
+        import live  # 延迟导入：live 依赖 chat
+        live.on_run(card)
+    except Exception:  # noqa: BLE001
+        pass
     if level == "none":
         return
     try:
@@ -479,11 +549,11 @@ async def notify_run(run: Run) -> None:
             await send_push(title, L("这条没回成，点开看看。", "This reply didn't go through. Tap to take a look."), to_thread,
                             thread_id=run.thread, level=level, collapse=f"reply:{run.thread}", kind="reply")
             return
-        card = new_card(run)
         if card:
             line = cut(card_line(card["kind"], card["body"], card["data"]), 90)
             await send_push(title, f"{card['title']} · {line}" if line else card["title"],
-                            {"thread": run.thread, "target": {"type": "card", "id": card["id"], "thread": run.thread}},
+                            {"thread": run.thread, "target": {"type": "card", "id": card["id"], "thread": run.thread},
+                             "card": rich_card(card, group_tint(run.thread))},
                             thread_id=run.thread, subtitle=card_label(card["kind"]), level=level, category="card",
                             collapse=f"card:{run.thread}:{card['kind'] or 'card'}", kind="card")
             return
