@@ -2,7 +2,7 @@
 
 **中文** · [English](README.md) · [openmousse.ai](https://openmousse.ai)
 
-**给自己跑 [OpenClaw](https://github.com/openclaw/openclaw) 的人的私人 agent app。** 在手机上直接跟你的 agent 对话，生活的每一块交给一个 Agent，再用一份记忆把 Claude、ChatGPT、Gemini 和你的 agent 串起来。自托管：你的机器、你的模型账号、你的数据。
+**给自己跑 claw 的人的私人 agent app：[OpenClaw](https://github.com/openclaw/openclaw)，或者任何有 OpenAI 兼容接口的 agent。** 在手机上直接跟你的 agent 对话，生活的每一块交给一个 Agent，再用一份记忆把 Claude、ChatGPT、Gemini 和你的 agent 串起来。自托管：你的机器、你的模型账号、你的数据。
 
 <p align="center">
   <picture><source media="(prefers-color-scheme: dark)" srcset="docs/screenshots/zh-today-dark.png"><img src="docs/screenshots/zh-today.png" width="30%" alt="今天：两个 Agent 给的建议卡"></picture>
@@ -16,6 +16,8 @@
 - **所有 AI 共用一份记忆。** [世界树](tree/)是一个 MCP 服务，Claude.ai、ChatGPT、Gemini、Notion 都能接。没有 OpenClaw 也能单独用。
 
 **OpenClaw 是什么？** 跑在你自己机器上的开源个人 AI agent（[openclaw.ai](https://openclaw.ai)）：skills、定时任务、Telegram 之类的聊天渠道、任意模型。OpenMousse 不替代它，而是在它上面加一个 app、一组 Agents 和一份共享记忆。
+
+**用别的 claw？** OpenMousse 在 OpenClaw 上最完整：每个 Agent 都是一个真的 OpenClaw agent，后台任务、执行审批、定时任务都能在 app 里看。别的 claw 或 agent 只要有 OpenAI 兼容的对话接口也能用，安装时填它的地址就行。对话、Agents（每个是一段单独的对话，知道自己管什么、记得昨天的日结）、看板、目标、日程、Zen、世界树、推送都能用；只有 OpenClaw 才有的（回复中插话、后台任务、执行审批、定时任务、模型计费）app 里会藏起来。细节见 [server/README.zh-CN.md](server/README.zh-CN.md#别的-claw)。
 
 **不是 OpenMuse。** [CopilotKit 的 OpenMuse](https://github.com/CopilotKit/openmuse) 是一台"agent 电脑"（浏览器、终端、邮件、填表），自带 agent。OpenMousse 不自带 agent：它建在你的 OpenClaw 上，专注你的生活数据、会主动找你的 Agents，和一份所有 AI 共用的记忆。
 

@@ -44,6 +44,7 @@ jobs:
           curl -sf -H 'Authorization: Bearer secret' http://127.0.0.1:8099/api/health | tee /tmp/om/health.json
           grep -q '"app_name":"CI"' /tmp/om/health.json
           grep -q '"first_run":true' /tmp/om/health.json
+          grep -q '"claw":{"kind":"openclaw"' /tmp/om/health.json
           (cd server && MOUSSE_SERVER_CONFIG=/tmp/om/server.json python settings_ctl.py user-name CI) && grep -q '"user_name": "CI"' /tmp/om/server.json && grep -q '"app_name": "CI"' /tmp/om/server.json
           test "$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:8099/api/health)" = "401"
           curl -sf -H 'Authorization: Bearer secret' http://127.0.0.1:8099/api/fitness/week | grep -q missing_source

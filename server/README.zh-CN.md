@@ -2,7 +2,7 @@
 
 **中文** · [English](README.md)
 
-薄 API 层（FastAPI）：认证、对话转发到你的 OpenClaw Gateway、Agent 的创建与删除、看板数据、附件与语音、推送，同时托管网页版。
+薄 API 层（FastAPI）：认证、对话转发到你的 claw（OpenClaw 的 Gateway，或任何 OpenAI 兼容接口，见[别的 claw](#别的-claw)）、Agent 的创建与删除、看板数据、附件与语音、推送，同时托管网页版。
 
 ## 装
 
@@ -26,6 +26,21 @@ python3 run.py                   # 或按 openmousse-server.service.example 装�
 
 - **Tailscale**（最省事）：服务绑 Tailscale 地址，手机装 Tailscale，app 里填 `http://100.x.x.x:8080`。
 - **公网 HTTPS**：`tailscale serve` / `tailscale funnel`，或 Caddy / nginx 反向代理到 127.0.0.1:8080，app 里填 `https://你的域名`。
+
+## 别的 claw
+
+服务器默认接 OpenClaw。别的 claw 或 agent 只要有 OpenAI 兼容的对话接口，就在 `server.json` 里加一段 `claw`（安装器问「你的 claw」时填它的地址，就会写这一段）：
+
+```json
+"claw": {"kind": "openai", "name": "我的 claw", "url": "http://127.0.0.1:8642/v1", "token": "…", "model": "default"}
+```
+
+- `url` 写到 `/v1`：服务器往 `<url>/chat/completions` 发 `stream: true` 的请求（直接回整段 JSON 的也认），连接页用 `<url>/models` 看连不连得上。`token`（或者 `token_env`：环境变量名，先看进程环境再看 `env_file`）作为 Bearer 令牌带上。`models` 是 app 里能切换的模型；`headers` 是它要的额外请求头。
+- `session` 定一个对话怎么接上一句：`{"mode": "history", "turns": 40}`（默认）每次把这个对话今天的记录一起发过去，任何无状态的接口都行，撤回就是这边删掉、下一轮不带；`{"mode": "header", "header": "X-Session-Id"}` 或 `{"mode": "user"}` 把会话键（`mousse:<对话>`）交给 claw、每次只发新的一句，给自己记会话的 claw 用。
+- Agents：每个 Agent 是同一个 claw 的一段单独的对话，每天第一句话前面带上它的名字、职责和上一次的日结。
+- 日结：03:45 `daily_close.py` 让今天说过话的每个对话用 5–10 行总结今天，服务器把回复存成 `<data_dir>/digest/<对话>/<日期>.md`，第二天第一句话前面带上。
+- skills 和规矩：安装时给出它的 skills 文件夹和每轮都读的规则文件（AGENTS.md 之类），OpenMousse 的 skill 软链进去、规矩追加一小节。skill 要跑 `python3 ~/.openmousse/repo/server/…_ctl.py`，所以它得能执行命令。
+- `/api/health` 报 `claw: {kind, name, caps}`，app 按它藏起做不到的：回复中插话、后台任务、执行审批、OpenClaw 的定时任务、模型计费、每个 Agent 各自的工作区。这些接口回空列表，不去调 `openclaw`。
 
 ## Agent
 

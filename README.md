@@ -2,7 +2,7 @@
 
 [中文](README.zh-CN.md) · **English** · [openmousse.ai](https://openmousse.ai)
 
-**A personal-agent app for people who run [OpenClaw](https://github.com/openclaw/openclaw).** Chat with your agent from your phone, give each part of your life its own Agent, and keep one memory that Claude, ChatGPT, Gemini and your agent all share. Self-hosted: your machine, your model accounts, your data.
+**A personal-agent app for people who run a claw: [OpenClaw](https://github.com/openclaw/openclaw), or any agent with an OpenAI-compatible API.** Chat with your agent from your phone, give each part of your life its own Agent, and keep one memory that Claude, ChatGPT, Gemini and your agent all share. Self-hosted: your machine, your model accounts, your data.
 
 <p align="center">
   <picture><source media="(prefers-color-scheme: dark)" srcset="docs/screenshots/en-today-dark.png"><img src="docs/screenshots/en-today.png" width="30%" alt="Today: suggestion cards from two Agents"></picture>
@@ -10,12 +10,14 @@
   <picture><source media="(prefers-color-scheme: dark)" srcset="docs/screenshots/en-fitness-dark.png"><img src="docs/screenshots/en-fitness.png" width="30%" alt="A Fitness Agent's dashboard"></picture>
 </p>
 
-- **Your agent in your pocket.** An iOS and web app for the OpenClaw you already run: streaming chat, voice notes, photos and files, push notifications.
+- **Your agent in your pocket.** An iOS and web app for the claw you already run: streaming chat, voice notes, photos and files, push notifications.
 - **One Agent per part of your life.** Fitness, meals, sleep, job applications… each is a real OpenClaw agent with its own memory, skills and dashboard. Ask for one in chat and it gets built.
 - **It comes to you.** A morning report, suggestion cards that refresh when new data arrives, and a daily digest so every Agent remembers yesterday.
 - **One memory for every AI.** The [memory tree](tree/) is an MCP server that Claude.ai, ChatGPT, Gemini and Notion connect to. It also works without OpenClaw.
 
 **What's OpenClaw?** An open-source personal AI agent that runs on your own machine ([openclaw.ai](https://openclaw.ai)): skills, scheduled jobs, chat channels such as Telegram, any model. OpenMousse doesn't replace it; it adds an app, Agents and a shared memory on top.
+
+**Another claw?** OpenMousse works best on OpenClaw: every Agent is a real OpenClaw agent, and background tasks, exec approvals and scheduled jobs show up in the app. Any other claw or agent with an OpenAI-compatible chat API works too; give the installer its URL. Chat, Agents (each one a conversation of its own that knows its role and yesterday's digest), boards, goals, the schedule, Zen, the memory tree and notifications all work; what only OpenClaw can do (cutting into a running reply, background tasks, exec approvals, scheduled jobs, model billing) is hidden. Details: [server/README.md](server/README.md#other-claws).
 
 **Not OpenMuse.** [CopilotKit's OpenMuse](https://github.com/CopilotKit/openmuse) is an agent *computer* (browser, terminal, email, forms) with its own agent built in. OpenMousse brings no agent of its own: it builds on your OpenClaw and focuses on your life data, proactive Agents and a memory every AI shares.
 

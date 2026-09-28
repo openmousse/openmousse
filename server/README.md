@@ -2,7 +2,7 @@
 
 [中文](README.zh-CN.md) · **English**
 
-Thin API layer (FastAPI): auth, chat relayed to your OpenClaw Gateway, Agent creation and deletion, board data, attachments and voice, push notifications, and hosting of the web build.
+Thin API layer (FastAPI): auth, chat relayed to your claw (OpenClaw's Gateway, or any OpenAI-compatible API, see [Other claws](#other-claws)), Agent creation and deletion, board data, attachments and voice, push notifications, and hosting of the web build.
 
 ## Install
 
@@ -26,6 +26,21 @@ Every field of `server.json` is documented at the top of [`config.py`](config.py
 
 - **Tailscale** (least effort): bind the service to the Tailscale address, install Tailscale on the phone, enter `http://100.x.x.x:8080` in the app.
 - **Public HTTPS**: `tailscale serve` / `tailscale funnel`, or Caddy / nginx reverse-proxying to 127.0.0.1:8080; enter `https://your.domain` in the app.
+
+## Other claws
+
+By default the server talks to OpenClaw. For any other claw or agent with an OpenAI-compatible chat API, add a `claw` section to `server.json` (the installer writes it when you give it a URL instead of pressing Enter at "your claw"):
+
+```json
+"claw": {"kind": "openai", "name": "My claw", "url": "http://127.0.0.1:8642/v1", "token": "…", "model": "default"}
+```
+
+- `url` goes up to `/v1`; the server POSTs to `<url>/chat/completions` with `stream: true` (a plain JSON reply works too) and checks `<url>/models` on the Connections page. `token` (or `token_env`, a variable name looked up in the environment and in `env_file`) is sent as a Bearer token. `models` lists what the app may switch between; `headers` adds headers your claw needs.
+- `session` says how a conversation continues: `{"mode": "history", "turns": 40}` (default) sends today's messages of that conversation every time, so any stateless API works and unsending just drops messages here; `{"mode": "header", "header": "X-Session-Id"}` or `{"mode": "user"}` hands your claw a session key (`mousse:<conversation>`) and sends only the new message, for claws that keep sessions themselves.
+- Agents: each Agent is a conversation of its own with the same claw. Its first message of the day carries its name and role, and the last daily digest.
+- Daily digest: at 03:45 `daily_close.py` asks each conversation that talked today for 5–10 lines on the day; the server keeps the reply in `<data_dir>/digest/<conversation>/<day>.md` and puts it in front of the next day's first message.
+- Skills and rules: give the installer your claw's skills folder and the rules file it reads every turn (AGENTS.md or similar), and OpenMousse's skills are linked in and a short rules section appended. Skills run `python3 ~/.openmousse/repo/server/…_ctl.py`, so your claw needs a shell tool to use them.
+- `/api/health` reports `claw: {kind, name, caps}`; the app hides what the claw can't do: cutting into a running reply, background tasks, exec approvals, OpenClaw scheduled jobs, model billing, per-Agent workspaces. Those endpoints answer with empty lists instead of calling `openclaw`.
 
 ## Agents
 
