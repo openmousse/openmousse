@@ -12,8 +12,11 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import json
+import os
 import shutil
+import signal
 import sqlite3
 import threading
 import time
@@ -1120,14 +1123,26 @@ def delete_message(body: MessageRef):
     return {"ok": True, "deleted": n}
 
 
+async def run_cli(argv: list[str], timeout: float) -> tuple[int, bytes, bytes]:
+    """跑一个命令行（openclaw …）→ (退出码, stdout, stderr)。超时或请求被取消（客户端断开）时连它起的子进程一起杀掉：
+    openclaw 外壳会再起一个干活的 node（约 160 MB），只杀外壳那个会留下来；Gateway 一慢，轮询每次起一个、越积越多
+    （2026-09-28 18:10 服务器 OOM 时堆了 7 个）。自己一个进程组，超时就整组 SIGKILL。"""
+    proc = await asyncio.create_subprocess_exec(*argv, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE, start_new_session=True)
+    try:
+        out, err = await asyncio.wait_for(proc.communicate(), timeout)
+    finally:
+        if proc.returncode is None:
+            with contextlib.suppress(ProcessLookupError, PermissionError):
+                os.killpg(proc.pid, signal.SIGKILL)
+    return proc.returncode or 0, out, err
+
+
 async def gateway_call(method: str, params: dict, timeout: float = 30) -> dict:
     if not claw.is_openclaw():  # 只有 OpenClaw 有 Gateway 的这些方法；别的 claw 当成「没有这项」，调用方各自降级
         raise HTTPException(501, L(f"{claw.name()} 没有这项（Gateway {method} 只有 OpenClaw 有）", f"{claw.name()} doesn't have this (Gateway {method} is OpenClaw-only)"))
     exe = shutil.which(settings.openclaw_bin) or settings.openclaw_bin
-    proc = await asyncio.create_subprocess_exec(exe, "gateway", "call", method, "--json", "--params", json.dumps(params, ensure_ascii=False),
-                                                stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE)
-    out, err = await asyncio.wait_for(proc.communicate(), timeout)
-    if proc.returncode != 0:
+    code, out, err = await run_cli([exe, "gateway", "call", method, "--json", "--params", json.dumps(params, ensure_ascii=False)], timeout)
+    if code != 0:
         detail = (err or out).decode("utf8", "replace")[-300:]
         raise HTTPException(502, L(f"Gateway {method} 失败：{detail}", f"Gateway {method} failed: {detail}"))
     return json.loads(out)

@@ -48,7 +48,7 @@ from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
 import claw
-from chat import OPENCLAW, TZ, _lock, day_bounds, day_of, db, gateway_call, log_activity, now_iso, session_key, start_run, thread_of
+from chat import OPENCLAW, TZ, _lock, day_bounds, day_of, db, gateway_call, log_activity, now_iso, run_cli, session_key, start_run, thread_of
 
 router = APIRouter()
 
@@ -132,11 +132,10 @@ async def openclaw_cli(*args: str, timeout: float = 30) -> Any:
         raise HTTPException(501, L(f"{claw.name()} 没有这项（只有 OpenClaw 有）", f"{claw.name()} doesn't have this (OpenClaw-only)"))
     exe = shutil.which(cfg.openclaw_bin) or cfg.openclaw_bin
     try:
-        proc = await asyncio.create_subprocess_exec(exe, *args, "--json", stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE)
+        code, out, err = await run_cli([exe, *args, "--json"], timeout)  # 超时连子进程一起杀（见 chat.run_cli）
     except OSError as e:  # 这台机器上没有 openclaw（空白实例、CI）：当成 502，别变成 500
         raise HTTPException(502, L(f"跑不了 openclaw：{e}", f"Couldn't run openclaw: {e}")) from e
-    out, err = await asyncio.wait_for(proc.communicate(), timeout)
-    if proc.returncode != 0:
+    if code != 0:
         cmd, tail = " ".join(args[:2]), (err or out).decode("utf8", "replace")[-300:]
         raise HTTPException(502, L(f"openclaw {cmd} 失败：{tail}", f"openclaw {cmd} failed: {tail}"))
     return json.loads(out)

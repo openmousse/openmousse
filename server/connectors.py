@@ -30,7 +30,7 @@ from typing import Any
 from fastapi import APIRouter
 
 import sources
-from chat import _lock, db
+from chat import _lock, db, run_cli
 import claw
 from config import TZ, raw, settings
 from data import when
@@ -590,15 +590,10 @@ async def channel_runtime(fresh: bool) -> dict | None:
         return _channels[1]
     exe = shutil.which(settings.openclaw_bin) or settings.openclaw_bin
     data = None
-    proc = None
     try:
-        proc = await asyncio.create_subprocess_exec(exe, "channels", "status", "--json", stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.DEVNULL)
-        out, _ = await asyncio.wait_for(proc.communicate(), 12)
-        data = json.loads(out) if proc.returncode == 0 and out else None
+        code, out, _ = await run_cli([exe, "channels", "status", "--json"], 12)  # 超时连子进程一起杀
+        data = json.loads(out) if code == 0 and out else None
     except (OSError, ValueError, asyncio.TimeoutError):
-        if proc and proc.returncode is None:
-            with contextlib.suppress(ProcessLookupError):
-                proc.kill()
         data = None
     res = None
     if isinstance(data, dict) and isinstance(data.get("channels"), dict):
