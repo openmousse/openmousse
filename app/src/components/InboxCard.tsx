@@ -23,12 +23,12 @@ export const kindLabel = (k: InboxKind | string): string => ({
   exec: L('执行命令', 'Run command'), task: L('派活', 'Task'), write: L('写入', 'Write'), send: L('发送', 'Send'), spend: L('花钱', 'Spend'),
   schedule: L('定时任务', 'Schedule'), push: L('推送', 'Notification'), skill: L('新 skill', 'New skill'), agent: L('新 Agent', 'New agent'),
   block: L('看板功能块', 'Board block'), project: L('项目', 'Project'), code: L('代码改动', 'Code change'), calendar: L('日程', 'Calendar'),
-  social: L('朋友', 'Friends'), other: L('其他', 'Other'),
+  social: L('朋友', 'Friends'), egress: L('代办', 'Errand'), other: L('其他', 'Other'),
 } as Record<string, string>)[k] ?? L('其他', 'Other');
 
 /** 动到外面的（写、发、花钱、日程、派活）用警示色；提案类用金色（助手自己想做的）；执行命令中性。 */
 const kindTone = (k: InboxKind): 'warn' | 'gold' | 'neutral' =>
-  (['write', 'send', 'spend', 'calendar', 'task', 'social'].includes(k) ? 'warn' : k === 'exec' ? 'neutral' : 'gold');
+  (['write', 'send', 'spend', 'calendar', 'task', 'social', 'egress'].includes(k) ? 'warn' : k === 'exec' ? 'neutral' : 'gold');
 
 const pad = (n: number) => String(n).padStart(2, '0');
 /** 刚刚 / 5 分钟前 / 14:05 / 昨天 14:05 / 9月24日 */
@@ -171,7 +171,7 @@ function PendingCard({ item, chat }: { item: InboxItem; chat: boolean }) {
   const [busy, setBusy] = useState<InboxAction | null>(null);
   const [more, setMore] = useState(false);
   const [alertShown, setAlertShown] = useState(false);  // 提醒卡画出了通知预览：detail 是同一句的文字版，不再显示
-  const [rewrite, setRewrite] = useState<string | null>(null);  // Sentinel 扣下的那句：「改一下」时你写的话
+  const [rewrite, setRewrite] = useState<string | null>(null);  // Sentinel 扣下的那句 / 扣下的代办请求：「改一下」时你写的话
   const exec = item.kind === 'exec';
   const review = item.kind === 'social' && item.social?.ask === 'review';
   const act = (action: InboxAction, note?: string) => {
@@ -261,6 +261,26 @@ function PendingCard({ item, chat }: { item: InboxItem; chat: boolean }) {
             <CardBtn kind="quiet" label={L('不发', "Don't send")} busy={busy === 'reject'} disabled={!!busy} onPress={() => act('reject')} />
             <CardBtn kind="quiet" label={L('改一下', 'Rewrite')} disabled={!!busy} onPress={() => setRewrite(item.social?.original ?? '')} />
             <CardBtn kind="primary" label={item.approveLabel || L('照发', 'Send as is')} icon={Check} busy={busy === 'approve'} disabled={!!busy} onPress={() => act('approve')} />
+          </>
+        ) : item.kind === 'egress' && rewrite != null ? (
+          // Sentinel 出口扣下的代办请求，「改一下」：写上怎么改，代办那边收到 403 和你的话，照着重新来
+          <View style={{ flex: 1, gap: space.sm }}>
+            <TextInput value={rewrite} onChangeText={setRewrite} multiline maxLength={400} autoFocus
+              placeholder={L('告诉代办要怎么改（比如：主题改成 Hi）', 'Tell the errand what to change (e.g. make the subject "Hi")')} placeholderTextColor={t.ink3}
+              accessibilityLabel={L('要怎么改', 'What to change')}
+              style={[type.body, styles.rewrite, { color: t.ink, borderColor: t.line, backgroundColor: t.bg }]} />
+            <View style={styles.actions}>
+              <CardBtn kind="quiet" label={L('算了', 'Back')} disabled={!!busy} onPress={() => setRewrite(null)} />
+              <CardBtn kind="primary" label={L('让它改', 'Send back')} icon={Check} busy={busy === 'revise'} disabled={!!busy || !rewrite.trim()}
+                onPress={() => act('revise', rewrite.trim())} />
+            </View>
+          </View>
+        ) : item.kind === 'egress' ? (
+          // 代办要提交 / 发送 / 用你的凭证：不要 / 改一下 / 放行这一次（只放这一个请求）
+          <>
+            <CardBtn kind="quiet" label={L('不要', 'No')} busy={busy === 'reject'} disabled={!!busy} onPress={() => act('reject')} />
+            <CardBtn kind="quiet" label={L('改一下', 'Revise')} disabled={!!busy} onPress={() => setRewrite('')} />
+            <CardBtn kind="primary" label={item.approveLabel || L('放行这一次', 'Let it through')} icon={Check} busy={busy === 'approve'} disabled={!!busy} onPress={() => act('approve')} />
           </>
         ) : item.kind === 'social' && item.social?.counter ? (
           // 名片 agent 替你约的：不去 / 换个时间（按你空着的晚上提一个）/ 同意（设计稿 SocAgents）
