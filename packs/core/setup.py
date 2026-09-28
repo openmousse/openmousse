@@ -22,7 +22,7 @@
      - --tree-public（「开公网」那一问）：Tailscale Funnel 只把 /t、/m 开到公网（Claude.ai、ChatGPT、Gemini、Notion 这些从它们的云上来连），
        这台机器的 MagicDNS 名字加进 Host 白名单；Funnel 没开成（或 443 上已有只在 tailnet 里的 serve，开了会连带公开）
        就在最后打印要手动跑的命令，照样装完。同一问也开分享和朋友：server.json 的 share.public_port（127.0.0.1 上只有 /s、/f 的小服务）
-       + share.public_url，Funnel 开 /s、/f（见 share_public）
+       + share.public_url，Funnel 开 /s、/f（见 share_public）；OpenClaw 还开 llm-task 插件（名片 agent 用，见 enable_llm_task）
      - 世界树服务已经在跑（再跑一遍安装器）就重启它：pip 刚装了新代码，配置也可能改了（换存储、加 Host）
   6. systemd user 服务：openmousse-server、openmousse-daily-close.timer；loginctl enable-linger。没有 systemctl 的机器跳过，最后说怎么手动跑
 再跑一遍是安全的：已有的不动，只补缺的。
@@ -534,6 +534,38 @@ def allow_skill_links(oc_path: Path, skills_dir: Path, home: Path, openclaw_bin:
     return True
 
 
+def enable_llm_task(oc_path: Path, home: Path, openclaw_bin: str) -> bool:
+    """开公网（能加朋友）时：名片 agent 替你回朋友和别家的 agent，要一次零工具的模型调用，走 OpenClaw 自带的 llm-task 插件
+    （Gateway 的 /tools/invoke 按名字调，不会进任何 agent 的对话工具表）。plugins.entries.llm-task.enabled = true；
+    单独备份、单独 validate，不认的版本就撤回（名片 agent 退回固定句子）；你自己关掉的（enabled: false）不动。返回是否要重启 Gateway。"""
+    oc = load_json(oc_path)
+    plugins = oc.setdefault("plugins", {})
+    entries = plugins.setdefault("entries", {}) if isinstance(plugins, dict) else None
+    if not isinstance(entries, dict):
+        return False
+    cur = entries.get("llm-task") if isinstance(entries.get("llm-task"), dict) else {}
+    if cur.get("enabled") is True:
+        return False
+    if cur.get("enabled") is False:
+        say(L("openclaw.json 里 llm-task 是关着的，不动：名片 agent 只用固定句子回朋友",
+              "llm-task is turned off in openclaw.json; left alone, so the card agent answers friends with fixed lines only"))
+        return False
+    entries["llm-task"] = {**cur, "enabled": True}
+    backups = MOUSSE_HOME / "backups"
+    backups.mkdir(parents=True, exist_ok=True)
+    backup = backups / f"openclaw.json.{datetime.now():%Y%m%d-%H%M%S}.llm-task"
+    shutil.copy2(oc_path, backup)
+    dump_json(oc_path, oc, mode=0o600)
+    if run([openclaw_bin, "config", "validate"], env=openclaw_env(home)).returncode != 0:
+        shutil.copy2(backup, oc_path)
+        say(L("这个版本的 OpenClaw 不认 llm-task 插件，没开：名片 agent 只用固定句子回朋友",
+              "This OpenClaw doesn't know the llm-task plugin; not turned on, so the card agent answers friends with fixed lines only"))
+        return False
+    say(L("openclaw.json：开了 llm-task 插件（名片 agent 用它替你回朋友，零工具）",
+          "openclaw.json: turned on the llm-task plugin (the card agent answers friends through it, with no tools)"))
+    return True
+
+
 # —— 5：世界树 ——
 
 def tree_to_vault(exe: Path, vault: Path, lang: str) -> bool:
@@ -901,6 +933,8 @@ def main() -> None:
         print("openclaw.json")
         restart = patch_openclaw(oc_path, home, cfg.get("openclaw_bin") or "openclaw")
         restart = allow_skill_links(oc_path, repo / "packs/core/skills", home, cfg.get("openclaw_bin") or "openclaw") or restart
+        if a.tree_public:  # 「开公网」= 能加朋友：名片 agent 走 llm-task
+            restart = enable_llm_task(oc_path, home, cfg.get("openclaw_bin") or "openclaw") or restart
     public = None
     if not a.no_tree:
         print(L("世界树", "Memory tree"))
