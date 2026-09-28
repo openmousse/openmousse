@@ -90,6 +90,9 @@ case "${DEF_LANG:-${LC_ALL:-${LANG:-}}}" in zh*|ZH*) DEF_LANG=zh ;; *) DEF_LANG=
 DEF_HOME="$(saved "c.get('openclaw_home')")"
 [ -n "$DEF_HOME" ] || DEF_HOME="${OPENCLAW_STATE_DIR:-$HOME/.openclaw}"
 DEF_TZ="$(saved "c.get('timezone')")"
+if [ -z "$DEF_TZ" ] && [ -f "${MOUSSE_OPENCLAW_HOME:-$DEF_HOME}/openclaw.json" ]; then  # OpenClaw 里设了用户时区（agents.defaults.userTimezone）就用它
+  DEF_TZ="$(python3 -c 'import json, sys; print(((json.load(open(sys.argv[1])).get("agents") or {}).get("defaults") or {}).get("userTimezone") or "")' "${MOUSSE_OPENCLAW_HOME:-$DEF_HOME}/openclaw.json" 2>/dev/null || true)"
+fi
 if [ -z "$DEF_TZ" ]; then
   DEF_TZ="$(cat /etc/timezone 2>/dev/null || timedatectl show -p Timezone --value 2>/dev/null || echo UTC)"
   [ "$DEF_TZ" = "Etc/UTC" ] && DEF_TZ="UTC"
@@ -138,6 +141,16 @@ else
   if [ -n "$MOUSSE_CLAW_RULES" ]; then CLAW_ARGS+=(--claw-rules "$MOUSSE_CLAW_RULES"); fi
 fi
 ask MOUSSE_TZ "你的时区 / your timezone (IANA name)" "$DEF_TZ"
+# 不认识的时区（打错了，或者 claw 没替换说明页里的占位符）用默认值；这台机器没有时区库的话没法查，照单全收
+if ! python3 -c 'import sys, zoneinfo
+try:
+    zoneinfo.ZoneInfo("UTC")
+except Exception:
+    sys.exit(0)
+zoneinfo.ZoneInfo(sys.argv[1])' "$MOUSSE_TZ" 2>/dev/null; then
+  echo "提示 / note: 时区「$MOUSSE_TZ」不认识，用 $DEF_TZ / unknown timezone \"$MOUSSE_TZ\", using $DEF_TZ"
+  MOUSSE_TZ="$DEF_TZ"
+fi
 ask MOUSSE_NAME "助手叫什么 / assistant name (shown in the app)" "$DEF_NAME"
 if [ "$CLAW_KIND" = openclaw ] && [ ! -f "$MOUSSE_OPENCLAW_HOME/openclaw.json" ]; then
   die "$MOUSSE_OPENCLAW_HOME/openclaw.json 不存在 / not found. Install OpenClaw and run openclaw onboard first (or give another claw's OpenAI-compatible URL instead)."
