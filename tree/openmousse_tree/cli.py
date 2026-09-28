@@ -3,7 +3,7 @@
   mousse-tree init [--name Alice] [--profile PATH] [--tz Europe/London] [--lang zh|en]   建库、生成令牌、读档案；--lang 定说明和输出的语言
   mousse-tree serve                                                     前台跑服务（systemd 用这个）
   mousse-tree urls [--base https://xxx.ts.net]                          各平台接入地址（含令牌）
-  mousse-tree install-openclaw                                          给 ~/.openclaw/openclaw.json 加导出目录的检索路径（先备份，后校验）
+  mousse-tree install-openclaw [--openclaw-home DIR]                   给 OpenClaw 的 openclaw.json 加导出目录的检索路径（先备份，后校验，不过就恢复）
   mousse-tree install-service                                           装 systemd user 服务并启动
   mousse-tree add --source myclaw --text "..." [--kind ...] [--tags ...]
   mousse-tree recall --q 关键词 | recent [--days 7] | stats | export
@@ -18,6 +18,7 @@ from __future__ import annotations
 import argparse
 import contextlib
 import json
+import os
 import secrets
 import shutil
 import subprocess
@@ -33,7 +34,7 @@ USAGE_EN = """mousse-tree command line.
   mousse-tree init [--name Alice] [--profile PATH] [--tz Europe/London] [--lang zh|en]   create the db, generate tokens, read the profile; --lang sets the language of instructions and output
   mousse-tree serve                                                     run the service in the foreground (systemd uses this)
   mousse-tree urls [--base https://xxx.ts.net]                          each platform's connection URL (with its token)
-  mousse-tree install-openclaw                                          add the export directory to ~/.openclaw/openclaw.json search paths (backup first, validate after)
+  mousse-tree install-openclaw [--openclaw-home DIR]                   add the export directory to OpenClaw's openclaw.json search paths (backup first, validate after, restore if it fails)
   mousse-tree install-service                                           install and start the systemd user service
   mousse-tree add --source myclaw --text "..." [--kind ...] [--tags ...]
   mousse-tree recall --q keyword | recent [--days 7] | stats | export
@@ -88,9 +89,9 @@ def cmd_init(a: argparse.Namespace) -> None:
     conn = S.connect()
     n = S.sync_profile(conn)
     S.export(conn)
-    toks = ', '.join(sorted(cfg['tokens'].values()))
-    print(C.L(f"ok · 配置 {C.CONFIG} · 库 {C.DB} · 档案 {cfg['profile_path']}（{n} 条要点）· 令牌 {toks}",
-              f"ok · config {C.CONFIG} · db {C.DB} · profile {cfg['profile_path']} ({n} bullet points) · tokens {toks}"))
+    k = len(cfg["tokens"])  # 只报个数：安装器的输出常被整段贴给别人求助，令牌原文只在 mousse-tree urls 里看
+    print(C.L(f"ok · 配置 {C.CONFIG} · 库 {C.DB} · 档案 {cfg['profile_path']}（{n} 条要点）· {k} 个平台令牌（地址：mousse-tree urls）",
+              f"ok · config {C.CONFIG} · db {C.DB} · profile {cfg['profile_path']} ({n} bullet points) · {k} platform tokens (addresses: mousse-tree urls)"))
     if not Path(cfg["profile_path"]).expanduser().exists():
         print(C.L("提示：档案文件不存在。`mousse-tree serve` 后用 `mousse-tree urls` 打印的管理页链接打开「档案」页写一份，或用 --profile 指到你的 USER.md。",
                   "Note: the profile file doesn't exist yet. After `mousse-tree serve`, open the admin link printed by `mousse-tree urls` "
@@ -199,27 +200,48 @@ def cmd_urls(a: argparse.Namespace) -> None:
     print(f"  http://127.0.0.1:{cfg['port']}/ui#key={cfg['ui_token']}")
 
 
-def cmd_install_openclaw(_: argparse.Namespace) -> None:
-    oc = Path.home() / ".openclaw/openclaw.json"
+def openclaw_config(home: str | None) -> tuple[Path, dict[str, str]]:
+    """要改的 openclaw.json 和跑 `openclaw config validate` 用的环境。给了 --openclaw-home 就是那里的 openclaw.json，
+    并让 openclaw 也去验那一份（OPENCLAW_STATE_DIR / OPENCLAW_CONFIG_PATH）；没给就跟 openclaw 自己一样找：
+    $OPENCLAW_CONFIG_PATH，其次 $OPENCLAW_STATE_DIR/openclaw.json，最后 ~/.openclaw/openclaw.json。"""
+    env = dict(os.environ)
+    if home:
+        d = Path(home).expanduser()
+        oc = d / "openclaw.json"
+        env.update(OPENCLAW_STATE_DIR=str(d), OPENCLAW_CONFIG_PATH=str(oc))
+        return oc, env
+    if env.get("OPENCLAW_CONFIG_PATH"):
+        return Path(env["OPENCLAW_CONFIG_PATH"]).expanduser(), env
+    return Path(env.get("OPENCLAW_STATE_DIR") or Path.home() / ".openclaw").expanduser() / "openclaw.json", env
+
+
+def cmd_install_openclaw(a: argparse.Namespace) -> None:
+    oc, env = openclaw_config(a.openclaw_home)
     if not oc.exists():
         sys.exit(C.L(f"没找到 {oc}", f"{oc} not found"))
     export_dir = str(Path(C.load()["export_path"]).expanduser().parent)
     cfg = json.loads(oc.read_text(encoding="utf8"))
     paths = cfg.setdefault("memory", {}).setdefault("search", {}).setdefault("extraPaths", [])
-    if any(p.get("path") == export_dir for p in paths):
-        print(C.L("extraPaths 已有，未改", "extraPaths already has it, nothing changed"))
+    if any(isinstance(p, dict) and p.get("path") == export_dir for p in paths):
+        print(C.L(f"{oc} 的 extraPaths 已有，未改", f"{oc}: extraPaths already has it, nothing changed"))
         return
-    backup = Path.home() / f"backups/openclaw.json.pre-mousse-tree-{datetime.now():%Y%m%d-%H%M}"  # 真要改才备份
+    backup = C.HOME / f"backups/openclaw.json.pre-mousse-tree-{datetime.now():%Y%m%d-%H%M%S}"  # 真要改才备份
     backup.parent.mkdir(parents=True, exist_ok=True)
     shutil.copy2(oc, backup)
     paths.append({"path": export_dir})
-    oc.write_text(json.dumps(cfg, ensure_ascii=False, indent=2) + "\n", encoding="utf8")
-    print(C.L(f"已加 extraPaths: {export_dir}（备份 {backup}）", f"Added to extraPaths: {export_dir} (backup {backup})"))
+    tmp = oc.with_suffix(oc.suffix + ".tmp")
+    tmp.write_text(json.dumps(cfg, ensure_ascii=False, indent=2) + "\n", encoding="utf8")
+    os.chmod(tmp, oc.stat().st_mode & 0o777)  # 原来的权限（openclaw.json 里有密钥，一般是 600）
+    tmp.replace(oc)
     if shutil.which("openclaw"):
-        r = subprocess.run(["openclaw", "config", "validate"], capture_output=True, text=True)
-        print((r.stdout or r.stderr).strip().splitlines()[-1] if (r.stdout or r.stderr) else "validate: no output")
-        print(C.L("重启 gateway 生效：systemctl --user restart openclaw-gateway",
-                  "Restart the gateway to apply it: systemctl --user restart openclaw-gateway"))
+        r = subprocess.run(["openclaw", "config", "validate"], capture_output=True, text=True, env=env, check=False)
+        if r.returncode != 0:
+            shutil.copy2(backup, oc)
+            sys.exit(C.L(f"openclaw config validate 没通过，{oc} 已恢复原样：", f"openclaw config validate failed; {oc} is restored as it was: ")
+                     + (r.stdout + r.stderr).strip()[-500:])
+    print(C.L(f"{oc} 的 extraPaths 加了 {export_dir}（备份 {backup}）", f"{oc}: added {export_dir} to extraPaths (backup {backup})"))
+    print(C.L("重启 gateway 生效：systemctl --user restart openclaw-gateway",
+              "Restart the gateway to apply it: systemctl --user restart openclaw-gateway"))
 
 
 def cmd_install_service(_: argparse.Namespace) -> None:
@@ -228,6 +250,9 @@ def cmd_install_service(_: argparse.Namespace) -> None:
     unit.parent.mkdir(parents=True, exist_ok=True)
     unit.write_text(SERVICE.format(exe=exe, desc=C.L("mousse-tree 世界树 MCP 服务（loopback）", "mousse-tree memory tree MCP service (loopback)")),
                     encoding="utf8")
+    if not shutil.which("systemctl"):
+        sys.exit(C.L(f"写了 {unit}，但这台机器没有 systemctl：自己跑 `{exe} serve`（放进你的进程管理器）",
+                     f"Wrote {unit}, but this machine has no systemctl: run `{exe} serve` yourself (under your process manager)"))
     for cmd in (["systemctl", "--user", "daemon-reload"], ["systemctl", "--user", "enable", "--now", "mousse-tree.service"]):
         subprocess.run(cmd, check=False)
     print(C.L(f"已装 {unit}；状态：systemctl --user status mousse-tree", f"Installed {unit}; status: systemctl --user status mousse-tree"))
@@ -309,7 +334,7 @@ def main() -> None:
     sp.add_parser("rebuild").set_defaults(fn=cmd_rebuild)
     sp.add_parser("serve").set_defaults(fn=cmd_serve)
     q = sp.add_parser("urls"); q.add_argument("--base"); q.set_defaults(fn=cmd_urls)
-    sp.add_parser("install-openclaw").set_defaults(fn=cmd_install_openclaw)
+    q = sp.add_parser("install-openclaw"); q.add_argument("--openclaw-home"); q.set_defaults(fn=cmd_install_openclaw)
     sp.add_parser("install-service").set_defaults(fn=cmd_install_service)
     q = sp.add_parser("add")
     q.add_argument("--source", default="owner"); q.add_argument("--text"); q.add_argument("--stdin", action="store_true")

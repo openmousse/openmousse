@@ -25,7 +25,7 @@ mousse-tree install-service                                 # systemd 常驻，�
 有 OpenClaw 的话再加一步，让你的 agent 能检索树的导出：
 
 ```bash
-mousse-tree install-openclaw        # 备份 openclaw.json，把导出目录加进 memory.search.extraPaths
+mousse-tree install-openclaw        # 备份 openclaw.json，把导出目录加进 memory.search.extraPaths（OpenClaw 不在默认位置：--openclaw-home DIR）
 systemctl --user restart openclaw-gateway
 ```
 

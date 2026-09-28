@@ -5,9 +5,9 @@
   1. ~/.openmousse/repo → 仓库（skills 里的命令都走这个固定路径）
   2. ~/.openmousse/server.json：名字、时区、语言、监听地址、OpenClaw 的位置、令牌（phone 给手机，local 给本机脚本）；
      --vault（服务器上已经在同步的 Obsidian 库）：think.vault = 库的文件夹、think.obsidian_vault = 库名（文件夹名），没设过才写
-  3. 主 agent 工作区的 skills/ 里软链 packs/core 的十个 skill（handoff / agent-builder / journal / memory-tree / inbox / dispatch / project / board / proposals / goals）；AGENTS.md 末尾追加 OpenMousse 的规则（按所选语言写）
+  3. 主 agent 工作区的 skills/ 里软链 packs/core 的十一个 skill（handoff / agent-builder / journal / memory-tree / inbox / dispatch / project / board / proposals / goals / onboarding）；AGENTS.md 末尾追加 OpenMousse 的规则（按所选语言写）
   4. openclaw.json（先备份，改完 openclaw config validate，不过就恢复）：
-     - agents.defaults.skills 是列表的话追加主对话用的九个 skill（board 只给 Agent，写在 server.json 的 agent_default_skills；没有这个键 = 不限制，不动）
+     - agents.defaults.skills 是列表的话追加主对话用的十个 skill（board 只给 Agent，写在 server.json 的 agent_default_skills；没有这个键 = 不限制，不动）
      - gateway.http.endpoints.chatCompletions.enabled = true（app 的对话走它）
      - session.reset = daily 04:00（对话页按天，日结在 03:45）
      - tools.deny 加 ask_user（app 通道没人能回答工具里的提问，会卡死）
@@ -18,8 +18,8 @@
      - --tree-public：Tailscale Funnel 只把 /t、/m 开到公网（Claude.ai、ChatGPT、Gemini、Notion 这些从它们的云上来连），
        这台机器的 MagicDNS 名字加进 Host 白名单；Funnel 没开成（或 443 上已有只在 tailnet 里的 serve，开了会连带公开）
        就在最后打印要手动跑的命令，照样装完
-     - 配置改了（换存储、加 Host）就重启 mousse-tree 服务
-  6. systemd user 服务：openmousse-server、openmousse-daily-close.timer；loginctl enable-linger
+     - 世界树服务已经在跑（再跑一遍安装器）就重启它：pip 刚装了新代码，配置也可能改了（换存储、加 Host）
+  6. systemd user 服务：openmousse-server、openmousse-daily-close.timer；loginctl enable-linger。没有 systemctl 的机器跳过，最后说怎么手动跑
 再跑一遍是安全的：已有的不动，只补缺的。
 语言（这里的输出、server.json 的 language、AGENTS.md 规则、世界树）：--lang；没给就用 server.json 里已有的，
 再没有就看环境变量 LC_ALL / LANG（zh 开头 → 中文，其它 → English）。
@@ -116,6 +116,15 @@ def dump_json(p: Path, data: dict, mode: int | None = None) -> None:
     if mode is not None:
         os.chmod(tmp, mode)
     tmp.replace(p)
+
+
+def openclaw_env(home: Path) -> dict[str, str]:
+    """跑 openclaw 命令时让它认 --openclaw-home 这份配置：OpenClaw 不在默认的 ~/.openclaw 时，不带这两个环境变量它会去验默认那份。"""
+    return {**os.environ, "OPENCLAW_STATE_DIR": str(home), "OPENCLAW_CONFIG_PATH": str(home / "openclaw.json")}
+
+
+def has_systemd() -> bool:
+    return shutil.which("systemctl") is not None
 
 
 def tailscale_ip() -> str | None:
@@ -390,7 +399,7 @@ def patch_openclaw(oc_path: Path, home: Path, openclaw_bin: str) -> bool:
     backup = backups / f"openclaw.json.{datetime.now():%Y%m%d-%H%M%S}"
     shutil.copy2(oc_path, backup)
     dump_json(oc_path, oc, mode=0o600)
-    r = run([openclaw_bin, "config", "validate"])
+    r = run([openclaw_bin, "config", "validate"], env=openclaw_env(home))
     if r.returncode != 0:
         shutil.copy2(backup, oc_path)
         say(L("openclaw config validate 没通过，已恢复原配置。输出：", "openclaw config validate failed; the original config is restored. Output:"))
@@ -484,7 +493,7 @@ def tree_public(exe: Path) -> tuple[list[str], bool]:
     return todo, True
 
 
-def setup_tree(venv: Path, cfg: dict, no_systemd: bool, vault: Path | None = None, public: bool = False) -> list[str] | None:
+def setup_tree(venv: Path, cfg: dict, home: Path, no_systemd: bool, vault: Path | None = None, public: bool = False) -> list[str] | None:
     """→ --tree-public 还要用户手动跑的命令（[] = 都好了；None = 没要公网，或世界树没装）。"""
     exe = venv / "bin/mousse-tree"
     tag = L("世界树：", "Memory tree: ")
@@ -502,18 +511,23 @@ def setup_tree(venv: Path, cfg: dict, no_systemd: bool, vault: Path | None = Non
     if public:
         todo, added = tree_public(exe)
         changed = changed or added
-    r = run([str(exe), "install-openclaw"])
+    r = run([str(exe), "install-openclaw", "--openclaw-home", str(home)])
     if r.returncode == 0:
         say(tag + " / ".join(x.strip() for x in r.stdout.strip().splitlines()[:2]))
     else:
         say(L("世界树 install-openclaw 失败：", "Memory tree: install-openclaw failed: ") + (r.stderr or r.stdout).strip()[-300:])
-    if not no_systemd:
+    if not no_systemd and has_systemd():
+        # install-service 只 enable --now：已经在跑的服务（再跑一遍安装器）不会换上 pip 刚装的代码，也不读新配置，所以在跑的就重启
+        running = run(["systemctl", "--user", "is-active", "mousse-tree.service"]).stdout.strip() == "active"
         r = run([str(exe), "install-service"])
         say(tag + ((r.stdout or r.stderr).strip().splitlines() or [L("install-service 没输出", "install-service printed nothing")])[-1])
-        if changed and shutil.which("systemctl"):  # install-service 只 enable --now，已经在跑的服务不会读新配置
+        if running:
             r = run(["systemctl", "--user", "restart", "mousse-tree.service"])
-            say(tag + (L("配置改了，服务已重启", "its config changed; restarted the service") if r.returncode == 0 else
-                       L("配置改了，重启服务失败 ", "its config changed; restarting the service failed ") + (r.stderr or r.stdout).strip()[-200:]))
+            say(tag + (L("服务已重启（换上这次的代码和配置）", "restarted the service (picks up this run's code and config)") if r.returncode == 0 else
+                       L("重启服务失败 ", "restarting the service failed ") + (r.stderr or r.stdout).strip()[-200:]))
+    elif not no_systemd:
+        say(tag + L("这台机器没有 systemctl：自己跑 `~/.openmousse/venv/bin/mousse-tree serve`（已经在跑就重启它）",
+                    "no systemctl on this machine: run `~/.openmousse/venv/bin/mousse-tree serve` yourself (restart it if it's already running)"))
     elif changed:
         say(tag + L("配置改了，重启世界树服务生效（systemctl --user restart mousse-tree）",
                     "its config changed; restart the memory tree service to apply it (systemctl --user restart mousse-tree)"))
@@ -541,8 +555,8 @@ def install_systemd(repo: Path, venv: Path, tz: str) -> None:
         ok = r.returncode == 0
         say(L(f"{unit}：{'已启动' if ok else '启动失败 ' + (r.stderr or r.stdout).strip()[-200:]}",
               f"{unit}: {'started' if ok else 'failed to start ' + (r.stderr or r.stdout).strip()[-200:]}"))
-    r = run(["loginctl", "enable-linger", os.environ.get("USER") or ""])
-    if r.returncode != 0:
+    r = run(["loginctl", "enable-linger", os.environ.get("USER") or ""]) if shutil.which("loginctl") else None
+    if r is None or r.returncode != 0:
         say(L("loginctl enable-linger 没成功（登出后服务会停）：用 sudo 跑一次 `loginctl enable-linger $USER`",
               "loginctl enable-linger failed (the services stop when you log out): run `sudo loginctl enable-linger $USER` once"))
 
@@ -586,11 +600,13 @@ def main() -> None:
     public = None
     if not a.no_tree:
         print(L("世界树", "Memory tree"))
-        public = setup_tree(venv, cfg, a.no_systemd, vault, a.tree_public)
+        public = setup_tree(venv, cfg, home, a.no_systemd, vault, a.tree_public)
     if not a.no_systemd:
         print("systemd")
-        install_systemd(repo, venv, cfg["timezone"])
-        if restart:
+        install_systemd(repo, venv, cfg["timezone"])  # 没有 systemctl 它自己说怎么手动跑
+        if restart and not has_systemd():
+            say(L("openclaw.json 改了，重启你的 Gateway 生效", "openclaw.json changed: restart your Gateway to apply it"))
+        elif restart:
             r = run(["systemctl", "--user", "is-active", "openclaw-gateway"])
             if r.stdout.strip() == "active":
                 run(["systemctl", "--user", "restart", "openclaw-gateway"])

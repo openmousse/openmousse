@@ -25,7 +25,7 @@ Language: `mousse-tree init --lang en` (or `zh`) sets the language of everything
 If you run OpenClaw, one more step lets your agents search the tree's export:
 
 ```bash
-mousse-tree install-openclaw        # backs up openclaw.json, adds the export directory to memory.search.extraPaths
+mousse-tree install-openclaw        # backs up openclaw.json, adds the export directory to memory.search.extraPaths (--openclaw-home DIR for a non-default OpenClaw)
 systemctl --user restart openclaw-gateway
 ```
 
