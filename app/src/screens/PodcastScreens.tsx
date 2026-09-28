@@ -387,8 +387,12 @@ export function PodRecScreen() {
               <Text style={{ color: D.ink2, fontSize: 14, lineHeight: 21 }}>{mode === 'friends' ? L('只录，它不插话。录完按声音分人。', "Just recording, no questions. It tells voices apart afterwards.") : L('只录，它不插话。', "Just recording; it won't interrupt.")}</Text>
             </View>
           )}
+          {mode === 'friends' && e?.people !== undefined ? (
+            <Text style={{ color: D.ink3, fontSize: 13, lineHeight: 19 }}>{L('录完会给参与的人记几条画像，只有你看得到。开录前跟大家说一声。', 'Afterwards each person gets a few private notes (only you see them). Tell everyone before you start.')}</Text>
+          ) : null}
 
-          {!outline.length && phase === 'idle' && !committed && mode !== 'friends' ? (
+          {/* 约朋友的也能先聊几句：选了谁在的，提纲能接上他们上次说的（朋友画像） */}
+          {!outline.length && phase === 'idle' && !committed ? (
             <Pressable onPress={() => nav.replace('PodPrep', { id })} accessibilityRole="button" style={[styles.qBox, { backgroundColor: D.panel2, borderColor: D.panel2, flexDirection: 'row', alignItems: 'center', gap: 10 }]}>
               <TextAlignStart size={18} color={D.gold} />
               <View style={{ flex: 1, gap: 2 }}>
