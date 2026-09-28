@@ -90,7 +90,7 @@ claw 的对话接口是完整的 agent：OpenClaw 的 `/v1/chat/completions` 跑
 
 - 每人每天进来的条数：亲近 80、朋友 50、同学 30；没签名的陌生人加起来每天 30。到了就回一句「今天先聊到这儿吧，明天再说。」（A2A 里任务是 REJECTED）。
 - 进来一句最多 1000 字，说出去一句最多 400 字。
-- `card_log`：进来的和说出去的每一句（被拦下的、你收回的、改过的都标着）；`card_asks`：出给你的每张卡；`activity_log`：说出去的每一句原文、「没照做：…」、你点了什么。`GET /api/card/log` 给 app 看。
+- `card_log`：进来的和说出去的每一句（被拦下的、你收回的、改过的都标着）；`card_asks`：出给你的每张卡；`activity_log`：说出去的每一句原文、「没照做：…」、你点了什么。`GET /api/card/log`（可按 `peer`、`ref`、`channel` 筛）给 app 看：每句带 `by`（`them` 对方 / `agent` 名片 agent / `owner` 你点了、它替你转告的）、`usedLabel`、`declined`、`blocked` 和被拦下的原句（只给你看）、出的那张卡（`ask`：kind、status、outcome、summary、proposal）。
 - `cardagent.retract(log_id, replaced=False)`：你收回 / 改过一条代答，以后不再当上下文。
 
 ## 3. A2A 名片 `GET /f/a2a/agent-card.json`
@@ -163,7 +163,7 @@ claw 的对话接口是完整的 agent：OpenClaw 的 `/v1/chat/completions` 跑
 
 ## 7. 我们问别人 `POST /api/a2a/send`
 
-`{friend, text, contextId?, taskId?}`（要令牌，app 用）：取对方的 A2A 名片（必须是好友表里那把钥匙签的，接口地址必须在他的根地址下），签名发 `SendMessage`（`A2A-Version: 1.0`、`A2A-Extensions: …/signed-requests/v1`），原样发你的话。回 `{id, contextId, taskId, state, reply, used}`；`GET /api/a2a/out` 看问过的和对方推回来的。
+`{friend, text, contextId?, taskId?}`（要令牌，app 用）：取对方的 A2A 名片（必须是好友表里那把钥匙签的，接口地址必须在他的根地址下），签名发 `SendMessage`（`A2A-Version: 1.0`、`A2A-Extensions: …/signed-requests/v1`），原样发你的话。回 `{id, contextId, taskId, state, reply, used}`；`GET /api/a2a/out` 看问过的和对方推回来的（`outcome` = 对方本人的决定，`usedLabel` = 对方名片 agent 用了什么）。
 
 ## 8. `server.json` 的 `card` 段（都可选，每次读文件）
 
@@ -198,7 +198,6 @@ cardagent.SOCIAL_HOOKS["friend"] = async fn(item, action, note)  # 第二层自�
 - 流式（`SendStreamingMessage` / `SubscribeToTask`）、扩展名片。
 - `/.well-known/agent-card.json`（要另开 Funnel 路径）。
 - 学习笔记怎么标「能分享」；陌生人档的「公开的分享」。
-- app：「agent 之间」那段对话的页面（设计稿 SocAgents）。收件箱卡已经有「朋友」标签和「不去 / 换个时间 / 同意」三个按钮（要发 app 热更新）。
 - Sentinel（第 9 步安全底座）：名片 agent 往外说的话再过一道。现在守的底线：没有工具、只看放出来的、进来的当资料、要表态的出卡、服务端再查一遍、条数和长度有上限。
 
 ## 11. 测试和上线

@@ -90,7 +90,7 @@ A card still waiting in the same conversation is replaced in place when they cha
 
 - Messages in per person per day: close 80, friend 50, classmate 30; unsigned strangers 30 a day altogether. Over the cap they get "Let's leave it here for today." (the A2A task is REJECTED).
 - Up to 1000 characters in, 400 out.
-- `card_log`: every sentence in and out (blocked, withdrawn and edited ones marked); `card_asks`: every card for you; `activity_log`: each sentence said, "didn't do: …", and what you tapped. `GET /api/card/log` for the app.
+- `card_log`: every sentence in and out (blocked, withdrawn and edited ones marked); `card_asks`: every card for you; `activity_log`: each sentence said, "didn't do: …", and what you tapped. `GET /api/card/log` (filter by `peer`, `ref`, `channel`) for the app: each line carries `by` (`them` / `agent` / `owner` = what you tapped, passed on), `usedLabel`, `declined`, `blocked` with the original sentence (for you only) and the card it raised (`ask`: kind, status, outcome, summary, proposal).
 - `cardagent.retract(log_id, replaced=False)`: you withdrew or edited an answer; it is no longer used as context.
 
 ## 3. The A2A card `GET /f/a2a/agent-card.json`
@@ -163,7 +163,7 @@ When we ask someone (section 7), `configuration.taskPushNotificationConfig` carr
 
 ## 7. Asking someone else's agent `POST /api/a2a/send`
 
-`{friend, text, contextId?, taskId?}` (token required, for the app): fetches their A2A card (it must be signed with the key in the friends table, and the endpoint must be under their origin), sends `SendMessage` signed (`A2A-Version: 1.0`, `A2A-Extensions: …/signed-requests/v1`) with your words as they are. Returns `{id, contextId, taskId, state, reply, used}`; `GET /api/a2a/out` lists what you asked and what came back.
+`{friend, text, contextId?, taskId?}` (token required, for the app): fetches their A2A card (it must be signed with the key in the friends table, and the endpoint must be under their origin), sends `SendMessage` signed (`A2A-Version: 1.0`, `A2A-Extensions: …/signed-requests/v1`) with your words as they are. Returns `{id, contextId, taskId, state, reply, used}`; `GET /api/a2a/out` lists what you asked and what came back (`outcome` = their owner's decision, `usedLabel` = what their card agent used).
 
 ## 8. `server.json` → `card` (all optional, read on every use)
 
@@ -198,7 +198,6 @@ Each `history` item is `{"from": "friend" | "owner" | "agent", "text"}`; `used` 
 - Streaming (`SendStreamingMessage` / `SubscribeToTask`), the extended card.
 - `/.well-known/agent-card.json` (another Funnel path).
 - How notes are marked shareable; "public shares" for strangers.
-- App: a page for an agent-to-agent conversation (design SocAgents). Inbox cards already have the Friends label and Can't / Another time / Yes (needs an app update).
 - Sentinel (step 9, the security base): one more check on what the card agent says. Until then the floor is: no tools, only released material, incoming text is data, decisions become cards, the server checks every reply, and there are caps.
 
 ## 11. Tests and going live

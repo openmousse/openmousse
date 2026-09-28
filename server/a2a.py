@@ -672,13 +672,34 @@ async def push_in(request: Request):
     return {"ok": True}
 
 
+def out_facts(data: str | None) -> tuple[str, str]:
+    """a2a_out 存下的最后一次结果（SendMessage 的 result 或推回来的 statusUpdate）里：(对方本人的决定 outcome, 对方名片 agent 的「用了什么」)。"""
+    try:
+        j = json.loads(data or "{}")
+    except ValueError:
+        return "", ""
+    if not isinstance(j, dict):
+        return "", ""
+    st = (j.get("statusUpdate") or {}).get("status") or (j.get("task") or {}).get("status") or {}
+    m = st.get("message") or j.get("message") or {}
+    parts = m.get("parts") if isinstance(m, dict) else None
+    dec = next((p.get("data") for p in parts or [] if isinstance(p, dict) and p.get("mediaType") == DECISION_TYPE), None)
+    card = ((m.get("metadata") or {}).get(EXT_CARD) or {}) if isinstance(m, dict) else {}
+    return str((dec or {}).get("outcome") or "") if isinstance(dec, dict) else "", str(card.get("label") or "") if isinstance(card, dict) else ""
+
+
 @router.get("/api/a2a/out")
 async def out_list(friend: str | None = None, limit: int = 50):
-    """我们问过别人的（对方的回话原样给你看）。"""
+    """我们问过别人的（对方的回话原样给你看）。outcome = 对方本人在卡上的决定（accepted / declined / counter / ack / private_declined / expired），
+    usedLabel = 对方的名片 agent 说它用了什么。"""
     limit = max(1, min(limit, 200))
     with _lock, adb() as conn:
         rows = conn.execute("SELECT * FROM a2a_out" + (" WHERE friend_id=?" if friend else "") + " ORDER BY created_at DESC LIMIT ?",
                             ([friend] if friend else []) + [limit]).fetchall()
-    return {"ok": True, "items": [{"id": r["id"], "friend": r["friend_id"], "contextId": r["context_id"], "taskId": r["task_id"],
-                                   "state": r["state"], "text": r["text"], "reply": r["reply"], "createdAt": r["created_at"],
-                                   "updatedAt": r["updated_at"]} for r in rows]}
+    items = []
+    for r in rows:
+        outcome, label = out_facts(r["data"])
+        items.append({"id": r["id"], "friend": r["friend_id"], "contextId": r["context_id"], "taskId": r["task_id"], "state": r["state"],
+                      "text": r["text"], "reply": r["reply"], "outcome": outcome, "usedLabel": label, "createdAt": r["created_at"],
+                      "updatedAt": r["updated_at"]})
+    return {"ok": True, "items": items}

@@ -736,7 +736,7 @@ async def answer(friend: dict | None, question: str, *, channel: str = "chat", m
         if defer and defer.get("rejected_before"):
             out["reply"], defer = say("rejected_before", lang), None
     label = used_label(out["used"], mats, scope)
-    meta = {"via": via, "declined": out["declined"], **({"blocked": blocked} if blocked else {}),
+    meta = {"via": via, "declined": out["declined"], "label": label, **({"blocked": blocked} if blocked else {}),
             **({"original": clean_text(str(raw_out.get("reply") or ""), 600)} if blocked else {})}
     lid = write_log(peer, channel, ref, "out", out["reply"], "sent", out["used"], defer["inbox_id"] if defer else None, meta)
     say_log(peer, out["reply"], label)
@@ -963,28 +963,37 @@ inbox.EXTRAS["social"] = card_extra
 # —— app 看的 ————————————————————————————————————————————————————————
 
 @router.get("/api/card/log")
-async def get_log(peer: str | None = None, ref: str | None = None, limit: int = 100):
-    """名片 agent 最近进出的话（你看它都说了什么）：可以按人（好友 id / kid:… / anon）或按一段对话筛。"""
+async def get_log(peer: str | None = None, ref: str | None = None, channel: str | None = None, limit: int = 100):
+    """名片 agent 最近进出的话（你看它都说了什么）：可以按人（好友 id / kid:… / anon）、按一段对话、按渠道（chat / a2a）筛。
+    by：them 对方说的 / agent 名片 agent 说的 / owner 你在卡上点了、它替你转告的；blocked + original：服务端拦下的原句（只给你看）；
+    ask：这句出的那张卡（kind、status、outcome、summary、proposal），卡过了 7 天不在收件箱里也查得到。"""
     limit = max(1, min(limit, 500))
     q, args = "SELECT * FROM card_log", []
     conds = []
-    if peer:
-        conds.append("peer=?")
-        args.append(peer)
-    if ref:
-        conds.append("ref=?")
-        args.append(ref)
+    for col, val in (("peer", peer), ("ref", ref), ("channel", channel)):
+        if val:
+            conds.append(f"{col}=?")
+            args.append(val)
     if conds:
         q += " WHERE " + " AND ".join(conds)
-    q += " ORDER BY ts DESC LIMIT ?"
+    q += " ORDER BY ts DESC, rowid DESC LIMIT ?"
     args.append(limit)
     with _lock, cdb() as conn:
         rows = conn.execute(q, args).fetchall()
-    return {"ok": True, "items": [{"id": r["id"], "ts": r["ts"], "peer": r["peer"], "peerName": r["peer_name"], "tier": r["tier"],
-                                   "channel": r["channel"], "ref": r["ref"], "dir": r["dir"],
-                                   "text": r["text"] if r["status"] not in ("retracted", "replaced") else "", "used": jloads(r["used"], []),
-                                   "status": r["status"], "inboxId": r["inbox_id"],
-                                   "declined": jloads(r["meta"], {}).get("declined") or []} for r in rows]}
+        ids = sorted({r["inbox_id"] for r in rows if r["inbox_id"]})
+        asks = {a["inbox_id"]: {"kind": a["kind"], "status": a["status"], "outcome": a["outcome"], "summary": a["summary"],
+                                "proposal": jloads(a["proposal"], {}) or None}
+                for a in conn.execute(f"SELECT * FROM card_asks WHERE inbox_id IN ({','.join('?' * len(ids))})", ids)} if ids else {}
+    items = []
+    for r in rows:
+        meta, gone = jloads(r["meta"], {}), r["status"] in ("retracted", "replaced")
+        items.append({"id": r["id"], "ts": r["ts"], "peer": r["peer"], "peerName": r["peer_name"], "tier": r["tier"],
+                      "channel": r["channel"], "ref": r["ref"], "dir": r["dir"], "by": "them" if r["dir"] == "in" else meta.get("by") or "agent",
+                      "text": "" if gone else r["text"], "used": jloads(r["used"], []), "usedLabel": meta.get("label") or "",
+                      "status": r["status"], "inboxId": r["inbox_id"], "ask": asks.get(r["inbox_id"]), "outcome": meta.get("outcome") or "",
+                      "declined": meta.get("declined") or [], "blocked": meta.get("blocked") or [],
+                      "original": "" if gone else meta.get("original") or ""})
+    return {"ok": True, "items": items}
 
 
 @router.get("/api/card/health")
