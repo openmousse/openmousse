@@ -35,4 +35,4 @@ skills 里的命令都走固定路径 `~/.openmousse/repo/…`（安装器建的
 
 语言：安装器会问用 `zh` 还是 `en`（默认看 `LANG`；也可以设 `MOUSSE_LANG`，或 `setup.py --lang`），写进 `server.json` 的 `language`。安装器的输出、`## OpenMousse` 规则、世界树、脚本的提示（包括日结的触发文字）都按它；`【自动触发】` 这个标记本身永远不变。已有的 `## OpenMousse` 一节再跑安装器也不会重写。
 
-两个可以跳过的问题：服务器上已经在同步的 Obsidian 库（`MOUSSE_VAULT`；`setup.py --vault`）放思考空间（`server.json` 的 `think.vault`，没设过才写）和世界树的笔记（库里的「世界树」文件夹，世界树还是 SQLite 存储时才换）；让 AI 平台连世界树（`MOUSSE_TREE_PUBLIC=y`；`setup.py --tree-public`）用 Tailscale Funnel 开放世界树的 `/t` 和 `/m`，并把这台机器的名字加进它的 Host 白名单。
+两个可以跳过的问题：服务器上已经在同步的 Obsidian 库（`MOUSSE_VAULT`；`setup.py --vault`）放思考空间（`server.json` 的 `think.vault`，没设过才写）和世界树的笔记（库里的「世界树」文件夹，世界树还是 SQLite 存储时才换）；开公网（`MOUSSE_TREE_PUBLIC=y`；`setup.py --tree-public`）用 Tailscale Funnel 开放世界树的 `/t` 和 `/m`（这台机器的名字加进它的 Host 白名单），以及分享页 `/s` 和朋友 `/f`（`server.json` 补上 `share.public_port` / `share.public_url`，朋友的推送没设过就按默认），app 的 `/api` 不上公网。

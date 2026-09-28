@@ -359,8 +359,36 @@ else:
     if hosts:
         ok(L("别的 AI 能从公网连它", "Other AIs can reach it over the internet"), ", ".join(map(str, hosts)))
     else:
-        print("    " + L("（没开公网：Claude.ai、ChatGPT 这些还连不上它；要开就再跑一遍安装命令，「让 AI 平台连世界树」答 y）",
+        print("    " + L("（没开公网：Claude.ai、ChatGPT 这些还连不上它；要开就再跑一遍安装命令，「开公网」答 y）",
                         "(not public: Claude.ai, ChatGPT and the like can't reach it yet; to open it, run the installer again and answer y)"))
+
+# —— 分享和朋友（公网）——
+section(L("分享和朋友", "Sharing and friends"))
+sh = cfg.get("share") if isinstance(cfg.get("share"), dict) else {}
+purl, pport = str(sh.get("public_url") or "").strip().rstrip("/"), sh.get("public_port")
+if not (purl and pport):
+    print("    " + L("（没开公网：分享只能发图、不能发链接，也加不了朋友；要开就再跑一遍安装命令，「开公网」答 y）",
+                    "(not public: shares go out as images only, no links, and no friends yet; to open it, run the installer again and answer y to going public)"))
+else:
+    c, b = http(f"http://127.0.0.1:{pport}/f/card")
+    try:
+        mine = json.loads(b) if c == 200 else {}
+    except ValueError:
+        mine = {}
+    if not mine:
+        bad(L("对外小服务没在回话", "The public mini-server isn't answering"), f"127.0.0.1:{pport} · {c or clean(b, 60)}",
+            L("它跟着 openmousse-server 起，", "it starts with openmousse-server; ") + restart_hint("openmousse-server"))
+    else:
+        c2, b2 = http(f"{purl}/f/card", timeout=10)
+        try:
+            outside = json.loads(b2) if c2 == 200 else {}
+        except ValueError:
+            outside = {}
+        if outside and (outside.get("key") or {}).get("x") == (mine.get("key") or {}).get("x"):
+            ok(L("朋友能从公网找到你", "Friends can reach you over the internet"), f"{purl}/f")
+        else:
+            bad(L("公网上打不开 /f", "/f isn't reachable over the internet"), f"{purl}/f/card · {c2 or clean(b2, 60)}",
+                f"tailscale funnel --bg --set-path=/f http://127.0.0.1:{pport}/f" + L("（/s 同样）；自己的域名就检查反向代理", " (and the same for /s); with your own domain, check the reverse proxy"))
 
 # —— 日结和推送 ——
 section(L("日结和推送", "Daily digest and notifications"))

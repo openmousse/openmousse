@@ -7,7 +7,7 @@
 # 环境变量（非交互）：MOUSSE_LANG（zh|en）、MOUSSE_CLAW（openclaw | hermes | nanobot | letta，或别的 claw 的 OpenAI 兼容接口地址 http://…/v1）、MOUSSE_OPENCLAW_HOME、
 #   别的 claw：MOUSSE_CLAW_NAME、MOUSSE_CLAW_TOKEN、MOUSSE_CLAW_MODEL、MOUSSE_CLAW_SKILLS（它的 skills 文件夹）、MOUSSE_CLAW_RULES（它每轮都读的规则文件）；
 #   MOUSSE_TZ、MOUSSE_NAME、MOUSSE_DIR（仓库位置）、MOUSSE_BIND（auto|127.0.0.1|<ip>）、
-#   MOUSSE_VAULT（服务器上已经在同步的 Obsidian 库文件夹，世界树和思考空间放进去；空 = 跳过）、MOUSSE_TREE_PUBLIC（y|n：用 Tailscale Funnel 让 AI 平台连世界树）
+#   MOUSSE_VAULT（服务器上已经在同步的 Obsidian 库文件夹，世界树和思考空间放进去；空 = 跳过）、MOUSSE_TREE_PUBLIC（y|n：用 Tailscale Funnel 开公网：AI 平台连世界树、分享链接、加朋友）
 # 其它参数原样传给 setup.py，比如 --no-systemd、--no-tree。
 set -euo pipefail
 
@@ -139,9 +139,9 @@ ask MOUSSE_NAME "助手叫什么 / assistant name (shown in the app)" "$DEF_NAME
 if [ "$CLAW_KIND" = openclaw ] && [ ! -f "$MOUSSE_OPENCLAW_HOME/openclaw.json" ]; then
   die "$MOUSSE_OPENCLAW_HOME/openclaw.json 不存在 / not found. Install OpenClaw and run openclaw onboard first (or give another claw's OpenAI-compatible URL instead)."
 fi
-# 可以跳过的两个：Obsidian 库（世界树和思考空间放进去）、让 AI 平台连世界树（Tailscale Funnel 开公网 HTTPS）
+# 可以跳过的两个：Obsidian 库（世界树和思考空间放进去）、开公网（Tailscale Funnel：AI 平台连世界树、分享链接、加朋友）
 ask MOUSSE_VAULT "（可跳过）Obsidian 库在这台服务器上的文件夹（已在同步：Obsidian Sync / Syncthing / git），世界树和思考空间放进去，回车跳过 / (optional) Obsidian vault folder on this server (already synced: Obsidian Sync / Syncthing / git) for the memory tree and the thinking space, Enter skips" ""
-ask MOUSSE_TREE_PUBLIC "（可跳过）让 AI 平台连世界树吗？Claude.ai、ChatGPT、Gemini、Notion、DeepSeek、通义、Kimi……支持 MCP 的都行，要用 Tailscale Funnel 开公网 HTTPS / (optional) let AI platforms connect to the memory tree? Claude.ai, ChatGPT, Gemini, Notion, DeepSeek, Qwen, Kimi… any MCP client; needs Tailscale Funnel for public HTTPS (y/n)" "n"
+ask MOUSSE_TREE_PUBLIC "（可跳过）开公网 HTTPS 吗？开了：Claude.ai、ChatGPT、Gemini 这些支持 MCP 的 AI 平台能连世界树，分享能发链接，能加朋友。用 Tailscale Funnel，只开这几条路，app 的接口不上公网 / (optional) open up public HTTPS? Then AI platforms such as Claude.ai, ChatGPT or Gemini (any MCP client) can reach the memory tree, shares get links, and friends can add you. Uses Tailscale Funnel and opens only those paths, never the app's API (y/n)" "n"
 case "$(printf '%s' "$MOUSSE_TREE_PUBLIC" | tr '[:upper:]' '[:lower:]')" in y|yes|1|true|是*) MOUSSE_TREE_PUBLIC=yes ;; *) MOUSSE_TREE_PUBLIC=no ;; esac
 OPTIONAL=()
 if [ -n "$MOUSSE_VAULT" ]; then OPTIONAL+=("--vault=$MOUSSE_VAULT"); fi

@@ -19,9 +19,10 @@
   5. 世界树：mousse-tree init（同一种语言）+ install-openclaw（+ systemd 服务）
      - --vault：还是 SQLite 存储就换成 Markdown，一条记忆一篇笔记放进 <库>/世界树（英文 Memory tree），档案放一份 档案.md / Profile.md
        （和 USER.md 双向同步）；已有的记忆导成笔记，一条不丢。已经是 Markdown 的不动
-     - --tree-public：Tailscale Funnel 只把 /t、/m 开到公网（Claude.ai、ChatGPT、Gemini、Notion 这些从它们的云上来连），
+     - --tree-public（「开公网」那一问）：Tailscale Funnel 只把 /t、/m 开到公网（Claude.ai、ChatGPT、Gemini、Notion 这些从它们的云上来连），
        这台机器的 MagicDNS 名字加进 Host 白名单；Funnel 没开成（或 443 上已有只在 tailnet 里的 serve，开了会连带公开）
-       就在最后打印要手动跑的命令，照样装完
+       就在最后打印要手动跑的命令，照样装完。同一问也开分享和朋友：server.json 的 share.public_port（127.0.0.1 上只有 /s、/f 的小服务）
+       + share.public_url，Funnel 开 /s、/f（见 share_public）
      - 世界树服务已经在跑（再跑一遍安装器）就重启它：pip 刚装了新代码，配置也可能改了（换存储、加 Host）
   6. systemd user 服务：openmousse-server、openmousse-daily-close.timer；loginctl enable-linger。没有 systemctl 的机器跳过，最后说怎么手动跑
 再跑一遍是安全的：已有的不动，只补缺的。
@@ -52,6 +53,8 @@ MOUSSE_HOME = Path("~/.openmousse").expanduser()
 SERVER_JSON = MOUSSE_HOME / "server.json"
 TREE_HOME = Path(os.environ.get("MOUSSE_TREE_HOME", Path.home() / ".mousse-tree"))  # 世界树的配置和库，和 tree/openmousse_tree/config.py 同一个位置
 FUNNEL_TIMEOUT = 30  # 秒：tailnet 还没开 Funnel 时 tailscale funnel 会一直等你去后台点开，安装不能卡在那
+PUBLIC_PATHS = ("/t", "/m", "/s", "/f")  # Funnel 只开这几条：世界树的 MCP（/t /m）、分享页（/s）、朋友（/f）；app 的 /api 永远不上公网
+SHARE_PORT = 8089  # 对外小服务（server/public.py：只有 /s 和 /f）默认的本机端口，被占了就往后找
 SKILLS = ("handoff", "agent-builder", "journal", "memory-tree", "inbox", "dispatch", "project", "board", "proposals", "goals", "onboarding")
 GENERIC_SKILLS = tuple(s for s in SKILLS if s not in ("dispatch", "proposals"))  # 别的 claw：派活（sessions_spawn）和日结提案是 OpenClaw 那边的
 MAIN_SKILLS = tuple(s for s in SKILLS if s != "board")  # 主对话用的；board（Agent 自己的表和看板）只给 Agent；proposals（日结提案）只有主对话用
@@ -188,7 +191,7 @@ def funnel_would_expose(dns: str) -> list[str]:
         sc = json.loads(r.stdout) if r.returncode == 0 and r.stdout.strip() else {}
         if (sc.get("AllowFunnel") or {}).get(hp):
             return []  # 已经开着 Funnel：上面的东西本来就是公开的
-        return sorted(p for p in (((sc.get("Web") or {}).get(hp) or {}).get("Handlers") or {}) if p not in ("/t", "/m"))
+        return sorted(p for p in (((sc.get("Web") or {}).get(hp) or {}).get("Handlers") or {}) if p not in PUBLIC_PATHS)
     except (ValueError, AttributeError):
         return []
 
@@ -564,7 +567,7 @@ def tree_public(exe: Path) -> tuple[list[str], bool]:
     443 上已经有只在 tailnet 里的 serve 就不开（Funnel 会把它们一起公开），命令打印出来让用户自己定。
     → (还要用户在服务器上跑的命令，[] = 都好了；世界树的配置改没改)。令牌一个都不打印。"""
     tag = L("世界树公网：", "Memory tree, public: ")
-    again = L("# 然后再跑一遍安装器，「让 AI 平台连世界树」答 y", "# then run the installer again and answer y to letting AI platforms connect")
+    again = L("# 然后再跑一遍安装器，「开公网」答 y", "# then run the installer again and answer y to going public")
     if not shutil.which("tailscale"):
         say(tag + L("这台机器没有 tailscale 命令，跳过", "no tailscale command on this machine; skipped"))
         return ["curl -fsSL https://tailscale.com/install.sh | sh && sudo tailscale up", again], False
@@ -611,6 +614,99 @@ def tree_public(exe: Path) -> tuple[list[str], bool]:
         return [*todo, f"{exe} init --host {dns} && systemctl --user restart mousse-tree"], False
     say(tag + L(f"{dns} 加进了世界树的 Host 白名单", f"added {dns} to the memory tree's Host allowlist"))
     return todo, True
+
+
+def tailscale_dns() -> str:
+    """这台机器在 Tailscale 里的 MagicDNS 名字；没装、没登录、读不到都是 ""。"""
+    if not shutil.which("tailscale"):
+        return ""
+    r = tailscale("status", "--json")
+    try:
+        return str((json.loads(r.stdout).get("Self") or {}).get("DNSName") or "").rstrip(".") if r.returncode == 0 else ""
+    except (ValueError, AttributeError):
+        return ""
+
+
+def free_port(start: int, tries: int = 20) -> int | None:
+    """127.0.0.1 上从 start 往后第一个没人占的端口（都占了 = None）。"""
+    import socket
+    for p in range(start, start + tries):
+        with contextlib.closing(socket.socket(socket.AF_INET, socket.SOCK_STREAM)) as s:
+            try:
+                s.bind(("127.0.0.1", p))
+            except OSError:
+                continue
+            return p
+    return None
+
+
+def share_public() -> tuple[list[str], str]:
+    """「开公网」答 y：分享链接和朋友也要公网 HTTPS。server.json 补上 share.public_port（服务在 127.0.0.1 上另起的小服务，
+    server/public.py，只有 /s 分享页和 /f 朋友，没有 /api）和 share.public_url（https://<MagicDNS 名字>），Funnel 只开 /s、/f 指过去。
+    朋友的推送（social.push）没写过就按默认：朋友发来的话响，名片 agent 代答了、有人用了邀请码静音。
+    public_url 已经是别的地址（自己的域名 / 反向代理）就只补端口，Funnel 不动，告诉用户转哪两条。已有的设置一律不改。
+    → (还要用户在服务器上跑的命令，[] = 都好了；对外地址，"" = 没配成)。服务要重启才起小服务：安装器最后一步本来就重启。"""
+    tag = L("分享和朋友：", "Sharing and friends: ")
+    again = L("# 然后再跑一遍安装器，「开公网」答 y", "# then run the installer again and answer y to going public")
+    if not shutil.which("tailscale"):
+        say(tag + L("这台机器没有 tailscale 命令，跳过", "no tailscale command on this machine; skipped"))
+        return ["curl -fsSL https://tailscale.com/install.sh | sh && sudo tailscale up", again], ""
+    dns = tailscale_dns()
+    if not dns:
+        say(tag + L("拿不到这台机器在 Tailscale 里的名字（还没登录？），跳过", "couldn't get this machine's Tailscale name (not logged in?); skipped"))
+        return ["sudo tailscale up", again], ""
+    cfg = load_json(SERVER_JSON) if SERVER_JSON.exists() else {}
+    share = dict(cfg["share"]) if isinstance(cfg.get("share"), dict) else {}
+    social = dict(cfg["social"]) if isinstance(cfg.get("social"), dict) else {}
+    own = f"https://{dns}"
+    try:
+        port = int(share.get("public_port") or 0) or None
+    except (TypeError, ValueError):
+        port = None
+    changed = []
+    if not port:
+        port = free_port(SHARE_PORT)
+        if not port:
+            say(tag + L(f"127.0.0.1 上 {SHARE_PORT} 往后 20 个端口都被占了，没配", f"ports {SHARE_PORT} and the next 19 on 127.0.0.1 are all taken; not set up"))
+            return [], ""
+        share["public_port"] = port
+        changed.append(f"share.public_port = {port}")
+    url = str(share.get("public_url") or "").strip().rstrip("/")
+    if not url:
+        url = share["public_url"] = own
+        changed.append(f"share.public_url = {own}")
+    if "push" not in social:
+        social["push"] = {"message": "ring", "answered": "quiet", "friend": "quiet"}
+        changed.append(L("social.push（朋友发来的话响铃，其余静音）", "social.push (a friend's message rings, the rest is quiet)"))
+    if changed:
+        cfg["share"], cfg["social"] = share, social
+        dump_json(SERVER_JSON, cfg, mode=0o600)
+        say(tag + L("server.json 补上了 ", "server.json now has ") + L("、", ", ").join(changed))
+    if url != own:
+        say(tag + L(f"对外地址是你自己配的 {url}，Funnel 不动：把 {url}/s 和 {url}/f 转到 http://127.0.0.1:{port}（同样的路径）",
+                    f"the public address is your own {url}, so Funnel is left alone: forward {url}/s and {url}/f to http://127.0.0.1:{port} (same paths)"))
+        return [], url
+    funnel = [["funnel", "--bg", f"--set-path={p}", f"http://127.0.0.1:{port}{p}"] for p in ("/s", "/f")]
+    shown = [" ".join(["tailscale", *args]) for args in funnel]
+    private = funnel_would_expose(dns)
+    if private:
+        paths = L("、", ", ").join(private)
+        say(tag + L(f"443 端口上已经有只在 tailnet 里的服务（{paths}），Funnel 会把它们一起公开，所以没替你开",
+                    f"port 443 already serves {paths} inside your tailnet only; Funnel would make those public too, so it wasn't turned on"))
+        return [L(f"# 先把 {paths} 挪到别的端口（tailscale serve --https=8443 …），或者确认它们可以公开，再跑：",
+                  f"# first move {paths} to another port (tailscale serve --https=8443 …), or make sure they may be public, then run:"), *shown], url
+    for args in funnel:
+        r = tailscale(*args)
+        if r.returncode == 0:
+            continue
+        say(tag + L("Funnel 没开成，tailscale 说：", "Funnel didn't come up; tailscale says:"))
+        for x in [x.strip() for x in (r.stdout + "\n" + r.stderr).splitlines() if x.strip()][-8:]:
+            say("  " + x)
+        return [L("sudo tailscale set --operator=$USER   # 只要一次：以后不用 sudo 就能配 Funnel", "sudo tailscale set --operator=$USER   # once, so Funnel can be set up without sudo"),
+                shown[0] + L("   # tailnet 还没开 Funnel 的话它会给一个链接，点开照做", "   # if Funnel isn't enabled for your tailnet yet, it prints a link: open it and follow it"),
+                shown[1]], url
+    say(tag + L(f"Funnel 开好了：{own}/s/…（分享链接）和 {own}/f/…（朋友）", f"Funnel is on: {own}/s/… (share links) and {own}/f/… (friends)"))
+    return [], url
 
 
 def probe_claw(c: dict) -> tuple[bool, str]:
@@ -812,6 +908,10 @@ def main() -> None:
         public = setup_tree(venv, cfg, home, a.no_systemd, vault, a.tree_public, openclaw=not generic)
         if not generic and oc_path.exists() and oc_path.read_bytes() != oc_before:
             restart = True  # 世界树往 extraPaths 里加了导出的文件夹
+    social = None
+    if a.tree_public:  # 同一问：分享链接和朋友（server.json 要在下面重启服务之前写好，小服务是服务启动时起的）
+        print(L("分享和朋友", "Sharing and friends"))
+        social = share_public()
     restarted = False
     if not a.no_systemd:
         print("systemd")
@@ -883,6 +983,17 @@ def main() -> None:
                 "  ~/.openmousse/venv/bin/mousse-tree urls   # each platform's address (it carries a token: only look at it in your own terminal); the app's Me → Memory tree shows them too"))
         print(L("  各平台在哪加见 tree/README.zh-CN.md 的「接平台」；别的 MCP 客户端先 `~/.openmousse/venv/bin/mousse-tree rotate <名字>` 给它一个自己的令牌",
                 "  Where to add it on each platform: \"Connecting platforms\" in tree/README.md. Any other MCP client: `~/.openmousse/venv/bin/mousse-tree rotate <name>` gives it its own token"))
+    if social is not None:
+        print()
+        print(L("分享和朋友：", "Sharing and friends:"))
+        todo, purl = social
+        if todo:
+            print(L("  还没弄完，在服务器上跑：", "  Not done yet; on the server run:"))
+            for x in todo:
+                print(f"    {x}")
+        if purl:
+            print(L(f"  对外地址 {purl}（只有 /s 分享页和 /f 朋友）。加朋友：app「对话」顶上切到「朋友」→ 加朋友，把邀请码发给对方",
+                    f"  Public address {purl} (only /s for shares and /f for friends). To add a friend: in the app, Chat → Friends → Add a friend, and send them the invite"))
     print()
     print(L("检查：", "Check:"))
     print(f"  curl -H 'Authorization: Bearer <token>' {url}/api/health")
@@ -890,9 +1001,9 @@ def main() -> None:
             "  systemctl --user status openmousse-server   # logs: journalctl --user -u openmousse-server -f"))
     if public is None:
         exposed = bool(tree_config().get("public_hosts"))
-        print(L("  ~/.openmousse/venv/bin/mousse-tree urls      # 世界树接各平台的地址" + ("" if exposed else "（先开公网：再跑一遍安装器，「让 AI 平台连世界树」答 y）"),
+        print(L("  ~/.openmousse/venv/bin/mousse-tree urls      # 世界树接各平台的地址" + ("" if exposed else "（先开公网：再跑一遍安装器，「开公网」答 y）"),
                 "  ~/.openmousse/venv/bin/mousse-tree urls      # memory tree URLs for AI platforms"
-                + ("" if exposed else " (open it up first: run the installer again and answer y to letting AI platforms connect)")))
+                + ("" if exposed else " (open it up first: run the installer again and answer y to going public)")))
     if (repo / "check.sh").exists():
         print(L(f"  bash {repo}/check.sh   # 自检：每一块通不通、怎么修；输出里没有令牌，可以整段发给帮你的人",
                 f"  bash {repo}/check.sh   # self-check: what works, what doesn't and how to fix it; no tokens in the output, so you can send all of it to whoever helps"))
