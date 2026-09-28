@@ -42,6 +42,7 @@ import time
 import uuid
 from datetime import date, datetime, timedelta
 from pathlib import Path
+from typing import Literal
 
 import httpx
 import yaml
@@ -428,16 +429,21 @@ def create_fragment(*, kind: str, text: str = "", keywords: list[str] | None = N
 
 def rewrite(f: dict, change) -> dict:
     """改一篇碎片：change(meta, body) 就地改，返回新的碎片。Leo 自己加的属性不动。"""
-    path = frag_path(f)
-    raw = path.read_text(encoding="utf8", errors="replace")
-    meta, body, bad = parse_note(raw)
-    if bad:
-        raise HTTPException(409, L("这篇笔记的属性格式坏了，先在 Obsidian 里修好", "This note's properties are malformed. Fix it in Obsidian first."))
-    if not meta.get("id"):
-        meta = {"id": f["id"], **meta}
-    body = change(meta, body) or body
-    write_atomic(path, dump_note(meta, body))
-    return frag_from_file(path, path.stat())
+    with _scan_lock:
+        path = frag_path(f)
+        raw = path.read_text(encoding="utf8", errors="replace")
+        meta, body, bad = parse_note(raw)
+        if bad:
+            raise HTTPException(409, L("这篇笔记的属性格式坏了，先在 Obsidian 里修好", "This note's properties are malformed. Fix it in Obsidian first."))
+        if not meta.get("id"):
+            meta = {"id": f["id"], **meta}
+        body = change(meta, body) or body
+        write_atomic(path, dump_note(meta, body))
+        st = path.stat()
+        fresh = frag_from_file(path, st)
+        # App writes are atomic and complete: bypass the external-sync grace period.
+        _cache[str(path)] = (st.st_mtime_ns, st.st_size, fresh)
+        return fresh
 
 
 def move_to(f: dict, folder: Path) -> Path:
@@ -794,7 +800,7 @@ async def post_topic(body: TopicIn):
 @router.get("/api/think/topics")
 async def list_topics(status: str = "open"):
     with _lock, tdb() as conn:
-        rows = conn.execute("SELECT * FROM think_topics" + ("" if status == "all" else " WHERE status=?") + " ORDER BY updated_at DESC LIMIT 200",
+        rows = conn.execute("SELECT * FROM think_topics WHERE status!='deleted'" + ("" if status == "all" else " AND status=?") + " ORDER BY updated_at DESC LIMIT 200",
                             (() if status == "all" else (status,))).fetchall()
     notes = note_ids()
     return {"ok": True, "topics": [topic_brief(r, notes) for r in rows]}
@@ -809,12 +815,14 @@ class TopicPatch(BaseModel):
     title: str | None = None
     add: list[str] = []
     remove: list[str] = []
-    status: str | None = None     # open：重新打开（想完了又想接着想）
+    status: Literal["open"] | None = None     # 重新打开已完成或软删除的主题
 
 
 @router.patch("/api/think/topics/{tid}")
 async def patch_topic(tid: str, body: TopicPatch):
     r = load_topic(tid)
+    if r["status"] == "deleted" and body.status != "open":
+        raise HTTPException(409, L("先恢复这个主题", "Restore this topic first"))
     ids = json.loads(r["fragments"] or "[]")
     by_id = {f["id"]: f for f in await asyncio.to_thread(scan)}
     for i in body.add:
@@ -826,12 +834,30 @@ async def patch_topic(tid: str, body: TopicPatch):
             ids.remove(i)
             if i in by_id:
                 await asyncio.to_thread(set_topics, by_id[i], None, tid)
+    if r["status"] == "deleted" and body.status == "open":
+        for i in ids:
+            if i in by_id:
+                await asyncio.to_thread(set_topics, by_id[i], tid)
     title = re.sub(r"\s+", " ", body.title or "").strip()[:40] if body.title is not None else r["title"]
     status = body.status if body.status in ("open",) else r["status"]
     with _lock, tdb() as conn:
         conn.execute("UPDATE think_topics SET title=?, fragments=?, status=?, rev=rev+1, updated_at=? WHERE id=?",
                      (title or r["title"], json.dumps(ids), status, now_iso(), tid))
     return {"ok": True, "topic": await asyncio.to_thread(topic_json, load_topic(tid))}
+
+
+@router.delete("/api/think/topics/{tid}")
+async def delete_topic(tid: str):
+    """Soft-delete only the topic; keep its fragment ids and conversation for undo."""
+    r = load_topic(tid)
+    by_id = {f["id"]: f for f in await asyncio.to_thread(scan)}
+    for fid in json.loads(r["fragments"] or "[]"):
+        if fid in by_id:
+            await asyncio.to_thread(set_topics, by_id[fid], None, tid)
+    with _lock, tdb() as conn:
+        conn.execute("UPDATE think_topics SET status='deleted', rev=rev+1, updated_at=? WHERE id=?",
+                     (now_iso(), tid))
+    return {"ok": True}
 
 
 def add_note_to_topic(tid: str, frag: dict) -> None:
@@ -904,8 +930,7 @@ async def talk(tid: str):
     """聊聊：它先读一遍碎片、先问你几个问题。回复不推（你正看着）。"""
     r = load_topic(tid)
     if r["status"] != "open":
-        with _lock, tdb() as conn:
-            conn.execute("UPDATE think_topics SET status='open', updated_at=? WHERE id=?", (now_iso(), tid))
+        await patch_topic(tid, TopicPatch(status="open"))
     run = chat.start_run(tid, MARK_TALK + LS("：读一下这几条，先问我几个问题", ": read these and ask me a few questions first"), None, origin="auto", level="none")
     return {"ok": True, "thread": tid, "userId": f"db{run.user_id}"}
 
@@ -1234,7 +1259,7 @@ def search_sync(q: str, scope: str) -> dict:
     if scope in ("all", "topic"):
         found = []
         with _lock, tdb() as conn:
-            rows = conn.execute("SELECT * FROM think_topics ORDER BY updated_at DESC").fetchall()
+            rows = conn.execute("SELECT * FROM think_topics WHERE status!='deleted' ORDER BY updated_at DESC").fetchall()
             for r in rows:
                 msgs = conn.execute("SELECT text FROM messages WHERE thread=? AND role IN ('user','grava') ORDER BY id DESC", (r["id"],)).fetchall()
                 hit = next((m["text"] for m in msgs if all_words(m["text"], words)), None)
@@ -1307,7 +1332,7 @@ def keyword_sync(k: str) -> dict:
     rows_t = []
     if topic_ids:
         with _lock, tdb() as conn:
-            rows_t = [r for tid in topic_ids if (r := conn.execute("SELECT * FROM think_topics WHERE id=?", (tid,)).fetchone())]
+            rows_t = [r for tid in topic_ids if (r := conn.execute("SELECT * FROM think_topics WHERE id=? AND status!='deleted'", (tid,)).fetchone())]
     notes = note_ids()
     topics = [topic_brief(r, notes) for r in rows_t]
     name = (frags[0]["keywords"] if frags else json.loads(rows[0]["keywords"]) if rows else [k])
