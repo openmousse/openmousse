@@ -21,15 +21,16 @@ T=~/.openmousse/venv/bin/mousse-tree
 
 ## 2. 怎么称呼他
 
-问他想让你怎么称呼他。他答了以后两件事都做：
+问他想让你怎么称呼他。他答了以后跑这一条：
 
 ```bash
-$T add --source openclaw-main --kind preference --tags 称呼 --text "希望被称呼为「小周」"
 python3 ~/.openmousse/repo/server/settings_ctl.py user-name "小周"
 ```
 
-- 第一条按 `skills/memory-tree` 记进世界树：关于他的事都记在那里，各个 Agent 和他别的 AI 都读得到。
-- 第二条让服务器给模型的说明里用这个称呼叫他，马上生效，不用重启。
+它一次做两件事，马上生效，不用重启：
+
+- 服务器给模型的说明里用这个称呼叫他（server.json 的 `user_name`）。
+- 档案 USER.md 里记一行「称呼：小周」（已经有就改那一行）。档案是世界树的主干，各个 Agent 和他接上的别的 AI 都读得到，所以称呼不用再往世界树单独记一片叶子。
 
 回一句"记下了，以后叫你小周"，接着第 3 步。
 
@@ -84,5 +85,5 @@ List everything you remember about me, one item per line: my background, what I'
 
 - 一步一条回复，不要一次把六步全倒出来，也不要写成长篇说明。
 - 他中途问别的：先答他的，答完问一句要不要接着刚才那一步。
-- 做过的就跳过：世界树里已经有他的称呼（`$T recall`）、已经有 Agent 了（`python3 ~/.openmousse/repo/server/agent_ctl.py list`），那一步说一句就过，不要再问一遍。
+- 做过的就跳过：已经有称呼了（`python3 ~/.openmousse/repo/server/settings_ctl.py user-name` 不带参数，看现在的）、已经有 Agent 了（`python3 ~/.openmousse/repo/server/agent_ctl.py list`），那一步说一句就过，不要再问一遍。
 - 要问他的都写在回复里，不要用 ask_user 这类等输入的工具。

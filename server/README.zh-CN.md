@@ -16,7 +16,7 @@ python3 tokens.py add 手机       # 生成 app 的接入令牌，填进 app 的
 python3 run.py                   # 或按 openmousse-server.service.example 装成 systemd 服务
 ```
 
-`server.json` 每个字段的含义在 [`config.py`](config.py) 顶部。改令牌、加 Agent 不用重启；改监听地址要重启。`python3 settings_ctl.py user-name <称呼>` 改给模型的说明里怎么称呼你（`user_name`，不用重启；新手带路时主对话会调它）。
+`server.json` 每个字段的含义在 [`config.py`](config.py) 顶部。改令牌、加 Agent 不用重启；改监听地址要重启。`python3 settings_ctl.py user-name <称呼>` 改给模型的说明里怎么称呼你（`user_name`，不用重启），档案 USER.md 也记一行；新手带路时主对话会调它。
 
 ## 认证
 

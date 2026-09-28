@@ -16,7 +16,7 @@ python3 tokens.py add phone      # generate an access token for the app's connec
 python3 run.py                   # or install as a systemd service, see openmousse-server.service.example
 ```
 
-Every field of `server.json` is documented at the top of [`config.py`](config.py). Changing tokens or adding Agents needs no restart; changing the bind address does. `python3 settings_ctl.py user-name <name>` sets what prompts to the model call you (`user_name`, no restart; the main chat runs it while showing a new user around).
+Every field of `server.json` is documented at the top of [`config.py`](config.py). Changing tokens or adding Agents needs no restart; changing the bind address does. `python3 settings_ctl.py user-name <name>` sets what prompts to the model call you (`user_name`, no restart) and records it as one line in the profile USER.md; the main chat runs it while showing a new user around.
 
 ## Auth
 
