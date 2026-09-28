@@ -450,6 +450,10 @@ app 里「对话 → 朋友」。你的服务器和朋友的服务器直接说�
 | `GET` / `PATCH /api/card` | 档位和近况 |
 | `GET /f/card`、`/f/jwks.json`、`/f/i/{token}/{key}`；`POST /f/hello`、`/f/msg` | 公开的（只在小服务上）：签名名片、公钥、邀请落地页；兑换邀请码、投消息（要签名） |
 
+## 代办和 Sentinel 出口（预览）
+
+替你在外面办事（查资料、填表、发信、预订）的 Agent，在 OpenClaw 的 Docker 沙箱里跑，上网只有 Sentinel 一条路：读随便读，要提交、发送、用你的凭证、带你私事的，都在收件箱里等你点「放行这一次」（kind `egress`）。凭证是占位符，出门时才换成真值，只对绑定的网站。不跑 `python3 errand.py setup` 就不生效；分几层锁、怎么判、凭证、回滚都在 [`../sandbox/errand/README.zh-CN.md`](../sandbox/errand/README.zh-CN.md)。模块：`egress.py`（判断、`/api/egress/*`、收件箱钩子）、`egress_proxy.py` + `sentinel_run.py`（代理）、`errand.py`（装、查、凭证）。
+
 ## 数据源是可选的
 
 看板要的训练 / 餐食 / 身体 / 日历 / 健康派生指标，各来自 `server.json` 的 `scripts` 目录（默认 `<workspace>/scripts`）里的一个脚本：`xunji.py`（训练 / 餐食 / 身体）、`calendar_ics.py`（日历）、`apple_health.py`（恢复分、热量缺口、体能趋势，还有起没起床：`/api/health/wake` 看手机推到 `/api/health/sleep` 的睡眠分段和 `/api/health/signal` 收到的起床信号）。`memory_tree.py` 提供世界树（「我 → 世界树」）。脚本在就加载，不在就是「还没接」：`/api/health` 的 `sources` 告诉 app 哪些接了，没接的接口回 `ok=false` + `missing_source`，app 的看板显示空状态，其它功能照常。见 [`sources.py`](sources.py)。

@@ -451,6 +451,10 @@ Chat → Friends in the app. Your server and a friend's server talk directly: id
 | `GET` / `PATCH /api/card` | Tiers and your status line |
 | `GET /f/card`, `/f/jwks.json`, `/f/i/{token}/{key}`; `POST /f/hello`, `/f/msg` | Public (on the small app only): the signed card, the key, the invite page; redeeming an invite and delivering a message (signed) |
 
+## Errand agent and Sentinel egress (preview)
+
+An agent that runs errands outside for you (research, forms, mail, bookings) from inside OpenClaw's Docker sandbox, with Sentinel as its only way online: reads pass, anything that submits, sends, uses your credentials or carries your private details waits for "Let it through" in the inbox (kind `egress`). Credentials are placeholders swapped in on the way out, for their bound hosts only. Off until `python3 errand.py setup`; everything (layers, rules, credentials, rollback) is in [`../sandbox/errand/README.md`](../sandbox/errand/README.md). Modules: `egress.py` (decisions, `/api/egress/*`, the inbox hook), `egress_proxy.py` + `sentinel_run.py` (the proxy), `errand.py` (setup / status / secrets).
+
 ## Data sources are optional
 
 The boards need workouts / meals / body / calendar / derived health metrics, each provided by one script in the `scripts` directory named in `server.json` (default `<workspace>/scripts`): `xunji.py` (workouts / meals / body), `calendar_ics.py` (calendar), `apple_health.py` (recovery score, energy balance, fitness trend, and whether you are up yet: `/api/health/wake` reads the raw sleep segments the phone pushes to `/api/health/sleep` and the wake signals posted to `/api/health/signal`). `memory_tree.py` provides the memory tree (Me → Memory tree). A script that is present gets loaded; a missing one means "not connected": `/api/health` reports `sources` so the app knows, the affected endpoints answer `ok=false` + `missing_source`, boards show an empty state, everything else works. See [`sources.py`](sources.py).
