@@ -38,6 +38,15 @@ from config import raw, settings
 
 KINDS = ("openclaw", "openai")
 DEFAULT_TURNS = 40
+# OpenClaw 的 channels 里不是人聊天的：a2a 是 agent 之间的协议（2026.9 的 onboard 默认就开着），不算「主对话和 X 共用」，也不进「连接」页
+NOT_CHAT_CHANNELS = frozenset({"a2a"})
+CHANNEL_NAMES = {"telegram": "Telegram", "discord": "Discord", "whatsapp": "WhatsApp", "slack": "Slack", "imessage": "iMessage",
+                 "googlechat": "Google Chat", "msteams": "Microsoft Teams", "irc": "IRC", "sms": "SMS", "line": "LINE",
+                 "nextcloud-talk": "Nextcloud Talk", "synology-chat": "Synology Chat"}
+
+
+def channel_name(key: str) -> str:
+    return CHANNEL_NAMES.get(key, key.capitalize())
 
 
 class ClawError(RuntimeError):

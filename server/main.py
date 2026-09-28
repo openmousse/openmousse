@@ -255,7 +255,7 @@ def shared_channels() -> list[str]:
         ch = json.loads(settings.openclaw_json.read_text(encoding="utf8")).get("channels") or {}
     except (OSError, ValueError):
         return []
-    return [k.capitalize() for k, v in ch.items() if isinstance(v, dict) and v.get("enabled")]
+    return [claw.channel_name(k) for k, v in ch.items() if k not in claw.NOT_CHAT_CHANNELS and isinstance(v, dict) and v.get("enabled")]
 
 
 @app.get("/api/health")

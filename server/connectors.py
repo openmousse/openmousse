@@ -628,10 +628,10 @@ def dm_words(policy: Any) -> str | None:
 def check_channels(oc: dict, rt: dict | None) -> list[dict]:
     out = []
     for key, c in (oc.get("channels") or {}).items():
-        if not isinstance(c, dict):
+        if not isinstance(c, dict) or key in claw.NOT_CHAT_CHANNELS:
             continue
         r = (rt or {}).get(key)
-        name = (r or {}).get("label") or {"telegram": "Telegram", "discord": "Discord", "whatsapp": "WhatsApp", "slack": "Slack"}.get(key, key.capitalize())
+        name = (r or {}).get("label") or claw.channel_name(key)
         icon = "send" if key == "telegram" else "messages"
         facts = [(L("私聊", "DMs"), dm_words(c.get("dmPolicy"))),
                  (L("上次连上", "Last connected"), when(parse_ts(r.get("since"))) if r and parse_ts(r.get("since")) else None)]

@@ -18,7 +18,7 @@
   db / uploads / profile_history   分别覆盖 data_dir 下的三个位置
   profile           基础档案 USER.md（默认 <openclaw_home>/shared/profile/USER.md）
   dist              网页版构建产物目录（默认 仓库根/dist）
-  gateway           OpenClaw Gateway 的 HTTP 地址
+  gateway           OpenClaw Gateway 的 HTTP 地址（默认 http://127.0.0.1:<openclaw.json 的 gateway.port，没写就 18789>）
   openclaw_bin      openclaw 命令的路径（PATH 里找不到时用）
   env_file          读 API 密钥的 .env（默认 <openclaw_home>/.env）
   default_model     新线程默认模型
@@ -89,6 +89,15 @@ def _p(value: str | None, default: Path) -> Path:
     return Path(value).expanduser() if value else default
 
 
+def gateway_default(openclaw_json: Path) -> str:
+    """server.json 没写 gateway：本机 + openclaw.json 里 Gateway 的端口（onboard 时换过端口也连得上）。读不到按 OpenClaw 默认的 18789。"""
+    try:
+        port = int((json.loads(openclaw_json.read_text(encoding="utf8")).get("gateway") or {}).get("port") or 18789)
+    except (OSError, ValueError, TypeError, AttributeError):
+        port = 18789
+    return f"http://127.0.0.1:{port}"
+
+
 class Settings:
     """启动时算好的路径与常量。令牌之类会变的东西每次从 raw() 读。"""
 
@@ -110,11 +119,11 @@ class Settings:
         self.profile_history = _p(c.get("profile_history"), self.data_dir / "profile-history.md")
         self.profile = _p(c.get("profile"), self.openclaw_home / "shared/profile/USER.md")
         self.dist = _p(c.get("dist"), REPO / "app" / "dist")
-        self.gateway: str = c.get("gateway") or "http://127.0.0.1:18789"
+        self.openclaw_json = self.openclaw_home / "openclaw.json"
+        self.gateway: str = c.get("gateway") or gateway_default(self.openclaw_json)
         self.openclaw_bin: str = c.get("openclaw_bin") or "openclaw"
         self.env_file = _p(c.get("env_file"), self.openclaw_home / ".env")
         self.default_model: str = c.get("default_model") or "anthropic/claude-opus-5-5"
-        self.openclaw_json = self.openclaw_home / "openclaw.json"
         self.backup_dir = _p(c.get("backup_dir"), self.data_dir / "backups")
         self.agent_default_skills: list[str] = [str(x) for x in c.get("agent_default_skills") or []]
         self.transcribe_prompt: str = c.get("transcribe_prompt") or ""
