@@ -11,6 +11,7 @@ export interface ModelOption {
   cost: CostTier;
   note: string;
   featured: boolean;
+  plain?: boolean; // 目录里没有、从服务器配置里来的模型（只知道 id）
 }
 
 /** Agent 的图标（服务器认的 24 个 key）。老数据里别的写法由 GroupIcon.tsx 换成这些，不认识的显示成默认图标。 */

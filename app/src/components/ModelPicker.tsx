@@ -10,6 +10,11 @@ import { useSheet } from './Sheet';
 import { Pill, T } from './ui';
 
 export const modelOf = (id?: string): ModelOption | undefined => MODELS.find((m) => m.id === id);
+/** 目录里没有的模型（比如 OpenClaw 里配的 DeepSeek）：名字取 id 里 / 后面那段，计费和用途不知道就不标。 */
+const plainModel = (id: string): ModelOption => {
+  const short = id.split('/').pop() || id;
+  return { id, name: short, short, billing: 'API', cost: '中', note: '', featured: true, plain: true };
+};
 
 /** 目录里写的是"订阅"，但这家的订阅登录过期了，实际会退到 API key 按量计费。 */
 export function useBilling() {
@@ -27,10 +32,10 @@ function Option({ m, on, onPress }: { m: ModelOption; on: boolean; onPress: () =
       <View style={{ flex: 1, gap: 4 }}>
         <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
           <T v="headline">{m.name}</T>
-          <Pill label={billingLabel(billing)} tone={billing === '订阅' ? 'gold' : billing === '免费' ? 'good' : 'cyan'} />
-          {m.cost === '贵' ? <Pill label={costLabel(m.cost)} tone="warn" /> : m.cost === '省' ? <Pill label={costLabel(m.cost)} tone="neutral" /> : null}
+          {m.plain ? null : <Pill label={billingLabel(billing)} tone={billing === '订阅' ? 'gold' : billing === '免费' ? 'good' : 'cyan'} />}
+          {m.plain ? null : m.cost === '贵' ? <Pill label={costLabel(m.cost)} tone="warn" /> : m.cost === '省' ? <Pill label={costLabel(m.cost)} tone="neutral" /> : null}
         </View>
-        <T v="callout" color={t.ink2}>{m.note}</T>
+        <T v="callout" color={t.ink2}>{m.plain ? m.id : m.note}</T>
       </View>
       {on ? <Check size={20} color={t.gold} /> : null}
     </Pressable>
@@ -38,9 +43,12 @@ function Option({ m, on, onPress }: { m: ModelOption; on: boolean; onPress: () =
 }
 
 /** 只列 Gateway 允许列表里的模型（openclaw.json 的 modelPolicy.allow）；还没读到就先按目录全列。 */
-function useAllowedModels() {
+function useAllowedModels(): ModelOption[] {
   const { models } = useStore();
-  return models ? MODELS.filter((m) => models.allowed.includes(m.id)) : MODELS;
+  if (!models) return MODELS;
+  // 允许列表空 = OpenClaw 没配（新装的就是这样，都能用）：列它配好的主模型和回退，不列目录里这台服务器多半没登录的
+  const ids = models.allowed.length ? models.allowed : [models.primary, ...(models.fallbacks ?? [])].filter((x): x is string => !!x);
+  return ids.map((id) => modelOf(id) ?? plainModel(id));
 }
 
 /** 别的 claw（不是 OpenClaw）：模型就是服务器 claw 段写的那几个（/api/models 的 allowed），app 的模型目录里没有它们，原样列出。OpenClaw = null。 */
@@ -78,7 +86,7 @@ function ModelList({ value, onPick }: { value: string; onPick: (id: string) => v
   return (
     <View style={{ gap: space.sm }} accessibilityRole="radiogroup">
       {list.map((m) => <Option key={m.id} m={m} on={m.id === value} onPress={() => onPick(m.id)} />)}
-      {!more ? (
+      {!more && allowed.some((m) => !m.featured) ? (
         <Pressable onPress={() => setMore(true)} style={{ paddingVertical: space.md, alignItems: 'center' }} accessibilityRole="button">
           <T v="callout" color={t.gold}>{L(`更多模型（${allowed.filter((m) => !m.featured).length}）`, `More models (${allowed.filter((m) => !m.featured).length})`)}</T>
         </Pressable>
@@ -109,7 +117,7 @@ export function ModelSwitch({ value, onChange }: { value: string; onChange: (id:
       onPress={() => sheet.open({ title: L('这段对话用哪个模型', 'Model for this chat'), content: (close) => <ModelList value={value} onPick={(id) => { onChange(id); close(); }} /> })}
       style={({ pressed }) => [styles.switch, { backgroundColor: t.surface, opacity: pressed ? 0.7 : 1 }]}>
       <View style={{ width: 7, height: 7, borderRadius: 4, backgroundColor: m?.billing === '订阅' ? t.goldFill : t.chartA }} />
-      <T v="caption" style={{ fontSize: 13 }} numberOfLines={1}>{other ? value : m?.short ?? L('模型', 'Model')}</T>
+      <T v="caption" style={{ fontSize: 13 }} numberOfLines={1}>{other ? value : m?.short ?? (value ? plainModel(value).short : L('模型', 'Model'))}</T>
       <ChevronDown size={14} color={t.ink2} />
     </Pressable>
   );

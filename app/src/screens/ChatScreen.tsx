@@ -238,7 +238,7 @@ export function ChatScreen() {
           {side
             ? <T v="caption" color={t.ink3} numberOfLines={1}>{side.archived ? L('已归档 · ', 'Archived · ') : L('项目 · ', 'Project · ')}{side.next ? leftWords(side.next.left) : side.goal || side.purpose || L('自己的上下文', 'Its own context')}</T>
             : <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
-                {connected ? <Pill label={sharedChannels.length ? L(`与 ${sharedChannels.join('、')} 共用主会话`, `Main session, shared with ${sharedChannels.join(', ')}`) : L('主会话', 'Main session')} tone="good" /> : <Pressable onPress={() => nav.navigate('Connect')} accessibilityRole="button" accessibilityLabel={L('设置服务器', 'Set up server')}><Pill label={booting ? L('正在连接…', 'Connecting…') : L('未连接服务器，点这里设置', 'Not connected, tap to set up')} tone="warn" /></Pressable>}
+                {connected ? <Pill lines={1} label={sharedChannels.length ? L(`与 ${sharedChannels.join('、')} 共用主会话`, `Main session, shared with ${sharedChannels.join(', ')}`) : L('主会话', 'Main session')} tone="good" /> : <Pressable onPress={() => nav.navigate('Connect')} accessibilityRole="button" accessibilityLabel={L('设置服务器', 'Set up server')} style={{ flexShrink: 1 }}><Pill lines={1} label={booting ? L('正在连接…', 'Connecting…') : L('未连接，点这里设置', 'Not connected, tap to set up')} tone="warn" /></Pressable>}
               </View>}
         </View>
         <Pressable onPress={() => nav.navigate('History', { thread: active })} hitSlop={8} accessibilityRole="button" accessibilityLabel={L('历史与搜索', 'History and search')} style={styles.menuBtn}>

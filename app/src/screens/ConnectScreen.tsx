@@ -59,10 +59,11 @@ export function ConnectScreen() {
 
         <SectionLabel>{L('怎么拿令牌', 'How to get a token')}</SectionLabel>
         <Card>
-          <T v="callout" color={t.ink2}>{L('在服务器上进 server 目录，运行：', 'On your server, go to the server/ folder and run:')}</T>
-          <T v="callout" style={{ fontFamily: 'monospace', marginVertical: 6 }}>{L('python3 tokens.py add 手机', 'python3 tokens.py add phone')}</T>
-          <T v="callout" color={t.ink2}>{L('把打印出来的令牌填到上面。令牌存在这台设备的钥匙串里，不经过任何第三方。',
-            "Paste the token it prints into the field above. It's stored in this device's keychain and never passes through a third party.")}</T>
+          <T v="callout" color={t.ink2}>{L('安装命令最后打印的「手机令牌」就是它。丢了的话，在服务器上运行：',
+            'It\'s the phone token the install command printed at the end. Lost it? On your server run:')}</T>
+          <T v="callout" selectable style={{ fontFamily: 'monospace', marginVertical: 6 }}>~/.openmousse/venv/bin/python ~/.openmousse/repo/server/tokens.py add phone2</T>
+          <T v="callout" color={t.ink2}>{L('把打印出来的新令牌填到上面。令牌存在这台设备的钥匙串里，不经过任何第三方。',
+            "Paste the new token it prints into the field above. It's stored in this device's keychain and never passes through a third party.")}</T>
         </Card>
       </ScrollView>
     </Screen>

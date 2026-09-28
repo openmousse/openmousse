@@ -99,16 +99,17 @@ export function SectionLabel({ children, right, caps = true }: { children: strin
 }
 
 /** 小标签。colors = [底色, 字色]，给 Agent 自己的颜色用；不给就按 tone。 */
-export function Pill({ label, tone = 'neutral', colors }: { label: string; tone?: 'neutral' | 'gold' | 'cyan' | 'good' | 'warn' | 'bad'; colors?: readonly [string, string] }) {
+export function Pill({ label, tone = 'neutral', colors, lines }: { label: string; tone?: 'neutral' | 'gold' | 'cyan' | 'good' | 'warn' | 'bad'; colors?: readonly [string, string]; lines?: number }) {
   const t = useTheme();
   const map = {
     neutral: [t.surface2, t.ink2], gold: [t.goldSoft, t.gold], cyan: [t.cyanSoft, t.cyan],
     good: [t.goodSoft, t.good], warn: [t.warnSoft, t.warn], bad: [t.badSoft, t.bad],
   } as const;
   const [bg, fg] = colors ?? map[tone];
+  // lines：挤的地方（聊天顶栏）只占这么多行，放不下就省略号，不压到旁边的按钮底下
   return (
-    <View style={{ backgroundColor: bg, borderRadius: radius.pill, paddingHorizontal: 8, paddingVertical: 3 }}>
-      <Text style={[type.caption, { color: fg }]}>{label}</Text>
+    <View style={[{ backgroundColor: bg, borderRadius: radius.pill, paddingHorizontal: 8, paddingVertical: 3 }, lines ? { flexShrink: 1 } : null]}>
+      <Text style={[type.caption, { color: fg }]} numberOfLines={lines}>{label}</Text>
     </View>
   );
 }
