@@ -1,5 +1,5 @@
 // 「思考」tab：想法（AI 不看，等你叫）、收藏（别人的东西，先存着）和播客（说出来，录完帮你理成笔记，见 ../think/Podcast.tsx）。顶上一个搜索框（想法、收藏、聊过的、库里的笔记一起搜）和按天翻的日历。
-import React, { useCallback, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { Platform, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
 import * as Clipboard from 'expo-clipboard';
 import { useFocusEffect, useNavigation, useRoute } from '@react-navigation/native';
@@ -22,6 +22,7 @@ import { TopicActionsSheet } from '../think/TopicSheets';
 import { useThink } from '../think/ThinkStore';
 import { ZenStartSheet, openZenSummary } from '../think/Zen';
 import { Podcast } from '../think/Podcast';
+import { podcastSupported } from '../api/podcast';
 
 type Tab = 'ideas' | 'saves' | 'podcast';
 const TABS: readonly Tab[] = ['ideas', 'saves', 'podcast'];
@@ -35,7 +36,10 @@ export function ThinkScreen() {
   // 别处要求切到某一栏（比如收藏里点了「放进思考」）：带 tab + at
   const [sel, setSel] = useState<{ tab: Tab; at: number }>({ tab: TABS.includes(route.params?.tab) ? route.params.tab : 'ideas', at: 0 });
   const wantedAt = (route.params?.at as number | undefined) ?? 0;
-  const tab: Tab = wantedAt > sel.at && TABS.includes(route.params?.tab) ? route.params.tab : sel.tab;
+  const [hasPod, setHasPod] = useState(true);  // 老服务器没有播客：不显示这一栏
+  useEffect(() => { podcastSupported().then(setHasPod); }, []);
+  const picked: Tab = wantedAt > sel.at && TABS.includes(route.params?.tab) ? route.params.tab : sel.tab;
+  const tab: Tab = picked === 'podcast' && !hasPod ? 'ideas' : picked;
   const setTab = (v: Tab) => setSel({ tab: v, at: Math.max(sel.at, wantedAt) });
 
   useFocusEffect(useCallback(() => { refresh(); refreshSaves(); refreshKeywords(); loadFocus(); }, [refresh, refreshSaves, refreshKeywords, loadFocus]));
@@ -57,7 +61,7 @@ export function ThinkScreen() {
       <LargeHeader title="Zen" sub={tab === 'ideas' ? L('想到什么先扔进来，它不看', "Drop thoughts here. It won't read them.") : tab === 'saves' ? L('别人的好东西，先存着', "Keep other people's good stuff") : L('说出来，录完帮你理成笔记', 'Say it out loud; it turns it into a note')} right={right} />
       <View style={{ paddingHorizontal: space.lg, gap: 10, paddingBottom: space.sm }}>
         <View style={[styles.seg, { backgroundColor: t.surface2 }]} accessibilityRole="tablist">
-          {([['ideas', L('想法', 'Thoughts'), 0], ['saves', L('收藏', 'Saved'), savesNew], ['podcast', L('播客', 'Podcast'), 0]] as const).map(([k, label, n]) => {
+          {([['ideas', L('想法', 'Thoughts'), 0], ['saves', L('收藏', 'Saved'), savesNew], ['podcast', L('播客', 'Podcast'), 0]] as const).filter(([k]) => k !== 'podcast' || hasPod).map(([k, label, n]) => {
             const on = tab === k;
             return (
               <Pressable key={k} onPress={() => setTab(k)} accessibilityRole="tab" accessibilityState={{ selected: on }}

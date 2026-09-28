@@ -3,7 +3,7 @@
 import { Platform } from 'react-native';
 import type { AudioSource } from 'expo-audio';
 import type { PendingFile } from '../data/types';
-import { authHeaders, fileUrl, getBase, request } from './base';
+import { authHeaders, fileUrl, getBase, httpStatus, request } from './base';
 import { formFile, xhrUpload } from './client';
 
 export type PodMode = 'solo' | 'host' | 'feynman' | 'friends';
@@ -41,6 +41,21 @@ export interface PodSuggestion { title: string; mode: Exclude<PodMode, 'friends'
 export interface PodHome { suggestions: PodSuggestion[] | null; suggestedAt: string | null; episodes: PodBrief[]; study: boolean }
 
 export const home = () => request<PodHome>('/api/podcast');
+
+let supported: boolean | null = null;
+/** 服务器有没有播客：老服务器 /api/podcast 是 404 / 405，思考页就不显示这一栏。连不上时先当有（别把栏目闪没了）。一次打开 app 只问一次。 */
+export async function podcastSupported(): Promise<boolean> {
+  if (supported !== null) return supported;
+  try {
+    await request('/api/podcast');
+    supported = true;
+  } catch (e) {
+    const s = httpStatus(e);
+    if (s === 404 || s === 405) supported = false;
+    else return true;
+  }
+  return supported;
+}
 export const suggest = (exclude: string[] = []) =>
   request<{ suggestions: PodSuggestion[] }>('/api/podcast/suggest', { method: 'POST', body: { exclude }, timeoutMs: 120000 }).then((j) => j.suggestions);
 export const create = (b: { title: string; mode: PodMode; source?: PodSource }) =>
