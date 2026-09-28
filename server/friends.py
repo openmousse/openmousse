@@ -293,7 +293,10 @@ def msg_json(r) -> dict:
         out["about"] = r["reply_to"]
     if r["kind"] == "answer":
         out["used"] = d.get("used") or []
+        out["usedLabel"] = d.get("usedLabel") or ""
         out["defer"] = bool(d.get("defer"))
+        if d.get("outcome"):
+            out["outcome"] = d["outcome"]
     if r["dir"] == "out" and r["status"] == "failed":
         out["error"] = r["error"]
     return out
@@ -773,12 +776,61 @@ async def answer_ask(fid: str, ask_id: int) -> None:
         text = str(res.get("text") or "").strip()[:TEXT_MAX]
         if not text:
             return
-        data = {"used": [str(u)[:60] for u in (res.get("used") or [])][:5], "defer": bool(res.get("defer")), "log_id": res.get("log_id"),
-                "declined": bool(res.get("declined")), "limited": bool(res.get("limited"))}
+        names = res.get("usedNames") if isinstance(res.get("usedNames"), list) else res.get("used")  # 给人看的名字（「这期节目」），不是资料 id
+        defer = res.get("defer") if isinstance(res.get("defer"), dict) else None
+        data = {"used": [str(u)[:60] for u in (names or [])][:5], "usedLabel": str(res.get("usedLabel") or "")[:80],
+                "defer": bool(res.get("defer")), "log_id": res.get("log_id"), "declined": bool(res.get("declined")),
+                "limited": bool(res.get("limited")), **({"inbox_id": defer.get("inbox_id")} if defer and defer.get("inbox_id") else {})}
         insert_out(fid, "answer", text, data=data, reply_to=ask["mid"], by="agent", review="pending")
         await notify(f, "answered", LS(f"{f['name']} 问了你的名片 agent，它答了", f"{f['name']} asked your card agent; it answered"))
     except Exception:  # noqa: BLE001 — 答不了就不答，Leo 在对话里看得到这条追问
         log.exception("friends answer_ask")
+
+
+async def deliver_chat(ask: dict, text: str, data: dict) -> bool:
+    """名片 agent 出的收件箱卡（要 Leo 表态的）点完以后，第三层把结果交回来：作为一条 by=agent 的 answer 发给那个朋友。
+    ask = cardagent 的 card_asks 一行（peer = 好友 id、ref = share:<sid>、inbox_id）；回的是哪条追问：先按那张卡找当初那条代答，
+    找不到就用这个朋友关于这条分享最近的一条追问。朋友不在了、分享收回了 → False（卡上会写「没能告诉对方」）。"""
+    fid = str(ask.get("peer") or "")
+    f = social.friend(fid) if FID_RE.match(fid) else None
+    text = str(text or "").strip()[:TEXT_MAX]
+    if not f or f["status"] != "active" or not text:
+        return False
+    sid = str(ask.get("ref") or "").removeprefix("share:")
+    about = None
+    with _lock, db() as conn:
+        rows = conn.execute("SELECT * FROM friend_messages WHERE friend=? AND dir='out' AND kind='answer' ORDER BY id DESC LIMIT 200", (fid,)).fetchall()
+        for r in rows:
+            if ask.get("inbox_id") and row_data(r).get("inbox_id") == ask["inbox_id"]:
+                about = r["reply_to"]
+                break
+        shares = {r["mid"]: row_data(r).get("share") or {} for r in conn.execute(
+            "SELECT mid, data FROM friend_messages WHERE friend=? AND dir='out' AND kind='share' AND status!='revoked'", (fid,))}
+        if about is None:
+            for r in conn.execute("SELECT * FROM friend_messages WHERE friend=? AND dir='in' AND kind='ask' ORDER BY id DESC LIMIT 50", (fid,)):
+                if (shares.get(r["reply_to"]) or {}).get("sid") == sid:
+                    about = r["mid"]
+                    break
+        if about is not None:
+            ask_row = conn.execute("SELECT reply_to FROM friend_messages WHERE friend=? AND dir='in' AND kind='ask' AND mid=?", (fid, about)).fetchone()
+            if not ask_row or ask_row["reply_to"] not in shares:
+                about = None   # 那条分享收回了
+    if about is None:
+        return False
+    insert_out(fid, "answer", text, data={"used": [], "defer": False, "outcome": str((data or {}).get("outcome") or "")[:20],
+                                         **({"inbox_id": ask["inbox_id"]} if ask.get("inbox_id") else {})},
+               reply_to=about, by="agent", review="ok")
+    return True
+
+
+def register_delivery() -> None:
+    ca = cardagent_mod()
+    reg = getattr(ca, "DELIVER", None) if ca else None
+    if isinstance(reg, dict):
+        reg["chat"] = deliver_chat
+
+
+register_delivery()
 
 
 # —— 给 app 的：朋友、邀请码 ——
