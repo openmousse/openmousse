@@ -700,9 +700,10 @@ async def check_claw() -> dict | None:
         ok, detail = await claw.probe()
     except Exception as exc:  # noqa: BLE001 — 地址写错之类：这一项显示连不上，别拖垮整页
         ok, detail = False, type(exc).__name__
-    mode, header, turns = claw.session_mode()
+    mode, field, turns = claw.session_mode()
     how = {"history": L(f"每次带上今天的记录（最多 {turns} 轮）", f"sends today's messages each time (up to {turns} turns)"),
-           "header": L(f"它自己记，会话键放在请求头 {header}", f"it keeps sessions itself; key in the {header} header"),
+           "header": L(f"它自己记，会话键放在请求头 {field}", f"it keeps sessions itself; key in the {field} header"),
+           "body": L(f"它自己记，会话键放在请求体的 {field}", f"it keeps sessions itself; key in the request's {field} field"),
            "user": L("它自己记，会话键放在 user 字段", "it keeps sessions itself; key in the user field")}[mode]
     facts = [(L("接口", "API"), claw.base_url() or None), (L("模型", "Model"), ", ".join(claw.models())), (L("对话怎么接上", "Conversation"), how),
              (L("令牌", "Token"), L("有", "Set") if claw.token() else L("没有", "None"))]

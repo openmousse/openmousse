@@ -4,15 +4,19 @@ server.json 的 claw 段（没有这一段 = OpenClaw，和以前完全一样）
   kind      "openclaw"（默认）| "openai"：任何有 OpenAI 兼容对话接口（POST <url>/chat/completions，SSE 流式）的 claw 或 agent
   name      界面上怎么叫它（默认 OpenClaw / "your claw"）
   url       openai：接口的根，一直写到 /v1，比如 http://127.0.0.1:8642/v1
-  token     openai：Bearer 令牌；也可以写 token_env = 环境变量名（先看进程环境，再看 settings.env_file 那个 .env）
-  model     openai：请求里的 model（默认 "default"）
+  token     openai：Bearer 令牌；也可以写 token_env = 环境变量名（先看进程环境，再看 claw 段的 env_file，再看 server.json 的 env_file）
+  model     openai：请求里的 model（不写 = "default"；写成空字符串 = 请求里不带 model，nanobot 要这样）
   models    openai：app 里能切换的模型（不给就只有 model 一个，app 不显示切换）
   session   openai：一个对话怎么接上一句
-              {"mode": "history", "turns": 40}  默认：每次把这个对话今天的记录（最多 turns 轮）一起发过去。什么接口都行，
-                                                claw 自己不用记会话；撤回 = 删 app 这边的记录，下一轮就不带了
-              {"mode": "header", "header": "X-Session-Id"}  claw 自己按会话记：会话键放进这个请求头，每次只发新的一句
-              {"mode": "user"}                  会话键放进 OpenAI 的 user 字段，每次只发新的一句
+              {"mode": "history", "turns": 40}  默认：每次把这个对话今天的记录（最多 turns 轮）一起发过去。给没有会话的接口用
+                                                （比如直接接一个模型的 API）；撤回 = 删 app 这边的记录，下一轮就不带了
+              {"mode": "header", "header": "X-Session-Id"}  claw 自己记会话：会话键放进这个请求头，每次只发新的一句（Hermes、Letta）
+              {"mode": "body", "field": "session_id"}        会话键放进请求体的这个字段（nanobot）
+              {"mode": "user"}                  会话键放进 OpenAI 的 user 字段
+            后三种的会话键是 mousse:<对话>:<逻辑日>，每天 04:00 换新的（多数 claw 自己不按天重置；前一天靠日结接上）；
+            "daily": false 就一直用 mousse:<对话>
   headers   openai：额外的请求头（有的 claw 用它选 agent、选工作区）
+  常见 claw 的现成配置（Hermes、nanobot、Letta）在 claw_presets.py，安装时答它的名字就行
   skills / rules   只给安装器用：claw 的 skills 文件夹（OpenMousse 的 skill 软链进去）、它每轮都读的规则文件（AGENTS.md 之类，规矩追加进去）
 
 OpenClaw 以外的 claw 能做的（caps()，/api/health 带给 app，做不到的入口 app 藏起来）：
@@ -66,25 +70,43 @@ def model() -> str:
     return str(cfg().get("model") or "").strip() or "default"
 
 
+def send_model() -> bool:
+    """请求里带不带 model：claw 段写了 "model": ""（空字符串）就不带（nanobot 只认它自己配的模型，不带最省事）。"""
+    c = cfg()
+    return not ("model" in c and not str(c.get("model") or "").strip())
+
+
 def models() -> list[str]:
     """app 里能选的模型（通用 claw）：models 列表，没有就只有 model 一个。"""
     ms = [str(m).strip() for m in cfg().get("models") or [] if str(m).strip()]
     return ms or [model()]
 
 
-def session_mode() -> tuple[str, str, int]:
-    """(mode, header, turns)。mode：history（默认）| header | user。"""
+def session_cfg() -> dict:
     s = cfg().get("session")
-    s = s if isinstance(s, dict) else {"mode": s} if isinstance(s, str) else {}
+    return s if isinstance(s, dict) else {"mode": s} if isinstance(s, str) else {}
+
+
+def session_mode() -> tuple[str, str, int]:
+    """(mode, name, turns)。mode：history（默认）| header | body | user；name = 请求头名（header）或请求体字段名（body）。"""
+    s = session_cfg()
     mode = str(s.get("mode") or "history").lower()
-    if mode not in ("history", "header", "user"):
+    if mode not in ("history", "header", "body", "user"):
         mode = "history"
-    header = str(s.get("header") or "X-Session-Id")
+    name_ = str(s.get("header") or "X-Session-Id") if mode == "header" else str(s.get("field") or "session_id") if mode == "body" else ""
     try:
         turns = max(1, min(200, int(s.get("turns") or DEFAULT_TURNS)))
     except (TypeError, ValueError):
         turns = DEFAULT_TURNS
-    return mode, header, turns
+    return mode, name_, turns
+
+
+def day_key(key: str, day: str) -> str:
+    """claw 自己记会话时（header / body / user）交给它的会话键：默认按逻辑日换新的（多数 claw 没有每天重置，app 一天一页）。"""
+    mode, _, _ = session_mode()
+    if mode == "history" or session_cfg().get("daily") is False:
+        return key
+    return f"{key}:{day}"
 
 
 def env_value(name_: str) -> str:
@@ -94,14 +116,16 @@ def env_value(name_: str) -> str:
         return ""
     if os.environ.get(name_):
         return os.environ[name_]
-    env_file = Path(str(raw().get("env_file"))).expanduser() if raw().get("env_file") else settings.env_file
-    try:
-        for line in env_file.read_text(encoding="utf8").splitlines():
-            k, sep, v = line.strip().removeprefix("export ").partition("=")
-            if sep and k.strip() == name_:
-                return v.strip().strip("'\"")
-    except OSError:
-        pass
+    files = [Path(str(cfg()["env_file"])).expanduser()] if cfg().get("env_file") else []  # 比如 Hermes 的 ~/.hermes/.env
+    files.append(Path(str(raw().get("env_file"))).expanduser() if raw().get("env_file") else settings.env_file)
+    for env_file in files:
+        try:
+            for line in env_file.read_text(encoding="utf8").splitlines():
+                k, sep, v = line.strip().removeprefix("export ").partition("=")
+                if sep and k.strip() == name_:
+                    return v.strip().strip("'\"")
+        except OSError:
+            continue
     return ""
 
 
@@ -157,11 +181,15 @@ def history(conn: sqlite3.Connection, thread: str, before_id: int, since: str, t
 
 
 def request_body(messages: list[dict], key: str, model_: str | None, stream: bool) -> tuple[dict, dict[str, str]]:
-    mode, header, _ = session_mode()
-    body: dict = {"model": model_ or model(), "stream": stream, "messages": messages}
+    mode, field, _ = session_mode()
+    body: dict = {"stream": stream, "messages": messages}
+    if send_model():
+        body["model"] = model_ or model()
     h = headers()
     if mode == "header":
-        h[header] = key
+        h[field] = key
+    elif mode == "body":
+        body[field] = key
     elif mode == "user":
         body["user"] = key
     return body, h

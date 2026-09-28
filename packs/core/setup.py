@@ -318,7 +318,7 @@ def write_server_json(a: argparse.Namespace, oc: dict, home: Path, workspace: Pa
     old_claw = cfg.get("claw") if isinstance(cfg.get("claw"), dict) else {}
     if claw:  # 别的 claw：令牌这次没给就沿用上次的（重装时回车）
         keep = {k: v for k, v in old_claw.items() if k in ("token", "token_env", "models", "session", "headers")} if old_claw.get("kind") == "openai" else {}
-        cfg["claw"] = {**keep, **{k: v for k, v in claw.items() if v}}
+        cfg["claw"] = {**keep, **{k: v for k, v in claw.items() if v or k == "model"}}  # model 可以是 ""（不带 model）
     elif old_claw.get("kind") not in (None, "openclaw"):
         cfg.pop("claw", None)  # 换回了 OpenClaw
         say(L("server.json 的 claw 段去掉了：换回 OpenClaw", "Removed the claw section from server.json: back to OpenClaw"))
@@ -546,7 +546,16 @@ def probe_claw(c: dict) -> tuple[bool, str]:
     """别的 claw 的接口连不连得上：GET <url>/models（多数 OpenAI 兼容接口都有；404 也算连得上，说明服务在）。不打印令牌。"""
     import urllib.error
     import urllib.request
-    req = urllib.request.Request(str(c.get("url") or "").rstrip("/") + "/models", headers={"Authorization": f"Bearer {c['token']}"} if c.get("token") else {})
+    token = c.get("token") or ""
+    if not token and c.get("token_env"):  # Hermes 之类：令牌在它自己的 .env（claw 段的 env_file）或环境变量里
+        token = os.environ.get(c["token_env"], "")
+        env_file = Path(str(c.get("env_file") or "")).expanduser() if c.get("env_file") else None
+        if not token and env_file and env_file.is_file():
+            for line in env_file.read_text(encoding="utf8").splitlines():
+                k, sep, v = line.strip().removeprefix("export ").partition("=")
+                if sep and k.strip() == c["token_env"]:
+                    token = v.strip().strip("'\"")
+    req = urllib.request.Request(str(c.get("url") or "").rstrip("/") + "/models", headers={"Authorization": f"Bearer {token}"} if token else {})
     try:
         with urllib.request.urlopen(req, timeout=5) as r:  # noqa: S310 — 用户自己填的地址
             return True, f"HTTP {r.status}"
@@ -645,6 +654,7 @@ def main() -> None:
     ap.add_argument("--no-systemd", action="store_true")
     ap.add_argument("--no-tree", action="store_true")
     ap.add_argument("--claw-url", help="another claw / agent's OpenAI-compatible API, up to /v1 (not OpenClaw)")
+    ap.add_argument("--claw-preset", help="hermes | nanobot | letta: start from server/claw_presets.py")
     ap.add_argument("--claw-name")
     ap.add_argument("--claw-model")
     ap.add_argument("--claw-skills", help="that claw's skills folder: OpenMousse's skills get linked in")
@@ -661,9 +671,21 @@ def main() -> None:
     generic = bool(a.claw_url)  # 别的 claw（OpenAI 兼容接口）：不碰 openclaw.json
     claw = None
     if generic:
-        claw = {"kind": "openai", "url": a.claw_url.strip().rstrip("/"), "name": (a.claw_name or "").strip() or "My claw",
-                "model": (a.claw_model or "").strip() or "default", "token": os.environ.get("MOUSSE_CLAW_TOKEN", "").strip(),
-                "skills": str(Path(a.claw_skills).expanduser()) if a.claw_skills else "", "rules": str(Path(a.claw_rules).expanduser()) if a.claw_rules else ""}
+        sys.path.insert(0, str(repo / "server"))
+        import claw_presets  # 只用标准库
+        claw = {**claw_presets.preset(a.claw_preset or ""), "kind": "openai", "url": a.claw_url.strip().rstrip("/")}
+        claw["name"] = (a.claw_name or "").strip() or claw.get("name") or "My claw"
+        if a.claw_model is not None:  # 没给就用预设的（nanobot 的 "" = 请求里不带 model）；都没有 = default
+            claw["model"] = a.claw_model.strip() or "default"
+        claw.setdefault("model", "default")
+        claw["token"] = os.environ.get("MOUSSE_CLAW_TOKEN", "").strip()
+        for k, v in (("skills", a.claw_skills), ("rules", a.claw_rules)):
+            if v:
+                claw[k] = str(Path(v).expanduser())
+            elif claw.get(k):
+                claw[k] = str(Path(claw[k]).expanduser())
+        if claw.get("token_env") and not claw["token"]:
+            claw.pop("token")  # 令牌按 token_env 从环境 / 它自己的 .env 读，server.json 里不存
         oc = {}
         workspace = MOUSSE_HOME / "workspace"  # OpenMousse 自己的：档案 USER.md、记忆页读的 MEMORY.md
         workspace.mkdir(parents=True, exist_ok=True)
@@ -682,7 +704,7 @@ def main() -> None:
     print("skills")
     restart = False
     if generic:
-        install_skills(Path(claw["skills"]) if claw["skills"] else None, Path(claw["rules"]) if claw["rules"] else None, repo, home,
+        install_skills(Path(claw["skills"]) if claw.get("skills") else None, Path(claw["rules"]) if claw.get("rules") else None, repo, home,
                        GENERIC_SKILLS, (GENERIC_RULES_ZH, GENERIC_RULES_EN))
     else:
         link_skills(workspace, repo, home)

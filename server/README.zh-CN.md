@@ -36,7 +36,9 @@ python3 run.py                   # 或按 openmousse-server.service.example 装�
 ```
 
 - `url` 写到 `/v1`：服务器往 `<url>/chat/completions` 发 `stream: true` 的请求（直接回整段 JSON 的也认），连接页用 `<url>/models` 看连不连得上。`token`（或者 `token_env`：环境变量名，先看进程环境再看 `env_file`）作为 Bearer 令牌带上。`models` 是 app 里能切换的模型；`headers` 是它要的额外请求头。
-- `session` 定一个对话怎么接上一句：`{"mode": "history", "turns": 40}`（默认）每次把这个对话今天的记录一起发过去，任何无状态的接口都行，撤回就是这边删掉、下一轮不带；`{"mode": "header", "header": "X-Session-Id"}` 或 `{"mode": "user"}` 把会话键（`mousse:<对话>`）交给 claw、每次只发新的一句，给自己记会话的 claw 用。
+- `session` 定一个对话怎么接上一句：`{"mode": "history", "turns": 40}`（默认）每次把这个对话今天的记录一起发过去，给自己没有会话的接口用（比如直接接一个模型的 API），撤回就是这边删掉、下一轮不带。自己记会话的 claw 每次只收新的一句和一个会话键：`{"mode": "header", "header": "X-Session-Id"}`、`{"mode": "body", "field": "session_id"}` 或 `{"mode": "user"}`。会话键是 `mousse:<对话>:<逻辑日>`，每天 04:00 换新的（多数 claw 自己不按天重置，前一天靠日结接上）；`"daily": false` 就一直用 `mousse:<对话>`。`"model": ""` = 请求里不带 model。
+- 现成配置（[`claw_presets.py`](claw_presets.py)），安装时答名字就填好：**Hermes Agent**（`hermes`：端口 8642、`X-Hermes-Session-Id`、令牌从 `~/.hermes/.env` 的 `API_SERVER_KEY` 读、skills 在 `~/.hermes/skills`）、**nanobot**（`nanobot`：端口 8900、会话在请求体 `session_id`、不带 model）、**Letta Code**（`letta`：端口 4500、`x-letta-chat-key`、model 写 agent 的名字）。
+- 还不支持：没有 OpenAI 兼容对话接口的（ZeroClaw 的 webhook、Moltis 的 RPC、NullClaw 的 A2A、PicoClaw 的 WebSocket、Agent Zero、NanoClaw、TinyAGI），还有 IronClaw 的 Responses 接口，都要各写一个驱动。
 - Agents：每个 Agent 是同一个 claw 的一段单独的对话，每天第一句话前面带上它的名字、职责和上一次的日结。
 - 日结：03:45 `daily_close.py` 让今天说过话的每个对话用 5–10 行总结今天，服务器把回复存成 `<data_dir>/digest/<对话>/<日期>.md`，第二天第一句话前面带上。
 - skills 和规矩：安装时给出它的 skills 文件夹和每轮都读的规则文件（AGENTS.md 之类），OpenMousse 的 skill 软链进去、规矩追加一小节。skill 要跑 `python3 ~/.openmousse/repo/server/…_ctl.py`，所以它得能执行命令。

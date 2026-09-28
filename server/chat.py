@@ -388,7 +388,7 @@ async def claw_stream(run: Run, content: str | list) -> None:
     def on_delta(text: str) -> None:
         run.text += text
         run.publish(("delta", {"text": text}))
-    await claw.stream(messages, run.key or session_key(run.thread), run.model, on_delta)
+    await claw.stream(messages, claw.day_key(run.key or session_key(run.thread), day_of(run.started)), run.model, on_delta)
 
 
 async def gateway_ws_stream(run: Run, text: str | None) -> None:

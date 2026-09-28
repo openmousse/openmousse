@@ -4,7 +4,7 @@
 # 或在仓库里：bash install.sh
 #
 # 做的事：clone / 更新仓库到 ~/openmousse → 建 ~/.openmousse/venv 装依赖 → 问几个问题 + 两个可以跳过的 → packs/core/setup.py 配好一切。
-# 环境变量（非交互）：MOUSSE_LANG（zh|en）、MOUSSE_CLAW（openclaw，或别的 claw 的 OpenAI 兼容接口地址 http://…/v1）、MOUSSE_OPENCLAW_HOME、
+# 环境变量（非交互）：MOUSSE_LANG（zh|en）、MOUSSE_CLAW（openclaw | hermes | nanobot | letta，或别的 claw 的 OpenAI 兼容接口地址 http://…/v1）、MOUSSE_OPENCLAW_HOME、
 #   别的 claw：MOUSSE_CLAW_NAME、MOUSSE_CLAW_TOKEN、MOUSSE_CLAW_MODEL、MOUSSE_CLAW_SKILLS（它的 skills 文件夹）、MOUSSE_CLAW_RULES（它每轮都读的规则文件）；
 #   MOUSSE_TZ、MOUSSE_NAME、MOUSSE_DIR（仓库位置）、MOUSSE_BIND（auto|127.0.0.1|<ip>）、
 #   MOUSSE_VAULT（服务器上已经在同步的 Obsidian 库文件夹，世界树和思考空间放进去；空 = 跳过）、MOUSSE_TREE_PUBLIC（y|n：用 Tailscale Funnel 让 AI 平台连世界树）
@@ -92,20 +92,38 @@ case "$(printf '%s' "$MOUSSE_LANG" | tr '[:upper:]' '[:lower:]')" in zh*|cn*|chi
 # 你的 claw：回车 = OpenClaw；别的 claw / agent 填它的 OpenAI 兼容接口地址。默认：上次装的那个，没装过就看这台机器上有没有 OpenClaw
 DEF_CLAW="$(saved "(c.get('claw') or {}).get('url') if (c.get('claw') or {}).get('kind') == 'openai' else ''")"
 [ -n "$DEF_CLAW" ] || DEF_CLAW=openclaw
-ask MOUSSE_CLAW "你的 claw：回车 = OpenClaw；别的 claw 或 agent 填它的 OpenAI 兼容接口地址（写到 /v1，比如 http://127.0.0.1:8642/v1） / your claw: Enter = OpenClaw; for another claw or agent, its OpenAI-compatible API URL (up to /v1, e.g. http://127.0.0.1:8642/v1)" "$DEF_CLAW"
-case "$MOUSSE_CLAW" in http://*|https://*) CLAW_KIND=openai ;; *) CLAW_KIND=openclaw ;; esac
+ask MOUSSE_CLAW "你的 claw：回车 = OpenClaw；hermes、nanobot、letta；别的 claw 或 agent 填它的 OpenAI 兼容接口地址（写到 /v1） / your claw: Enter = OpenClaw; hermes, nanobot or letta; for another claw or agent, its OpenAI-compatible API URL (up to /v1)" "$DEF_CLAW"
+PRESET=""
+case "$(printf '%s' "$MOUSSE_CLAW" | tr '[:upper:]' '[:lower:]')" in
+  http://*|https://*) CLAW_KIND=openai ;;
+  hermes|nanobot|letta) CLAW_KIND=openai; PRESET="$(printf '%s' "$MOUSSE_CLAW" | tr '[:upper:]' '[:lower:]')" ;;
+  *) CLAW_KIND=openclaw ;;
+esac
+preset() { python3 "$MOUSSE_DIR/server/claw_presets.py" "$PRESET" "$1" 2>/dev/null || true; }  # 预设的一个字段（server/claw_presets.py）
 CLAW_ARGS=()
 if [ "$CLAW_KIND" = openclaw ]; then
   command -v openclaw >/dev/null || echo "提示 / note: openclaw is not on PATH. Install OpenClaw and run openclaw onboard first, then come back."
   ask MOUSSE_OPENCLAW_HOME "OpenClaw 装在哪 / OpenClaw home (directory with openclaw.json)" "$DEF_HOME"
 else
-  ask MOUSSE_CLAW_NAME "它叫什么（app 里这么叫它） / its name (shown in the app)" "$(saved "(c.get('claw') or {}).get('name')")"
-  ask_secret MOUSSE_CLAW_TOKEN "接口令牌，没有就回车；输入不显示，重装时回车 = 沿用上次的 / API token, Enter if none; hidden, Enter on a rerun keeps the old one"
-  ask MOUSSE_CLAW_MODEL "请求里的模型名（model） / the model name to send (model)" "$(saved "(c.get('claw') or {}).get('model')" | grep . || echo default)"
-  ask MOUSSE_CLAW_SKILLS "（可跳过）它的 skills 文件夹：OpenMousse 的 skill 软链进去 / (optional) its skills folder, OpenMousse's skills get linked in" ""
+  if [ -n "$PRESET" ]; then
+    ask MOUSSE_CLAW_URL "$(preset name) 的接口地址 / $(preset name)'s API URL" "$(preset url)"
+    MOUSSE_CLAW="$MOUSSE_CLAW_URL"
+  fi
+  ask MOUSSE_CLAW_NAME "它叫什么（app 里这么叫它） / its name (shown in the app)" "$( [ -n "$PRESET" ] && preset name || saved "(c.get('claw') or {}).get('name')")"
+  if [ -z "$(preset token_env)" ]; then  # Hermes / nanobot 的令牌在它们自己的 .env / 环境变量里，安装器按名字去读，不用问
+    ask_secret MOUSSE_CLAW_TOKEN "接口令牌，没有就回车；输入不显示，重装时回车 = 沿用上次的 / API token, Enter if none; hidden, Enter on a rerun keeps the old one"
+  fi
+  case "$PRESET" in
+    hermes|nanobot) ;;  # 模型用预设（Hermes 写 hermes-agent，nanobot 不发 model）
+    letta) ask MOUSSE_CLAW_MODEL "Letta 里 agent 的名字或 id（请求里的 model） / the Letta agent's name or id (sent as model)" "$(saved "(c.get('claw') or {}).get('model')")" ;;
+    *) ask MOUSSE_CLAW_MODEL "请求里的模型名（model） / the model name to send (model)" "$(saved "(c.get('claw') or {}).get('model')" | grep . || echo default)" ;;
+  esac
+  ask MOUSSE_CLAW_SKILLS "（可跳过）它的 skills 文件夹：OpenMousse 的 skill 软链进去 / (optional) its skills folder, OpenMousse's skills get linked in" "$(preset skills)"
   ask MOUSSE_CLAW_RULES "（可跳过）它每轮都读的规则文件（AGENTS.md 之类）：OpenMousse 的规矩追加进去 / (optional) the rules file it reads every turn (AGENTS.md or similar), OpenMousse's rules get appended" ""
   export MOUSSE_CLAW_TOKEN  # 令牌走环境变量给 setup.py，不放命令行（ps 看得到）
-  CLAW_ARGS=(--claw-url "$MOUSSE_CLAW" --claw-name "${MOUSSE_CLAW_NAME:-My claw}" --claw-model "${MOUSSE_CLAW_MODEL:-default}")
+  CLAW_ARGS=(--claw-url "$MOUSSE_CLAW" --claw-name "${MOUSSE_CLAW_NAME:-My claw}")
+  if [ -n "$PRESET" ]; then CLAW_ARGS+=(--claw-preset "$PRESET"); fi
+  if [ -n "${MOUSSE_CLAW_MODEL:-}" ]; then CLAW_ARGS+=(--claw-model "$MOUSSE_CLAW_MODEL"); elif [ -z "$PRESET" ]; then CLAW_ARGS+=(--claw-model default); fi
   if [ -n "$MOUSSE_CLAW_SKILLS" ]; then CLAW_ARGS+=(--claw-skills "$MOUSSE_CLAW_SKILLS"); fi
   if [ -n "$MOUSSE_CLAW_RULES" ]; then CLAW_ARGS+=(--claw-rules "$MOUSSE_CLAW_RULES"); fi
 fi
