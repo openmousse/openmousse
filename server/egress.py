@@ -221,14 +221,19 @@ def looks_encoded(path: str, host: str = "") -> bool:
 
 
 def errand_task() -> str:
-    """你交代的这件事：代办对话里最近一条不是它自己说的话（你发的，或主对话转过去的）。"""
+    """你交代的这件事：代办对话里最近一条你发的（role user），或主对话转过去的（role auto、以【主对话转来】开头）。
+    它自己的回复、系统的【自动触发】都不算。"""
+    import chat
     try:
         with _lock, db() as conn:
-            r = conn.execute("SELECT text FROM messages WHERE thread=? AND role NOT IN ('assistant','auto') ORDER BY id DESC LIMIT 1",
-                             (AGENT,)).fetchone()
+            r = conn.execute("SELECT text FROM messages WHERE thread=? AND (role='user' OR (role='auto' AND text LIKE ?)) "
+                             "ORDER BY id DESC LIMIT 1", (AGENT, chat.PREFIX_RELAY + "%")).fetchone()
     except sqlite3.Error:
         return ""
-    return re.sub(r"\s+", " ", r["text"]).strip()[:400] if r else ""
+    if not r:
+        return ""
+    text = r["text"][len(chat.PREFIX_RELAY):] if r["text"].startswith(chat.PREFIX_RELAY) else r["text"]
+    return re.sub(r"\s+", " ", text).strip()[:400]
 
 
 def verb_of(req: CheckIn) -> str:
@@ -378,7 +383,7 @@ async def decide(req: CheckIn) -> dict:
     path = req.path.split("?", 1)[0]
     c = cfg()
     if suffix_in(host, DROP_HOSTS, path):
-        return {"decision": "drop", "reason": L("追踪 / 统计", "Tracking / analytics")}
+        return {"decision": "drop", "reason": L("追踪、统计或浏览器后台请求", "Tracking, analytics or browser background traffic")}
     if suffix_in(host, tuple(c.get("block_hosts") or ())) or host == own_public_host():
         return {"decision": "deny", "reason": L("这个网站在 Sentinel 的拦截名单里", "This site is on Sentinel's block list")}
     if method not in READ and suffix_in(host, PAY_HOSTS):
@@ -479,6 +484,15 @@ async def on_decided(it: dict, action: str) -> dict:
     """inbox.HOOKS["egress"]：放行 / 不放行 / 改一下。都不往任何对话里发话（silent）：代理那边正等着，它会把结果交给代办。"""
     with _lock, edb() as conn:
         r = conn.execute("SELECT id, status FROM egress_holds WHERE inbox_id=?", (it["id"],)).fetchone()
+        if not r:
+            # 卡片刚建好、推送刚发出去，make_hold 还没来得及把卡号写回扣留记录（你点得比它快）：按卡片的去重键（请求的指纹）找回来
+            d = conn.execute("SELECT dedupe FROM inbox WHERE id=?", (it["id"],)).fetchone()
+            sha = (d["dedupe"] if d else "").removeprefix("egress:")
+            if sha:
+                r = conn.execute("SELECT id, status FROM egress_holds WHERE sha LIKE ? AND status='pending' ORDER BY created_at DESC LIMIT 1",
+                                 (sha + "%",)).fetchone()
+                if r:
+                    conn.execute("UPDATE egress_holds SET inbox_id=? WHERE id=?", (it["id"], r["id"]))
     if not r:
         return {"silent": True, "result": L("这个请求已经不在了", "That request is gone")}
     ts = now_iso()

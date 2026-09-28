@@ -91,6 +91,8 @@ def agents_md(name: str) -> str:
     浏览器里就是再点一次提交）。
   - 回 403 `"sentinel": "rejected"`：他没放行；`note` 里是他的话（比如「邮件主题改一下」），照着改了重新来。
   - 回 403 `"sentinel": "denied"`：规矩不许（付款还没开放、私网地址、端口、WebSocket……），换个办法或告诉 {who} 办不了。
+  - 浏览器里提交被扣下时，browser 工具等不了那么久，会先报超时：**别重新点提交**，隔一两分钟再读一次页面，看是不是已经完成了
+    （放行以后请求会自己接着发完）；十分钟后页面上出现 Sentinel 的「held」说明，才按上面那条再提交一次。
 - **付款还没开放**：走到付款那一步就停下，把链接、金额、要填什么告诉 {who}。
 - **密码和密钥**：不要问 {who} 要密码，也不要把密码写进回复。能用的凭证是占位符 `MOUSSE_SECRET_<名字>`（有哪些见下面），填进请求里，Sentinel
   只在发往绑定的网站时换成真的；发给别的网站会被挡。没有你需要的，就告诉 {who}：请他在服务器上加一个（`errand.py secret set`）。
@@ -123,6 +125,9 @@ You run errands outside for {who}: research, compare prices, read pages, fill in
     the exact same request again** (valid for 30 minutes; in the browser, submit again).
   - 403 `"sentinel": "rejected"`: not let through; `note` has their words (e.g. "change the subject"). Change it and try again.
   - 403 `"sentinel": "denied"`: not allowed (payments aren't open yet, private addresses, ports, WebSockets…). Find another way or tell {who}.
+  - When a browser submit is held, the browser tool can't wait that long and times out first: **don't submit again**. Read the page again
+    after a minute or two to see whether it went through (once let through, the request finishes by itself); only if Sentinel's "held"
+    page shows up after ten minutes, submit again as above.
 - **No payments yet**: stop at the payment step and tell {who} the link, the amount and what to fill in.
 - **Passwords and keys**: never ask {who} for a password or put one in a reply. Usable credentials are placeholders `MOUSSE_SECRET_<NAME>` (listed
   below); put them in the request and Sentinel swaps in the real value only for the site they're bound to. Anywhere else they're blocked.

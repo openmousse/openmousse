@@ -208,6 +208,9 @@ async def guard(request: Request, call_next):
                                                              "No valid access token. On the server run python3 tokens.py add <name> and enter the token on the app's connect screen.")},
                                     status_code=401)
             request.state.principal = who
+            # Sentinel 代理的令牌只管出网判断：别的接口（对话、收件箱……）一律不给，免得它能替你点头
+            if who == "token:sentinel" and not request.url.path.startswith("/api/egress/"):
+                return JSONResponse({"ok": False, "error": "this token is only for /api/egress"}, status_code=403)
         resp = await call_next(request)
     finally:
         i18n.reset(lang_token)
