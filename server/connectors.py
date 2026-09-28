@@ -31,6 +31,7 @@ from fastapi import APIRouter
 
 import sources
 from chat import _lock, db
+import claw
 from config import TZ, raw, settings
 from data import when
 from i18n import L, lang
@@ -581,8 +582,10 @@ def check_tree(state: dict[str, dict]) -> dict | None:
 # —— 渠道和通知 ——————————————————————————————————————————————————————
 
 async def channel_runtime(fresh: bool) -> dict | None:
-    """各聊天渠道在不在线（openclaw channels status --json，经 Gateway）。只留布尔值和时间；读不到是 None。"""
+    """各聊天渠道在不在线（openclaw channels status --json，经 Gateway）。只留布尔值和时间；读不到是 None。别的 claw 不看。"""
     global _channels
+    if not claw.is_openclaw():
+        return None
     if not fresh and _channels and time.time() - _channels[0] < CHANNEL_TTL:
         return _channels[1]
     exe = shutil.which(settings.openclaw_bin) or settings.openclaw_bin
@@ -689,6 +692,29 @@ FALLBACK = {"xunji": ("训记", "Xunji", "dumbbell"), "health": ("Apple 健康",
             "tree": ("世界树", "Memory tree", "tree"), "push": ("推送", "Notifications", "bell")}
 
 
+async def check_claw() -> dict | None:
+    """别的 claw（claw.py）：它的对话接口连不连得上。OpenClaw 不在这里列（它的状态看各渠道和模型页）。只报地址、模型、会话方式，不报令牌。"""
+    if claw.is_openclaw():
+        return None
+    try:
+        ok, detail = await claw.probe()
+    except Exception as exc:  # noqa: BLE001 — 地址写错之类：这一项显示连不上，别拖垮整页
+        ok, detail = False, type(exc).__name__
+    mode, header, turns = claw.session_mode()
+    how = {"history": L(f"每次带上今天的记录（最多 {turns} 轮）", f"sends today's messages each time (up to {turns} turns)"),
+           "header": L(f"它自己记，会话键放在请求头 {header}", f"it keeps sessions itself; key in the {header} header"),
+           "user": L("它自己记，会话键放在 user 字段", "it keeps sessions itself; key in the user field")}[mode]
+    facts = [(L("接口", "API"), claw.base_url() or None), (L("模型", "Model"), ", ".join(claw.models())), (L("对话怎么接上", "Conversation"), how),
+             (L("令牌", "Token"), L("有", "Set") if claw.token() else L("没有", "None"))]
+    uses = L(f"主对话、各个 Agent、Zen 的「想完了」都由它回答；{app()} 只负责转发、存记录和推送。",
+             f"The main chat, every Agent and Zen's wrap-ups are answered by it; {app()} relays, keeps the history and sends notifications.")
+    if ok:
+        return item("claw", claw.name(), "server", "ok", L("连得上", "Reachable"), facts, uses)
+    return item("claw", claw.name(), "server", "warn", L("连不上", "Can't reach it") + f" · {detail}", facts, uses,
+                L("看它在不在跑，server.json 里 claw 段的 url、token 对不对；改完不用重启。",
+                  "Check that it's running and that url / token in the claw section of server.json are right; no restart needed after editing."))
+
+
 def safe(fn, *args) -> Any:
     """跑一项检查。检查本身出了错也不拖累别的：日志里只记一行错误类型（不带内容），这一项显示「读不到它的状态」。"""
     try:
@@ -716,12 +742,14 @@ def local_part() -> tuple[dict[str, list], dict]:
 
 
 def titles() -> dict[str, str]:
-    return {"data": L("数据来源", "Data sources"), "schedule": L("日程和邮件", "Schedule & mail"), "files": L("文件和笔记", "Files & notes"),
+    return {"claw": L("你的 claw", "Your claw"), "data": L("数据来源", "Data sources"), "schedule": L("日程和邮件", "Schedule & mail"), "files": L("文件和笔记", "Files & notes"),
             "memory": L("记忆", "Memory"), "channels": L("渠道和通知", "Channels & notifications")}
 
 
 async def build(fresh: bool) -> dict:
-    (part, oc), rt = await asyncio.gather(asyncio.to_thread(local_part), channel_runtime(fresh))
+    (part, oc), rt, mine = await asyncio.gather(asyncio.to_thread(local_part), channel_runtime(fresh), check_claw())
+    if mine:  # 别的 claw：放最上面一组
+        part = {"claw": [mine], **part}
     try:
         chans = check_channels(oc, rt)
     except Exception as exc:  # noqa: BLE001

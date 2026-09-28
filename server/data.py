@@ -46,6 +46,7 @@ from typing import Any, Awaitable, Callable
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
+import claw
 from chat import OPENCLAW, TZ, _lock, day_bounds, day_of, db, gateway_call, log_activity, now_iso, session_key, start_run, thread_of
 
 router = APIRouter()
@@ -126,6 +127,8 @@ def forget_cache(*prefixes: str) -> None:
 
 
 async def openclaw_cli(*args: str, timeout: float = 30) -> Any:
+    if not claw.is_openclaw():  # 配的是别的 claw：别去跑这台机器上可能装着的 openclaw
+        raise HTTPException(501, L(f"{claw.name()} 没有这项（只有 OpenClaw 有）", f"{claw.name()} doesn't have this (OpenClaw-only)"))
     exe = shutil.which(cfg.openclaw_bin) or cfg.openclaw_bin
     try:
         proc = await asyncio.create_subprocess_exec(exe, *args, "--json", stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE)
@@ -293,12 +296,14 @@ def groups():
 
 @router.post("/api/groups")
 def create_group(body: GroupIn):
-    """新建 Agent = 建一个独立的 OpenClaw agent（workspace、记忆、skills）+ groups 表一行。失败就什么都不留。"""
+    """新建 Agent = 建一个独立的 OpenClaw agent（workspace、记忆、skills）+ groups 表一行。失败就什么都不留。
+    别的 claw 没有 OpenClaw 那样的独立 agent：只记 groups 表一行，这个 Agent 就是同一个 claw 的一个单独会话（见 chat.agent_role）。"""
     name, icon, color = agent_name(body.name), icon_key(body.icon), color_key(body.color)
     gid = f"g-{uuid.uuid4().hex[:8]}"
     ts = now_iso()
     try:
-        agents.provision(gid, name, body.purpose.strip(), icon, skills=body.skills)
+        if claw.is_openclaw():
+            agents.provision(gid, name, body.purpose.strip(), icon, skills=body.skills)
     except agents.ProvisionError as e:
         raise HTTPException(502, str(e)) from e
     with _lock, ddb() as conn:
@@ -347,14 +352,14 @@ def edit_group(gid: str, body: GroupPatch) -> dict:
             last = conn.execute("SELECT text FROM messages WHERE thread=? ORDER BY id DESC LIMIT 1", (gid,)).fetchone()
         return {"ok": True, "group": group_out(r, last["text"] if last else "")}
     try:
-        if "model" in new and agents.entry_of(gid) is None:
+        if "model" in new and claw.is_openclaw() and agents.entry_of(gid) is None:
             raise HTTPException(400, L(f"「{r['name']}」没有自己的 OpenClaw 配置（openclaw.json 里没有 agents.entries.{gid}），默认模型改不了",
                                        f'"{r["name"]}" has no OpenClaw entry of its own (no agents.entries.{gid} in openclaw.json), so its default model cannot be changed'))
         ws = cfg.agent_workspaces.get(gid)
         undo = (agents.write_role(gid, ws, new.get("name") or r["name"], new["purpose"] if "purpose" in new else r["purpose"] or "")
                 if ws and ("name" in new or "purpose" in new) else (lambda: None))
         try:
-            if "model" in new:
+            if "model" in new and claw.is_openclaw():  # 别的 claw：模型只记在这个 Agent 的对话上（threads.model）
                 agents.set_model(gid, new["model"])
         except agents.ProvisionError:
             undo()
@@ -388,7 +393,7 @@ def delete_group(gid: str):
     if not r:
         raise HTTPException(404, L("没有这个 Agent", "No such agent"))
     try:
-        archived = agents.remove(gid)
+        archived = agents.remove(gid) if claw.is_openclaw() else None
     except agents.ProvisionError as e:
         raise HTTPException(502, str(e)) from e
     with _lock, ddb() as conn:
@@ -640,6 +645,8 @@ def cron_words(expr: str, hm: str, tz: str | None) -> str:
 
 
 async def cron_jobs() -> list[dict]:
+    if not claw.is_openclaw():  # 别的 claw 的定时任务读不到；系统定时器照常列（timers）
+        return []
     data = await cached("cron", 30, lambda: gateway_call("cron.list", {"includeDisabled": True}, timeout=30))
     titles = cron_titles()
     out = []
@@ -734,6 +741,8 @@ def exec_approval(a: dict) -> dict:
 
 @router.get("/api/approvals")
 async def approvals():
+    if not claw.is_openclaw():  # 执行审批是 OpenClaw 的
+        return {"ok": True, "approvals": []}
     data = await cached("approvals", 5, lambda: openclaw_cli("approvals", "pending", timeout=20))
     out = []
     for a in data.get("approvals", []):
@@ -796,6 +805,8 @@ def ledger_task(r: dict) -> dict:
 
 async def task_rows() -> list[dict]:
     """子会话任务。先读 OpenClaw 的任务台账（SQLite，几毫秒，见 cards.py）；读不到再走 tasks.list（起 node 进程，约 2 秒，缓存 10 秒）。"""
+    if not claw.is_openclaw():  # 后台任务是 OpenClaw 的子会话；别的 claw 没有这本台账
+        return []
     rows = await asyncio.to_thread(cards.ledger, "1", (), 60)
     if rows is not None:
         return [ledger_task(r) for r in rows]
@@ -1132,6 +1143,8 @@ def forget(iid: str):
 
 @router.get("/api/models")
 async def models():
+    if not claw.is_openclaw():  # 别的 claw：模型就是 server.json 里 claw 段写的那几个，没有回退链和登录状态
+        return {"ok": True, "primary": claw.model(), "fallbacks": [], "subagent": None, "allowed": claw.models(), "providers": [], "claw": claw.info()}
     c = config()
     d = (c.get("agents") or {}).get("defaults") or {}
     try:
@@ -1167,6 +1180,8 @@ async def security():
     ch = c.get("channels") or {}
     tokens, nodes = cfg.tokens(), cfg.tailscale_nodes()
     try:
+        if not claw.is_openclaw():
+            raise HTTPException(501)
         policy = await cached("policy", 300, lambda: openclaw_cli("approvals", "get", timeout=20))
         scope = next((s for s in (policy.get("effectivePolicy") or {}).get("scopes", []) if s.get("agentId") == "main"), {})
         sec = (scope.get("security") or {}).get("effective")
@@ -1212,6 +1227,15 @@ async def security():
          "sub": L(f"审批队列里现在有 {pending} 个动作等你决定。", f"{pending} {'action' if pending == 1 else 'actions'} in the approval queue waiting for your OK."),
          "state": str(pending), "tone": "neutral"},
     ]
+    if not claw.is_openclaw():  # 别的 claw：上面那些读的是 openclaw.json，对它没有意义；只看 app 的认证和它的接口
+        url = claw.base_url()
+        host = url.split("://", 1)[-1].split("/", 1)[0].rsplit(":", 1)[0].strip("[]")
+        local_claw = host in ("127.0.0.1", "localhost", "::1") or host.startswith("100.")
+        facts = [facts[1], {"title": L(f"{claw.name()} 的接口", f"{claw.name()}'s API"),
+                            "sub": L(f"{url}；" + ("只在本机或 tailnet 里。" if local_claw else "不在本机：确认它走 HTTPS、带令牌。") + ("带令牌。" if claw.token() else "没有令牌。"),
+                                     f"{url}; " + ("local or inside your tailnet. " if local_claw else "not local: make sure it uses HTTPS and a token. ") + ("Token set." if claw.token() else "No token.")),
+                            "state": ok if local_claw or (url.startswith("https://") and claw.token()) else review,
+                            "tone": "good" if local_claw or (url.startswith("https://") and claw.token()) else "warn"}]
     plan = [
         {"title": L("隔离执行环境", "Isolated execution"),
          "sub": L("浏览器、填表等代办任务在沙箱里跑，碰不到服务器上的密钥和文件。", "Errands like browsing and filling in forms run in a sandbox, away from the server's keys and files.")},

@@ -8,6 +8,8 @@
   timezone          IANA 时区，逻辑日和时间显示都按它算
   language          "zh" 或 "en"：没带 Accept-Language 的请求、推送、定时器用的语言（默认 en；app 的请求按它自己的语言）
   bind              {"host", "port"}：服务监听地址。loopback 给反向代理 / Tailscale Serve；Tailscale 私网地址只给自己的设备
+  claw              你的 claw：不写 = OpenClaw（下面 openclaw_home / gateway / openclaw_bin 那几项）；别的 claw 或 agent 写
+                    {"kind": "openai", "name", "url": ".../v1", "token" 或 "token_env", "model", "models", "session", "headers"}，见 claw.py（每次读文件）
   openclaw_home     OpenClaw 的家（默认 ~/.openclaw）
   workspace         主 agent 的 workspace（默认 <openclaw_home>/workspace）
   agent_workspaces  {agent_id: workspace 路径}：有独立 workspace 的 Agent（对话按 id 路由到它，记忆页读它的 MEMORY.md）

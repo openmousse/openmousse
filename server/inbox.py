@@ -29,6 +29,7 @@ from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 
 import chat
+import claw
 import data
 import push
 from chat import LEVELS, _lock, db, log_activity, now_iso
@@ -199,6 +200,8 @@ async def exec_pending(ttl: float = 5) -> tuple[list[dict], str | None]:
     读不到（没装 OpenClaw、Gateway 没开）不抛错：返回空列表和原因；失败也缓存，免得轮询时每次都重试。"""
     async def fetch() -> dict:
         try:
+            if not claw.is_openclaw():  # 执行审批只有 OpenClaw 有
+                return {"approvals": []}
             return await data.openclaw_cli("approvals", "pending", timeout=20)
         except Exception as e:  # noqa: BLE001
             return {"approvals": [], "error": str(getattr(e, "detail", None) or e)[:300]}

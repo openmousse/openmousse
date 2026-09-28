@@ -51,6 +51,7 @@ from fastapi.responses import FileResponse
 from pydantic import BaseModel
 
 import chat
+import claw
 import config
 from chat import _lock, db, log_activity, now_iso
 from config import TZ, settings, user_word
@@ -1034,7 +1035,9 @@ def parse_draft(text: str, frags: list[dict], title: str) -> dict:
 
 
 async def complete(prompt: str, key: str, model: str, timeout: float = 300) -> str:
-    """一问一答（不进任何 app 线程）：流式攒完整段回复。"""
+    """一问一答（不进任何 app 线程）：流式攒完整段回复。别的 claw 走 claw.py 的 OpenAI 兼容接口。"""
+    if not claw.is_openclaw():
+        return await claw.complete(prompt, key, model if model in claw.models() else None, timeout)
     token = chat.gateway_token()
     out = ""
     async with httpx.AsyncClient(timeout=httpx.Timeout(timeout, connect=10)) as client:
@@ -1083,8 +1086,9 @@ async def make_draft(tid: str) -> None:
         with _lock, tdb() as conn:
             conn.execute("UPDATE think_topics SET draft_status='error', draft_error=?, draft_at=? WHERE id=?", (str(exc)[:300], now_iso(), tid))
     finally:
-        try:  # 这一问的会话用完就删（OpenClaw 会压缩存档一份）
-            await chat.gateway_call("sessions.delete", {"key": key}, timeout=20)
+        try:  # 这一问的会话用完就删（OpenClaw 会压缩存档一份；别的 claw 没有这一步）
+            if claw.is_openclaw():
+                await chat.gateway_call("sessions.delete", {"key": key}, timeout=20)
         except Exception:  # noqa: BLE001
             pass
 

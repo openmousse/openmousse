@@ -42,6 +42,7 @@ from i18n import L  # noqa: E402
 from sources import calendar_ics, xunji, xunji_name  # noqa: E402
 import study  # noqa: E402
 import cards  # noqa: E402
+import claw  # noqa: E402
 import schedule  # noqa: E402
 import chat  # noqa: E402
 import settle  # noqa: E402
@@ -89,10 +90,11 @@ def meal_label(key: str) -> str:
 
 @asynccontextmanager
 async def lifespan(_app: FastAPI):
-    cards.start()  # 盯 OpenClaw 的任务台账：后台任务做完了静默推一条
+    if claw.is_openclaw():  # 这两个读 OpenClaw 的任务台账和会话记录；别的 claw 没有
+        cards.start()  # 盯 OpenClaw 的任务台账：后台任务做完了静默推一条
+        settle.start()  # 从 app 派的后台任务做完后，派它的对话里那一轮回话接回 app（实时接管 + 从 chat.history 补漏）
     chat.resume_queued()  # 上次重启前还排着没发的消息：接着发
     asyncio.create_task(chat.resume_ws())  # 走对话通道的：重启前发出去、还没拿到回复的，接回来或补回回复
-    settle.start()  # 从 app 派的后台任务做完后，派它的对话里那一轮回话接回 app（实时接管 + 从 chat.history 补漏）
     alerts.start()  # Agent 的提醒：到点查表，有东西就推
     yield
 
@@ -243,7 +245,9 @@ schedule.TRAINS_ON = trains_on  # 过去的训练日程用训练记录补实际�
 
 
 def shared_channels() -> list[str]:
-    """主会话还接着哪些聊天渠道（openclaw.json 里 enabled 的 channels），app 用来说明"主对话和 X 共用"。"""
+    """主会话还接着哪些聊天渠道（openclaw.json 里 enabled 的 channels），app 用来说明"主对话和 X 共用"。别的 claw 不知道，当没有。"""
+    if not claw.is_openclaw():
+        return []
     try:
         ch = json.loads(settings.openclaw_json.read_text(encoding="utf8")).get("channels") or {}
     except (OSError, ValueError):
@@ -255,7 +259,7 @@ def shared_channels() -> list[str]:
 def health(request: Request):
     return {"ok": True, "app_name": settings.app_name, "time": datetime.now(TZ).strftime("%Y-%m-%d %H:%M"), "timezone": settings.timezone,
             "principal": getattr(request.state, "principal", None), "shared_channels": shared_channels(),
-            "sources": sources.AVAILABLE, "chat": "live",
+            "sources": sources.AVAILABLE, "chat": "live", "claw": claw.info(),
             "first_run": first_run()}  # 新实例（还没有消息、没有 Agent）：app 在主对话顶上放「从这里开始」
 
 

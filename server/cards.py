@@ -424,7 +424,7 @@ def on_run_end(run: chat.Run) -> None:
         src = _sources.pop(row["id"], None)
         if src and not src.done:
             publish(src, handoff_json(row, names()))
-    if run.thread.startswith(("task:", "study-")):
+    if run.thread.startswith(("task:", "study-")) or not chat.claw.is_openclaw():  # 别的 claw 没有 OpenClaw 的任务台账
         return
     rows = ledger("owner_key=? AND created_at>=?", (run.key or chat.session_key(run.thread), int(run.t0 * 1000) - 3000), 20) or []
     if rows:

@@ -18,6 +18,7 @@ import sqlite3
 import threading
 import time
 from datetime import datetime, timedelta
+from pathlib import Path
 from dataclasses import dataclass, field
 from typing import AsyncIterator
 
@@ -26,7 +27,8 @@ from fastapi import APIRouter, HTTPException
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
-from config import TZ, raw, settings  # noqa: E402
+import claw  # noqa: E402
+from config import TZ, raw, settings, user_word  # noqa: E402
 from i18n import L, LS  # noqa: E402
 
 OPENCLAW = settings.openclaw_json
@@ -58,6 +60,7 @@ class Run:
     origin: str = "user"  # user：用户发的；auto：定时器 / 收件箱之类系统触发；relay：主对话转来。存进回复那一行的 origin
     level: str | None = None  # 推送档位 ring / quiet / none；None = 按 origin 定（见 push.run_level）
     feed_mark: int = 0  # 开跑时 feed_items 的最大 rowid：回完看这之后这个线程有没有写新卡，有就推卡片
+    digest: bool = False  # 这一轮的回复是日结（别的 claw）：回完存进 <data_dir>/digest/，明天第一句话前面带上
     inbox_mark: int = 0  # 开跑时 inbox 的最大 rowid：回完把这之后这个线程新交的收件箱条目挂到这条回复下（created_at 只到秒，不够准）
     handoff_mark: int = 0  # 开跑时 handoffs 的最大 rowid：回完把这之后从这个线程转出去的挂到这条回复下（见 cards.py）
     cards: dict = field(default_factory=dict)  # 这次回复里出的转交卡、任务卡（id → 最新的样子）：客户端重新接上时补发（见 cards.py）
@@ -116,6 +119,8 @@ def agent_of(thread: str) -> str:
 
 
 def session_key(thread: str) -> str:
+    if not claw.is_openclaw():  # 别的 claw：会话键只是给它分会话用（claw.py 的 header / user 模式）
+        return f"mousse:{thread}"
     if thread == "main":
         return "agent:main:main"
     if thread in settings.group_agents:
@@ -212,7 +217,10 @@ def with_quote(m: dict, ref: sqlite3.Row | None) -> dict:
 
 def thread_model(conn: sqlite3.Connection, thread: str) -> str:
     r = conn.execute("SELECT model FROM threads WHERE id=?", (thread,)).fetchone()
-    return (r["model"] if r and r["model"] else None) or DEFAULT_MODEL
+    m = r["model"] if r and r["model"] else None
+    if not claw.is_openclaw():  # 别的 claw：线程上记的不在它的模型列表里（比如换 claw 之前选的）就用它的默认
+        return m if m in claw.models() else claw.model()
+    return m or DEFAULT_MODEL
 
 
 @router.get("/api/chat/history")
@@ -319,6 +327,7 @@ class SendBody(BaseModel):
     ref: str | None = None       # （/api/chat/send）说的是日程或「要记得的」里的哪一条（schedule.py 的 id）：模型另外看到是哪一条、怎么改
     save: str | None = None      # （/api/chat/send）问的是哪条收藏（saves.py 的 id）：模型另外看到它的来源、备注和正文
     replyTo: str | None = None   # （/api/chat/send）长按「引用」着发的：引的是这个对话里哪条消息（"db<id>"），模型另外看到原话
+    digest: bool = False         # （/api/chat/trigger）别的 claw 的日结：这一轮的回复就是今天的日结，服务器存下来（见 save_digest）
 
 
 def sse(event: str, data: dict) -> bytes:
@@ -357,12 +366,29 @@ async def gateway_stream(run: Run, text: str | list, token: str) -> None:
 
 def transport() -> str:
     """发消息走哪条路：server.json 的 chat.transport。"http"（默认）= OpenAI 兼容接口；"ws" = Gateway 的 WebSocket 对话通道（gateway_ws.py，能插话）。"""
+    if not claw.is_openclaw():
+        return "http"
     return str((raw().get("chat") or {}).get("transport") or "http").lower()
 
 
 def ws_ok(content: str | list) -> bool:
     """这一条能不能走 WebSocket：带图片的（content 数组）还走 HTTP（图片按 OpenAI 格式直接给模型，WebSocket 的附件格式没对过）。"""
     return transport() == "ws" and isinstance(content, str)
+
+
+async def claw_stream(run: Run, content: str | list) -> None:
+    """别的 claw（claw.py，OpenAI 兼容接口）：history 模式把这个对话今天在这一条之前的记录一起发过去，claw 自己不用记会话。"""
+    mode, _, turns = claw.session_mode()
+    messages: list[dict] = []
+    if mode == "history":
+        with _lock, db() as conn:
+            messages = claw.history(conn, run.thread, run.user_id, day_bounds(day_of(run.started))[0], turns)
+    messages.append({"role": "user", "content": content})
+
+    def on_delta(text: str) -> None:
+        run.text += text
+        run.publish(("delta", {"text": text}))
+    await claw.stream(messages, run.key or session_key(run.thread), run.model, on_delta)
 
 
 async def gateway_ws_stream(run: Run, text: str | None) -> None:
@@ -434,8 +460,11 @@ async def recover_reply(key: str, gw_run: str | None, since: float) -> str | Non
 async def run_gateway(run: Run, text: str | list | None, token: str) -> None:
     """后台把一条消息发给 Gateway，流式攒回复，结束后入库。不依赖任何客户端连接。text 可以是 OpenAI 的 content 数组（带图片）；
     None = 接管一个 Gateway 已经在跑的 runId（run.gw_run：插话变成了单独一轮、服务重启后接回来）。结束后把回复进行中排着的消息合成下一轮发出去（drain）。"""
-    use_ws = text is None or ws_ok(text)
-    run.stream_task = asyncio.create_task(gateway_ws_stream(run, text) if use_ws else gateway_stream(run, text, token))
+    if not claw.is_openclaw():
+        run.stream_task = asyncio.create_task(claw_stream(run, text if text is not None else ""))
+    else:
+        use_ws = text is None or ws_ok(text)
+        run.stream_task = asyncio.create_task(gateway_ws_stream(run, text) if use_ws else gateway_stream(run, text, token))
     try:
         await run.stream_task
     except asyncio.CancelledError:
@@ -461,6 +490,8 @@ async def run_gateway(run: Run, text: str | list | None, token: str) -> None:
         cur = conn.execute("INSERT INTO messages(thread, role, text, model, requested, ts, status, origin) VALUES(?,?,?,?,?,?,?,?)",
                            (run.thread, "grava", run.text, run.model, run.requested, run.finished, run.status, run.origin))
         run.reply_id = cur.lastrowid
+    if run.digest and run.status == "ok" and run.text.strip():
+        save_digest(run.thread, day_of(run.started), run.text)
     try:  # 这次回复里交到收件箱的条目挂到这条回复下面（app 在对话里把卡片显示在它下面）；在「done」之前，app 一刷新就看得到
         import inbox as inbox_mod  # 延迟导入：inbox.py 依赖本模块
         inbox_mod.link_message(run.thread, run.inbox_mark, run.reply_id)
@@ -499,6 +530,8 @@ PROVIDER_ALIAS = {"openai-codex": "openai"}
 
 async def actual_model(key: str) -> str | None:
     """回退链可能换了模型：从会话记录里读最后一条回复实际用的是哪个。读不到就算了。"""
+    if not claw.is_openclaw():
+        return None
     try:
         hist = await gateway_call("chat.history", {"sessionKey": key, "limit": 4}, timeout=8)
     except (HTTPException, asyncio.TimeoutError, OSError, ValueError):
@@ -562,7 +595,7 @@ def start_run(thread: str, text: str, model: str | None, key: str | None = None,
     level：回完推送的档位（ring / quiet / none），不给按 origin 定：user 响铃、relay 不推、auto 静默（见 push.run_level）。"""
     if (cur := RUNS.get(thread)) and not cur.done:
         raise HTTPException(409, L("上一条还没回完，等它结束或先接回去看。", "The last reply isn't finished yet. Wait for it, or reconnect to see it."))
-    token = gateway_token()
+    token = gateway_token() if claw.is_openclaw() else ""
     import files as files_mod  # 延迟导入：files.py 依赖本模块
     rows = files_mod.load_pending(thread, attachment_ids or [])
     role = "auto" if origin in ("auto", "relay") else "user"
@@ -601,7 +634,64 @@ def daily_context(thread: str) -> str | None:
         parts.append(projects_mod.context_for(thread))
     except Exception:  # noqa: BLE001 — 带不上只是模型少看一眼项目卡，消息照发
         pass
+    if not claw.is_openclaw() and first_today(thread):
+        parts += [agent_role(thread), last_digest(thread)]
     return "\n\n".join(x for x in parts if x) or None
+
+
+def first_today(thread: str) -> bool:
+    """这个对话今天（逻辑日）还没说过话：开跑前调，这一句就是今天的第一句。"""
+    since = day_bounds(day_of(now_iso()))[0]
+    with _lock, db() as conn:
+        return conn.execute("SELECT 1 FROM messages WHERE thread=? AND ts>=? LIMIT 1", (thread, since)).fetchone() is None
+
+
+DIGEST_DAYS = 7  # 带上一次的日结：最多往回找这么多天
+
+
+def digest_path(thread: str, day: str) -> Path:
+    return settings.data_dir / "digest" / thread.replace("/", "_") / f"{day}.md"
+
+
+def save_digest(thread: str, day: str, text: str) -> None:
+    """别的 claw 的日结：回复原样存成 <data_dir>/digest/<线程>/<逻辑日>.md（临时文件 + 换名）。OpenClaw 的日结 agent 自己写进工作区，不走这里。"""
+    p = digest_path(thread, day)
+    try:
+        p.parent.mkdir(parents=True, exist_ok=True)
+        tmp = p.with_name(f".{p.name}.tmp")
+        tmp.write_text(text.strip() + "\n", encoding="utf8")
+        tmp.replace(p)
+    except OSError as e:
+        print(f"[chat] 日结没存上：{type(e).__name__}")
+
+
+def last_digest(thread: str) -> str | None:
+    """今天之前最近一次的日结（最多往回 DIGEST_DAYS 天）：别的 claw 不一定记得昨天，每天第一句话前面带上它。"""
+    today = datetime.strptime(day_of(now_iso()), "%Y-%m-%d").date()
+    for i in range(1, DIGEST_DAYS + 1):
+        d = (today - timedelta(days=i)).isoformat()
+        try:
+            text = digest_path(thread, d).read_text(encoding="utf8").strip()
+        except OSError:
+            continue
+        if text:
+            return LS(f"（{settings.app_name} 给你的说明，{user_word()}看不到）这个对话上一次的日结（{d}）：\n{text}",
+                      f"({settings.app_name}'s note to you; the user doesn't see it) This conversation's last daily digest ({d}):\n{text}")
+    return None
+
+
+def agent_role(thread: str) -> str | None:
+    """别的 claw 没有 OpenClaw 那样各自独立的 Agent：一个 Agent = 同一个 claw 的一个单独会话。这个 Agent 的对话今天的第一句话前面
+    带上它是谁、管什么（groups 表的名字和职责），history 模式下这一段跟着记录一直带着。不是 Agent 的线程 → None。"""
+    with _lock, db() as conn:
+        g = conn.execute("SELECT name, purpose FROM groups WHERE id=?", (thread,)).fetchone()
+        if not g:
+            return None
+    who, what = g["name"], (g["purpose"] or "").strip()
+    return LS(f"（{settings.app_name} 给你的说明，{user_word()}看不到）这个对话是 Agent「{who}」" + (f"：{what}" if what else "") +
+              f"。你就是它：只管这一块，别的事请{user_word()}去主对话说。",
+              f"({settings.app_name}'s note to you; the user doesn't see it) This conversation is the Agent \"{who}\"" + (f": {what}" if what else "") +
+              ". You are that Agent: stick to this area and send anything else back to the main chat.")
 
 
 def begin(thread: str, model: str, user_id: int, ts: str, content: str | list, token: str, key: str | None = None, origin: str = "user",
@@ -611,9 +701,10 @@ def begin(thread: str, model: str, user_id: int, ts: str, content: str | list, t
               inbox_mark=max_rowid("inbox"), handoff_mark=max_rowid("handoffs"))
     RUNS[thread] = run
     asyncio.create_task(run_gateway(run, content, token))
-    try:  # 回复进行中盯着 OpenClaw 的任务台账：这次新派的子任务当场出任务卡（见 cards.py）
+    try:  # 回复进行中盯着 OpenClaw 的任务台账：这次新派的子任务当场出任务卡（见 cards.py）；别的 claw 没有这本台账
         import cards as cards_mod  # 延迟导入：cards.py 依赖本模块
-        cards_mod.watch(run)
+        if claw.is_openclaw():
+            cards_mod.watch(run)
     except Exception:  # noqa: BLE001
         pass
     return run
@@ -964,6 +1055,7 @@ async def trigger(body: SendBody):
         raise HTTPException(400, L("level 只能是 ring / quiet / none", "level must be ring, quiet or none"))
     level = body.level or ("none" if body.notify is False else "quiet")
     run = start_run(body.thread, text, body.model, origin="auto", level=level)
+    run.digest = body.digest and not claw.is_openclaw()  # 回复要等后台跑完：现在标上来得及
     return {"ok": True, "thread": body.thread, "userId": f"db{run.user_id}", "modelId": run.model, "level": level}
 
 
@@ -1029,6 +1121,8 @@ def delete_message(body: MessageRef):
 
 
 async def gateway_call(method: str, params: dict, timeout: float = 30) -> dict:
+    if not claw.is_openclaw():  # 只有 OpenClaw 有 Gateway 的这些方法；别的 claw 当成「没有这项」，调用方各自降级
+        raise HTTPException(501, L(f"{claw.name()} 没有这项（Gateway {method} 只有 OpenClaw 有）", f"{claw.name()} doesn't have this (Gateway {method} is OpenClaw-only)"))
     exe = shutil.which(settings.openclaw_bin) or settings.openclaw_bin
     proc = await asyncio.create_subprocess_exec(exe, "gateway", "call", method, "--json", "--params", json.dumps(params, ensure_ascii=False),
                                                 stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE)
@@ -1074,7 +1168,7 @@ async def rewind(body: MessageRef):
         raise HTTPException(404, L("找不到这条消息", "Message not found"))
     if r["role"] != "user":
         raise HTTPException(400, L("只能撤回自己发的消息", "You can only unsend your own messages"))
-    entry = await find_entry(body.thread, (r["gw_text"] if "gw_text" in r.keys() and r["gw_text"] else r["text"]), r["ts"])
+    entry = await find_entry(body.thread, (r["gw_text"] if "gw_text" in r.keys() and r["gw_text"] else r["text"]), r["ts"]) if claw.is_openclaw() else None
     if entry:
         await gateway_call("sessions.rewind", {"sessionKey": session_key(body.thread), "entryId": entry})
     with _lock, db() as conn:

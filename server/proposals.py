@@ -40,6 +40,7 @@ from pydantic import BaseModel
 
 import agents
 import boards
+import claw
 import data
 import inbox
 from chat import _lock, day_bounds, day_of, db, hhmm, log_activity, now_iso
@@ -78,6 +79,8 @@ def bad(zh: str, en: str, code: int = 400, **extra) -> JSONResponse:
 # —— skill 文件和允许列表 ————————————————————————————————————————————————
 
 def skills_root() -> Path:
+    if not claw.is_openclaw() and claw.cfg().get("skills"):  # 别的 claw：它自己的 skills 文件夹（server.json 的 claw.skills）
+        return Path(str(claw.cfg()["skills"])).expanduser()
     return settings.workspace / "skills"
 
 
@@ -133,7 +136,10 @@ def allowlist(cfg: dict, agent_id: str) -> list | None:
 
 
 def grant(agent_ids: list[str], name: str) -> list[str]:
-    """把 skill 加进这些 Agent 的允许列表（openclaw.json）。返回真的改了的 Agent（没设列表 = 本来就能用，不算）。"""
+    """把 skill 加进这些 Agent 的允许列表（openclaw.json）。返回真的改了的 Agent（没设列表 = 本来就能用，不算）。
+    别的 claw 没有 OpenClaw 的允许列表：放进它的 skills 文件夹就算装好了。"""
+    if not claw.is_openclaw():
+        return []
     changed: list[str] = []
 
     def change(cfg: dict) -> bool:
