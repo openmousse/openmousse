@@ -34,7 +34,7 @@ from pathlib import Path
 HERE = Path(__file__).resolve().parent
 MOUSSE_HOME = Path("~/.openmousse").expanduser()
 SERVER_JSON = MOUSSE_HOME / "server.json"
-SKILLS = ("handoff", "agent-builder", "journal", "memory-tree", "inbox", "dispatch", "project", "board", "proposals", "goals")
+SKILLS = ("handoff", "agent-builder", "journal", "memory-tree", "inbox", "dispatch", "project", "board", "proposals", "goals", "onboarding")
 MAIN_SKILLS = tuple(s for s in SKILLS if s != "board")  # 主对话用的；board（Agent 自己的表和看板）只给 Agent；proposals（日结提案）只有主对话用
 AGENTS_MARK = "## OpenMousse"
 AGENTS_RULES_ZH = """

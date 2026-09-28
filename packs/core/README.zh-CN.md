@@ -15,6 +15,7 @@
 | `skills/project` | 项目，有始有终的事（几天到几周、有目标和截止）：用户让开就开，一件事要聊好几天就提议开；在项目里随手更新项目卡，项目的事转进项目，归档时写结论（`server/project_ctl.py` → 服务的 `/api/projects`） |
 | `skills/board` | 每个 Agent 自己的表和看板：用户想长期记的东西记进它自己定义的表，用积木（数字、进度、趋势、列表、清单、文字、按钮）摆到看板上，app 按配置画，不用改代码。用户让加的直接加（看板顶上能撤回）；它自己想到的交提案，「等你点头」里带预览（`server/board_ctl.py` → 服务的 `/api/boards`） |
 | `skills/goals` | 用户的长期目标（app「目标」页：健康 / 学业 / 职业 / 财务）。用户让加、让改的直接改（目标页顶上能撤销）；它自己觉得该调的交提案，进「等你点头」；用户没说过的目标不编。体重、体脂的当前值自动读（训练软件为主，Apple 健康对照），体脂从不自动算（`server/goals_ctl.py` → 服务的 `/api/goals`） |
+| `skills/onboarding` | 新手带路（主对话），一次一步、每一步都能跳过：这是什么、怎么称呼他（记一片世界树的叶子，再用 `server/settings_ctl.py` 写 server.json 的 `user_name`）、让它认识他（把别的 AI 记得的贴回来，或者问几个问题）、Apple 健康、第一个 Agent（先出方案卡，他点头才建）、他别的 AI 接同一份记忆。新实例上 app 主对话顶上的「从这里开始」开的头 |
 | `scripts/daily_close.py` | 03:45 给当天有过对话的线程发「【自动触发】日结」，04:00 会话重置前把结论写进记忆（回完不推送） |
 | `scripts/mousse_common.py` | 上面几个脚本共用：从 `~/.openmousse/server.json` 读服务地址、`local` 令牌、数据库、时区 |
 | `systemd/` | `openmousse-server`、`openmousse-daily-close.timer` 的模板 |
