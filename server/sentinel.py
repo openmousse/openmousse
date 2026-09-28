@@ -68,7 +68,7 @@ def backend() -> str:
 # —— 规则 ——————————————————————————————————————————————————————————
 
 def other_names(peer: dict) -> list[str]:
-    """别的朋友的名字和备注（这个人自己的不算，和你自己的名字重的也不算：朋友叫 Leo、备注姓周，不能让「Leo」句句被扣）：
+    """别的朋友的名字和备注（这个人自己的不算，和你自己的名字重的也不算：朋友叫 Alex、备注姓陈，不能让「Alex」句句被扣）：
     名片 agent 不该在这儿提到别人。"""
     try:
         import social
@@ -91,7 +91,7 @@ def other_names(peer: dict) -> list[str]:
 
 
 def overlap(a: str, b: str) -> bool:
-    """两个名字算不算撞：英文按词（Leo Wang 和 Leo 撞，Lily 和 Li 不撞），中文按字面包含。"""
+    """两个名字算不算撞：英文按词（Alex Wang 和 Alex 撞，Lily 和 Li 不撞），中文按字面包含。"""
     a, b = a.strip().lower(), b.strip().lower()
     if not a or not b:
         return False
