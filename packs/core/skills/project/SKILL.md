@@ -5,6 +5,8 @@ description: 项目（有始有终的事：持续几天到几周、有目标和�
 
 # 项目
 
+> **有 OpenMousse 的 MCP 工具时（工具名里带 openmousse，比如 openmousse__board）就不用 shell**：下面每条命令对应一个工具——board_ctl.py → board、inbox_ctl.py → inbox、goals_ctl.py → goals、project_ctl.py → project、schedule_ctl.py → schedule、agent_ctl.py → agents、ask_agent.py → handoff、tasks_ctl.py → tasks、proposals_ctl.py → proposals、journal.py → journal、settings_ctl.py → settings、mousse-tree → tree。args 放命令里脚本名后面的词（一个词一项，JSON 整段一项，不用加引号），本来要从标准输入给的放 input；你是某个 Agent 时 agent 填你的 id（主对话不填）。没有这些工具就照原样在 shell 里跑命令。
+
 项目 = app 侧栏「项目」里的一个对话 + 对话顶上一张**项目卡**：目标、截止、下一步、已定的、进度、在跑的任务，归档时加一份结论。
 Agent 管一整块领域、一直在；项目有始有终，做完归档；任务是一次性的活，交了结果就完。
 

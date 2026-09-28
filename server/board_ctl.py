@@ -31,6 +31,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import re
 import sys
 import urllib.error
@@ -106,6 +107,8 @@ def call(method: str, path: str, body: dict | None = None) -> dict:
 
 
 def guess_agent() -> str:
+    if aid := os.environ.get("MOUSSE_AGENT", "").strip():  # 经 MCP 调的：服务端按令牌或 agent 参数告诉我们是谁（mcp_bridge.py）
+        return aid
     here = Path.cwd().resolve()
     for aid, ws in settings.agent_workspaces.items():
         try:

@@ -41,8 +41,19 @@ python3 run.py                   # 或按 openmousse-server.service.example 装�
 - 还不支持：没有 OpenAI 兼容对话接口的（ZeroClaw 的 webhook、Moltis 的 RPC、NullClaw 的 A2A、PicoClaw 的 WebSocket、Agent Zero、NanoClaw、TinyAGI），还有 IronClaw 的 Responses 接口，都要各写一个驱动。
 - Agents：每个 Agent 是同一个 claw 的一段单独的对话，每天第一句话前面带上它的名字、职责和上一次的日结。
 - 日结：03:45 `daily_close.py` 让今天说过话的每个对话用 5–10 行总结今天，服务器把回复存成 `<data_dir>/digest/<对话>/<日期>.md`，第二天第一句话前面带上。
-- skills 和规矩：安装时给出它的 skills 文件夹和每轮都读的规则文件（AGENTS.md 之类），OpenMousse 的 skill 软链进去、规矩追加一小节。skill 要跑 `python3 ~/.openmousse/repo/server/…_ctl.py`，所以它得能执行命令。
+- skills 和规矩：安装时给出它的 skills 文件夹和每轮都读的规则文件（AGENTS.md 之类），OpenMousse 的 skill 软链进去、规矩追加一小节。skill 要跑 `python3 ~/.openmousse/repo/server/…_ctl.py`，所以它得能执行命令；能连 MCP 的 claw 走 `/mcp` 就不用（见下面「MCP」）。
 - `/api/health` 报 `claw: {kind, name, caps}`，app 按它藏起做不到的：回复中插话、后台任务、执行审批、OpenClaw 的定时任务、模型计费、每个 Agent 各自的工作区。这些接口回空列表，不去调 `openclaw`。
+
+## MCP：claw 不用 shell 也能用这些功能
+
+服务器在 `/mcp` 开了一个 MCP 入口（Streamable HTTP，无状态，[`mcp_bridge.py`](mcp_bridge.py)），claw 经它用看板、收件箱、目标、项目、日程、Agent、后台任务额度、日结提案、日志、转给 Agent、称呼、世界树。沙箱里的 Agent、换了 docker / ssh 终端后端的 Hermes、云上托管的 claw 跑不了 skill 里的命令，走这里就行。
+
+- 地址：`http://<服务地址>/mcp/<令牌>`（令牌放在路径里），或者 `/mcp` + `Authorization: Bearer <令牌>`。令牌是 `server.json` 的 `auth.tokens` 里名字为 `mcp` 的那个（安装器生成；`python3 tokens.py add mcp` 也行），别的令牌 `/mcp` 不认。名字是 `mcp-<agent id>` 的令牌绑一个 Agent，只能替它做事。
+- 工具：每个是一条现成命令的桥，写法和 skills 里的命令一模一样：`args` = 脚本名后面的词（一个词一项，不经 shell，不用加引号），`input` = 本来要从标准输入给的，`agent` = 你是哪个 Agent（命令就在它的工作区里跑，看板、收件箱按它认；别的 claw 的 Agent 没有工作区也认得）。每次起一个子进程（约 0.1 秒），同时最多 4 个，单次最长 120 秒（handoff 300 秒）。
+- OpenClaw：安装器在 `openclaw.json` 的 `mcp.servers` 里加 `openmousse`（Gateway 热加载，不用重启），工具名是 `openmousse__board` 这种。skills 里的命令照旧能用，两条路并存，skill 开头写了有工具就用工具。
+- 别的 claw：安装完打印地址和它那家怎么加（Hermes 的 `mcp_servers`、nanobot 的 `tools.mcpServers`、Letta Code 的 `/mcp add`）。Agent 那段说明里带着它的 id，调工具时填进 `agent`。
+- `server.json` 的 `mcp.scripts` 可以换掉或加一个工具背后的命令（`{"journal": ["python3", "~/…/my_journal.py"]}`，写 `null` = 不提供），改了要重启服务。
+- 每轮的上下文：11 个工具的定义约 7,500 字，跟 11 个 skill 的描述差不多。
 
 ## Agent
 

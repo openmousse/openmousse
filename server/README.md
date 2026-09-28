@@ -41,8 +41,19 @@ By default the server talks to OpenClaw. For any other claw or agent with an Ope
 - Not yet: claws without an OpenAI-compatible chat API (ZeroClaw's webhook, Moltis's RPC, NullClaw's A2A, PicoClaw's WebSocket, Agent Zero, NanoClaw, TinyAGI) and IronClaw's Responses API need a driver of their own.
 - Agents: each Agent is a conversation of its own with the same claw. Its first message of the day carries its name and role, and the last daily digest.
 - Daily digest: at 03:45 `daily_close.py` asks each conversation that talked today for 5–10 lines on the day; the server keeps the reply in `<data_dir>/digest/<conversation>/<day>.md` and puts it in front of the next day's first message.
-- Skills and rules: give the installer your claw's skills folder and the rules file it reads every turn (AGENTS.md or similar), and OpenMousse's skills are linked in and a short rules section appended. Skills run `python3 ~/.openmousse/repo/server/…_ctl.py`, so your claw needs a shell tool to use them.
+- Skills and rules: give the installer your claw's skills folder and the rules file it reads every turn (AGENTS.md or similar), and OpenMousse's skills are linked in and a short rules section appended. Skills run `python3 ~/.openmousse/repo/server/…_ctl.py`, so your claw needs a shell tool to use them. A claw that can connect to MCP doesn't need that: it can use `/mcp` instead (see "MCP" below).
 - `/api/health` reports `claw: {kind, name, caps}`; the app hides what the claw can't do: cutting into a running reply, background tasks, exec approvals, OpenClaw scheduled jobs, model billing, per-Agent workspaces. Those endpoints answer with empty lists instead of calling `openclaw`.
+
+## MCP: the features without a shell
+
+The server has an MCP endpoint at `/mcp` (Streamable HTTP, stateless, [`mcp_bridge.py`](mcp_bridge.py)) through which a claw uses boards, the inbox, goals, projects, the schedule, Agents, the background-task allowance, nightly proposals, the journal, handing off to an Agent, what to call the user, and the memory tree. Sandboxed Agents, Hermes on a docker or ssh terminal backend, and claws hosted in the cloud can't run the skills' commands; they can use this.
+
+- Address: `http://<server>/mcp/<token>` (token in the path), or `/mcp` with `Authorization: Bearer <token>`. The token is the one named `mcp` under `auth.tokens` in `server.json` (the installer creates it; `python3 tokens.py add mcp` works too); `/mcp` accepts no other token. A token named `mcp-<agent id>` is bound to that Agent and can only act for it.
+- Tools: each one bridges an existing command, written exactly as in the skills: `args` = the words after the script name (one word per item, no shell, no quoting), `input` = what would go to standard input, `agent` = which Agent you are (the command runs in its workspace and boards and the inbox know it's that Agent; Agents of other claws, which have no workspace, are recognised too). Each call starts a subprocess (about 0.1 s), at most 4 at a time, 120 s at most (handoff: 300 s).
+- OpenClaw: the installer adds `openmousse` under `mcp.servers` in `openclaw.json` (the Gateway hot-reloads it, no restart); the tools are named like `openmousse__board`. The skills' commands still work; both paths exist side by side and each skill says to prefer the tools when they're there.
+- Other claws: the installer prints the address and how to add it to that claw (Hermes's `mcp_servers`, nanobot's `tools.mcpServers`, Letta Code's `/mcp add`). An Agent's note carries its id, to put in `agent`.
+- `mcp.scripts` in `server.json` replaces or adds the command behind a tool (`{"journal": ["python3", "~/…/my_journal.py"]}`; `null` = don't offer it); restart the server after changing it.
+- Context per turn: the 11 tool definitions come to about 7,500 characters, about the same as the 11 skill descriptions.
 
 ## Agents
 

@@ -48,6 +48,8 @@
                     share.public_port（朋友经小服务的 /f 找到你）。每次读文件，不用重启
   podcast           播客（见 podcast.py，全部可选）：{"dir": 原声放哪（默认 <data_dir>/podcast）, "text_model": "gpt-transcribe",
                     "time_model": "whisper-1"（"" = 不要逐句时间）, "thinking": "low", "model": llm-task 的模型覆盖}。每次读文件，不用重启
+  mcp               MCP 入口（/mcp，见 mcp_bridge.py）：{"scripts": {"工具名": ["命令", "参数"…] 或 null}}：换掉 / 加 / 关掉一个工具背后的命令
+                    （令牌是 auth.tokens 里的 mcp、mcp-<agent id>；改了工具要重启）
   wake              起床信号：{"notify_cmd": [...], "notify_hours": ["05:30", "13:00"]}：早上收到信号（快捷指令、app 回到前台、「我起来了」）
                     时跑一下这个命令，比如立刻跑一次出起床报告的定时脚本（见 health.py；每次读文件，不用重启）
 

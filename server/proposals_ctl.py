@@ -184,7 +184,7 @@ def main() -> None:
             board = None
             if a.board_file:
                 try:
-                    board = json.loads(open(a.board_file, encoding="utf8").read())
+                    board = json.loads(sys.stdin.read() if a.board_file == "-" else open(a.board_file, encoding="utf8").read())
                 except (OSError, ValueError) as e:
                     sys.exit(L(f"--board-file 读不了：{e}", f"Can't read --board-file: {e}"))
             body["agent"] = {"name": a.name, "purpose": a.purpose, "icon": a.icon, "color": a.color, "board": board}

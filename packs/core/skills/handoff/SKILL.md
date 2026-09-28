@@ -5,6 +5,8 @@ description: 主对话把属于某个 Agent 的问题转给它。当用户问的
 
 # 转给 Agent
 
+> **有 OpenMousse 的 MCP 工具时（工具名里带 openmousse，比如 openmousse__board）就不用 shell**：下面每条命令对应一个工具——board_ctl.py → board、inbox_ctl.py → inbox、goals_ctl.py → goals、project_ctl.py → project、schedule_ctl.py → schedule、agent_ctl.py → agents、ask_agent.py → handoff、tasks_ctl.py → tasks、proposals_ctl.py → proposals、journal.py → journal、settings_ctl.py → settings、mousse-tree → tree。args 放命令里脚本名后面的词（一个词一项，JSON 整段一项，不用加引号），本来要从标准输入给的放 input；你是某个 Agent 时 agent 填你的 id（主对话不填）。没有这些工具就照原样在 shell 里跑命令。
+
 每个 Agent 各管一块，有自己的记忆、skills 和看板（`--list` 看现在有哪些，包括用户在 app 里或对话里新建的）。属于它们的事**转给它们做**，不要自己直接答：那样记录会落在你这边，Agent 的记忆里没有，明天它就不知道。
 
 ```bash

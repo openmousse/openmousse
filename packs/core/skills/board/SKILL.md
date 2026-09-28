@@ -5,6 +5,8 @@ description: 你自己的数据表和看板（app 里你那一页的「看板」
 
 # 看板：你自己的表 + 积木
 
+> **有 OpenMousse 的 MCP 工具时（工具名里带 openmousse，比如 openmousse__board）就不用 shell**：下面每条命令对应一个工具——board_ctl.py → board、inbox_ctl.py → inbox、goals_ctl.py → goals、project_ctl.py → project、schedule_ctl.py → schedule、agent_ctl.py → agents、ask_agent.py → handoff、tasks_ctl.py → tasks、proposals_ctl.py → proposals、journal.py → journal、settings_ctl.py → settings、mousse-tree → tree。args 放命令里脚本名后面的词（一个词一项，JSON 整段一项，不用加引号），本来要从标准输入给的放 input；你是某个 Agent 时 agent 填你的 id（主对话不填）。没有这些工具就照原样在 shell 里跑命令。
+
 app 按你写的配置画看板，不需要改代码。你管三样：**表**（记什么，字段你定）、**行**（数据）、**看板配置**（用哪几块积木、放哪、数据从哪张表怎么算）。
 
 ```bash

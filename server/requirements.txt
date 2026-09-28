@@ -12,3 +12,4 @@ PyYAML>=6
 markdown-it-py>=3
 aiohttp>=3.9
 cryptography>=41
+mcp>=1.23,<2  # /mcp（mcp_bridge.py）；和 tree/ 一样卡在 1.x

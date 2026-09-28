@@ -5,6 +5,8 @@ description: 收件箱（app 里的「等你点头」）：要用户点头才做
 
 # 收件箱：先问再做
 
+> **有 OpenMousse 的 MCP 工具时（工具名里带 openmousse，比如 openmousse__board）就不用 shell**：下面每条命令对应一个工具——board_ctl.py → board、inbox_ctl.py → inbox、goals_ctl.py → goals、project_ctl.py → project、schedule_ctl.py → schedule、agent_ctl.py → agents、ask_agent.py → handoff、tasks_ctl.py → tasks、proposals_ctl.py → proposals、journal.py → journal、settings_ctl.py → settings、mousse-tree → tree。args 放命令里脚本名后面的词（一个词一项，JSON 整段一项，不用加引号），本来要从标准输入给的放 input；你是某个 Agent 时 agent 填你的 id（主对话不填）。没有这些工具就照原样在 shell 里跑命令。
+
 你交上来的事会变成一张带按钮的卡：在对话里就显示在你这条回复下面，同时出现在 app「今天 → 等你点头」里。用户点**同意**，或者引用这张卡回复你说要怎么改，或者**拒绝**。同意之后系统会在你的线程里发一句「【收件箱】已同意…」，那时你再动手。
 
 **在对话里要用户点头时，不要让他打「确认」**：交一条收件箱，回复里只说你想做什么、按钮就在下面。

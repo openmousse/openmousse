@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import sys
 import urllib.error
 import urllib.parse
@@ -89,6 +90,8 @@ def item_path(iid: str, tail: str = "") -> str:
 
 def guess_source() -> str:
     """没给 --source：当前目录在哪个 Agent 的工作区里就算它的（Agent 跑命令默认在自己的工作区里），否则是 main。"""
+    if aid := os.environ.get("MOUSSE_AGENT", "").strip():  # 经 MCP 调的：服务端告诉我们是谁（mcp_bridge.py）
+        return aid
     here = Path.cwd().resolve()
     for aid, ws in settings.agent_workspaces.items():
         try:

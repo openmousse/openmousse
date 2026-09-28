@@ -338,7 +338,7 @@ def write_server_json(a: argparse.Namespace, oc: dict, home: Path, workspace: Pa
         cfg["profile"] = str(workspace / "USER.md")
     auth = cfg.setdefault("auth", {})
     tokens = auth.setdefault("tokens", {})
-    for name in ("phone", "local"):
+    for name in ("phone", "local", "mcp"):  # mcp：claw 经 MCP 连 /mcp 用的（见 server/mcp_bridge.py），不给人看
         if not tokens.get(name):
             tokens[name] = secrets.token_urlsafe(24)
             new_tokens[name] = tokens[name]
@@ -532,6 +532,60 @@ def allow_skill_links(oc_path: Path, skills_dir: Path, home: Path, openclaw_bin:
     say(L(f"openclaw.json：skills.load.allowSymlinkTargets + {real}（OpenClaw 才肯加载软链进来的 skill）",
           f"openclaw.json: skills.load.allowSymlinkTargets + {real} (so OpenClaw loads the linked skills)"))
     return True
+
+
+def mcp_url(cfg: dict) -> str:
+    """claw 连 OpenMousse 的 MCP 地址（令牌放在路径里：不用请求头、不用环境变量）。没有 mcp 令牌 = 空。"""
+    tok = ((cfg.get("auth") or {}).get("tokens") or {}).get("mcp") or ""
+    if not tok:
+        return ""
+    b = cfg.get("bind") or {}
+    host = b.get("host") or "127.0.0.1"
+    host = "127.0.0.1" if host in ("0.0.0.0", "::", "") else host
+    return f"http://{host}:{int(b.get('port') or 8080)}/mcp/{tok}"
+
+
+def print_mcp_hint(url: str, preset: str) -> None:
+    """别的 claw：告诉用户怎么把 OpenMousse 的 MCP 加进它的 claw（各家配置格式不一样，安装器不去改它们的配置文件）。"""
+    print(L("让你的 claw 经 MCP 用看板、收件箱这些（不用 shell）。地址里带令牌，只在自己终端看：",
+            "Let your claw use boards, the inbox and the rest over MCP (no shell needed). The address carries a token; only look at it in your own terminal:"))
+    print(f"  {url}")
+    hints = {
+        "hermes": L("  Hermes：~/.hermes/config.yaml 的 mcp_servers 下加 `openmousse: {url: \"<上面的地址>\"}`，然后在 Hermes 里 /reload-mcp",
+                    "  Hermes: under mcp_servers in ~/.hermes/config.yaml add `openmousse: {url: \"<the address above>\"}`, then /reload-mcp in Hermes"),
+        "nanobot": L("  nanobot：~/.nanobot/config.json 的 tools.mcpServers 加 `\"openmousse\": {\"url\": \"<上面的地址>\"}`，重启 nanobot",
+                     "  nanobot: in ~/.nanobot/config.json add `\"openmousse\": {\"url\": \"<the address above>\"}` under tools.mcpServers, then restart nanobot"),
+        "letta": L("  Letta Code：在对话里 /mcp add --transport http openmousse <上面的地址>",
+                   "  Letta Code: in a chat, /mcp add --transport http openmousse <the address above>"),
+    }
+    print(hints.get(preset) or L("  在它的 MCP 设置里加一个 Streamable HTTP 服务器，名字写 openmousse",
+                                 "  add a Streamable HTTP server named openmousse in its MCP settings"))
+
+
+def add_mcp_server(oc_path: Path, url: str, home: Path, openclaw_bin: str) -> None:
+    """OpenClaw：mcp.servers 里加 openmousse（Streamable HTTP）。Agent 就能经 MCP 用看板、收件箱这些，不用 shell（沙箱里的 Agent 也行）。
+    Gateway 热加载，不用重启。单独备份、单独 validate：不认 mcp.servers 的老版本就只撤这一项。直接改文件，令牌不上命令行。"""
+    if not url:
+        return
+    oc = load_json(oc_path)
+    servers = oc.setdefault("mcp", {}).setdefault("servers", {})
+    want = {"url": url, "transport": "streamable-http", "requestTimeoutMs": 320000}  # handoff 等 Agent 回话最长 300 秒，OpenClaw 默认 60 秒
+    cur = servers.get("openmousse")
+    if isinstance(cur, dict) and all(cur.get(k) == v for k, v in want.items()):
+        return
+    servers["openmousse"] = {**(cur if isinstance(cur, dict) else {}), **want}
+    backups = MOUSSE_HOME / "backups"
+    backups.mkdir(parents=True, exist_ok=True)
+    backup = backups / f"openclaw.json.{datetime.now():%Y%m%d-%H%M%S}.mcp"
+    shutil.copy2(oc_path, backup)
+    dump_json(oc_path, oc, mode=0o600)
+    if run([openclaw_bin, "config", "validate"], env=openclaw_env(home)).returncode != 0:
+        shutil.copy2(backup, oc_path)
+        say(L("这个版本的 OpenClaw 不认 mcp.servers，没加（Agent 照旧用 skills 里的命令）",
+              "This OpenClaw doesn't know mcp.servers; left out (Agents keep using the skills' commands)"))
+        return
+    say(L("openclaw.json：mcp.servers + openmousse（Agent 经 MCP 用看板、收件箱这些；Gateway 自己热加载）",
+          "openclaw.json: mcp.servers + openmousse (Agents reach boards, the inbox and the rest over MCP; the Gateway hot-reloads it)"))
 
 
 def enable_llm_task(oc_path: Path, home: Path, openclaw_bin: str) -> bool:
@@ -933,6 +987,7 @@ def main() -> None:
         print("openclaw.json")
         restart = patch_openclaw(oc_path, home, cfg.get("openclaw_bin") or "openclaw")
         restart = allow_skill_links(oc_path, repo / "packs/core/skills", home, cfg.get("openclaw_bin") or "openclaw") or restart
+        add_mcp_server(oc_path, mcp_url(cfg), home, cfg.get("openclaw_bin") or "openclaw")
         if a.tree_public:  # 「开公网」= 能加朋友：名片 agent 走 llm-task
             restart = enable_llm_task(oc_path, home, cfg.get("openclaw_bin") or "openclaw") or restart
     public = None
@@ -984,6 +1039,8 @@ def main() -> None:
         ok, detail = probe_claw(cfg.get("claw") or {})
         print(L(f"你的 claw：{cfg['claw'].get('name')}（{cfg['claw'].get('url')}）" + ("，接口连得上 ✓" if ok else f"，接口现在连不上 ✗（{detail}）：看它在不在跑、地址和令牌对不对，改 server.json 的 claw 段不用重启"),
                 f"Your claw: {cfg['claw'].get('name')} ({cfg['claw'].get('url')})" + (", API reachable ✓" if ok else f", API not reachable right now ✗ ({detail}): check it's running and the URL / token are right; editing the claw section of server.json needs no restart")))
+        if mcp_url(cfg):
+            print_mcp_hint(mcp_url(cfg), a.claw_preset or "")
     else:
         print(gw_line)
     if "phone" in new_tokens:

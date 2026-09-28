@@ -183,6 +183,24 @@ elif code in (401, 403):
     bad(L("服务在，但令牌对不上", "Server is up but the token doesn't match"), f"HTTP {code}", L("令牌改过的话重启一下服务：", "if you changed tokens, restart it: ") + "systemctl --user restart openmousse-server")
 else:
     bad(L("服务连不上", "Server not reachable"), f"http://{host}:{port} · {clean(body, 80)}", restart_hint("openmousse-server"))
+if code == 200:  # MCP 入口：claw 不用 shell 也能用看板、收件箱这些（server/mcp_bridge.py）
+    mtok = str(tokens.get("mcp") or "")
+    if not mtok:
+        warn(L("MCP 入口没有令牌", "The MCP endpoint has no token"), L("claw 只能用 skills 里的命令", "claws can only use the skills' commands"),
+             L("再跑一遍安装命令（会生成 mcp 令牌）", "run the installer again (it creates the mcp token)"))
+    else:
+        c2, b2 = http(f"http://{host}:{port}/mcp", mtok, "POST", {"jsonrpc": "2.0", "id": 1, "method": "tools/list", "params": {}},
+                      headers={"Accept": "application/json, text/event-stream"})
+        try:
+            n = len(json.loads(b2)["result"]["tools"])
+        except (ValueError, KeyError, TypeError):
+            n = 0
+        if c2 == 200 and n:
+            ok(L("MCP 入口", "MCP endpoint"), L(f"/mcp · {n} 个工具", f"/mcp · {n} tools"))
+        elif c2 == 404:
+            warn(L("这版服务还没有 /mcp", "This server version has no /mcp yet"), "", L("更新：再跑一遍安装命令", "update: run the installer again"))
+        else:
+            bad(L("MCP 入口不通", "MCP endpoint not working"), f"HTTP {c2} · {clean(b2, 80)}", restart_hint("openmousse-server"))
 
 # —— 手机怎么连 ——
 section(L("手机怎么连（Tailscale）", "Reaching it from the phone (Tailscale)"))

@@ -5,6 +5,8 @@ description: 新手带路（只有主对话用）：用户第一次用、让你�
 
 # 新手带路
 
+> **有 OpenMousse 的 MCP 工具时（工具名里带 openmousse，比如 openmousse__board）就不用 shell**：下面每条命令对应一个工具——board_ctl.py → board、inbox_ctl.py → inbox、goals_ctl.py → goals、project_ctl.py → project、schedule_ctl.py → schedule、agent_ctl.py → agents、ask_agent.py → handoff、tasks_ctl.py → tasks、proposals_ctl.py → proposals、journal.py → journal、settings_ctl.py → settings、mousse-tree → tree。args 放命令里脚本名后面的词（一个词一项，JSON 整段一项，不用加引号），本来要从标准输入给的放 input；你是某个 Agent 时 agent 填你的 id（主对话不填）。没有这些工具就照原样在 shell 里跑命令。
+
 他刚装好：没有 Agent，你对他一无所知。带他走一遍，**一次只走一步**，每条回复几行字，说完这一步就停下等他。每一步都能跳过：他说"跳过""下一步""以后再说"，告诉他以后在哪能做，接着下一步。用他开口的语言说（开场白是英文就全程英文，app 里的名字也用英文界面上的）。
 
 ```bash

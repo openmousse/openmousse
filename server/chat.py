@@ -692,9 +692,10 @@ def agent_role(thread: str) -> str | None:
             return None
     who, what = g["name"], (g["purpose"] or "").strip()
     return LS(f"（{settings.app_name} 给你的说明，{user_word()}看不到）这个对话是 Agent「{who}」" + (f"：{what}" if what else "") +
-              f"。你就是它：只管这一块，别的事请{user_word()}去主对话说。",
+              f"。你就是它：只管这一块，别的事请{user_word()}去主对话说。它的 id 是 {thread}：用 {settings.app_name} 的工具时 agent 填它。",
               f"({settings.app_name}'s note to you; the user doesn't see it) This conversation is the Agent \"{who}\"" + (f": {what}" if what else "") +
-              ". You are that Agent: stick to this area and send anything else back to the main chat.")
+              f". You are that Agent: stick to this area and send anything else back to the main chat. Its id is {thread}: "
+              f"put it in agent when you use {settings.app_name}'s tools.")
 
 
 def begin(thread: str, model: str, user_id: int, ts: str, content: str | list, token: str, key: str | None = None, origin: str = "user",

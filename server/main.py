@@ -35,6 +35,7 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI, HTTPException, Query, Request
 from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
+from starlette.routing import Mount, Route
 
 import sources  # noqa: E402 — 先于 health / data：把 scripts/ 放进 sys.path、加载可选数据源
 from config import TZ, settings  # noqa: E402
@@ -47,6 +48,10 @@ import claw  # noqa: E402
 import schedule  # noqa: E402
 import chat  # noqa: E402
 import settle  # noqa: E402
+try:
+    import mcp_bridge  # noqa: E402  /mcp：claw 经 MCP 用看板、收件箱这些（见 mcp_bridge.py）
+except ImportError:  # 没装 mcp 包的老安装：没有 /mcp，别的照常
+    mcp_bridge = None
 from chat import router as chat_router  # noqa: E402
 from cards import router as cards_router  # noqa: E402
 from health import router as health_router  # noqa: E402
@@ -102,10 +107,16 @@ async def lifespan(_app: FastAPI):
     asyncio.create_task(chat.resume_ws())  # 走对话通道的：重启前发出去、还没拿到回复的，接回来或补回回复
     alerts.start()  # Agent 的提醒：到点查表，有东西就推
     friends.start()  # 朋友聊天的投递循环：发出去的消息排队发、失败重试；名片变了告诉朋友
-    yield
+    if mcp_bridge is None:
+        yield
+        return
+    async with mcp_bridge.server.session_manager.run():  # /mcp 要它（无状态：每个请求一个传输）
+        yield
 
 
 app = FastAPI(title=f"{settings.app_name} API", docs_url=None, redoc_url=None, openapi_url=None, lifespan=lifespan)
+if mcp_bridge is not None:  # 放最前面：/mcp 不走 /api 的令牌检查，它自己认 mcp 令牌；/mcp 不带斜杠也要接住（MCP 客户端不跟 POST 的重定向）
+    app.router.routes[:0] = [Route("/mcp", endpoint=mcp_bridge.gate, methods=["GET", "POST", "DELETE"]), Mount("/mcp", app=mcp_bridge.gate)]
 app.include_router(chat_router)
 app.include_router(cards_router)  # 在 data 之前：/api/tasks/quota 不能被 /api/tasks/{tid} 先接走
 app.include_router(health_router)

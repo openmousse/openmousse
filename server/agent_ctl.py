@@ -101,7 +101,7 @@ def main() -> None:
         plan = None
         if a.board_file:  # 先读好、校验个大概再建 Agent，免得建了一半才发现文件坏了
             try:
-                plan = json.loads(open(a.board_file, encoding="utf8").read())
+                plan = json.loads(sys.stdin.read() if a.board_file == "-" else open(a.board_file, encoding="utf8").read())
             except (OSError, ValueError) as e:
                 sys.exit(L(f"--board-file 读不了：{e}", f"Can't read --board-file: {e}"))
             if not isinstance(plan, dict) or not isinstance(plan.get("blocks", []), list) or not isinstance(plan.get("tables", []), list):
