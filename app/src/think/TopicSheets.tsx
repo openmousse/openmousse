@@ -1,5 +1,5 @@
 // Shared topic actions: deletion only unlinks thoughts and can be undone here.
-import React, { useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { TextInput, View } from 'react-native';
 import { Btn, T, showError } from '../components/ui';
 import * as thinkApi from '../api/think';
@@ -13,6 +13,10 @@ export function RenameSheet({ topic, close, onDone }: Props) {
   const t = useTheme();
   const [v, setV] = useState(topic?.title ?? '');
   const [busy, setBusy] = useState(false);
+  const input = useRef<TextInput>(null);
+  // 不用 autoFocus：弹层打开时会先收起对话输入栏的键盘，同一刻再弹键盘会和弹层升起的动画打架（键盘上下跳、弹层被顶一下）。
+  // 等弹层升到位（动画 300ms）再聚焦，键盘只弹一次，弹层跟着键盘上沿走。
+  useEffect(() => { const id = setTimeout(() => input.current?.focus(), 350); return () => clearTimeout(id); }, []);
   const save = async () => {
     if (!topic || !v.trim() || busy) return;
     setBusy(true);
@@ -23,7 +27,8 @@ export function RenameSheet({ topic, close, onDone }: Props) {
   if (!topic) return null;
   return (
     <View style={{ gap: space.md }}>
-      <TextInput value={v} onChangeText={setV} autoFocus accessibilityLabel={L('主题名字', 'Topic name')}
+      <TextInput ref={input} value={v} onChangeText={setV} selectTextOnFocus returnKeyType="done" onSubmitEditing={save} blurOnSubmit={false}
+        maxLength={40} accessibilityLabel={L('主题名字', 'Topic name')}
         style={[type.body, { borderRadius: radius.md, paddingHorizontal: space.lg, paddingVertical: 12, backgroundColor: t.surface, color: t.ink }]} />
       <Btn label={busy ? L('正在改…', 'Renaming…') : L('改', 'Rename')} onPress={save} />
     </View>
