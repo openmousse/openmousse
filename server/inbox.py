@@ -581,6 +581,12 @@ async def act(iid: str, body: ActIn):
     done = await hook(it, action) if hook else None
     silent = bool(done and done.get("silent"))  # 钩子自己办完了，不往线程里发话（social：对方说的不能进 Agent 的线程）
     out: dict = {"ok": True, "item": it}
+    if done and done.get("failed") and done.get("pending"):
+        # 钩子没办成、但可以再来（Sentinel 扣下的那句没送到对方）：卡回到「等你点」，写上为什么
+        with _lock, idb() as conn:
+            conn.execute("UPDATE inbox SET status='pending', note='', result=?, decided_at=NULL, updated_at=? WHERE id=?", (done["failed"], now_iso(), iid))
+        out["item"] = item(iid)
+        return out
     if action == "revise" and done and done.get("status") == "done" and not done.get("failed"):
         # 钩子按你写的话办完了（Sentinel 扣下的那句，你改了以后发出去了）：不用再等谁改，直接算处理完
         with _lock, idb() as conn:
@@ -609,6 +615,10 @@ async def act(iid: str, body: ActIn):
             out["run"] = kick(it["thread"], approve_text(it, note))
     elif action == "reject":
         log_activity(L(f"拒绝了{who}的「{title}」", f'Declined "{title}" from {who}'), "denied")
+        if done and done.get("result") and not done.get("failed"):  # 钩子写了办成什么样（Sentinel 那张：没发，告诉对方答不了）
+            with _lock, idb() as conn:
+                conn.execute("UPDATE inbox SET result=?, updated_at=? WHERE id=?", (done["result"], now_iso(), iid))
+            out["item"] = it = item(iid)
     else:
         log_activity(L(f"让{who}把「{title}」改一下", f'Asked {who} to revise "{title}"'), "edit")
         if not hook:

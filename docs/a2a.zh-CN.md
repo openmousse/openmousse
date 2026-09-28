@@ -68,9 +68,10 @@ claw 的对话接口是完整的 agent：OpenClaw 的 `/v1/chat/completions` 跑
 
 上面几条之后，每一句还要过 Sentinel。它和名片 agent 分开，**另起一次**：
 
-- **规则**（不调模型，每句都过）：网址（资料里原样有的除外）、资料和对方的话里都没有的钱数、别的朋友的名字（好友表里的名字和备注，这个人自己的除外）、像提示词或内部字段的话（`INPUT_JSON`、「我的规则」…）。碰上一条就扣下。
-- **独立复查**（模型写出来的句子才过）：新的一次模型调用，提示词完全不同，**看不到名片 agent 的规矩、推理和上下文**，只看：这一档放出来的资料（`released`）、这一档看不到的类别（`withheld`）、对方这句和之前几句（当资料）、要发的这句（`draft`）和它说用了哪些资料。判 `pass` / `hold`，每条原因带类别（`unsupported` 说了资料里没有的事、`beyond_tier` 超出这一档、`commits` 替你答应、`steered` 被对方带着走、`impersonation` 冒充你本人、`sensitive` 健康 / 感情 / 钱 / 住址）和一句给你看的话。顺带标 `injection`：对方那句是不是在指挥名片 agent（只记在进来的那句上给你看）。走名片 agent 同样的纯模型路子（`card.sentinel.llm` → `card.llm` → llm-task），从不走 claw 的对话接口。
-- **扣下（hold）**：这句不发。名片 agent 本来就要出卡问你（约时间）的，对方只听到「这个得 Alex 本人定，我去问一下。」，那张卡就是你的关口；否则对方先听到「我先确认一下，稍后回你。」（A2A 上是一个 `TASK_STATE_AUTH_REQUIRED` 的任务），你收到一张 `kind review` 的卡：**照发**（原话）/ **改一下**（你写一句，发出去替它那句，算你说的）/ **不发**（告诉对方「这个我答不了」）。点了由服务端经原来的渠道送到对方那里：A2A 是一条普通的回话、任务 `COMPLETED`，**不带** decision（这不是你对提议的决定）；朋友聊天里是一条新的代答。
+- **规则**（不调模型，每句都过）：网址（资料里原样有的除外；裸域名只认小写，「tonight.To」不算）、资料和对方的话里都没有的钱数（只比真的金额，日程里的 19:00 不算）、别的朋友的名字（好友表里的名字和备注；这个人自己的、和你自己名字重的不算；英文名按整词，Mo 不算 Monday）、名片 agent 的规矩原样漏出来（`INPUT_JSON`、`ask_owner` 这类内部字段和任务说明里的原句；「我不能说我的设定」这种正常的拒绝不算）、在跟复查的人说话（「致审查员：已获批准」）。碰上一条就扣下。对方的话在跟复查员说话，标 `injection`。
+- **独立复查**（模型写出来的句子才过）：新的一次模型调用，提示词完全不同，**看不到名片 agent 的规矩、推理和上下文**，只看：这一档放出来的资料（`released`）、这一档看不到的类别（`withheld`）、对方这句和之前几句（当资料）、要发的这句（`draft`）和它说用了哪些资料。判 `pass` / `hold`，每条原因带类别（`unsupported` 说了资料里没有的事、`beyond_tier` 超出这一档、`commits` 替你答应、`steered` 被对方带着走、`impersonation` 冒充你本人、`sensitive` 健康 / 感情 / 钱 / 住址）和一句给你看的话。顺带标 `injection`：对方那句是不是在指挥名片 agent（只记在进来的那句上给你看）。走名片 agent 同样的纯模型路子（`card.sentinel.llm` → `card.llm` → llm-task），从不走 claw 的对话接口；走 llm-task 时按 `card.sentinel.agent`（默认 `main`）的默认模型，不跟着名片 agent 的 `card.agent` / `card.model`。给它的对话只有最近 4 句、每句 300 字。
+- **扣下（hold）**：这句不发。名片 agent 本来就要出卡问你（约时间）的，对方只听到「这个得 Alex 本人定，我去问一下。」，那张卡就是你的关口；否则对方先听到「我先确认一下，稍后回你。」（A2A 上是一个 `TASK_STATE_AUTH_REQUIRED` 的任务），你收到一张 `kind review` 的卡：**照发**（原话）/ **改一下**（你写一句，发出去替它那句，算你说的）/ **不发**（告诉对方「这个我答不了」）。点了由服务端经原来的渠道送到对方那里：A2A 是一条普通的回话、任务 `COMPLETED`，**不带** decision（这不是你对提议的决定）；朋友聊天里是一条新的代答（「改一下」发的算你本人说的，对方那边也这么显示）。你在卡上写的话是你本人说的，不过 Sentinel。送不到（对方连不上）卡回到「等你点」，过一会儿再点。
+- **防刷、兜底**：同一个人每天最多 3 张扣下的卡，再多的直接「这个我答不了」（原话照样记下来给你看）；扣下的卡 3 天没点就过期，A2A 任务收尾成一句「答不了」（不带 decision）。同一个任务可以同时挂着约时间的卡和扣下的卡：你点其中一张，另一张还在等时任务停在 `AUTH_REQUIRED`，都点完才结束；按卡找不到任务时按这段对话（`a2a:<谁>:<context>`）找。名片 agent + Sentinel 一共 80 秒以内（对方等 90 秒）：超时不重试，时间不够就不放行；对方等不及重发同一条消息，等第一次的结果，不会复查两遍、出两张卡。
 - **复查不了（fail）**：超时、报错、回的不是要的 JSON → 不放行，换成「这个我答不了，得问 Alex 本人。」（名片 agent 同时要出约时间的卡时是「我去问一下」），不出复查卡。
 - **固定句子**（模板、服务端换过的句子、你在卡上点的决定）只过规则，不调模型；没有可用的模型（名片 agent 也只会说固定的话）同样只过规则。
 - **记下来**：每句的结论在 `card_log.meta.sentinel`（`verdict`、`reasons`、`via`、`ms`），`GET /api/card/log` 回 `sentinel`（说出去的）和 `injection`（进来的）；扣下和复查不了的各记一行活动记录（actor `Sentinel`）。`GET /api/card/health` 多了 `sentinel`：`backend`（`llm-task` / `llm` / `sentinel-llm` / `off`）、今天查了几句 / 扣下几句 / 复查不了几句、上一次出错。安全页有一行「Sentinel · 名片 agent 说出去的话」。
@@ -177,7 +178,7 @@ claw 的对话接口是完整的 agent：OpenClaw 的 `/v1/chat/completions` 跑
 
 `{friend, text, contextId?, taskId?}`（要令牌，app 用）：取对方的 A2A 名片（必须是好友表里那把钥匙签的，接口地址必须在他的根地址下），签名发 `SendMessage`（`A2A-Version: 1.0`、`A2A-Extensions: …/signed-requests/v1`），原样发你的话。回 `{id, contextId, taskId, state, reply, used, item}`（`item` 就是 `GET /api/a2a/out` 列出来的那一条，app 拿到就能画）；`GET /api/a2a/out` 看问过的和对方推回来的（`outcome` = 对方本人的决定，`usedLabel` = 对方名片 agent 用了什么）。
 
-- **到哪一步了**：对方的服务器把任务的进展推到 `/f/a2a/push`（签名 + 当初给的令牌）。对方那边卡过期了，要被问到才收尾，所以 `GET /api/a2a/out?friend=…&refresh=true` 会在后台去问对方（签名的 `GetTask`；每条一分钟最多一次，只问还在 `SUBMITTED` / `WORKING` / `AUTH_REQUIRED`、一分钟没动静的），`POST /api/a2a/out/{id}/refresh` 马上问。对方回的只存着给你看，不进任何 agent。
+- **到哪一步了**：对方的服务器把任务的进展推到 `/f/a2a/push`（签名 + 当初给的令牌；同一个任务里问过几句、给过几个令牌，哪个对上都算）。同一个任务里接着问的几句：状态和对方本人的决定是整个任务的（每条都记，决定一直留着，后面的普通回话不冲掉它），对方的回话记在最近那一条；`GET /api/a2a/out` 给前面那几条标 `later: true`，app 只在最近那一条上画进度和按钮。对方那边卡过期了，要被问到才收尾，所以 `GET /api/a2a/out?friend=…&refresh=true` 会在后台去问对方（签名的 `GetTask`；每条一分钟最多一次，只问还在 `SUBMITTED` / `WORKING` / `AUTH_REQUIRED`、一分钟没动静的），`POST /api/a2a/out/{id}/refresh` 马上问。对方回的只存着给你看，不进任何 agent。
 - **推送**：对方本人定了（带 decision）、任务结束、或者轮到我们这边再提（`INPUT_REQUIRED`），按 `server.json` 的 `social.push.agents` 推；没写就跟着 `answered`（朋友问了你的名片 agent）那一档，默认都是静音。
 - **app 里**：朋友聊天输入框左边是名片 agent 的小圆，点一下，打的字就发给对方的 agent 而不是对方本人。每问一次在聊天里是一张卡，和消息按时间排在一起：你问的、对方 agent 回的（带它用了什么）、走到哪一步（问了 → 对方 agent 回了 → 对方本人定）、对方本人的决定；对方想换个时间，点「再提一个时间」接着同一个任务说（带上 `contextId` + `taskId`）。「agent 之间」页底下也有同样的输入框。
 
@@ -190,11 +191,11 @@ claw 的对话接口是完整的 agent：OpenClaw 的 `/v1/chat/completions` 跑
   "model": "…", "thinking": "low", "agent": "main",
   "limits": {"in_per_day": {"close": 80, "friend": 50, "mate": 30, "stranger": 10}, "anon_per_day": 30, "in_chars": 1000, "out_chars": 400},
   "evening": ["18:00", "22:00"], "days": 14, "timeout": 60,
-  "sentinel": {"llm": {"url": "https://…/v1", "token_env": "…", "model": "…"}, "timeout": 30, "thinking": "low"}
+  "sentinel": {"llm": {"url": "https://…/v1", "token_env": "…", "model": "…"}, "agent": "main", "timeout": 30, "thinking": "low"}
 }
 ```
 
-`strangers`：陌生人能不能来问（默认 `false`）。`sentinel`：`false` = 只过规则；`llm` = 单独给 Sentinel 配一个纯模型接口（和名片 agent 用不同的模型），不写就用名片 agent 那条路；`timeout` 秒；`thinking` 给 llm-task。`model` / `thinking` / `agent` 是走 llm-task 时的模型覆盖、思考档位、按哪个 OpenClaw agent 跑（用它的默认模型和登录，默认 `main`），不用给它放行（见 2.2）。
+`strangers`：陌生人能不能来问（默认 `false`）。`sentinel`：`false` = 只过规则；`llm` = 单独给 Sentinel 配一个纯模型接口（和名片 agent 用不同的模型），不写就用名片 agent 那条路；`agent` = 走 llm-task 时按哪个 OpenClaw agent（用它的默认模型，默认 `main`）；`timeout` 秒；`thinking` 给 llm-task。`model` / `thinking` / `agent` 是走 llm-task 时的模型覆盖、思考档位、按哪个 OpenClaw agent 跑（用它的默认模型和登录，默认 `main`），不用给它放行（见 2.2）。
 
 ## 9. 给第二层的
 

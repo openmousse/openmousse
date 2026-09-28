@@ -276,7 +276,8 @@ def wire(r) -> dict:
     elif k == "ask":
         out.update(about=r["reply_to"], text=r["text"])
     elif k == "answer":
-        out.update(about=r["reply_to"], text=r["text"], used=d.get("used") or [], defer=bool(d.get("defer")), by="agent")
+        out.update(about=r["reply_to"], text=r["text"], used=d.get("used") or [], defer=bool(d.get("defer")),
+                   by="person" if r["by"] == "person" else "agent")
     elif k == "edit":
         out.update(target=d.get("target"), text=d.get("text") or "", by=d.get("by") or "person")
     elif k == "revoke":
@@ -673,7 +674,8 @@ async def receive(request: Request):
         elif kind == "answer":
             about, text = _mid(m.get("about")), _str(m.get("text"), TEXT_MAX)
             used = [str(u)[:60] for u in (m.get("used") or [])[:5]] if isinstance(m.get("used"), list) else []
-            rid = store_in(f["id"], mid, "answer", text, at=at, reply_to=about, by="agent", data={"used": used, "defer": m.get("defer") is True})
+            rid = store_in(f["id"], mid, "answer", text, at=at, reply_to=about, by="person" if m.get("by") == "person" else "agent",
+                           data={"used": used, "defer": m.get("defer") is True})
         elif kind in ("edit", "revoke"):
             target = _mid(m.get("target"))
             if kind == "edit":
@@ -831,7 +833,7 @@ async def deliver_chat(ask: dict, text: str, data: dict) -> bool:
     if about is None:
         return False
     owner = (data or {}).get("by") == "owner"  # 你在卡上自己写的（Sentinel 扣下后「改一下」）：算你说的
-    insert_out(fid, "answer", text, data={"used": [str(u)[:60] for u in ((data or {}).get("used") or [])][:5] if not owner else [],
+    insert_out(fid, "answer", text, data={"used": [str(u)[:60] for u in ((data or {}).get("usedNames") or [])][:5] if not owner else [],
                                          "usedLabel": str((data or {}).get("label") or "")[:80], "defer": False,
                                          "outcome": str((data or {}).get("outcome") or "")[:20],
                                          **({"inbox_id": ask["inbox_id"]} if ask.get("inbox_id") else {})},
