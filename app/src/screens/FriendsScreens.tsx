@@ -493,12 +493,13 @@ export function FriendChatScreen() {
     if (!friend) return;
     // 先画上「在问」，对方的名片 agent 要调模型，回来可能要十几秒；这期间照样能发别的
     const tmp: A2AOut = { id: `local-${Date.now()}`, friend: friend.id, contextId: prev?.contextId ?? null, taskId: prev?.taskId ?? null, state: 'local',
-      text, reply: null, outcome: '', usedLabel: '', createdAt: new Date().toISOString(), updatedAt: '' };
+      text, reply: null, outcome: '', usedLabel: '', createdAt: new Date().toISOString(), updatedAt: '', later: false };
     setOuts((cur) => mergeOuts(cur, [tmp]));
     setDraft('');
     setAgentAsk(null);
     fr.a2aSend(friend.id, text, prev)
-      .then((o) => setOuts((cur) => mergeOuts(cur.filter((x) => x.id !== tmp.id), [o])))
+      // 同一个任务里前面那几条：算「后来又接着说了」（进度和按钮只画在最新那条上）
+      .then((o) => setOuts((cur) => mergeOuts(cur.filter((x) => x.id !== tmp.id).map((x) => (o.taskId && x.taskId === o.taskId ? { ...x, later: true } : x)), [o])))
       .catch((e) => {
         setOuts((cur) => cur.filter((x) => x.id !== tmp.id));
         setDraft((d) => d || text);

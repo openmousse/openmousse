@@ -281,8 +281,8 @@ function PairLens({ bg, size = 22 }: { bg: string; size?: number }) {
 export function AskOutCard({ o, name, onOpen, onMore }: { o: A2AOut; name: string; onOpen?: () => void; onMore?: () => void }) {
   const t = useTheme();
   const local = isLocalOut(o);
-  const st = local ? null : outState(o, name);
-  const more = !local && !!onMore && needsMore(o);
+  const st = local || o.later ? null : outState(o, name);
+  const more = !local && !o.later && !!onMore && needsMore(o);
   return (
     <Pressable onPress={onOpen} disabled={!onOpen} accessibilityRole={onOpen ? 'button' : undefined}
       accessibilityHint={onOpen ? L('打开「agent 之间」', 'Opens Agent to agent') : undefined}
@@ -309,7 +309,8 @@ export function AskOutCard({ o, name, onOpen, onMore }: { o: A2AOut; name: strin
           </View>
         </View>
       ) : null}
-      {o.taskId && !local ? <Steps o={o} name={name} /> : null}
+      {o.taskId && !local && !o.later ? <Steps o={o} name={name} /> : null}
+      {o.later ? <T v="caption" color={t.ink3}>{L('后来在同一件事里又接着说了，进展看最新那一条', 'Continued in a later message; see the latest one for where it stands')}</T> : null}
       {st || more ? (
         <View style={styles.askFoot}>
           {st ? <Pill label={st.label} tone={st.tone} /> : null}
@@ -425,12 +426,12 @@ export function FriendAgentsScreen() {
     if (!text || !friend) return;
     const p = prev;
     const tmp: A2AOut = { id: `local-${Date.now()}`, friend: friend.id, contextId: p?.contextId ?? null, taskId: p?.taskId ?? null, state: 'local',
-      text, reply: null, outcome: '', usedLabel: '', createdAt: new Date().toISOString(), updatedAt: '' };
+      text, reply: null, outcome: '', usedLabel: '', createdAt: new Date().toISOString(), updatedAt: '', later: false };
     setPend((c) => [...c, tmp]);
     setDraft('');
     setPrev(null);
     fr.a2aSend(friend.id, text, p)
-      .then((o) => setOut((c) => [o, ...c.filter((x) => x.id !== o.id)]))
+      .then((o) => setOut((c) => [o, ...c.filter((x) => x.id !== o.id).map((x) => (o.taskId && x.taskId === o.taskId ? { ...x, later: true } : x))]))
       .catch((e) => { setDraft(text); setPrev(p); showError(L('没问成', "Couldn't ask"), e); })
       .finally(() => setPend((c) => c.filter((x) => x.id !== tmp.id)));
   };

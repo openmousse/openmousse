@@ -111,6 +111,8 @@ export interface CardLogItem {
 export interface A2AOut {
   id: string; friend: string; contextId: string | null; taskId: string | null; state: string | null;
   text: string; reply: string | null; outcome: string; usedLabel: string; createdAt: string; updatedAt: string;
+  /** 同一个任务里后来又接着问了：进度、决定和按钮只画在最近那一条上 */
+  later: boolean;
 }
 
 export const cardLog = (peer: string) =>
@@ -125,6 +127,7 @@ export const cardLog = (peer: string) =>
 const outOf = (x: Partial<A2AOut>, friend: string): A2AOut => ({
   id: x.id ?? '', friend: x.friend ?? friend, contextId: x.contextId ?? null, taskId: x.taskId ?? null, state: x.state ?? null,
   text: x.text ?? '', reply: x.reply ?? null, outcome: x.outcome ?? '', usedLabel: x.usedLabel ?? '', createdAt: x.createdAt ?? '', updatedAt: x.updatedAt ?? '',
+  later: !!x.later,
 });
 /** refresh：还在等对方本人的，服务器顺手问一下对方到哪了（下一次读就是新的） */
 export const a2aOut = (friend: string, refresh = false) =>
