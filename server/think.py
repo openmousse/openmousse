@@ -787,7 +787,7 @@ def create_topic_sync(ids: list[str], title: str | None) -> str:
             set_topics(f, add=tid)
         except HTTPException:
             pass  # 属性坏了的笔记：主题照样记着它，笔记上不写
-    log_activity(L(f"开了一个思考主题「{name}」（{len(frags)} 条想法）", f'Started a thinking topic "{name}" ({len(frags)} thoughts)'), "edit")
+    log_activity(L(f"在 Zen 里开了一个主题「{name}」（{len(frags)} 条想法）", f'Started a Zen topic "{name}" ({len(frags)} thoughts)'), "edit")
     return tid
 
 
@@ -908,9 +908,9 @@ def context_for(thread: str) -> str | None:
     ids = json.loads(r["fragments"] or "[]")
     by_id = {f["id"]: f for f in scan()}
     frags = [by_id[i] for i in ids if i in by_id and not by_id[i]["note"]]
-    lines = [LS(f"【思考空间】这个对话是 Leo 的一个思考主题「{r['title']}」（id {r['id']}）。下面是他扔进来的碎片：他自己想到的，"
+    lines = [LS(f"【Zen 空间】这个对话是 Leo 在 Zen 空间（app 的 Zen tab，原来叫思考空间）里的一个主题「{r['title']}」（id {r['id']}）。下面是他扔进来的碎片：他自己想到的，"
                 "以前没给你看过，现在叫你来一起想。每天第一句话、碎片变了以后自动带给你，对话里不显示。",
-                f"[Thinking space] This chat is one of the user's thinking topics \"{r['title']}\" (id {r['id']}). Below are the thoughts "
+                f"[Zen space] This chat is the user's topic \"{r['title']}\" (id {r['id']}) in the Zen space (the app's Zen tab, formerly the thinking space). Below are the thoughts "
                 "they dropped in: their own, never shown to you before; now they want you to think along. Attached to the first message "
                 "each day and after the thoughts change; not shown in the chat."),
              LS("规矩：先追问，不急着下结论，一次两三个问题；用他的原话，不替他润色；可以翻库里的笔记和世界树（recall）对照他以前想过的，"
@@ -967,8 +967,8 @@ def transcript(tid: str, limit: int = 60) -> list[str]:
 def draft_prompt(r: sqlite3.Row, frags: list[dict]) -> str:
     talk_lines = transcript(r["id"])
     br = branches()
-    lines = [LS(f"【思考空间 · 想完了】Leo 想完了一个主题「{r['title']}」，请把下面的碎片（和你们聊过的）整理成一篇他自己的笔记草稿。",
-                f"[Thinking space · done] The user finished thinking about \"{r['title']}\". Turn the thoughts below (and your talk, if any) "
+    lines = [LS(f"【Zen 空间 · 想完了】Leo 想完了一个主题「{r['title']}」，请把下面的碎片（和你们聊过的）整理成一篇他自己的笔记草稿。",
+                f"[Zen space · done] The user finished thinking about \"{r['title']}\". Turn the thoughts below (and your talk, if any) "
                 "into a draft of their own note."),
              LS("规矩：", "Rules:"),
              LS("- 尽量用他的原话，不替他润色，不加他没说过的观点；没想清的放进 open，别替他下结论。",

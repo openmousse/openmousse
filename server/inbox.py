@@ -7,6 +7,8 @@
   改一下 → 在 Agent 的对话里引用这张卡回复（/api/chat/send 带 inboxId：条目变 revising，模型另外看到是在回复哪一条），
   它改好用 update 重新提交（同一个 id）。POST /api/inbox/{id} 的 revise 仍然能用（把意见当一条【收件箱】消息发进线程）。
 - 状态：pending 等你点头 → approved 同意了 → done 做完 / failed 没做成；rejected 拒绝；revising 等它改；withdrawn 它自己撤回；expired 过了 expires_at。
+- 跟进：定下来以后（「已处理」里点「跟进」）在 Agent 的对话里引用这一条说话（/api/chat/send 带 inboxId）：记下 followed_at / follow_note，
+  模型另外看到是哪一条、现在什么状态、怎么报结果；做完 / 没做成的改回 approved（在做），等它再用 done / fail 报。
 - kind 决定默认推送档位：task / write / send / spend / calendar 响铃，skill / agent / block / project / code / schedule / push / other 静默。
   exec 是虚拟的：OpenClaw 的执行审批（`openclaw approvals pending`），id 写成 exec:<审批 id>，同意 = allow-once，拒绝 = deny，不能「改一下」。
 - 这是征得同意的界面，不是沙箱：不检查是谁提交的；真正拦住危险动作的是 OpenClaw 的执行审批和各 skill 自己的规则。
@@ -59,9 +61,11 @@ def idb() -> sqlite3.Connection:
         dedupe TEXT NOT NULL DEFAULT '', note TEXT NOT NULL DEFAULT '', result TEXT NOT NULL DEFAULT '', created_at TEXT NOT NULL,
         updated_at TEXT NOT NULL, decided_at TEXT, expires_at TEXT, message_id INTEGER)""")
     global _migrated
-    if not _migrated:  # 早先建的表没有 message_id（卡片挂在哪条回复下面）：补上列，只查一次
-        if "message_id" not in {r[1] for r in conn.execute("PRAGMA table_info(inbox)")}:
-            conn.execute("ALTER TABLE inbox ADD COLUMN message_id INTEGER")
+    if not _migrated:  # 早先建的表没有后来加的列：message_id（卡片挂在哪条回复下面）、followed_at / follow_note（跟进）。补上，只查一次
+        have = {r[1] for r in conn.execute("PRAGMA table_info(inbox)")}
+        for col, decl in (("message_id", "INTEGER"), ("followed_at", "TEXT"), ("follow_note", "TEXT NOT NULL DEFAULT ''")):
+            if col not in have:
+                conn.execute(f"ALTER TABLE inbox ADD COLUMN {col} {decl}")
         _migrated = True
     conn.execute("CREATE INDEX IF NOT EXISTS inbox_status ON inbox(status, created_at)")
     conn.execute("CREATE INDEX IF NOT EXISTS inbox_dedupe ON inbox(dedupe)")
@@ -134,7 +138,9 @@ def item_json(r: sqlite3.Row, nm: dict[str, str]) -> dict:
             "title": r["title"], "why": r["why"] or "", "changes": changes_of(r["changes"]), "detail": r["detail"] or "",
             "approveLabel": r["approve_label"] or "", "status": r["status"], "note": r["note"] or "", "result": r["result"] or "",
             "level": r["level"] or default_level(r["kind"]), "createdAt": r["created_at"], "updatedAt": r["updated_at"],
-            "decidedAt": r["decided_at"], "expiresAt": r["expires_at"], "messageId": r["message_id"], **extra_of(r)}
+            "decidedAt": r["decided_at"], "expiresAt": r["expires_at"], "messageId": r["message_id"],
+            "day": chat.day_of(r["created_at"]),  # 提它的那天（04:00 为界的逻辑日）：app 的「看原对话」按它打开那天的记录
+            "followedAt": r["followed_at"], "followNote": r["follow_note"] or "", **extra_of(r)}
 
 
 def extra_of(r: sqlite3.Row) -> dict:
@@ -299,6 +305,56 @@ def mark_revising(it: dict, note: str) -> None:
     with _lock, idb() as conn:
         conn.execute("UPDATE inbox SET status='revising', note=?, updated_at=? WHERE id=? AND status IN ('pending','revising')", (note, now_iso(), it["id"]))
     log_activity(L(f"让{it['sourceName']}把「{it['title']}」改一下", f'Asked {it["sourceName"]} to revise "{it["title"]}"'), "edit")
+
+
+FOLLOWABLE = ("approved", "done", "failed", "rejected", "withdrawn", "expired")  # 定下来以后还能跟进的
+
+
+def follow_context(iid: str) -> tuple[dict, str] | None:
+    """/api/chat/send 带了 inboxId、那一条已经定下来了：用户在「已处理」里点了「跟进」，在对话里接着说这件事。
+    返回 (条目, 只给模型看的前情)；exec、不存在、还没定下来的（那是「改一下」，见 reply_context）返回 None。前情按 server.json 的语言。"""
+    if not iid or iid.startswith("exec:"):
+        return None
+    with _lock, idb() as conn:
+        r = conn.execute("SELECT * FROM inbox WHERE id=?", (iid,)).fetchone()
+    if not r or r["status"] not in FOLLOWABLE:
+        return None
+    it = item_json(r, names())
+    t, i, st, res = it["title"], it["id"], it["status"], it["result"]
+    zh_st = {"approved": "同意了、还没报结果", "done": "报过做完了", "failed": "报过没做成", "rejected": "他当时没要",
+             "withdrawn": "你撤回了", "expired": "等太久作废了"}[st]
+    en_st = {"approved": "approved, no result reported yet", "done": "reported done", "failed": "reported as not done",
+             "rejected": "the user declined it", "withdrawn": "you withdrew it", "expired": "it expired unanswered"}[st]
+    zh = f"（这条是在跟进收件箱里已经处理过的「{t}」（{i}）：{zh_st}" + (f"，结果是「{res}」" if res else "") + f"。原来交的内容用 `python3 {CTL} get {i}` 看。"
+    en = f'(This message follows up on the inbox item "{t}" ({i}), which was already settled: {en_st}' + (f' (result: "{res}")' if res else "") + \
+        f". See what was submitted with `python3 {CTL} get {i}`. "
+    if st == "approved":
+        zh += f"先回答他问的，接着做；做完用 `python3 {CTL} done {i} --result \"一句话结果\"` 报，做不成用 fail。）"
+        en += f'Answer what they ask and carry on; when it is done run `python3 {CTL} done {i} --result "one-line result"`, or fail if it can\'t be done.)'
+    elif st in ("done", "failed"):
+        zh += (f"他来跟进，多半是还没做完或者有后续：这一条已经改回「在做」。按他说的接着做（他同意过，不用重新提交），"
+               f"做完用 `python3 {CTL} done {i} --result \"这次的结果\"` 报（盖掉原来的结果），做不成用 fail；"
+               "如果只是问问、事情确实做完了，回答以后也用 done 报一次，写清现在的情况。）")
+        en += ("A follow-up usually means it isn't finished or something follows from it, so the item is back to in progress. "
+               f'Carry on as they say (already approved; no need to resubmit), then run `python3 {CTL} done {i} --result "this time\'s result"` '
+               "(replaces the old result), or fail if it can't be done. If they are only asking and it really is done, answer and report done "
+               "again anyway, saying where things stand.)")
+    else:
+        zh += (f"他现在又提起：先看他怎么说；要重新做的话按他说的用 `python3 {CTL} add …` 提一条新的，照常等他点头"
+               "（别带原来那条的 dedupe 键，带了会被当成拒绝过的挡回来）。）")
+        en += (f"They are bringing it up again: see what they say; if it should be done after all, submit a new item with `python3 {CTL} add …` "
+               "and wait for their OK as usual (without the old item's dedupe key, which would be turned away as declined before).)")
+    return it, LS(zh, en)
+
+
+def mark_followed(it: dict, note: str) -> None:
+    """用户跟进了一件定下来的事：记下时间和他说的话；做完 / 没做成的改回 approved（在做），等 Agent 再报结果。"""
+    ts = now_iso()
+    reopen = it["status"] in ("done", "failed")
+    with _lock, idb() as conn:
+        conn.execute("UPDATE inbox SET followed_at=?, follow_note=?, updated_at=?" + (", status='approved'" if reopen else "")
+                     + " WHERE id=? AND status=?", (ts, note, ts, it["id"], it["status"]))
+    log_activity(L(f"跟进{it['sourceName']}的「{it['title']}」", f'Followed up on "{it["title"]}" with {it["sourceName"]}'), "edit")
 
 
 def start(thread: str, text: str) -> None:

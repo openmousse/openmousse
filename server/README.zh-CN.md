@@ -80,6 +80,8 @@ python3 inbox_ctl.py list [--status recent]
 
 「改一下」：在 Agent 的对话里引用这张卡回复，`/api/chat/send` 带 `inboxId`：条目变成 revising，你的话记成 note，模型另外看到一句「这是在回复哪一条、改好怎么交」（对话记录里只有你的话）。
 
+「跟进」：已经定下来的条目（「已处理」→ 点一条 → 跟进）带同样的 `inboxId`：记下 `followedAt` / `followNote`；做完 / 没做成的改回 approved（在做），模型另外看到这一条、现在的状态和结果、怎么再用 `done` / `fail` 报。没要 / 撤回 / 过期的状态不变，模型被告知要做就重新提一条。条目还带 `day`（提它的逻辑日），app 的「看原对话」按它打开那天的记录、滚到那条消息。
+
 条目：`{id, kind, source, sourceName, thread, title, why, changes: [], detail, approveLabel, fields?, status, note, result, level, createdAt, updatedAt, decidedAt, expiresAt, messageId}`。`messageId`：Agent 在一次回复里交的条目，回复结束时挂到那条回复（`messages.id`）下面；不是在回复里交的是 null。kind：task / write / send / spend / schedule / push / skill / agent / block / code / calendar / other（exec 只来自 OpenClaw，带 `fields`）；status：pending / approved / rejected / revising / done / failed / withdrawn / expired。旧的 `/api/approvals` 接口还在，给老版本 app。
 
 ## 转交卡和任务卡
@@ -291,7 +293,7 @@ app 里的「我 → 世界树」。你的各个 AI（Claude、ChatGPT、Gemini�
 
 ## 思考空间和收藏
 
-app 的「思考」tab：想到什么先扔进来（一句话、几个 `#关键词`、语音、照片、文件、链接、长文），没有人回。勾几条点「聊聊」或「想完了」，模型才参与。「收藏」存别的 App 里的好东西（链接、文件、截图），同样不调模型，你决定怎么处理。「冥想时间」期间推送全压住，结束时一次给你。见 [`think.py`](think.py)、[`saves.py`](saves.py)。
+app 的「思考」tab（2026-09-28 起界面上叫 **Zen**，代码和接口仍叫 think）：想到什么先扔进来（一句话、几个 `#关键词`、语音、照片、文件、链接、长文），没有人回。勾几条点「聊聊」或「想完了」，模型才参与。「收藏」存别的 App 里的好东西（链接、文件、截图），同样不调模型，你决定怎么处理。「冥想时间」期间推送全压住，结束时一次给你。见 [`think.py`](think.py)、[`saves.py`](saves.py)。
 
 - **一条想法 = 一篇 Markdown 笔记。** `server.json` 配了 `think.vault`（例如 `"think": {"vault": "~/vault", "obsidian_vault": "库的名字"}`）就放进库的收件箱，Obsidian 里看得到，在那边改了也读得回来；没配放 `<data_dir>/think/`。文件夹名按语言默认（中文：收件箱 / 收件箱/已想完 / 收件箱/附件 / 笔记 / 写作；`think.inbox_dir`、`done_dir`、`attach_dir`、`notes_dir`、`writing_dir` 可改）。属性：`id, kind, created_at, source, keywords, tags, topics, note, files, url`；附件在正文末尾嵌成 `![[…]]`。在 Obsidian 里新建的笔记也收。文件按 mtime 和大小判断有没有变，1 秒内刚改的等下一轮（同步客户端不是原子写），写一律临时文件 + rename。删除 = 挪进库的 `.trash/`；想完的挪进「已想完」，不删。
 - **关键词** = 属性 `keywords` + 正文里的 `#词`（跟在中文后面也算）。关键词页列出带它的全部想法和收藏、用过它的主题、常一起出现的词。
