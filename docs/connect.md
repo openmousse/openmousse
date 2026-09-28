@@ -100,5 +100,12 @@ The code works once and expires in 10 minutes. If it runs out, make a new one. D
 
 ## Hosted claws
 
-- **With a terminal** (Kimi Claw's web terminal, a VPS, a container with a shell): do the same steps in that terminal. Some hosted containers can't run Tailscale. If `tailscale up` fails, tell the user the phone can't reach this machine yet and stop. Don't open it to the internet without asking.
+- **With a terminal** (Kimi Claw's web terminal, a VPS, a container with a shell): do the same steps in that terminal.
+- **Kimi Claw and similar containers (not tested yet):** containers often have no `sudo`, no network device for Tailscale, and no systemd. If so:
+  - Run Tailscale in userspace mode: `tailscaled --tun=userspace-networking --statedir="$HOME/.tailscale" &`, then `tailscale up` and send the user the login link. It needs no root.
+  - Install with `MOUSSE_BIND=127.0.0.1` and without systemd: `curl … | MOUSSE_NONINTERACTIVE=1 MOUSSE_BIND=127.0.0.1 … bash -s -- --no-systemd`. In userspace mode, Tailscale passes the phone's connections on to this machine's 127.0.0.1.
+  - Start the server yourself: `cd ~/openmousse/server && nohup ~/.openmousse/venv/bin/python run.py >> ~/.openmousse/server.log 2>&1 &`. Start it again (and `tailscaled`) whenever the container restarts.
+  - The pairing link automatically uses this machine's Tailscale address.
+  - Kimi Claw's terminal drops when its Gateway restarts, so run the installer when nothing else will restart the Gateway.
+  - If Tailscale can't start at all, tell the user the phone can't reach this machine yet and stop. Don't open it to the internet without asking.
 - **Without a terminal** (only a settings page for MCP connectors): OpenMousse has to run on another machine the user controls, which needs its own claw to chat with. You can still use OpenMousse's tools through its MCP address if that machine offers one over HTTPS, but chatting stays in your own app.

@@ -100,5 +100,12 @@ bash ~/openmousse/check.sh
 
 ## 托管在云上的 claw
 
-- **有终端的**（KimiClaw 的网页终端、VPS、带 shell 的容器）：在那个终端里照上面的步骤做。有些托管容器跑不了 Tailscale。`tailscale up` 失败的话，告诉用户手机暂时连不到这台，然后停下，没问过就别开公网。
+- **有终端的**（KimiClaw 的网页终端、VPS、带 shell 的容器）：在那个终端里照上面的步骤做。
+- **KimiClaw 这类容器（还没实测）：** 容器里常常没有 `sudo`，没有给 Tailscale 用的网卡，也没有 systemd。这样的话：
+  - Tailscale 用「用户态网络」模式跑：`tailscaled --tun=userspace-networking --statedir="$HOME/.tailscale" &`，再 `tailscale up`，把登录链接发给用户。这个模式不要 root。
+  - 安装时让它只听本机、不用 systemd：`curl … | MOUSSE_NONINTERACTIVE=1 MOUSSE_BIND=127.0.0.1 … bash -s -- --no-systemd`。用户态模式下，Tailscale 会把手机的连接转给本机的 127.0.0.1。
+  - 服务器自己起：`cd ~/openmousse/server && nohup ~/.openmousse/venv/bin/python run.py >> ~/.openmousse/server.log 2>&1 &`。容器一重启，它和 `tailscaled` 都要重新起。
+  - 配对链接会自动用这台机器的 Tailscale 地址。
+  - KimiClaw 的 Gateway 一重启终端就断，所以别在它要重启的时候装。
+  - Tailscale 实在起不来的话，告诉用户手机暂时连不到这台，然后停下，没问过就别开公网。
 - **没有终端的**（只有一个加 MCP 连接器的设置页）：OpenMousse 得装在用户自己的另一台机器上，那台还要有它自己的 claw 负责聊天。那台要是经 HTTPS 提供 MCP 地址，你照样能用 OpenMousse 的工具，但聊天还是在你自己的 app 里。
