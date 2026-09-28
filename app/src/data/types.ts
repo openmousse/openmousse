@@ -49,7 +49,9 @@ export interface Approval {
 }
 
 /** 收件箱：要你点头的事。exec = OpenClaw 的执行命令审批（id 是 exec:<审批 id>），其余是 Agent 自己交上来的提案。 */
-export type InboxKind = 'exec' | 'task' | 'write' | 'send' | 'spend' | 'schedule' | 'push' | 'skill' | 'agent' | 'block' | 'project' | 'code' | 'calendar' | 'other';
+export type InboxKind = 'exec' | 'task' | 'write' | 'send' | 'spend' | 'schedule' | 'push' | 'skill' | 'agent' | 'block' | 'project' | 'code' | 'calendar' | 'social' | 'other';
+/** 名片 agent 要你表态的卡（server/cardagent.py）：约时间（decision，能「换个时间」）还是问你私事（private，「知道了」）；谁问的、从哪来（a2a / chat） */
+export interface InboxSocialInfo { ask: 'decision' | 'private'; counter: boolean; peer: string; channel: string }
 export type InboxStatus = 'pending' | 'approved' | 'rejected' | 'revising' | 'done' | 'failed' | 'withdrawn' | 'expired';
 export type InboxAction = 'approve' | 'reject' | 'revise';
 export interface InboxItem {
@@ -77,6 +79,8 @@ export interface InboxItem {
   /** 日结提案（server/proposals.py）：kind skill 的卡在 skill 字段、kind agent 的在 agent 字段，内容一样：给谁、这几次的原话、做法全文 / 职责 */
   skill?: InboxProposalInfo;
   agent?: InboxProposalInfo;
+  /** 只有 social 有：名片 agent 的卡怎么画按钮 */
+  social?: InboxSocialInfo;
   status: InboxStatus;
   /** 「改一下」时写的意见 */
   note: string;

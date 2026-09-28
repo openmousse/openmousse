@@ -45,7 +45,8 @@ function normalizeInbox(raw: Partial<InboxItem> & { id: string }): InboxItem {
     kind: (raw.kind ?? 'other') as InboxItem['kind'],
     source: str(raw.source) || 'main',
     sourceName: str(raw.sourceName),
-    thread: str(raw.thread) || str(raw.source) || 'main',
+    // 名片 agent 的卡不属于任何对话（server/inbox.py 回空的 thread）：别补成来源，免得出现「去对话里说」「跟进」
+    thread: raw.kind === 'social' ? '' : str(raw.thread) || str(raw.source) || 'main',
     messageId: msgNum(raw.messageId),
     title: str(raw.title),
     why: str(raw.why),
@@ -67,6 +68,7 @@ function normalizeInbox(raw: Partial<InboxItem> & { id: string }): InboxItem {
     project: raw.project && typeof raw.project === 'object' ? raw.project : undefined,
     skill: proposalInfo(raw.skill),
     agent: proposalInfo(raw.agent),
+    social: raw.social && typeof raw.social === 'object' ? raw.social : undefined,
   };
 }
 

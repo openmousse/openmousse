@@ -22,12 +22,13 @@ import { AlertPreview, BoardPreview } from './blocks/BoardPreview';
 export const kindLabel = (k: InboxKind | string): string => ({
   exec: L('执行命令', 'Run command'), task: L('派活', 'Task'), write: L('写入', 'Write'), send: L('发送', 'Send'), spend: L('花钱', 'Spend'),
   schedule: L('定时任务', 'Schedule'), push: L('推送', 'Notification'), skill: L('新 skill', 'New skill'), agent: L('新 Agent', 'New agent'),
-  block: L('看板功能块', 'Board block'), project: L('项目', 'Project'), code: L('代码改动', 'Code change'), calendar: L('日程', 'Calendar'), other: L('其他', 'Other'),
+  block: L('看板功能块', 'Board block'), project: L('项目', 'Project'), code: L('代码改动', 'Code change'), calendar: L('日程', 'Calendar'),
+  social: L('朋友', 'Friends'), other: L('其他', 'Other'),
 } as Record<string, string>)[k] ?? L('其他', 'Other');
 
 /** 动到外面的（写、发、花钱、日程、派活）用警示色；提案类用金色（助手自己想做的）；执行命令中性。 */
 const kindTone = (k: InboxKind): 'warn' | 'gold' | 'neutral' =>
-  (['write', 'send', 'spend', 'calendar', 'task'].includes(k) ? 'warn' : k === 'exec' ? 'neutral' : 'gold');
+  (['write', 'send', 'spend', 'calendar', 'task', 'social'].includes(k) ? 'warn' : k === 'exec' ? 'neutral' : 'gold');
 
 const pad = (n: number) => String(n).padStart(2, '0');
 /** 刚刚 / 5 分钟前 / 14:05 / 昨天 14:05 / 9月24日 */
@@ -60,6 +61,11 @@ const zh = (name: string, rest: string) => (/[A-Za-z0-9]$/.test(name) ? `${name}
 export function receiptText(item: InboxItem, name: string): { head: string; sub: string } {
   const exec = item.kind === 'exec';
   const title = item.title;
+  if (item.kind === 'social') {
+    // 名片 agent 的卡：点了就已经告诉对方了（server/cardagent.py 的 decide）
+    if (item.status === 'revising') return { head: L(`换个时间 · ${title}`, `Another time · ${title}`), sub: L('已经告诉对方，等对方再提', 'Told them; waiting for another suggestion') };
+    if (item.status === 'rejected') return { head: L(`不去 · ${title}`, `Not going · ${title}`), sub: item.result || L('已经告诉对方，没说原因', 'Told them, no reason given') };
+  }
   switch (item.status) {
     case 'approved':
       return exec
@@ -224,6 +230,13 @@ function PendingCard({ item, chat }: { item: InboxItem; chat: boolean }) {
           <>
             <CardBtn kind="quiet" label={L('拒绝', 'Deny')} busy={busy === 'reject'} disabled={!!busy} onPress={() => act('reject')} />
             <CardBtn kind="primary" label={L('这一次同意', 'Allow once')} busy={busy === 'approve'} disabled={!!busy} onPress={() => act('approve')} />
+          </>
+        ) : item.kind === 'social' && item.social?.counter ? (
+          // 名片 agent 替你约的：不去 / 换个时间（按你空着的晚上提一个）/ 同意（设计稿 SocAgents）
+          <>
+            <CardBtn kind="quiet" label={L('不去', "Can't")} busy={busy === 'reject'} disabled={!!busy} onPress={() => act('reject')} />
+            <CardBtn kind="quiet" label={L('换个时间', 'Another time')} busy={busy === 'revise'} disabled={!!busy} onPress={() => act('revise')} />
+            <CardBtn kind="primary" label={item.approveLabel || L('同意', 'Approve')} icon={Check} busy={busy === 'approve'} disabled={!!busy} onPress={() => act('approve')} />
           </>
         ) : (
           <>
