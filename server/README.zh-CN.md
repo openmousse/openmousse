@@ -352,6 +352,26 @@ app 的「思考」tab（2026-09-28 起界面上叫 **Zen**，代码和接口仍
 | `GET /api/think/saves/{id}/file?thumb=1` | 原件 |
 | `POST /api/think/saves/{id}/give` / `…/to-idea` | 交给 Agent `{agent}` / 放进思考 |
 
+## 分享
+
+把一条回复、一篇想完了的笔记变成一个链接或一张干净版卡片：对话里长按一条 →「分享」，或者 Zen 想完了存好以后点「分享」；「我 → 分享出去的」列着发出去的。见 [`share.py`](share.py)。
+
+- **分享是一份快照**：分享的时候把正文抄一份存进 `shares`，原文以后再改，已经发出去的不变。
+- **先挡私事**：档案（`USER.md`）里的住址、伴侣和家人的名字，邮箱、电话，身体数字（体重、体脂、心率、睡眠……），还有 `share.private_words` 里你自己加的词，默认都挡住，你一处处放出来。挡住的原文不出服务器：链接页和卡片上都是一块灰条，标题也一样。
+- **两种样子**：带链接的 `/s/<令牌>` 是一页干净的网页，不用装 app 就能看，`/s/<令牌>/card.png` 是聊天里显示的预览图；干净版是一张 3:4 的图，没有网址、二维码和 app 名字，发不让带链接的平台。图在服务器上用 Pillow 画，中文要有中文字体（自动找 Noto Sans CJK，`share.font` / `share.font_bold` 可以换）。
+- **让外网打得开链接**：配上 `share.public_port`，`run.py` 会在 `127.0.0.1:<端口>` 上另起一个只有 `/s/` 的小服务（[`public.py`](public.py)：没有 `/api`，不认令牌也不认设备），用 Tailscale Funnel 或反向代理指过去（`tailscale funnel --bg --set-path /s http://127.0.0.1:<端口>/s`），再把 `share.public_url` 设成外面看到的地址。没配 `public_url` 时 app 只给干净版卡片。主服务上也有 `/s/`，只在你自己的设备上开得到；浏览次数只数从小服务进来的，链接预览机器人不算。
+- **收回**：快照清空（挡好的标题留在你的列表里），链接页变成「已经收回了」。没发出去的草稿 7 天后删掉。不调模型。
+
+| 接口 | 做什么 |
+|---|---|
+| `POST /api/shares` | `{kind: message, thread, id}` / `{kind: note, topic 或 path}` / `{kind: text, title?, text}` → 草稿，带 `masks`（标签、挡住的原文和前后几个字、放没放出来）和 `segments`；同一条再分享是同一份 |
+| `GET /api/shares` | 发出去的和收回的；`canLink` = 配了对外地址 |
+| `GET` / `PATCH /api/shares/{id}` | `{release?: [挡住处的 id], hide?: [...], quote?, title?, withQuestion?}`（`""` = 回到默认；`withQuestion` 会重新取快照） |
+| `POST /api/shares/{id}/publish` | 链接开始能打开（配了 `public_url` 才有 `url`） |
+| `DELETE /api/shares/{id}` | 收回（草稿直接删） |
+| `GET /api/shares/{id}/card?style=clean\|link` | 卡片图（data URI）；`/card.png` 是图本身 |
+| `GET /s/{token}`、`/s/{token}/card.png` | 公开的：链接页和预览图 |
+
 ## 数据源是可选的
 
 看板要的训练 / 餐食 / 身体 / 日历 / 健康派生指标，各来自 `server.json` 的 `scripts` 目录（默认 `<workspace>/scripts`）里的一个脚本：`xunji.py`（训练 / 餐食 / 身体）、`calendar_ics.py`（日历）、`apple_health.py`（恢复分、热量缺口、体能趋势，还有起没起床：`/api/health/wake` 看手机推到 `/api/health/sleep` 的睡眠分段和 `/api/health/signal` 收到的起床信号）。`memory_tree.py` 提供世界树（「我 → 世界树」）。脚本在就加载，不在就是「还没接」：`/api/health` 的 `sources` 告诉 app 哪些接了，没接的接口回 `ok=false` + `missing_source`，app 的看板显示空状态，其它功能照常。见 [`sources.py`](sources.py)。

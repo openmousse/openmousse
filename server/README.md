@@ -353,6 +353,26 @@ The Think tab in the app (labelled **Zen** since 2026-09-28; the code and API st
 | `GET /api/think/saves/{id}/file?thumb=1` | The original |
 | `POST /api/think/saves/{id}/give` / `…/to-idea` | Hand it to an Agent `{agent}` / turn it into a thought |
 
+## Sharing
+
+Share a reply or a Done-thinking note as a link page or a clean image card: long-press a message → Share, or Zen → Done thinking → Share; Me → Shared lists what went out. See [`share.py`](share.py).
+
+- **A share is a snapshot.** The text is copied into `shares` when you share; editing the original later doesn't change what went out.
+- **Private bits are hidden first.** Addresses and the names of your partner and family found in the profile (`USER.md`), emails, phone numbers, body numbers (weight, body fat, heart rate, sleep…) and the words in `share.private_words` start hidden, and you show them one by one. Hidden text never leaves the server: the link page and the cards draw a grey bar instead, titles included.
+- **Two looks.** *With link*: `/s/<token>` is a plain page anyone can open without the app, and `/s/<token>/card.png` is the preview image chat apps show. *Clean*: a 3:4 image with no URL, QR code or app name, for platforms that don't allow links. Cards are drawn on the server with Pillow; Chinese needs a CJK font (Noto Sans CJK is found automatically, `share.font` / `share.font_bold` pick another).
+- **Reaching the link from outside.** Set `share.public_port` and `run.py` also starts a small app on `127.0.0.1:<port>` that serves only `/s/` ([`public.py`](public.py): no `/api`, no tokens, no trusted devices). Point Tailscale Funnel or a reverse proxy at it (`tailscale funnel --bg --set-path /s http://127.0.0.1:<port>/s`) and set `share.public_url` to the address people see. Without `public_url` the app offers the clean card only. The main server serves `/s/` too, for your own devices; views are counted only through the public app, link-preview bots excluded.
+- **Withdraw** empties the snapshot (the hidden-bits title stays in your list) and the link says it was withdrawn. Drafts nobody published are deleted after 7 days. No model is called.
+
+| Route | What |
+|---|---|
+| `POST /api/shares` | `{kind: message, thread, id}` / `{kind: note, topic or path}` / `{kind: text, title?, text}` → a draft with `masks` (label, the hidden text and a few words around it, released) and `segments`; sharing the same message again returns the same share |
+| `GET /api/shares` | Published and withdrawn shares; `canLink` = a public address is configured |
+| `GET` / `PATCH /api/shares/{id}` | `{release?: [mask ids], hide?: [...], quote?, title?, withQuestion?}` (`""` = back to the default; `withQuestion` takes the snapshot again) |
+| `POST /api/shares/{id}/publish` | The link starts working (`url` when `public_url` is set) |
+| `DELETE /api/shares/{id}` | Withdraw (a draft is simply deleted) |
+| `GET /api/shares/{id}/card?style=clean\|link` | The card as a data URI; `/card.png` for the image itself |
+| `GET /s/{token}`, `/s/{token}/card.png` | Public: the link page and its preview image |
+
 ## Data sources are optional
 
 The boards need workouts / meals / body / calendar / derived health metrics, each provided by one script in the `scripts` directory named in `server.json` (default `<workspace>/scripts`): `xunji.py` (workouts / meals / body), `calendar_ics.py` (calendar), `apple_health.py` (recovery score, energy balance, fitness trend, and whether you are up yet: `/api/health/wake` reads the raw sleep segments the phone pushes to `/api/health/sleep` and the wake signals posted to `/api/health/signal`). `memory_tree.py` provides the memory tree (Me → Memory tree). A script that is present gets loaded; a missing one means "not connected": `/api/health` reports `sources` so the app knows, the affected endpoints answer `ok=false` + `missing_source`, boards show an empty state, everything else works. See [`sources.py`](sources.py).

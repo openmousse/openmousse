@@ -20,6 +20,7 @@
 | 思考（想法、主题、想完了的笔记） | 库的收件箱里一条一篇的 Markdown 笔记（server.json `think.vault`，没配放 `<data_dir>/think/`），主题和草稿在 grava.db `think_topics`，想完了写进库的 笔记/ 或 写作/，要记的经 workspace 的 `memory_tree.py` 进世界树（见 think.py） |
 | 冥想时间 | grava.db `think_focus` + `think_focus_held`（期间 push.send_push 不推、记下来，结束时给小结；见 think.py） |
 | 收藏 | grava.db `think_saves` + `<data_dir>/saves/` 里的原件和抽出来的正文（存的时候不调模型；见 saves.py） |
+| 分享（我 → 分享出去的；链接页 /s/<令牌>） | grava.db `shares`：分享时抄一份正文快照，加上认出来要挡的地方（档案里的住址和家人名字、邮箱电话、身体数字）；卡片图在服务器上画，缓存在 `<data_dir>/shares/`；外网只经 public.py 的小服务（见 share.py） |
 | 日志（Group 记忆页、我 → 日志） | grava.db `journal`（Grava 经 `scripts/grava_journal.py` 写） |
 | Agent 看板里的积木（Agent 自己的表、看板配置和版本） | grava.db `collections` / `records` / `boards`（Agent 经 `server/board_ctl.py` 写；提案走收件箱 kind block；见 boards.py） |
 | 日结提案（主对话每晚回看这一周，提「加一个 skill」「建一个 Agent」） | grava.db `proposals`（main 经 `server/proposals_ctl.py` 交；同意后服务端写 skills/、改 openclaw.json 的允许列表或建好 Agent；见 proposals.py） |

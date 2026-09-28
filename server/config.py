@@ -39,6 +39,10 @@
   study             学习台：{materials, pages, courses, deadlines_cmd, video_cmd, readings, recordings}（见 study.py；每次读文件，不用重启）
   chat              对话：{"transport": "http" | "ws"}。http（默认）走 Gateway 的 OpenAI 兼容接口；ws 走 Gateway 的 WebSocket 对话通道
                     （gateway_ws.py：回复进行中能插话、停止用 chat.abort、服务重启不掐断回复），设备身份存 <data_dir>/gateway-device.json（每次读文件）
+  share             分享（见 share.py）：{"public_url": "https://<机器>.<tailnet>.ts.net", "public_port": 8089, "private_words": ["…"],
+                    "font": "…", "font_bold": "…"}。public_port 配了，run.py 就在 127.0.0.1 上另起一个只有 /s/ 的小服务（public.py），
+                    给 Funnel / 反向代理指过去；public_url 是外面看到的地址，没配就只能发干净版卡片。private_words：还要挡的词。
+                    每次读文件，不用重启（public_port 改了要重启）
   wake              起床信号：{"notify_cmd": [...], "notify_hours": ["05:30", "13:00"]}：早上收到信号（快捷指令、app 回到前台、「我起来了」）
                     时跑一下这个命令，比如立刻跑一次出起床报告的定时脚本（见 health.py；每次读文件，不用重启）
 

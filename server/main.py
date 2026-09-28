@@ -69,6 +69,7 @@ from think import router as think_router  # noqa: E402 — 思考空间、冥想
 from saves import router as saves_router  # noqa: E402 — 收藏
 from live import router as live_router  # noqa: E402 — 实时活动（app 1.0.5 起）
 from widget import router as widget_router  # noqa: E402 — 小组件（app 1.0.5 起）
+from share import public_router as share_public_router, router as share_router  # noqa: E402 — 分享（社交第一层）
 
 DIST = settings.dist
 settings.db.parent.mkdir(parents=True, exist_ok=True)  # 新实例第一次启动：数据目录还不存在
@@ -122,6 +123,8 @@ app.include_router(saves_router)  # 在 think 之前：/api/think/saves/… 不�
 app.include_router(live_router)
 app.include_router(widget_router)
 app.include_router(think_router)
+app.include_router(share_router)
+app.include_router(share_public_router)  # /s/<令牌>：分享的链接页，公开（这里只在自己的设备上开得到；外网走 public.py）
 app.add_exception_handler(sources.NoSource, sources.no_source_handler)
 _whois: dict[str, tuple[float, str | None]] = {}
 _lock = threading.Lock()
