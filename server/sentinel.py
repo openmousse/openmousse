@@ -203,11 +203,17 @@ async def review(peer: dict, scope: dict, mats: list[dict], history: list[dict],
     s = cfg()
     timeout = float((s.get("timeout") if isinstance(s, dict) else None) or 30)
     import cardagent
-    try:
-        got, via = await ask_model(model_input(peer, scope, mats, history, question, out), timeout)
-    except cardagent.CardLLMError as e:
-        _last_error = (cardagent.now_iso(), str(e)[:200])
-        return done("fail", [{"kind": "unavailable", "detail": L("复查没做成（模型没接上）", "couldn't review it (no model)")}], b)
+    inp = model_input(peer, scope, mats, history, question, out)
+    got: dict | None = None
+    for attempt in (1, 2):  # 模型偶尔回一段不是 JSON 的：再问一次，还不行才算复查不了
+        try:
+            got, via = await ask_model(inp, timeout)
+            break
+        except cardagent.CardLLMError as e:
+            _last_error = (cardagent.now_iso(), str(e)[:200])
+            if attempt == 2 or not cardagent.retryable(e):
+                return done("fail", [{"kind": "unavailable", "detail": L("复查没做成（模型没接上）", "couldn't review it (no model)")}], b)
+    assert got is not None
     verdict = str(got.get("verdict") or "").strip().lower()
     if verdict not in ("pass", "hold"):
         _last_error = (cardagent.now_iso(), f"unexpected verdict: {verdict[:40]}")

@@ -525,14 +525,23 @@ async def think(peer: dict, mats: list[dict], history: list[dict], question: str
     global _last_error
     prompt, input_ = task_prompt(), task_input(peer, mats, history, question)
     b = backend()
-    try:
-        if b == "llm":
-            return await via_openai(cfg()["llm"], prompt, input_, float(cfg().get("timeout") or 60))
-        if b == "llm-task":
-            return await via_llm_task(prompt, input_, float(cfg().get("timeout") or 60))
-    except CardLLMError as e:
-        _last_error = (now_iso(), b, str(e)[:200], time.time())
+    for attempt in (1, 2):  # 模型偶尔回一段不是 JSON 的（llm-task：「LLM returned invalid JSON」，9/28 实测约六次一回）：再问一次
+        try:
+            if b == "llm":
+                return await via_openai(cfg()["llm"], prompt, input_, float(cfg().get("timeout") or 60))
+            if b == "llm-task":
+                return await via_llm_task(prompt, input_, float(cfg().get("timeout") or 60))
+        except CardLLMError as e:
+            _last_error = (now_iso(), b, str(e)[:200], time.time())
+            if attempt == 2 or not retryable(e):
+                break
     return template_reply(mats, question, lang), "template"
+
+
+def retryable(e: CardLLMError) -> bool:
+    """值得再问一次的：模型回的不像样、超时。没开 llm-task、没令牌、HTTP 4xx 这类再问也一样。"""
+    msg = str(e)
+    return not any(k in msg for k in ("not enabled", "no gateway token", "is not set", "HTTP 401", "HTTP 403", "HTTP 404"))
 
 
 _last_error: tuple[str, str, str, float] | None = None  # (什么时候, 哪条路, 什么错, 时间戳)
