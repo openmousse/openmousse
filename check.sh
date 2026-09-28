@@ -256,7 +256,10 @@ if is_openclaw:
             if mismatch else L("openclaw gateway status 看它在不在跑；", "check openclaw gateway status; ") + restart_hint("openclaw-gateway"))
     # 模型：谁在答、登没登录
     if exe:
-        ms_code, o, e = run([exe, "models", "status", "--json"], timeout=60)
+        # 有好几个 Agent 时 OpenClaw 2026.9 要指明看谁（否则报 has no explicit owner）；老版本不认 --agent 就不带
+        ms_code, o, e = run([exe, "models", "status", "--json", "--agent", "main"], timeout=60)
+        if ms_code != 0:
+            ms_code, o, e = run([exe, "models", "status", "--json"], timeout=60)
         try:
             ms = json.loads(o) if ms_code == 0 else {}
         except ValueError:
