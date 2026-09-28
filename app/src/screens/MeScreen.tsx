@@ -1,12 +1,13 @@
-import React, { useEffect } from 'react';
+import React, { useEffect, useState } from 'react';
 import { agentName } from '../brand';
 import { Pressable, ScrollView, View } from 'react-native';
 import { useNavigation } from '@react-navigation/native';
-import { Activity, BookOpen, Brain, CalendarDays, ClipboardList, Cpu, IdCard, Palette, Plug, Server, ShareIcon, ShieldCheck, TreeDeciduous } from '../components/icons';
+import { Activity, BookOpen, Brain, CalendarDays, ClipboardList, Cpu, IdCard, Palette, Plug, Server, ShareIcon, ShieldCheck, TreeDeciduous, User } from '../components/icons';
 import { LensAvatar } from '../components/LensAvatar';
 import { Card, LargeHeader, ListRow, NavHeader, Pill, PullRefresh, Screen, SectionLabel, Segmented, T } from '../components/ui';
 import { L, useLang, type LangPref } from '../i18n';
 import { useStore } from '../store';
+import { podFeatures } from '../api/podcast';
 import { space, useAppearance, useTheme } from '../theme';
 
 export function MeScreen() {
@@ -22,6 +23,9 @@ export function MeScreen() {
   const conn = connectors?.kind === 'ok' ? connectors.data.counts : null;
   // 世界树和连接不在启动时读（见 store 的 STARTUP_KEYS）：第一次来「我」这一页时读，下面两行的小字要用
   useEffect(() => { if (connected) reload('tree', 'connectors').catch(() => {}); }, [connected, reload]);
+  // 朋友画像（播客记的，只有你看得到）：服务器有才显示
+  const [people, setPeople] = useState(false);
+  useEffect(() => { if (connected) podFeatures().then((f) => setPeople(f.people)).catch(() => {}); }, [connected]);
   return (
     <Screen>
       {/* 从侧栏底部进来（2026-09-27 起「我」不是 tab 了）：顶上一个返回 */}
@@ -57,8 +61,9 @@ export function MeScreen() {
             <ListRow icon={<ShieldCheck size={20} color={warn.length ? t.warn : t.cyan} />} title={L('安全', 'Security')} sub={security ? (warn.length ? L(`${warn.length} 项要注意：${warn.map((f) => f.title).join('、')}`, `${warn.length} to check: ${warn.map((f) => f.title).join(', ')}`) : L('都正常', 'All good')) : L('服务器上的实测状态', 'Live status from the server')} onPress={() => nav.navigate('Security')} last />
           </Card>
 
-          <SectionLabel>{L('分享', 'Sharing')}</SectionLabel>
+          <SectionLabel>{people ? L('朋友和分享', 'Friends and sharing') : L('分享', 'Sharing')}</SectionLabel>
           <Card style={{ paddingVertical: space.xs }}>
+            {people ? <ListRow icon={<User size={20} color={t.cyan} />} title={L('朋友画像', 'Friend notes')} sub={L('和朋友一起录播客时记的，只有你看得到', 'Kept from podcasts you record together; only you see them')} onPress={() => nav.navigate('People')} /> : null}
             <ListRow icon={<ShareIcon size={20} color={t.cyan} />} title={L('分享出去的', 'Shared')} sub={L('发出去的链接、看过几次，能随时收回', 'Links you sent, how often they were opened; withdraw any time')} onPress={() => nav.navigate('Shares')} last />
           </Card>
 

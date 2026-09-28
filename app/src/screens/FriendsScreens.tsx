@@ -11,7 +11,7 @@ import Svg, { Path, Rect } from 'react-native-svg';
 import * as fr from '../api/friends';
 import type { A2AOut, AnyTier, CardSettings, Friend, FriendMsg, FriendsHome as Home, Invite, ScopeKey, Tier } from '../api/friends';
 import { ArrowUp, Ban, Check, ChevronRight, ClipboardPaste, Copy, Ellipsis, IdCard, Link2, QrCode, RotateCw, ShareIcon, ShieldCheck,
-  TriangleAlert, Undo2, UserPlus, UserX, X } from '../components/icons';
+  Mic, TriangleAlert, Undo2, UserPlus, UserX, X } from '../components/icons';
 import { AgentLens, timeLabel } from '../components/FriendBits';
 import { Markdown } from '../components/Markdown';
 import { useSheet } from '../components/Sheet';
@@ -22,6 +22,10 @@ import { L } from '../i18n';
 import { useStore } from '../store';
 import { radius, space, type, useTheme, type Theme } from '../theme';
 import { AskOutCard, isLocalOut } from './FriendAgentsScreen';
+import { Action } from '../components/ChatView';
+import { podFeatures } from '../api/podcast';
+import { PutInPodcast } from '../think/Materials';
+import { openEpisode } from '../think/Podcast';
 
 export { AgentLens, timeLabel };
 
@@ -326,7 +330,7 @@ function MsgView({ m, friend, onAsk, onReview, onEdit, onRetry, onLong }: {
     const gone = m.status === 'revoked';
     const used = m.usedLabel || (m.used?.length ? L(`只用了：${m.used.join('、')}`, `Used only: ${m.used.join(', ')}`) : '');
     return (
-      <View style={{ flexDirection: 'row', gap: space.sm, alignItems: 'flex-start' }}>
+      <Pressable onLongPress={!gone ? () => onLong(m) : undefined} delayLongPress={350} style={{ flexDirection: 'row', gap: space.sm, alignItems: 'flex-start' }}>
         <AgentLens mine={mine} />
         <View style={{ flex: 1, minWidth: 0, gap: 6 }}>
           <T v="caption" color={t.gold} style={{ fontWeight: '700' }}>{who}</T>
@@ -349,7 +353,7 @@ function MsgView({ m, friend, onAsk, onReview, onEdit, onRetry, onLong }: {
           {mine ? <ReviewBox m={m} onReview={(a) => onReview(m, a)} onEdit={() => onEdit(m)} /> : null}
           <StatusLine m={m} onRetry={() => onRetry(m)} />
         </View>
-      </View>
+      </Pressable>
     );
   }
   // text / ask：气泡
@@ -371,7 +375,7 @@ function MsgView({ m, friend, onAsk, onReview, onEdit, onRetry, onLong }: {
   );
   return (
     <View style={{ gap: 3 }}>
-      {mine && !gone && !isAsk ? <Pressable onLongPress={() => onLong(m)} delayLongPress={350}>{bubble}</Pressable> : bubble}
+      {!gone ? <Pressable onLongPress={() => onLong(m)} delayLongPress={350}>{bubble}</Pressable> : bubble}
       <T v="caption" color={t.ink3} style={{ alignSelf: mine ? 'flex-end' : 'flex-start' }}>{timeLabel(m.ts)}</T>
       <StatusLine m={m} onRetry={() => onRetry(m)} />
     </View>
@@ -437,6 +441,8 @@ export function FriendChatScreen() {
   const route = useRoute<any>();
   const id = route.params?.id as string;
   const sheet = useSheet();
+  const [canPod, setCanPod] = useState(false);
+  useEffect(() => { podFeatures().then((f) => setCanPod(f.materials)).catch(() => {}); }, []);
   const { reload } = useStore();
   const [friend, setFriend] = useState<Friend | null>(null);
   const [msgs, setMsgs] = useState<FriendMsg[]>([]);
@@ -537,8 +543,25 @@ export function FriendChatScreen() {
   const onMore = (o: A2AOut) => { setAgentAsk({ prev: o }); setAskOf(null); setEditOf(null); setTimeout(() => input.current?.focus(), 50); };
   const toggleAgent = () => { setAgentAsk(agentAsk ? null : { prev: null }); setAskOf(null); if (editOf) { setEditOf(null); setDraft(''); } };
   const onRetry = (m: FriendMsg) => { fr.retry(m.id).then(put).catch((e) => showError(L('没重发成', "Couldn't retry"), e)); };
-  const onLong = (m: FriendMsg) => confirm(L('收回这条？', 'Withdraw this?'), L('对方那边清空，显示「收回了这条」。', 'It disappears on their side and shows "withdrew this".'), L('收回', 'Withdraw'),
+  const withdraw = (m: FriendMsg) => confirm(L('收回这条？', 'Withdraw this?'), L('对方那边清空，显示「收回了这条」。', 'It disappears on their side and shows "withdrew this".'), L('收回', 'Withdraw'),
     () => { fr.revokeMsg(m.id).then(put).catch((e) => showError(L('没收回', "Couldn't withdraw"), e)); });
+  // 长按一条：放进播客（两边说的都行，朋友说的只在那一期里用）、收回（你发的）
+  const onLong = (m: FriendMsg) => {
+    const canWithdraw = m.dir === 'out' && m.status !== 'revoked' && (m.kind === 'text' || m.kind === 'share');
+    const podOk = canPod && (m.kind === 'text' || m.kind === 'ask' || m.kind === 'answer') && m.status !== 'revoked' && !!m.text.trim();
+    if (!podOk) { if (canWithdraw) withdraw(m); return; }
+    sheet.open({ title: m.dir === 'out' ? L('这条消息', 'This message') : L(`${friend?.name ?? ''}说的`, `${friend?.name ?? ''} said`), content: (close) => (
+      <View style={{ gap: space.sm }}>
+        <Action icon={Mic} label={L('放进播客', 'Add to a podcast')} note={m.dir === 'in'
+          ? L(`当一期播客的素材；${friend?.name ?? '朋友'}说的只在那一期里用，不原话进库和世界树`, `Use it in an episode; ${friend?.name ?? 'their'} words stay in that episode, never quoted into the vault or memory tree`)
+          : L('当一期播客的素材：录前聊天、主持人追问、整理都参考', "Use it in an episode: prep, the host's questions and the note draw on it")}
+          onPress={() => sheet.open({ title: L('放进哪一期', 'Which episode'), content: (c) => (
+            <PutInPodcast kind="friend" target={`${id}:${m.id}`} close={c} onOpen={(e) => openEpisode(nav, e)} />
+          ) })} />
+        {canWithdraw ? <Action icon={Undo2} label={L('收回', 'Withdraw')} danger note={L('对方那边清空，显示「收回了这条」', 'It disappears on their side')} onPress={() => { close(); withdraw(m); }} /> : null}
+      </View>
+    ) });
+  };
   const openSheet = () => {
     if (!friend) return;
     sheet.open({ title: friend.name, content: (close) => (

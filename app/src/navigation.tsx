@@ -27,6 +27,7 @@ import { ThinkDoneScreen, ThinkTalkScreen } from './screens/ThinkTalkScreen';
 import { ThinkWriteScreen, ZenEndScreen } from './screens/ThinkWriteScreen';
 import { ThinkHistoryScreen, ThinkKeywordScreen, ThinkSearchScreen } from './screens/ThinkFindScreens';
 import { PodDoneScreen, PodFriendsScreen, PodPrepScreen, PodRecScreen } from './screens/PodcastScreens';
+import { PeopleScreen, PersonScreen } from './screens/PeopleScreens';
 import { SaveScreen } from './screens/SaveScreen';
 import { ShareScreen } from './screens/ShareScreen';
 import { SharesScreen } from './screens/SharesScreen';
@@ -221,6 +222,9 @@ export function RootNavigator() {
         <Stack.Screen name="PodRec" component={PodRecScreen} options={{ gestureEnabled: false, animation: 'slide_from_bottom' }} />
         <Stack.Screen name="PodDone" component={PodDoneScreen} />
         <Stack.Screen name="PodFriends" component={PodFriendsScreen} />
+        {/* 朋友画像（播客记的，只有你看得到，2026-09-28）：我 → 朋友画像，录完页「小林的画像多了 3 条」 */}
+        <Stack.Screen name="People" component={PeopleScreen} />
+        <Stack.Screen name="Person" component={PersonScreen} />
         <Stack.Screen name="Save" component={SaveScreen} />
         {/* 分享（社交第一层，2026-09-28）：先挡私事，再发链接或干净版卡片 */}
         <Stack.Screen name="Share" component={ShareScreen} />

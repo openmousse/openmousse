@@ -29,6 +29,7 @@ function sourceLook(t: Theme, s: PodSource) {
     case 'deadline': return { Icon: CalendarDays, ...t.tints.orange };
     case 'tree': return { Icon: TreeDeciduous, ...t.tints.green };
     case 'open': return { Icon: Lightbulb, ...t.tints.gold };
+    case 'person': return { Icon: Users, ...t.tints.pink };
     default: return { Icon: Mic, ...t.tints.purple };
   }
 }
@@ -85,7 +86,9 @@ export function Podcast() {
       nav.navigate(then === 'prep' ? 'PodPrep' : 'PodRec', { id: e.id });
     } catch (e) { showError(L('没开成', "Couldn't start"), e); } finally { setBusy(null); }
   };
-  const fromSuggestion = (s: PodSuggestion) => start(s.title, s.mode, s.source, s.mode === 'host' ? 'prep' : 'rec');
+  const fromSuggestion = (s: PodSuggestion) => (s.mode === 'friends'  // 朋友画像来的「约小林聊…」：去约朋友那页（人和题目带过去，等他在了再开录）
+    ? nav.navigate('PodFriends', { title: s.title, person: s.source.person, name: s.source.name })
+    : start(s.title, s.mode, s.source, s.mode === 'host' ? 'prep' : 'rec'));
   const askTopic = (then: 'prep' | 'rec') => {
     if (mode === 'friends' && then === 'rec') { nav.navigate('PodFriends'); return; }
     sheet.open({ title: then === 'prep' ? L('录前先聊聊', 'Talk it through first') : L(`开始录 · ${modeName(mode)}`, `Record · ${modeName(mode)}`),
@@ -131,7 +134,7 @@ export function Podcast() {
             <View style={styles.wait}><T v="callout" color={t.ink2}>{L('今天没挑出来。自己起个题，点下面「开始录」。', 'Nothing picked today. Pick your own topic with Record below.')}</T></View>
           ) : sugg.map((s, i) => {
             const lk = sourceLook(t, s.source);
-            const act = s.mode === 'host' ? L('先聊聊', 'Talk first') : s.mode === 'feynman' ? L('费曼', 'Feynman') : L('录', 'Record');
+            const act = s.mode === 'host' ? L('先聊聊', 'Talk first') : s.mode === 'feynman' ? L('费曼', 'Feynman') : s.mode === 'friends' ? L('约', 'Invite') : L('录', 'Record');
             return (
               <Pressable key={`${s.title}${i}`} onPress={() => fromSuggestion(s)} disabled={!!busy} accessibilityRole="button" accessibilityLabel={`${s.title}，${s.source.label ?? ''}，${act}`}
                 style={({ pressed }) => [styles.row, i ? { borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: t.line } : null, { opacity: pressed ? 0.7 : 1 }]}>

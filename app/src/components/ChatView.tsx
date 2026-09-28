@@ -22,6 +22,9 @@ import { HandoffChip, HandoffFrom, ProjectChip, ScheduleChip, TaskCardView, mode
 import { MAX_FILES, pickDocuments, pickMedia } from './chatInput';
 import { loadDraft, saveDraft } from '../drafts';
 import { saveMessage } from '../api/think';
+import { podFeatures } from '../api/podcast';
+import { PutInPodcast } from '../think/Materials';
+import { openEpisode } from '../think/Podcast';
 
 // 从「今天」的「去对话里说」带过来、还没发出去的引用，也按线程记着。
 const quotes = new Map<string, ChatQuote>();
@@ -295,7 +298,7 @@ export function Bubble({ m, showAvatar, onLongPress, before, from, highlight, on
   );
 }
 
-function Action({ icon: Icon, label, note, danger, onPress }: { icon: typeof Copy; label: string; note?: string; danger?: boolean; onPress: () => void }) {
+export function Action({ icon: Icon, label, note, danger, onPress }: { icon: typeof Copy; label: string; note?: string; danger?: boolean; onPress: () => void }) {
   const t = useTheme();
   const color = danger ? t.bad : t.ink;
   return (
@@ -388,6 +391,9 @@ export function ChatView({ threadId, placeholder, empty, welcome, quote: quotePr
   // 回调不能每次渲染换一个：KeyboardChatScrollView 会跟着重新挂监听，打字时每个字都要做一遍
   const setInset = useCallback((b: number) => { list.current.inset = b; }, []);
   const nav = useNavigation<any>();
+  // 长按「放进播客」：服务器有播客素材才显示（老服务器没有）
+  const [canPod, setCanPod] = useState(false);
+  useEffect(() => { podFeatures().then((f) => setCanPod(f.materials)).catch(() => {}); }, []);
   const busy = !!typing[threadId];
   const placed = useMemo(() => placeCards(allCards, msgs, busy), [allCards, msgs, busy]);
   const liveHandoffs = placed.live.filter((c): c is HandoffCard => c.kind === 'handoff');
@@ -544,6 +550,12 @@ export function ChatView({ threadId, placeholder, empty, welcome, quote: quotePr
           {m.id.startsWith('db') && m.role !== 'auto' ? (
             <Action icon={Bookmark} label={L('收藏', 'Save')} note={L('存进「Zen → 收藏」，以后能搜、能交给 Agent', 'Keep it in Zen → Saved to search or hand to an Agent later')}
               onPress={() => { close(); saveMessage(threadId, m.id).then(() => Alert.alert(L('收藏好了', 'Saved'), L('在「Zen → 收藏」里', 'In Zen → Saved'))).catch(fail); }} />
+          ) : null}
+          {canPod && m.id.startsWith('db') && m.role !== 'auto' && text.trim() ? (
+            <Action icon={Mic} label={L('放进播客', 'Add to a podcast')} note={L('当一期播客的素材：录前聊天、主持人追问、整理都参考', "Use it in an episode: prep, the host's questions and the note draw on it")}
+              onPress={() => sheet.open({ title: L('放进哪一期', 'Which episode'), content: (c) => (
+                <PutInPodcast kind="chat" target={`${threadId}:${m.id}`} close={c} onOpen={(e) => openEpisode(nav, e)} />
+              ) })} />
           ) : null}
           {m.id.startsWith('db') && m.role !== 'auto' && text.trim() ? (
             <Action icon={ShareIcon} label={L('分享', 'Share')} note={L('先挡住私事，再发链接或一张卡片', 'Hides private bits first, then send a link or a card')}

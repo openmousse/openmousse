@@ -9,17 +9,19 @@ import { ActivityIndicator, Alert, AppState, Linking, Platform, Pressable, Scrol
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import Reanimated from 'react-native-reanimated';
 import { useNavigation, useRoute } from '@react-navigation/native';
-import { ArrowUp, Check, ChevronDown, ChevronLeft, ChevronUp, CircleAlert, GraduationCap, MessageCircle, Mic, NotebookText, Pause, Pencil, Play, Plus, Square, TextAlignStart, TreeDeciduous, Users, X } from '../components/icons';
+import { ArrowUp, Check, ChevronDown, ChevronLeft, ChevronRight, ChevronUp, CircleAlert, GraduationCap, MessageCircle, Mic, NotebookText, Paperclip, Pause, Pencil, Play, Plus, Square, TextAlignStart, TreeDeciduous, User, Users, X } from '../components/icons';
 import { useBottomInset } from '../components/keyboard';
 import { useSheet } from '../components/Sheet';
 import { Btn, Screen, T, showError } from '../components/ui';
 import * as pod from '../api/podcast';
-import type { Episode, PodMode, PodSegment, PodSentence } from '../api/podcast';
+import type { Episode, PersonPick, PodMode, PodSegment, PodSentence } from '../api/podcast';
+import * as ppl from '../api/people';
 import { L } from '../i18n';
 import { radius, space, type, useTheme } from '../theme';
 import { GrowInput, KeywordChip } from '../think/parts';
 import { modeLook, modeName } from '../think/Podcast';
 import { keepAwake, locate, usePodPlayer, useTakeRecorder } from '../think/podAudio';
+import { MaterialsRow, MaterialsSheet } from '../think/Materials';
 
 // 录音页不跟深浅色走：一直是深的（设计稿 PodRec）
 const D = { bg: '#101216', panel: '#1A1E24', panel2: '#15181D', line: '#2A3038', line2: '#3A414B', ink: '#ECEEF0', ink2: '#A6AEB7', ink3: '#8A929B', gold: '#DDB56A', purple: '#B9A4F4', rec: '#EC7A70', btn: '#1E2329' };
@@ -117,6 +119,11 @@ export function PodPrepScreen() {
       <Header title={L('录前先聊聊', 'Before recording')} sub={e ? L(`${e.title} · 不进主对话`, `${e.title} · not in the main chat`) : ''} onBack={() => nav.goBack()}
         icon={<View style={[styles.icon, { backgroundColor: t.tints.purple.soft }]}><TextAlignStart size={17} color={t.tints.purple.fg} /></View>}
         right={<Pressable onPress={record} hitSlop={8} accessibilityRole="button" style={styles.headBtn}><T v="callout" color={t.gold} style={{ fontWeight: '600' }}>{L('直接录', 'Just record')}</T></Pressable>} />
+      {e && e.materials !== undefined ? (
+        <View style={{ paddingHorizontal: space.lg, paddingTop: space.sm }}>
+          <MaterialsRow id={id} count={e.materials} onCount={(n) => setE((x) => (x ? { ...x, materials: n } : x))} />
+        </View>
+      ) : null}
       <Reanimated.View ref={root} onLayout={bottom.onLayout} style={[{ flex: 1 }, bottom.style]}>
         <ScrollView ref={scroller} contentContainerStyle={{ padding: space.lg, gap: 14 }} keyboardShouldPersistTaps="handled"
           onContentSizeChange={() => scroller.current?.scrollToEnd({ animated: false })}>
@@ -402,6 +409,7 @@ export function PodRecScreen() {
               ))}
             </View>
           ) : null}
+          {e && e.materials !== undefined ? <MaterialsRow id={id} count={e.materials} dark onCount={(n) => setE((x) => (x ? { ...x, materials: n } : x))} /> : null}
         </View>
       </ScrollView>
 
@@ -506,7 +514,9 @@ export function PodDoneScreen() {
   ) });
   const del = () => {
     const go = () => pod.remove(id).then(() => nav.goBack()).catch((err) => showError(L('没删掉', "Couldn't delete"), err));
-    const msg = L('原声和逐字稿一起删；存进库的笔记还在。', 'Deletes the audio and transcript; a note you saved stays in the vault.');
+    const msg = e?.mode === 'friends'
+      ? L('原声、逐字稿、素材，还有从这期记的朋友画像一起删（你改过的画像留着）；存进库的笔记还在。', "Deletes the audio, transcript, materials and the friend notes from this episode (ones you edited stay); a note you saved stays in the vault.")
+      : L('原声、逐字稿和素材一起删；存进库的笔记还在。', 'Deletes the audio, transcript and materials; a note you saved stays in the vault.');
     if (Platform.OS === 'web') { if (window.confirm(msg)) go(); return; }
     Alert.alert(L('删掉这一期？', 'Delete this episode?'), msg, [{ text: L('取消', 'Cancel'), style: 'cancel' }, { text: L('删掉', 'Delete'), style: 'destructive', onPress: go }]);
   };
@@ -554,6 +564,29 @@ export function PodDoneScreen() {
           <Naming e={e} onDone={setE} play={(seg, s) => playSentence(seg, s)} playing={player.playing} />
         ) : null}
 
+        {e && done && e.result?.people?.length ? e.result.people.map((x) => (
+          <Pressable key={x.person} onPress={() => nav.navigate('Person', { id: x.person })} accessibilityRole="button"
+            style={({ pressed }) => [styles.okRow, { backgroundColor: t.tints.pink.soft, opacity: pressed ? 0.7 : 1 }]}>
+            <User size={16} color={t.tints.pink.fg} />
+            <View style={{ flex: 1, gap: 1 }}>
+              <T v="callout" color={t.tints.pink.fg} style={{ fontWeight: '600' }}>{x.added ? L(`${x.name}的画像多了 ${x.added} 条`, `${x.added} new notes about ${x.name}`) : L(`${x.name}的画像没有新的`, `Nothing new about ${x.name}`)}</T>
+              {x.replaced || x.answered ? (
+                <T v="caption" color={t.tints.pink.fg} style={{ fontWeight: '400' }}>
+                  {[x.replaced ? L(`更新了 ${x.replaced} 条旧说法`, `${x.replaced} updated`) : null, x.answered ? L(`下次问问的问过了 ${x.answered} 条`, `${x.answered} follow-ups answered`) : null].filter(Boolean).join(' · ')}
+                </T>
+              ) : null}
+            </View>
+            <ChevronRight size={16} color={t.tints.pink.fg} />
+          </Pressable>
+        )) : null}
+        {e && done && e.materials ? (
+          <Pressable onPress={() => sheet.open({ title: L('这一期的素材', 'Materials for this episode'), content: () => <MaterialsSheet id={id} onCount={(n) => setE((x) => (x ? { ...x, materials: n } : x))} /> })}
+            accessibilityRole="button" style={({ pressed }) => [styles.matLine, { opacity: pressed ? 0.6 : 1 }]}>
+            <Paperclip size={14} color={t.ink3} />
+            <T v="caption" color={t.ink3} style={{ fontWeight: '400', flex: 1 }}>{L(`参考了 ${e.materials} 条素材 · 笔记里只写出处，朋友说的不进库`, `Drew on ${e.materials} materials · the note only lists sources`)}</T>
+            <ChevronRight size={14} color={t.ink3} />
+          </Pressable>
+        ) : null}
         {e && done && form ? (
           <>
             {fy ? (
@@ -718,12 +751,22 @@ export function PodDoneScreen() {
               ) : null}
               {e.result?.minutes ? (
                 <Block label={L('每人一份纪要', 'MINUTES, ONE EACH')}>
-                  {Object.entries(e.result.minutes).map(([who, pts]) => (
-                    <View key={who} style={{ gap: 2 }}>
-                      <T v="callout" style={{ fontWeight: '700' }}>{who}</T>
-                      {pts.map((p, i) => <T key={i} v="callout" color={t.ink2}>· {p}</T>)}
-                    </View>
-                  ))}
+                  {Object.entries(e.result.minutes).map(([who, pts]) => {
+                    const person = e.result?.people?.find((x) => x.name === who);
+                    return (
+                      <View key={who} style={{ gap: 2 }}>
+                        <T v="callout" style={{ fontWeight: '700' }}>{who}</T>
+                        {/* 记了画像的人：纪要最后一句是「会记进画像」（服务器加的），淡一点 */}
+                        {pts.map((p, i) => (person && i === pts.length - 1 && p.startsWith('（') || p.startsWith('(This goes')
+                          ? <T key={i} v="caption" color={t.ink3} style={{ fontWeight: '400' }}>{p}</T> : <T key={i} v="callout" color={t.ink2}>· {p}</T>))}
+                        {person ? (
+                          <Pressable onPress={() => nav.navigate('Person', { id: person.person })} accessibilityRole="button" hitSlop={6} style={{ alignSelf: 'flex-start', paddingTop: 2 }}>
+                            <T v="caption" color={t.gold} style={{ fontWeight: '600' }}>{L(`看${who}的画像 ›`, `Notes about ${who} ›`)}</T>
+                          </Pressable>
+                        ) : null}
+                      </View>
+                    );
+                  })}
                 </Block>
               ) : null}
               <Block label={L('关键词', 'Keywords')}>
@@ -819,7 +862,10 @@ function EditSentence({ initial, flag, close, onSave }: { initial: string; flag?
   );
 }
 
-/** 坐一起录的：第一次让你认一下谁是谁（每个声音放两句，点一句能听）。 */
+/** 坐一起录的：第一次让你认一下谁是谁（每个声音放两句，点一句能听）。别的声音选是谁：开录前选的「谁在」、以前记过画像的人、朋友，或者新名字；
+ * 对上人的，整理完会给他记几条画像（只有你看得到）；「不记画像」的只留名字。 */
+type Who = { k: 'me' } | { k: 'person'; id: string; name: string } | { k: 'friend'; friend: string; name: string } | { k: 'new'; name: string } | { k: 'none' };
+
 function Naming({ e, onDone, play, playing }: { e: Episode; onDone: (e: Episode) => void; play: (seg: PodSegment, s: PodSentence) => void; playing: string | null }) {
   const t = useTheme();
   const labels: string[] = [];
@@ -831,39 +877,111 @@ function Naming({ e, onDone, play, playing }: { e: Episode; onDone: (e: Episode)
       if (samples[s.speaker].length < 2) samples[s.speaker].push({ seg, s });
     }
   }
-  const [names, setNames] = useState<Record<string, string>>(() => ({ ...e.speakers }));
+  const hasPeople = e.speakerPeople !== undefined;  // 老服务器没有朋友画像：只写名字
+  const [who, setWho] = useState<Record<string, Who>>(() => Object.fromEntries(labels.map((k) => {
+    const v = e.speakers[k];
+    const pid = e.speakerPeople?.[k];
+    if (v === '@me') return [k, { k: 'me' }];
+    if (pid) return [k, { k: 'person', id: pid, name: v ?? '' }];
+    return [k, v ? { k: 'new', name: v } : { k: 'none' }];
+  })));
+  const [skip, setSkip] = useState<Record<string, boolean>>({});
+  const [known, setKnown] = useState<{ people: ppl.Person[]; friends: { id: string; name: string }[] }>({ people: [], friends: [] });
   const [busy, setBusy] = useState(false);
-  const me = Object.keys(names).find((k) => names[k] === '@me');
+  useEffect(() => { if (hasPeople) ppl.list().then((r) => setKnown({ people: r.people, friends: r.friends })).catch(() => {}); }, [hasPeople]);
+  // 选的顺序：这期开录前选的谁在 → 以前记过的人 → 还没对上人的朋友
+  const present = e.people ?? [];
+  const chips: Who[] = [
+    ...present.map((p) => ({ k: 'person' as const, id: p.id, name: p.name })),
+    ...known.people.filter((p) => !present.some((x) => x.id === p.id)).slice(0, 8).map((p) => ({ k: 'person' as const, id: p.id, name: p.name })),
+    ...known.friends.slice(0, 6).map((f) => ({ k: 'friend' as const, friend: f.id, name: f.name })),
+  ];
+  const me = labels.find((k) => who[k]?.k === 'me');
+  const same = (a: Who | undefined, b: Who) => !!a && a.k === b.k && (a.k === 'person' ? a.id === (b as { id: string }).id : a.k === 'friend' ? a.friend === (b as { friend: string }).friend : true);
+  const markMe = (k: string) => setWho((w) => {
+    const next: Record<string, Who> = Object.fromEntries(Object.entries(w).map(([a, b]) => [a, b.k === 'me' ? { k: 'none' } : b]));
+    next[k] = { k: 'me' };
+    // 只有两个声音、开录前只选了一个人：另一个声音就是他
+    const rest = labels.filter((x) => x !== k);
+    if (rest.length === 1 && present.length === 1 && next[rest[0]].k === 'none') next[rest[0]] = { k: 'person', id: present[0].id, name: present[0].name };
+    return next;
+  });
+  const nameOf = (w: Who | undefined) => (w && (w.k === 'person' || w.k === 'friend' || w.k === 'new') ? w.name.trim() : '');
+  const named = (w: Who | undefined) => !!w && (w.k === 'me' || !!nameOf(w));
+  const ready = !!me && labels.every((k) => named(who[k]));
   const go = async () => {
-    if (busy || !me) return;
+    if (busy || !ready) return;
     setBusy(true);
-    try { onDone(await pod.patch(e.id, { speakers: Object.fromEntries(labels.map((k) => [k, names[k]?.trim() || k])) })); } catch (err) { showError(L('没存上', "Couldn't save"), err); } finally { setBusy(false); }
+    try {
+      const speakers: Record<string, string> = {};
+      const people: Record<string, PersonPick> = {};
+      for (const k of labels) {
+        const w = who[k];
+        if (w.k === 'me') { speakers[k] = '@me'; continue; }
+        if (w.k !== 'person' && w.k !== 'friend' && w.k !== 'new') continue;
+        speakers[k] = w.name.trim();
+        if (!hasPeople) continue;
+        people[k] = skip[k] ? { name: w.name.trim(), skip: true } : w.k === 'person' ? { id: w.id } : w.k === 'friend' ? { friend: w.friend, name: w.name } : { name: w.name.trim() };
+      }
+      onDone(await pod.patch(e.id, hasPeople ? { speakers, people } : { speakers }));
+    } catch (err) { showError(L('没存上', "Couldn't save"), err); } finally { setBusy(false); }
   };
   return (
     <View style={[styles.card, { backgroundColor: t.surface, borderColor: t.line, gap: 12, paddingVertical: space.md }]}>
       <T v="headline">{L('认一下谁是谁', "Who's who?")}</T>
-      <T v="callout" color={t.ink2}>{L(`按声音分出了 ${labels.length} 个人。点一句听听，标出哪个是你；朋友说的只留在这一期里，不进你的库和世界树。`, `It found ${labels.length} voices. Tap a line to listen and mark which one is you; what friends said stays in this episode only.`)}</T>
-      {labels.map((k) => (
-        <View key={k} style={{ gap: 6, borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: t.line, paddingTop: 10 }}>
-          {samples[k].map(({ seg, s }) => (
-            <Pressable key={`${seg.idx}.${s.i}`} onPress={() => play(seg, s)} accessibilityRole="button" style={{ flexDirection: 'row', gap: 6, alignItems: 'flex-start' }}>
-              {playing === `${seg.idx}.${s.i}` ? <Square size={12} color={t.ink2} fill={t.ink2} /> : <Play size={12} color={t.ink2} fill={t.ink2} />}
-              <T v="callout" style={{ flex: 1 }}>{s.text}</T>
-            </Pressable>
-          ))}
-          <View style={{ flexDirection: 'row', gap: 8, alignItems: 'center' }}>
-            <Pressable onPress={() => setNames((n) => ({ ...Object.fromEntries(Object.entries(n).map(([a, b]) => [a, b === '@me' ? '' : b])), [k]: '@me' }))} accessibilityRole="button"
-              style={[styles.mini, { backgroundColor: names[k] === '@me' ? t.goldSoft : t.bg, height: 36 }]}>
-              {names[k] === '@me' ? <Check size={14} color={t.gold} /> : null}<Text style={[type.callout, { color: names[k] === '@me' ? t.gold : t.ink, fontWeight: '600' }]}>{L('这是我', "That's me")}</Text>
-            </Pressable>
-            {names[k] !== '@me' ? (
-              <TextInput value={names[k] ?? ''} onChangeText={(v) => setNames((n) => ({ ...n, [k]: v }))} placeholder={L('朋友叫什么', "Friend's name")} placeholderTextColor={t.ink3}
-                style={[type.callout, { flex: 1, backgroundColor: t.bg, color: t.ink, borderRadius: radius.sm, paddingHorizontal: 10, height: 36 }]} />
+      <T v="callout" color={t.ink2}>{hasPeople
+        ? L(`按声音分出了 ${labels.length} 个人。点一句听听，标出哪个是你，别的选一下是谁：认好了会给每个人记几条画像（只有你看得到）。朋友说的只留在这一期里，不进你的库和世界树。`,
+          `It found ${labels.length} voices. Tap a line to listen, mark which one is you and pick who the others are: each gets a few private notes (only you see them). What friends said stays in this episode.`)
+        : L(`按声音分出了 ${labels.length} 个人。点一句听听，标出哪个是你；朋友说的只留在这一期里，不进你的库和世界树。`, `It found ${labels.length} voices. Tap a line to listen and mark which one is you; what friends said stays in this episode only.`)}</T>
+      {labels.map((k) => {
+        const w = who[k];
+        const isMe = w?.k === 'me';
+        return (
+          <View key={k} style={{ gap: 8, borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: t.line, paddingTop: 10 }}>
+            {samples[k].map(({ seg, s }) => (
+              <Pressable key={`${seg.idx}.${s.i}`} onPress={() => play(seg, s)} accessibilityRole="button" style={{ flexDirection: 'row', gap: 6, alignItems: 'flex-start' }}>
+                {playing === `${seg.idx}.${s.i}` ? <Square size={12} color={t.ink2} fill={t.ink2} /> : <Play size={12} color={t.ink2} fill={t.ink2} />}
+                <T v="callout" style={{ flex: 1 }}>{s.text}</T>
+              </Pressable>
+            ))}
+            <View style={styles.chips}>
+              <Pressable onPress={() => markMe(k)} accessibilityRole="button" accessibilityLabel={L('这是我', "That's me")} accessibilityState={{ selected: isMe }}
+                style={[styles.pchip, { borderColor: isMe ? t.goldFill : t.line, backgroundColor: isMe ? t.goldSoft : t.bg }]}>
+                {isMe ? <Check size={14} color={t.gold} /> : null}<Text style={[type.callout, { color: isMe ? t.gold : t.ink, fontWeight: '600' }]}>{L('这是我', "That's me")}</Text>
+              </Pressable>
+              {!isMe && hasPeople ? chips.map((c) => {
+                const on = same(w, c);
+                const key = c.k === 'person' ? c.id : c.k === 'friend' ? c.friend : '';
+                return (
+                  <Pressable key={key} onPress={() => setWho((x) => ({ ...x, [k]: c }))} accessibilityRole="button" accessibilityState={{ selected: on }}
+                    style={[styles.pchip, { borderColor: on ? t.tints.pink.fg : t.line, backgroundColor: on ? t.tints.pink.soft : t.bg }]}>
+                    {on ? <Check size={14} color={t.tints.pink.fg} /> : null}
+                    <Text style={[type.callout, { color: on ? t.tints.pink.fg : t.ink, fontWeight: '600' }]}>{c.k === 'person' || c.k === 'friend' ? c.name : ''}</Text>
+                    {c.k === 'friend' ? <Text style={[type.caption, { color: t.ink3 }]}>{L('朋友', 'friend')}</Text> : null}
+                  </Pressable>
+                );
+              }) : null}
+            </View>
+            {!isMe ? (
+              <TextInput value={w?.k === 'new' ? w.name : ''} onChangeText={(v) => setWho((x) => ({ ...x, [k]: v ? { k: 'new', name: v } : { k: 'none' } }))}
+                placeholder={hasPeople && chips.length ? L('不在上面？写个名字', 'Not listed? Type a name') : L('朋友叫什么', "Friend's name")} placeholderTextColor={t.ink3}
+                style={[type.callout, { backgroundColor: t.bg, color: t.ink, borderRadius: radius.sm, paddingHorizontal: 10, height: 36 }]} />
+            ) : null}
+            {!isMe && hasPeople && named(w) ? (
+              <Pressable onPress={() => setSkip((x) => ({ ...x, [k]: !x[k] }))} accessibilityRole="checkbox" accessibilityState={{ checked: !skip[k] }} hitSlop={6}
+                style={{ flexDirection: 'row', alignItems: 'center', gap: 6, alignSelf: 'flex-start' }}>
+                <View style={[styles.box, { borderColor: skip[k] ? t.ink3 : t.goldFill, backgroundColor: skip[k] ? 'transparent' : t.goldFill }]}>
+                  {!skip[k] ? <Check size={11} color={t.onGold} strokeWidth={3} /> : null}
+                </View>
+                <T v="caption" color={t.ink2} style={{ fontWeight: '400' }}>{skip[k]
+                  ? L('不记画像，只写名字', 'No notes, just the name')
+                  : L(`给${nameOf(w)}记画像（只有你看得到）`, `Keep notes about ${nameOf(w)} (only you)`)}</T>
+              </Pressable>
             ) : null}
           </View>
-        </View>
-      ))}
-      <Btn label={busy ? L('正在整理…', 'Organizing…') : me ? L('认好了，接着整理', 'Done, organize it') : L('先标出哪个是你', 'Mark which one is you')} onPress={go} />
+        );
+      })}
+      <Btn label={busy ? L('正在整理…', 'Organizing…') : !me ? L('先标出哪个是你', 'Mark which one is you') : ready ? L('认好了，接着整理', 'Done, organize it') : L('每个声音都选一下是谁', 'Say who each voice is')} onPress={go} />
     </View>
   );
 }
@@ -873,18 +991,55 @@ function Naming({ e, onDone, play, playing }: { e: Episode; onDone: (e: Episode)
 export function PodFriendsScreen() {
   const t = useTheme();
   const nav = useNavigation<any>();
-  const [title, setTitle] = useState('');
+  const route = useRoute<any>();
+  // 「今天聊点什么」里的「约小林聊…」：带着题目和人进来
+  const [title, setTitle] = useState<string>(route.params?.title ?? '');
   const [host, setHost] = useState(true);
   const [busy, setBusy] = useState(false);
+  const [hasPeople, setHasPeople] = useState(false);
+  const [known, setKnown] = useState<{ people: ppl.Person[]; friends: { id: string; name: string }[] }>({ people: [], friends: [] });
+  const [chosen, setChosen] = useState<Who[]>(() => (route.params?.person ? [{ k: 'person', id: route.params.person, name: route.params.name ?? '' }] : []));
+  const [typed, setTyped] = useState('');
+  const [remember, setRemember] = useState<Record<string, ppl.PersonNote[]>>({});
+  useEffect(() => {
+    pod.podFeatures().then((f) => {
+      setHasPeople(f.people);
+      if (f.people) ppl.list().then((r) => setKnown({ people: r.people, friends: r.friends })).catch(() => {});
+    });
+  }, []);
+  // 选了以前记过的人：拿他的画像，给你看主持人会记得什么
+  const ids = chosen.flatMap((c) => (c.k === 'person' ? [c.id] : [])).join(',');
+  useEffect(() => {
+    for (const pid of ids ? ids.split(',') : []) {
+      ppl.get(pid).then((r) => setRemember((m) => ({ ...m, [pid]: r.notes.filter((n) => n.status === 'active') }))).catch(() => {});
+    }
+  }, [ids]);
+  const key = (c: Who) => (c.k === 'person' ? c.id : c.k === 'friend' ? `f:${c.friend}` : c.k === 'new' ? `n:${c.name}` : '');
+  const toggle = (c: Who) => setChosen((xs) => (xs.some((x) => key(x) === key(c)) ? xs.filter((x) => key(x) !== key(c)) : [...xs, c]));
+  const addTyped = () => {
+    const v = typed.trim();
+    if (!v) return;
+    const hit = known.people.find((p) => p.name.toLowerCase() === v.toLowerCase());
+    toggle(hit ? { k: 'person', id: hit.id, name: hit.name } : { k: 'new', name: v });
+    setTyped('');
+  };
   const go = async () => {
     if (busy || !title.trim()) return;
     setBusy(true);
     try {
-      const e = await pod.create({ title: title.trim(), mode: 'friends', source: { kind: 'own' } });
+      const people = chosen.flatMap((c): PersonPick[] => (c.k === 'person' ? [{ id: c.id }] : c.k === 'friend' ? [{ friend: c.friend, name: c.name }] : c.k === 'new' ? [{ name: c.name }] : []));
+      const src = route.params?.person ? { kind: 'person' as const, person: route.params.person, name: route.params.name } : { kind: 'own' as const };
+      const e = await pod.create({ title: title.trim(), mode: 'friends', source: src, ...(hasPeople ? { people } : {}) });
       nav.replace('PodRec', { id: e.id, host });
     } catch (err) { showError(L('没开成', "Couldn't start"), err); } finally { setBusy(false); }
   };
   const lk = modeLook(t, 'friends');
+  const options: Who[] = [
+    ...known.people.map((p) => ({ k: 'person' as const, id: p.id, name: p.name })),
+    ...known.friends.map((f) => ({ k: 'friend' as const, friend: f.id, name: f.name })),
+  ];
+  const extra = chosen.filter((c) => !options.some((o) => key(o) === key(c)));  // 新写的名字、带进来但列表里还没有的
+  const recall = chosen.flatMap((c) => (c.k === 'person' && remember[c.id]?.length ? [{ name: c.name || known.people.find((p) => p.id === c.id)?.name || '', notes: remember[c.id] }] : []));
   return (
     <Screen>
       <Header title={L('约朋友一起录', 'Record with friends')} sub={L('一台手机放中间', 'One phone in the middle')} onBack={() => nav.goBack()}
@@ -892,6 +1047,39 @@ export function PodFriendsScreen() {
       <ScrollView contentContainerStyle={{ padding: space.md, gap: space.md }} automaticallyAdjustKeyboardInsets keyboardShouldPersistTaps="handled">
         <TextInput value={title} onChangeText={setTitle} placeholder={L('这期聊什么？', 'What will you talk about?')} placeholderTextColor={t.ink3} accessibilityLabel={L('这期聊什么', 'Topic')}
           style={[type.body, { backgroundColor: t.surface, color: t.ink, borderRadius: radius.md, paddingHorizontal: space.lg, paddingVertical: 12 }]} />
+        {hasPeople ? (
+          <View style={[styles.card, { backgroundColor: t.surface, borderColor: t.line, gap: 10, paddingVertical: space.md }]}>
+            <T v="headline" style={{ fontSize: 15 }}>{L('谁在', "Who's here")}</T>
+            <View style={styles.chips}>
+              {[...options, ...extra].map((c) => {
+                const on = chosen.some((x) => key(x) === key(c));
+                return (
+                  <Pressable key={key(c)} onPress={() => toggle(c)} accessibilityRole="checkbox" accessibilityState={{ checked: on }}
+                    style={[styles.pchip, { borderColor: on ? t.tints.pink.fg : t.line, backgroundColor: on ? t.tints.pink.soft : t.bg }]}>
+                    {on ? <Check size={14} color={t.tints.pink.fg} /> : null}
+                    <Text style={[type.callout, { color: on ? t.tints.pink.fg : t.ink, fontWeight: '600' }]}>{c.k === 'person' ? (c.name || known.people.find((p) => p.id === c.id)?.name || '…') : c.k === 'friend' || c.k === 'new' ? c.name : ''}</Text>
+                    {c.k === 'friend' ? <Text style={[type.caption, { color: t.ink3 }]}>{L('朋友', 'friend')}</Text> : null}
+                  </Pressable>
+                );
+              })}
+            </View>
+            <TextInput value={typed} onChangeText={setTyped} onSubmitEditing={addTyped} returnKeyType="done" placeholder={L('写个名字，回车加上', 'Type a name, press return')} placeholderTextColor={t.ink3}
+              accessibilityLabel={L('加一个人', 'Add someone')} style={[type.callout, { backgroundColor: t.bg, color: t.ink, borderRadius: radius.sm, paddingHorizontal: 10, height: 36 }]} />
+            <T v="caption" color={t.ink3} style={{ fontWeight: '400' }}>{L('选了的人，AI 主持人会接上你们上次聊的；录完认人时也排在最前面。', 'The AI host picks up where you left off with them; they also come first when you mark who is who.')}</T>
+          </View>
+        ) : null}
+        {recall.length ? (
+          <View style={[styles.card, { backgroundColor: t.tints.pink.soft, borderColor: t.tints.pink.soft, gap: 6, paddingVertical: space.md }]}>
+            <T v="label" color={t.tints.pink.fg}>{L('主持人记得', 'THE HOST REMEMBERS')}</T>
+            {recall.map((r) => (
+              <View key={r.name} style={{ gap: 2 }}>
+                {[...r.notes.filter((n) => n.kind === 'ask'), ...r.notes.filter((n) => n.kind !== 'ask')].slice(0, 3).map((n) => (
+                  <T key={n.id} v="callout" color={t.ink}>{`${r.name} · ${n.text}`}</T>
+                ))}
+              </View>
+            ))}
+          </View>
+        ) : null}
         <View style={[styles.card, { backgroundColor: t.surface, borderColor: t.line, gap: 6, paddingVertical: space.md }]}>
           <T v="headline" style={{ fontSize: 15 }}>{L('一台手机放中间', 'One phone in the middle')}</T>
           <T v="callout" color={t.ink2}>{L('录完按声音分人，第一次让你认一下谁是谁。', "Afterwards it tells voices apart; the first time you mark who's who.")}</T>
@@ -904,12 +1092,15 @@ export function PodFriendsScreen() {
           </View>
           <Switch value={host} onValueChange={setHost} trackColor={{ true: t.goldFill, false: t.surface2 }} />
         </View>
-        <T v="callout" color={t.ink2}>{L('开录前跟大家说一声，屏幕上一直亮着「在录」。', 'Tell everyone before you start; the screen shows “Recording” the whole time.')}</T>
+        <T v="callout" color={t.ink2}>{hasPeople
+          ? L('开录前跟大家说一声：屏幕上一直亮着「在录」，录完会给参与的人记画像（只有你看得到）。', 'Tell everyone before you start: the screen shows “Recording” the whole time, and afterwards each person gets a few private notes (only you see them).')
+          : L('开录前跟大家说一声，屏幕上一直亮着「在录」。', 'Tell everyone before you start; the screen shows “Recording” the whole time.')}</T>
         <View style={[styles.card, { backgroundColor: t.surface, borderColor: t.line, gap: 6, paddingVertical: space.md }]}>
           <T v="label" color={t.ink3}>{L('录完', 'AFTERWARDS')}</T>
           <T v="callout">{L('· 每人一份纪要，按各自说的整理', '· Minutes for each person, from what they said')}</T>
           <T v="callout">{L('· 只有你说的，进你的库和世界树', '· Only what you said goes into your vault and memory tree')}</T>
           <T v="callout">{L('· 朋友说的只留在这一期里', "· What friends said stays in this episode")}</T>
+          {hasPeople ? <T v="callout">{L('· 给每个朋友记几条画像：在做的事、在意的、下次问问。只有你看得到，能改能删', '· A few notes about each friend: what they are up to, what they care about, what to ask next time. Only you see them; edit or delete any')}</T> : null}
         </View>
         <Btn label={busy ? L('正在开…', 'Starting…') : L('开始录', 'Start recording')} icon={<Mic size={16} color={t.onGold} />} onPress={go} />
       </ScrollView>
@@ -962,4 +1153,7 @@ const styles = StyleSheet.create({
   sent: { flexDirection: 'row', alignItems: 'flex-start', gap: 4, borderRadius: 8, paddingVertical: 6, paddingHorizontal: 4 },
   quote: { flexDirection: 'row', alignItems: 'center', gap: 8, paddingVertical: 4 },
   rel: { borderRadius: 12, padding: 10, gap: 4 },
+  matLine: { flexDirection: 'row', alignItems: 'center', gap: 6, paddingHorizontal: 4, marginTop: -4 },
+  pchip: { flexDirection: 'row', alignItems: 'center', gap: 4, height: 32, paddingHorizontal: 12, borderRadius: 16, borderWidth: 1 },
+  box: { width: 16, height: 16, borderRadius: 4, borderWidth: 1.5, alignItems: 'center', justifyContent: 'center' },
 });
