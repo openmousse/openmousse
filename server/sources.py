@@ -6,7 +6,8 @@
   workouts / meals / body   ← scripts/xunji.py（作者用的训记；换别的软件就写一个同名接口的适配器）
   calendar                  ← scripts/calendar_ics.py（ICS 链接）
   health                    ← scripts/apple_health.py（恢复分、热量缺口、体能趋势；原始数据由手机推到 /api/health/daily，不需要脚本）
-  tree                      ← scripts/memory_tree.py（世界树：各 AI 平台共用的记忆，真身是 Obsidian 库里的笔记；见 memtree.py）
+  tree                      ← scripts/memory_tree.py（作者的世界树：Obsidian 库里的笔记，有枝）；没有它就用安装器装的开源版世界树
+                              （openmousse_tree，见 treelib.py）。各 AI 平台共用的记忆，见 memtree.py
 
 脚本目录在 server.json 的 `scripts`（默认 <workspace>/scripts）。
 """
@@ -43,6 +44,10 @@ xunji = _load("xunji")
 calendar_ics = _load("calendar_ics")
 apple_health = _load("apple_health")
 memory_tree = _load("memory_tree")
+if memory_tree is None:
+    import treelib
+    if treelib.available():
+        memory_tree = treelib
 
 AVAILABLE: dict[str, bool] = {
     "workouts": xunji is not None,

@@ -10,6 +10,11 @@ memory_tree 的函数都拿跨进程锁、会先按库的最新状态重建索�
                         叶子的 source 是笔记里写的；origin 是最早记下它的平台：每周修剪改写 / 合并出来的（source=prune）顺着 supersedes 找回去，
                         「按来源」和 counts.bySource 都按 origin 算
   POST /api/tree/{id}   {action: confirm | forget | move, branch?}：确认 / 忘记 / 挪枝（branch 写枝名，写「档案」= 直接挂主干）
+  GET  /api/tree/connect             接到你的 AI：真身放在哪、公网地址、每个平台的接入地址（含令牌）、怎么接、要贴的那句指令
+  POST /api/tree/platforms {name}    加一个平台（DeepSeek、通义千问、Kimi……）：发一个新令牌，重启世界树服务
+  DELETE /api/tree/platforms/{id}    删掉一个平台：它的地址立即作废，重启世界树服务
+
+两种世界树都能接：作者实例的 workspace scripts/memory_tree.py（有枝），或安装器装的开源版（treelib.py，没有枝，挪枝不支持）。
 
 活动记录由 memory_tree 自己写，只写做了什么、不写记忆内容；actor 是「你 · 世界树」。这里不打印、不记录叶子的内容。
 """
@@ -18,7 +23,11 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import re
+import secrets
 import sqlite3
+import subprocess
+import time
+import urllib.request
 from types import ModuleType
 
 from fastapi import APIRouter, HTTPException
@@ -33,7 +42,9 @@ router = APIRouter()
 ID_RE = re.compile(r"[\w-]{1,64}")
 ACTIONS = ("confirm", "forget", "move")
 # 各 AI 平台（世界树 MCP 的接入名 → 显示名）；Grava 自己的 Agent 写的是 grava-<agent id>
-PLATFORMS = {"claude": "Claude", "chatgpt": "ChatGPT", "gemini": "Gemini", "claude-code": "Claude Code", "notion": "Notion"}
+PLATFORMS = {"claude": "Claude", "chatgpt": "ChatGPT", "gemini": "Gemini", "claude-code": "Claude Code", "notion": "Notion",
+             "deepseek": "DeepSeek", "qwen": "Qwen", "kimi": "Kimi"}
+PLATFORM_ID = re.compile(r"[a-z][a-z0-9-]{1,23}")
 
 
 def tree() -> ModuleType:
@@ -87,14 +98,17 @@ def snapshot() -> dict:
     """整棵树（在线程里跑）。"""
     mt = sources.memory_tree
     agents = agent_names()
+    branch_col = "branch" if getattr(mt, "HAS_BRANCHES", True) else "NULL AS branch"  # 开源版世界树没有枝
     with contextlib.closing(mt.connect()) as conn:  # connect() 先按库的最新状态刷新索引
         branches = mt.branch_tree(conn)
         rows = conn.execute(
-            "SELECT id, text, kind, source, status, branch, tags, observed_at, created_at FROM tree "
+            f"SELECT id, text, kind, source, status, {branch_col}, tags, observed_at, created_at FROM tree "  # noqa: S608 — 列名是常量
             "WHERE source != 'profile' AND status IN ('active','pending') ORDER BY observed_at DESC, created_at DESC").fetchall()
         links = {r["id"]: (r["source"], r["supersedes"]) for r in conn.execute("SELECT id, source, supersedes FROM tree WHERE source != 'profile'")}
         trunk = conn.execute("SELECT COUNT(*) FROM tree WHERE source = 'profile'").fetchone()[0]
-        issues = conn.execute("SELECT COUNT(*) FROM issue").fetchone()[0]
+        issues = 0
+        with contextlib.suppress(sqlite3.Error):  # issue 表只有笔记存储才有
+            issues = conn.execute("SELECT COUNT(*) FROM issue").fetchone()[0]
     names = {b["name"] for b in branches}
     total = {b["name"]: b["leaves"] for b in branches}
     for b in reversed(branches):  # 先序倒过来走：小枝先算完，再加到上一级
@@ -121,6 +135,8 @@ def snapshot() -> dict:
         "leaves": leaves,
         "counts": {"total": len(leaves), "pending": sum(1 for x in leaves if x["status"] == "pending"), "bySource": by_source},
         "issues": issues,
+        "branchable": getattr(mt, "HAS_BRANCHES", True),
+        "storage": storage_of(mt),
     }
 
 
@@ -133,6 +149,187 @@ async def get_tree():
         raise HTTPException(503, L(f"世界树读不了：{exc}", f"Couldn't read the memory tree: {exc}")) from exc
 
 
+# —— 接到你的 AI（「我 → 世界树」最上面那块，2026-09-28；路由要排在 POST /api/tree/{id} 前面，不然 platforms 会被当成叶子 id）——————————————————————————————
+# 世界树给每个平台一个令牌：令牌在地址里（/t/<令牌>/mcp，Claude.ai、ChatGPT 这类不带认证的连接器），或者放请求头（/m/mcp，Notion 这类）。
+# 令牌就是平台名的钥匙：树按令牌知道是谁写的，叶子的 source 就是平台名。加 / 删平台要重启世界树服务（路由按令牌在启动时建好）。
+
+INSTRUCTION = ("对话开始先调 profile 和 recall 了解我；我说出关于自己的新事实、偏好、决定、近况时调 remember。",
+               "Call profile and recall at the start of a conversation to know me; when I state a new fact, preference, decision or update about myself, call remember.")
+PRESETS = ("claude", "chatgpt", "gemini", "notion", "claude-code", "deepseek", "qwen", "kimi")
+
+
+def platform_name(pid: str) -> str:
+    return L("通义千问", "Qwen") if pid == "qwen" else PLATFORMS.get(pid, pid)
+
+
+def guide(pid: str) -> tuple[str, list[str]]:
+    """(auth, 步骤)：auth = path（地址里带令牌）| header（地址 /m/mcp，令牌放请求头）。步骤里的 {url} 由 app 换成地址。"""
+    paste = L("把下面那句指令贴进它的自定义指令，关掉它自带的记忆，免得两边记的不一样。",
+              "Paste the instruction below into its custom instructions and turn off its own memory, so the two don't drift apart.")
+    known = {
+        "claude": ("path", [L("打开 claude.ai → 设置 → 连接器（Connectors）→ 添加自定义连接器。", "Open claude.ai → Settings → Connectors → Add custom connector."),
+                            L("名字写「世界树」，地址粘贴上面这个，认证留空。", "Name it Memory tree, paste the address above, leave authentication empty."), paste]),
+        "chatgpt": ("path", [L("打开 ChatGPT → 设置 → Apps & Connectors → 高级，打开 Developer mode（要 Plus 以上）。",
+                               "Open ChatGPT → Settings → Apps & Connectors → Advanced and turn on Developer mode (Plus or above)."),
+                             L("点「创建」，地址粘贴上面这个，认证选 None。", "Tap Create, paste the address above, authentication None."), paste]),
+        "gemini": ("path", [L("打开 gemini.google.com → 设置 → Connected Apps → 添加自定义 app（官方目前要求人在美国）。",
+                              "Open gemini.google.com → Settings → Connected Apps → Add a custom app (Google currently requires you to be in the US)."),
+                            L("地址粘贴上面这个。", "Paste the address above."), paste]),
+        "notion": ("header", [L("Notion 的 Custom Agent → Tools & Access → Custom MCP server（要 Business 版以上）。",
+                                "In Notion, open a Custom Agent → Tools & Access → Custom MCP server (Business plan or above)."),
+                              L("地址填上面这个，认证选 Bearer token，值填下面的令牌。", "Paste the address above, pick Bearer token authentication and paste the token below."),
+                              L("把下面那句指令写进这个 Agent 的说明。", "Put the instruction below into the Agent's instructions.")]),
+        "claude-code": ("path", [L("在终端运行：claude mcp add --transport http tree {url}", "In a terminal run: claude mcp add --transport http tree {url}"),
+                                 L("把下面那句指令加进 CLAUDE.md。", "Add the instruction below to CLAUDE.md.")]),
+        "qwen": ("path", [L("通义千问的网页版还不能加自定义 MCP，用它的命令行工具 Qwen Code：在 ~/.qwen/settings.json 的 mcpServers 里加一项 \"tree\": {\"httpUrl\": \"{url}\"}。",
+                            "Qwen's web chat can't add custom MCP servers yet, so use Qwen Code: in ~/.qwen/settings.json add \"tree\": {\"httpUrl\": \"{url}\"} under mcpServers."),
+                          L("在 Qwen Code 里输入 /mcp，看到 tree 就接上了。", "Type /mcp in Qwen Code; when tree shows up it's connected."),
+                          L("把下面那句指令加进 QWEN.md。", "Add the instruction below to QWEN.md.")]),
+        "kimi": ("path", [L("Kimi 的网页版还不能加自定义 MCP，用它的命令行工具 Kimi Code：在终端运行 kimi mcp add --transport http tree {url}",
+                            "Kimi's web chat can't add custom MCP servers yet, so use Kimi Code: run kimi mcp add --transport http tree {url}"),
+                          L("在 Kimi Code 里用 /mcp 看一眼，tree 在就接上了。", "Check with /mcp in Kimi Code; if tree is listed it's connected."), paste]),
+    }
+    if pid in known:
+        return known[pid]
+    return ("path", [L("在这个 AI 里找「MCP」「连接器」或「工具」的设置，添加一个远程 MCP 服务（Streamable HTTP），地址粘贴上面这个，不用认证。",
+                       "In that AI, find the MCP / connectors / tools settings and add a remote MCP server (Streamable HTTP) with the address above, no authentication."),
+                     L("它的网页版不支持自定义 MCP 的话，用它家的命令行工具，或者任何支持 MCP 的客户端配上它的模型。",
+                       "If its web app can't add custom MCP servers, use its command-line tool, or any MCP-capable client set up with its model."), paste])
+
+
+def tree_unit() -> str | None:
+    """世界树的 systemd 用户服务：作者的实例叫 grava-tree，安装器装的叫 mousse-tree。"""
+    for unit in ("grava-tree", "mousse-tree"):
+        try:
+            r = subprocess.run(["systemctl", "--user", "show", "-p", "LoadState", "--value", f"{unit}.service"], capture_output=True, text=True, timeout=5)
+        except (OSError, subprocess.TimeoutExpired):
+            return None
+        if r.stdout.strip() == "loaded":
+            return unit
+    return None
+
+
+def restart_tree(port: int) -> bool:
+    """重启世界树服务，等它的 /health 回来（最多 12 秒）。没有 systemd 服务 = False，app 提示手动重启。"""
+    unit = tree_unit()
+    if not unit:
+        return False
+    try:
+        subprocess.run(["systemctl", "--user", "restart", f"{unit}.service"], capture_output=True, timeout=20, check=True)
+    except (OSError, subprocess.SubprocessError):
+        return False
+    for _ in range(24):
+        time.sleep(0.5)
+        with contextlib.suppress(OSError):
+            with urllib.request.urlopen(f"http://127.0.0.1:{port}/health", timeout=2) as r:  # noqa: S310 — 本机
+                if r.status == 200:
+                    return True
+    return False
+
+
+def storage_of(mt: ModuleType) -> dict:
+    """真身放在哪：开源版自己报；作者的实例是 Obsidian 库里的笔记（memory_tree.NOTES）。"""
+    if hasattr(mt, "storage"):
+        return mt.storage()
+    notes = getattr(mt, "NOTES", None)
+    return {"kind": "markdown", "path": str(notes)} if notes else {"kind": "unknown", "path": ""}
+
+
+def connect_info() -> dict:
+    """「接到你的 AI」要的一切（在线程里跑）。含令牌，只给带了访问令牌的 app。"""
+    mt = sources.memory_tree
+    cfg = mt.load_config()
+    port = int(cfg.get("port") or 8787)
+    hosts = [h for h in cfg.get("public_hosts") or [] if isinstance(h, str) and h]
+    base = f"https://{hosts[0]}" if hosts else None
+    last: dict[str, str] = {}
+    with contextlib.suppress(Exception):  # noqa: BLE001 — 读不到就不显示「最近写过」
+        with contextlib.closing(mt.connect(sync=False)) as conn:  # 不刷新：MCP 服务每 5 秒刷一次
+            last = {r[0]: r[1] for r in conn.execute("SELECT source, MAX(created_at) FROM tree WHERE source != 'profile' GROUP BY source")}
+    by_platform: dict[str, str] = {}
+    for tok, pid in (cfg.get("tokens") or {}).items():
+        if isinstance(pid, str) and isinstance(tok, str):
+            by_platform.setdefault(pid, tok)
+    platforms = []
+    for pid in sorted(by_platform, key=lambda p: (PRESETS.index(p) if p in PRESETS else len(PRESETS), p)):
+        auth, steps = guide(pid)
+        tok = by_platform[pid]
+        platforms.append({
+            "id": pid, "name": platform_name(pid), "auth": auth, "steps": steps, "lastWrote": last.get(pid),
+            "url": (f"{base}/t/{tok}/mcp" if auth == "path" else f"{base}/m/mcp") if base else None,
+            "token": tok if auth == "header" else None,
+        })
+    return {
+        "ok": True,
+        "storage": storage_of(mt),
+        "public": base,
+        "funnel": None if base else [f"tailscale funnel --bg --set-path=/t http://127.0.0.1:{port}/t",
+                                     f"tailscale funnel --bg --set-path=/m http://127.0.0.1:{port}/m"],
+        "restartable": tree_unit() is not None,
+        "instruction": L(*INSTRUCTION),
+        "platforms": platforms,
+        "presets": [{"id": p, "name": platform_name(p)} for p in PRESETS if p not in by_platform],
+    }
+
+
+@router.get("/api/tree/connect")
+async def get_connect():
+    tree()
+    try:
+        return await asyncio.to_thread(connect_info)
+    except (OSError, RuntimeError, ValueError, sqlite3.Error) as exc:
+        raise HTTPException(503, L(f"世界树的配置读不了：{exc}", f"Couldn't read the memory tree's settings: {exc}")) from exc
+
+
+class PlatformIn(BaseModel):
+    name: str
+
+
+def change_platform(pid: str, add: bool) -> dict:
+    """加（已经有就原样返回，不重启）/ 删一个平台的令牌，然后重启世界树服务（在线程里跑）。"""
+    mt = sources.memory_tree
+    cfg = mt.load_config()
+    tokens: dict[str, str] = cfg.setdefault("tokens", {})
+    have = [t for t, name in tokens.items() if name == pid]
+    if add and have:
+        return {"changed": False}
+    if not add and not have:
+        raise LookupError(pid)
+    for t in have:
+        del tokens[t]
+    if add:
+        tokens[secrets.token_urlsafe(24)] = pid
+    mt.save_config(cfg)
+    return {"changed": True, "restarted": restart_tree(int(cfg.get("port") or 8787))}
+
+
+@router.post("/api/tree/platforms")
+async def add_platform(body: PlatformIn):
+    tree()
+    pid = re.sub(r"[\s_]+", "-", body.name.strip().lower())
+    if not PLATFORM_ID.fullmatch(pid):
+        raise HTTPException(400, L("平台名用英文字母、数字和连字符，2 到 24 个字，比如 deepseek", "Use letters, digits and hyphens, 2–24 characters, e.g. deepseek"))
+    try:
+        res = await asyncio.to_thread(change_platform, pid, True)
+    except (OSError, ValueError) as exc:
+        raise HTTPException(503, L(f"没加上：{exc}", f"Couldn't add it: {exc}")) from exc
+    return {"ok": True, "id": pid, **res}
+
+
+@router.delete("/api/tree/platforms/{pid}")
+async def remove_platform(pid: str):
+    tree()
+    if not PLATFORM_ID.fullmatch(pid):
+        raise HTTPException(404, L("没有这个平台", "No such platform"))
+    try:
+        res = await asyncio.to_thread(change_platform, pid, False)
+    except LookupError as exc:
+        raise HTTPException(404, L("没有这个平台", "No such platform")) from exc
+    except (OSError, ValueError) as exc:
+        raise HTTPException(503, L(f"没删掉：{exc}", f"Couldn't remove it: {exc}")) from exc
+    return {"ok": True, **res}
+
+
 class TreeAction(BaseModel):
     action: str
     branch: str | None = None  # move：枝名（或别名）；「档案」= 直接挂主干
@@ -142,7 +339,8 @@ def act(mid: str, action: str, branch: str, actor: str) -> dict | None:
     """确认 / 忘记 / 挪枝（在线程里跑）。叶子不存在、是档案要点、已经不是当前的 → None。"""
     mt = sources.memory_tree
     with contextlib.closing(mt.connect()) as conn:
-        row = conn.execute("SELECT status, source, branch FROM tree WHERE id=?", (mid,)).fetchone()
+        branch_col = "branch" if getattr(mt, "HAS_BRANCHES", True) else "NULL AS branch"
+        row = conn.execute(f"SELECT status, source, {branch_col} FROM tree WHERE id=?", (mid,)).fetchone()  # noqa: S608 — 列名是常量
         if not row or row["source"] == "profile" or row["status"] not in mt.CURRENT:
             return None
         if action == "confirm":

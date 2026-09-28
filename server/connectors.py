@@ -541,8 +541,9 @@ def check_tree(state: dict[str, dict]) -> dict | None:
     with contextlib.suppress(Exception):  # noqa: BLE001 — 索引读不了就只报服务状态
         with contextlib.closing(mt.connect(sync=False)) as conn:  # 不刷新：MCP 服务每 5 秒刷一次
             current = conn.execute("SELECT COUNT(*) FROM tree WHERE source != 'profile' AND status IN ('active','pending')").fetchone()[0]
-            issues = conn.execute("SELECT COUNT(*) FROM issue").fetchone()[0]
             last = {r[0]: r[1] for r in conn.execute("SELECT source, MAX(created_at) FROM tree WHERE source != 'profile' GROUP BY source")}
+            with contextlib.suppress(sqlite3.Error):  # issue 表只有 Markdown 存储才有（开源版用 SQLite 存时没有）
+                issues = conn.execute("SELECT COUNT(*) FROM issue").fetchone()[0]
     port = 8787
     with contextlib.suppress(Exception):  # noqa: BLE001
         port = int((mt.load_config() or {}).get("port") or 8787)  # tree.json 里只取端口
