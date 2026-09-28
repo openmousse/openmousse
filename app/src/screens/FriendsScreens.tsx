@@ -9,10 +9,10 @@ import { useNavigation, useRoute } from '@react-navigation/native';
 import * as Clipboard from 'expo-clipboard';
 import Svg, { Path, Rect } from 'react-native-svg';
 import * as fr from '../api/friends';
-import type { AnyTier, CardSettings, Friend, FriendMsg, FriendsHome as Home, Invite, ScopeKey, Tier } from '../api/friends';
+import type { A2AOut, AnyTier, CardSettings, Friend, FriendMsg, FriendsHome as Home, Invite, ScopeKey, Tier } from '../api/friends';
 import { ArrowUp, Ban, Check, ChevronRight, ClipboardPaste, Copy, Ellipsis, IdCard, Link2, QrCode, RotateCw, ShareIcon, ShieldCheck,
   TriangleAlert, Undo2, UserPlus, UserX, X } from '../components/icons';
-import { LensAvatar } from '../components/LensAvatar';
+import { AgentLens, timeLabel } from '../components/FriendBits';
 import { Markdown } from '../components/Markdown';
 import { useSheet } from '../components/Sheet';
 import { ChatScroll, KeyboardSticky, dismissMode, useBottomInset } from '../components/keyboard';
@@ -21,6 +21,9 @@ import type { AgentColor } from '../data/types';
 import { L } from '../i18n';
 import { useStore } from '../store';
 import { radius, space, type, useTheme, type Theme } from '../theme';
+import { AskOutCard, isLocalOut } from './FriendAgentsScreen';
+
+export { AgentLens, timeLabel };
 
 // —— 小零件 ——
 
@@ -52,33 +55,6 @@ export function FriendAvatar({ id, name, size = 44 }: { id: string; name: string
   );
 }
 
-/** 名片 agent 的小透镜：自己的用自己的形象，朋友的是粉紫色的环。 */
-export function AgentLens({ mine, size = 28 }: { mine: boolean; size?: number }) {
-  const t = useTheme();
-  const { avatar } = useStore();
-  if (mine) return <LensAvatar size={size} config={avatar} />;
-  return (
-    <View style={{ width: size, height: size, borderRadius: size / 2, backgroundColor: t.lensField, alignItems: 'center', justifyContent: 'center' }}>
-      <View style={{ width: size / 2, height: size / 2, borderRadius: size / 4, borderWidth: 2, borderColor: '#F291BC', borderTopColor: '#B9A4F4' }} />
-    </View>
-  );
-}
-
-function ymd(d: Date) { return `${d.getFullYear()}-${d.getMonth() + 1}-${d.getDate()}`; }
-
-/** 列表和气泡上的时间：今天 = 钟点，昨天，今年 = 月/日，更早带年。 */
-export function timeLabel(ts: string | null | undefined): string {
-  if (!ts) return '';
-  const d = new Date(ts);
-  if (Number.isNaN(d.getTime())) return '';
-  const now = new Date();
-  const yest = new Date(now.getTime() - 86400000);
-  const hm = `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
-  if (ymd(d) === ymd(now)) return hm;
-  if (ymd(d) === ymd(yest)) return L(`昨天 ${hm}`, `Yesterday ${hm}`);
-  if (d.getFullYear() === now.getFullYear()) return `${d.getMonth() + 1}/${d.getDate()}`;
-  return `${d.getFullYear()}/${d.getMonth() + 1}/${d.getDate()}`;
-}
 
 function lastLine(f: Friend): string {
   const x = f.last;
@@ -214,6 +190,29 @@ export function FriendsHome() {
 }
 
 // —— 聊天 ——
+
+/** 问出去的（a2a_out）按 id 合并，早的在前；还在等的（local-…）排在最后。 */
+function mergeOuts(prev: A2AOut[], more: A2AOut[]): A2AOut[] {
+  const byId = new Map(prev.map((o) => [o.id, o]));
+  for (const o of more) byId.set(o.id, o);
+  const at = (o: A2AOut) => (isLocalOut(o) ? Infinity : new Date(o.createdAt).getTime() || 0);
+  return [...byId.values()].sort((a, b) => at(a) - at(b));
+}
+
+type Line = { kind: 'msg'; m: FriendMsg } | { kind: 'out'; o: A2AOut };
+
+/** 聊天里的一行行：朋友的消息按服务器的顺序，名片 agent 问出去的按问的时间插进去。 */
+function timeline(msgs: FriendMsg[], outs: A2AOut[]): Line[] {
+  const lines: Line[] = [];
+  let i = 0;
+  for (const m of msgs) {
+    const t = new Date(m.ts).getTime();
+    while (i < outs.length && !isLocalOut(outs[i]) && !Number.isNaN(t) && new Date(outs[i].createdAt).getTime() <= t) lines.push({ kind: 'out', o: outs[i++] });
+    lines.push({ kind: 'msg', m });
+  }
+  while (i < outs.length) lines.push({ kind: 'out', o: outs[i++] });
+  return lines;
+}
 
 function mergeMsgs(prev: FriendMsg[], more: FriendMsg[]): FriendMsg[] {
   if (!more.length) return prev;
@@ -437,8 +436,12 @@ export function FriendChatScreen() {
   const [draft, setDraft] = useState('');
   const [askOf, setAskOf] = useState<{ mid: string; title: string } | null>(null);
   const [editOf, setEditOf] = useState<FriendMsg | null>(null);
+  // 让名片 agent 去问对方的 agent（第三层）：prev = 接着哪一件事说（对方想换个时间）
+  const [agentAsk, setAgentAsk] = useState<{ prev: A2AOut | null } | null>(null);
+  const [outs, setOuts] = useState<A2AOut[]>([]);
   const [sending, setSending] = useState(false);
   const scroller = useRef<ScrollView>(null);
+  const input = useRef<TextInput>(null);
   const root = useRef<View>(null);
   const bottom = useBottomInset(root);
   const lastId = useRef(0);
@@ -462,15 +465,42 @@ export function FriendChatScreen() {
     const h = setInterval(() => { fr.thread(id, lastId.current).then((th) => apply(th, false)).catch(() => {}); }, 4000);
     return () => clearInterval(h);
   }, [id, apply]);
+  const hasA2A = !!friend?.caps.includes('a2a');
+  const loadOuts = useCallback(() => fr.a2aOut(id, true).then((o) => setOuts((cur) => mergeOuts(cur.filter(isLocalOut), o))).catch(() => {}), [id]);
+  useEffect(() => { if (hasA2A) loadOuts(); }, [hasA2A, loadOuts]);
+  const waiting = outs.some((o) => !isLocalOut(o) && ['TASK_STATE_AUTH_REQUIRED', 'TASK_STATE_WORKING', 'TASK_STATE_SUBMITTED'].includes(o.state ?? ''));
+  useEffect(() => {
+    if (!waiting) return undefined;
+    const h = setInterval(loadOuts, 8000);
+    return () => clearInterval(h);
+  }, [waiting, loadOuts]);
   useEffect(() => {
     const h = setTimeout(() => scroller.current?.scrollToEnd({ animated: true }), 80);
     return () => clearTimeout(h);
-  }, [msgs.length]);
+  }, [msgs.length, outs.length]);
 
   const put = (m: FriendMsg) => { lastId.current = Math.max(lastId.current, m.id); setMsgs((cur) => mergeMsgs(cur, [m])); };
+  const askAgent = (text: string, prev: A2AOut | null) => {
+    if (!friend) return;
+    // 先画上「在问」，对方的名片 agent 要调模型，回来可能要十几秒；这期间照样能发别的
+    const tmp: A2AOut = { id: `local-${Date.now()}`, friend: friend.id, contextId: prev?.contextId ?? null, taskId: prev?.taskId ?? null, state: 'local',
+      text, reply: null, outcome: '', usedLabel: '', createdAt: new Date().toISOString(), updatedAt: '' };
+    setOuts((cur) => mergeOuts(cur, [tmp]));
+    setDraft('');
+    setAgentAsk(null);
+    fr.a2aSend(friend.id, text, prev)
+      .then((o) => setOuts((cur) => mergeOuts(cur.filter((x) => x.id !== tmp.id), [o])))
+      .catch((e) => {
+        setOuts((cur) => cur.filter((x) => x.id !== tmp.id));
+        setDraft((d) => d || text);
+        setAgentAsk({ prev });
+        showError(L('没问成', "Couldn't ask"), e);
+      });
+  };
   const submit = async () => {
     const text = draft.trim();
     if (!text || sending || !friend) return;
+    if (agentAsk) { askAgent(text, agentAsk.prev); return; }
     setSending(true);
     try {
       if (editOf) put(await fr.review(editOf.id, 'edit', text));
@@ -492,8 +522,10 @@ export function FriendChatScreen() {
     if (a === 'revoke') confirm(L('收回这条代答？', 'Withdraw this answer?'), L('对方那边清空，显示「收回了这条」。', 'It disappears on their side and shows "withdrew this".'), L('收回', 'Withdraw'), go);
     else go();
   };
-  const onEdit = (m: FriendMsg) => { setEditOf(m); setAskOf(null); setDraft(m.text); };
-  const onAsk = (m: FriendMsg) => { if (m.share) { setAskOf({ mid: m.mid, title: m.share.title }); setEditOf(null); } };
+  const onEdit = (m: FriendMsg) => { setEditOf(m); setAskOf(null); setAgentAsk(null); setDraft(m.text); };
+  const onAsk = (m: FriendMsg) => { if (m.share) { setAskOf({ mid: m.mid, title: m.share.title }); setEditOf(null); setAgentAsk(null); } };
+  const onMore = (o: A2AOut) => { setAgentAsk({ prev: o }); setAskOf(null); setEditOf(null); setTimeout(() => input.current?.focus(), 50); };
+  const toggleAgent = () => { setAgentAsk(agentAsk ? null : { prev: null }); setAskOf(null); if (editOf) { setEditOf(null); setDraft(''); } };
   const onRetry = (m: FriendMsg) => { fr.retry(m.id).then(put).catch((e) => showError(L('没重发成', "Couldn't retry"), e)); };
   const onLong = (m: FriendMsg) => confirm(L('收回这条？', 'Withdraw this?'), L('对方那边清空，显示「收回了这条」。', 'It disappears on their side and shows "withdrew this".'), L('收回', 'Withdraw'),
     () => { fr.revokeMsg(m.id).then(put).catch((e) => showError(L('没收回', "Couldn't withdraw"), e)); });
@@ -505,6 +537,9 @@ export function FriendChatScreen() {
   };
 
   const active = friend?.status === 'active';
+  const canAgent = !!friend && active && hasA2A;
+  const lines = timeline(msgs, outs);
+  const openAgents = () => { if (friend) nav.navigate('FriendAgents', { id: friend.id }); };
   const sub = friend ? [friend.tierName, friend.agent ? L(`有 agent · 能追问 ${friend.name} 分享的东西`, `Has an agent · you can ask about ${friend.name}'s shares`) : ''].filter(Boolean).join(' · ') : undefined;
   return (
     <Screen>
@@ -515,10 +550,15 @@ export function FriendChatScreen() {
           keyboardShouldPersistTaps="handled" keyboardDismissMode={dismissMode} refreshControl={<PullRefresh onRefresh={load} />}>
           {err ? <Card><T v="callout" color={t.bad}>{L(`读不到：${err}`, `Couldn't load: ${err}`)}</T></Card> : null}
           {!friend && !err ? <ActivityIndicator color={t.gold} style={{ marginTop: space.xl }} /> : null}
-          {friend && !msgs.some((m) => m.kind !== 'system') ? (
-            <T v="callout" color={t.ink3} style={{ textAlign: 'center' }}>{L('说点什么，或者从对话里长按一条 →「分享」发给他。', 'Say something, or long-press a message in a chat → Share to send it here.')}</T>
+          {friend && !msgs.some((m) => m.kind !== 'system') && !outs.length ? (
+            <T v="callout" color={t.ink3} style={{ textAlign: 'center' }}>
+              {canAgent ? L(`说点什么，或者点输入框左边的小圆，让你的名片 agent 去问 ${friend.name} 的 agent（比如约个时间）。`, `Say something, or tap the little circle left of the box to have your card agent ask ${friend.name}'s agent (say, for a time to meet).`)
+                : L('说点什么，或者从对话里长按一条 →「分享」发给他。', 'Say something, or long-press a message in a chat → Share to send it here.')}
+            </T>
           ) : null}
-          {friend ? msgs.map((m) => <MsgView key={m.id} m={m} friend={friend} onAsk={onAsk} onReview={onReview} onEdit={onEdit} onRetry={onRetry} onLong={onLong} />) : null}
+          {friend ? lines.map((x) => (x.kind === 'out'
+            ? <AskOutCard key={x.o.id} o={x.o} name={friend.name} onOpen={isLocalOut(x.o) ? undefined : openAgents} onMore={active ? () => onMore(x.o) : undefined} />
+            : <MsgView key={x.m.id} m={x.m} friend={friend} onAsk={onAsk} onReview={onReview} onEdit={onEdit} onRetry={onRetry} onLong={onLong} />)) : null}
           {friend && !agentOn && msgs.some((m) => m.kind === 'ask' && m.dir === 'in') ? (
             <T v="caption" color={t.ink3} style={{ textAlign: 'center' }}>{L('你的名片 agent 还没开：他的追问要你自己回。', "Your card agent isn't on: answer their questions yourself.")}</T>
           ) : null}
@@ -531,25 +571,38 @@ export function FriendChatScreen() {
               </T>
             ) : (
               <>
-                {askOf || editOf ? (
+                {askOf || editOf || agentAsk ? (
                   <View style={{ paddingHorizontal: space.md, paddingTop: space.sm }}>
                     <View style={[styles.quote, { backgroundColor: t.goldSoft }]}>
-                      <T v="callout" numberOfLines={1} style={{ flex: 1, fontSize: 13 }}>
-                        {editOf ? L('改名片 agent 的这条代答（发出去替换它那条）', "Rewriting your card agent's answer (replaces it)") : L(`追问：${askOf?.title}（${friend.name} 的名片 agent 答）`, `Ask about: ${askOf?.title} (${friend.name}'s card agent answers)`)}
+                      {agentAsk ? <AgentLens mine size={16} /> : null}
+                      <T v="callout" numberOfLines={agentAsk ? 2 : 1} style={{ flex: 1, fontSize: 13 }}>
+                        {agentAsk ? (agentAsk.prev ? L(`接着和 ${friend.name} 的 agent 说那件事：「${agentAsk.prev.text}」`, `Continuing with ${friend.name}'s agent: "${agentAsk.prev.text}"`)
+                          : L(`让你的名片 agent 去问 ${friend.name} 的 agent；要 ${friend.name} 本人定的，对方会去问 ${friend.name}`, `Your card agent asks ${friend.name}'s agent; anything ${friend.name} has to decide goes to ${friend.name}`))
+                          : editOf ? L('改名片 agent 的这条代答（发出去替换它那条）', "Rewriting your card agent's answer (replaces it)") : L(`追问：${askOf?.title}（${friend.name} 的名片 agent 答）`, `Ask about: ${askOf?.title} (${friend.name}'s card agent answers)`)}
                       </T>
-                      <Pressable onPress={() => { setAskOf(null); if (editOf) { setEditOf(null); setDraft(''); } }} hitSlop={10} accessibilityRole="button" accessibilityLabel={L('不追问了', 'Cancel')}>
+                      <Pressable onPress={() => { setAskOf(null); setAgentAsk(null); if (editOf) { setEditOf(null); setDraft(''); } }} hitSlop={10} accessibilityRole="button"
+                        accessibilityLabel={agentAsk ? L('不让它去问了', "Don't ask their agent") : L('不追问了', 'Cancel')}>
                         <X size={14} color={t.ink3} />
                       </Pressable>
                     </View>
                   </View>
                 ) : null}
                 <View style={styles.composer}>
-                  <TextInput value={draft} onChangeText={setDraft} multiline numberOfLines={1} onKeyPress={webEnter}
-                    placeholder={askOf ? L('问点什么…', 'Ask something…') : L(`发给 ${friend.name}`, `Message ${friend.name}`)} placeholderTextColor={t.ink3}
-                    accessibilityLabel={L('消息输入框', 'Message')} style={[type.body, styles.input, { backgroundColor: t.surface, color: t.ink }]} />
-                  <Pressable onPress={submit} disabled={!draft.trim() || sending} accessibilityRole="button" accessibilityLabel={L('发出去', 'Send')}
-                    style={[styles.send, { backgroundColor: draft.trim() && !sending ? t.goldFill : t.surface2 }]}>
-                    <ArrowUp size={20} color={draft.trim() && !sending ? t.onGold : t.ink3} />
+                  {canAgent ? (
+                    <Pressable onPress={toggleAgent} accessibilityRole="button" accessibilityState={{ selected: !!agentAsk }}
+                      accessibilityLabel={L(`让名片 agent 去问 ${friend.name} 的 agent`, `Have your card agent ask ${friend.name}'s agent`)}
+                      style={({ pressed }) => [styles.agentBtn, { borderColor: agentAsk ? t.gold : t.line, backgroundColor: agentAsk ? t.goldSoft : 'transparent', opacity: pressed ? 0.7 : 1 }]}>
+                      <AgentLens mine size={26} />
+                    </Pressable>
+                  ) : null}
+                  <TextInput ref={input} value={draft} onChangeText={setDraft} multiline numberOfLines={1} onKeyPress={webEnter}
+                    placeholder={agentAsk ? (agentAsk.prev ? L('比如：那周五晚上呢？', 'e.g. How about Friday evening?') : L(`比如：${friend.name} 这周哪天晚上有空？`, `e.g. Which evenings is ${friend.name} free this week?`))
+                      : askOf ? L('问点什么…', 'Ask something…') : L(`发给 ${friend.name}`, `Message ${friend.name}`)} placeholderTextColor={t.ink3}
+                    accessibilityLabel={agentAsk ? L('要名片 agent 去问的话', 'What your card agent should ask') : L('消息输入框', 'Message')}
+                    style={[type.body, styles.input, { backgroundColor: t.surface, color: t.ink }, agentAsk ? { borderWidth: 1, borderColor: t.gold } : null]} />
+                  <Pressable onPress={submit} disabled={!draft.trim() || (sending && !agentAsk)} accessibilityRole="button" accessibilityLabel={agentAsk ? L('让它去问', 'Ask') : L('发出去', 'Send')}
+                    style={[styles.send, { backgroundColor: draft.trim() && (!sending || agentAsk) ? t.goldFill : t.surface2 }]}>
+                    <ArrowUp size={20} color={draft.trim() && (!sending || agentAsk) ? t.onGold : t.ink3} />
                   </Pressable>
                 </View>
               </>
@@ -850,6 +903,7 @@ const styles = StyleSheet.create({
   composer: { flexDirection: 'row', alignItems: 'flex-end', gap: space.sm, paddingHorizontal: space.md, paddingVertical: space.sm },
   input: { flex: 1, minHeight: 40, maxHeight: 120, borderRadius: 20, paddingHorizontal: 16, paddingTop: 9, paddingBottom: 9 },
   send: { width: 40, height: 40, borderRadius: 20, alignItems: 'center', justifyContent: 'center' },
+  agentBtn: { width: 40, height: 40, borderRadius: 20, borderWidth: 1.5, alignItems: 'center', justifyContent: 'center' },
   quote: { flexDirection: 'row', alignItems: 'center', gap: 6, borderRadius: radius.md, paddingHorizontal: 10, paddingVertical: 7 },
   field: { borderWidth: StyleSheet.hairlineWidth, borderRadius: radius.sm, paddingHorizontal: space.md, paddingVertical: space.sm },
   inviteRow: { flexDirection: 'row', alignItems: 'center', gap: space.md, paddingVertical: space.sm },

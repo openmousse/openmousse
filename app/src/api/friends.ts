@@ -114,12 +114,24 @@ export const cardLog = (peer: string) =>
       usedLabel: x.usedLabel ?? '', status: x.status ?? '', inboxId: x.inboxId ?? null, ask: x.ask ?? null, outcome: x.outcome ?? '',
       declined: x.declined ?? [], blocked: x.blocked ?? [], original: x.original ?? '',
     })));
-export const a2aOut = (friend: string) =>
-  request<{ items: Partial<A2AOut>[] }>(`/api/a2a/out?friend=${encodeURIComponent(friend)}&limit=100`)
-    .then((j) => (j.items ?? []).map((x): A2AOut => ({
-      id: x.id ?? '', friend: x.friend ?? friend, contextId: x.contextId ?? null, taskId: x.taskId ?? null, state: x.state ?? null,
-      text: x.text ?? '', reply: x.reply ?? null, outcome: x.outcome ?? '', usedLabel: x.usedLabel ?? '', createdAt: x.createdAt ?? '', updatedAt: x.updatedAt ?? '',
-    })));
+const outOf = (x: Partial<A2AOut>, friend: string): A2AOut => ({
+  id: x.id ?? '', friend: x.friend ?? friend, contextId: x.contextId ?? null, taskId: x.taskId ?? null, state: x.state ?? null,
+  text: x.text ?? '', reply: x.reply ?? null, outcome: x.outcome ?? '', usedLabel: x.usedLabel ?? '', createdAt: x.createdAt ?? '', updatedAt: x.updatedAt ?? '',
+});
+/** refresh：还在等对方本人的，服务器顺手问一下对方到哪了（下一次读就是新的） */
+export const a2aOut = (friend: string, refresh = false) =>
+  request<{ items: Partial<A2AOut>[] }>(`/api/a2a/out?friend=${encodeURIComponent(friend)}&limit=100${refresh ? '&refresh=true' : ''}`)
+    .then((j) => (j.items ?? []).map((x) => outOf(x, friend)));
+/** 让你的名片 agent 去问朋友的 agent 一句（原样发过去；对方的回话只给你看）。接着上一轮说：带上那一轮的 contextId / taskId。
+ * 对方的名片 agent 要调模型，可能要等十几秒。 */
+export const a2aSend = (friend: string, text: string, prev?: { contextId: string | null; taskId: string | null } | null) =>
+  request<{ id: string; contextId: string | null; taskId: string | null; state: string | null; reply: string; used: string; item?: Partial<A2AOut> }>(
+    '/api/a2a/send', { method: 'POST', body: { friend, text, contextId: prev?.contextId || undefined, taskId: prev?.taskId || undefined }, timeoutMs: 100000 })
+    // 老服务器不回 item：按回的几个字段拼一条
+    .then((j) => outOf(j.item ?? { id: j.id, contextId: j.contextId, taskId: j.taskId, state: j.state, text, reply: j.reply, usedLabel: j.used,
+      createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() }, friend));
+export const a2aRefresh = (id: string, friend: string) =>
+  request<{ item: Partial<A2AOut> }>(`/api/a2a/out/${encodeURIComponent(id)}/refresh`, { method: 'POST', timeoutMs: 40000 }).then((j) => outOf(j.item, friend));
 
 export const card = () => request<CardSettings>('/api/card');
 export const patchCard = (b: { tiers?: Partial<Record<AnyTier, Partial<Record<ScopeKey, string>>>>; status?: string }) =>

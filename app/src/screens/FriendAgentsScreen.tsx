@@ -3,17 +3,19 @@
 // 或者你的名片 agent 去问对方（a2a_out，按 contextId 分）。出给你的卡挂在出卡的那句下面（收件箱里还在就能直接点），
 // 最后一轮对方来问的紧下面是「这次它说出去的」。聊天里对着分享的追问，代答在聊天里（能看、能改、能收回），这里不重复。
 import React, { useCallback, useEffect, useRef, useState } from 'react';
-import { ActivityIndicator, Pressable, ScrollView, StyleSheet, View } from 'react-native';
+import { ActivityIndicator, Platform, Pressable, ScrollView, StyleSheet, TextInput, View,
+  type NativeSyntheticEvent, type TextInputKeyPressEventData } from 'react-native';
 import { useFocusEffect, useNavigation, useRoute } from '@react-navigation/native';
 import * as fr from '../api/friends';
 import type { A2AOut, CardAsk, CardLogItem, CardSettings, Friend, ScopeKey } from '../api/friends';
 import { InboxCard } from '../components/InboxCard';
-import { Ban, ChevronRight, IdCard } from '../components/icons';
-import { Card, NavHeader, Pill, PullRefresh, Screen, T } from '../components/ui';
+import { ArrowUp, Ban, ChevronRight, IdCard, X } from '../components/icons';
+import { ChatScroll, KeyboardSticky, dismissMode, useBottomInset } from '../components/keyboard';
+import { Card, NavHeader, Pill, PullRefresh, Screen, T, showError } from '../components/ui';
 import { L } from '../i18n';
 import { useStore } from '../store';
-import { radius, space, useTheme } from '../theme';
-import { AgentLens, timeLabel } from './FriendsScreens';
+import { radius, space, type, useTheme } from '../theme';
+import { AgentLens, timeLabel } from '../components/FriendBits';
 
 type Round =
   | { kind: 'in'; key: string; at: number; items: CardLogItem[] }
@@ -68,7 +70,7 @@ function askOutcome(a: CardAsk): { label: string; tone: 'good' | 'gold' | 'neutr
 }
 
 /** 你的名片 agent 去问以后，对方那边到哪一步了。 */
-function outState(o: A2AOut, name: string): { label: string; tone: 'good' | 'gold' | 'warn' | 'neutral' } | null {
+export function outState(o: A2AOut, name: string): { label: string; tone: 'good' | 'gold' | 'warn' | 'neutral' } | null {
   switch (o.outcome) {
     case 'accepted': return { label: L(`${name} 同意了`, `${name} said yes`), tone: 'good' };
     case 'declined': return { label: L(`${name} 这次去不了`, `${name} can't make it`), tone: 'neutral' };
@@ -209,29 +211,107 @@ function InRound({ r, name, ready }: { r: Extract<Round, { kind: 'in' }>; name: 
   );
 }
 
-function OutRound({ r, name }: { r: Extract<Round, { kind: 'out' }>; name: string }) {
+const DONE_STATES = ['TASK_STATE_COMPLETED', 'TASK_STATE_FAILED', 'TASK_STATE_CANCELED', 'TASK_STATE_REJECTED'];
+/** 还没发出去（app 里先画上）的一条：id 以 local- 开头。 */
+export const isLocalOut = (o: A2AOut) => o.state === 'local';
+/** 这一问要不要你再说一句：对方本人想换个时间（任务在等我们这边再提）。 */
+export const needsMore = (o: A2AOut) => o.state === 'TASK_STATE_INPUT_REQUIRED' || (o.outcome === 'counter' && !DONE_STATES.includes(o.state ?? ''));
+
+/** 走到哪一步：问了 → 对方的 agent 回了 → 对方本人定了（只有要对方本人表态、建了任务的才有第三步）。 */
+function Steps({ o, name }: { o: A2AOut; name: string }) {
+  const t = useTheme();
+  const decided = !!o.outcome || DONE_STATES.includes(o.state ?? '');
+  const steps = [
+    { key: 'ask', label: L('问了', 'Asked'), done: true, now: false },
+    { key: 'reply', label: L('对方 agent 回了', 'Their agent replied'), done: true, now: false },
+    { key: 'owner', label: L(`${name} 本人定`, `${name} decides`), done: decided, now: !decided },
+  ];
+  return (
+    <View style={styles.steps} accessible accessibilityLabel={steps.map((x) => `${x.label}${x.done ? L('（到了）', ' (done)') : L('（还没）', ' (not yet)')}`).join('，')}>
+      {steps.map((x, i) => (
+        <React.Fragment key={x.key}>
+          {i ? <View style={[styles.stepLine, { backgroundColor: x.done ? t.good : t.line }]} /> : null}
+          <View style={styles.step}>
+            <View style={[styles.stepDot, x.done ? { backgroundColor: t.good, borderColor: t.good } : { borderColor: x.now ? t.gold : t.line }]} />
+            <T v="caption" color={x.done ? t.ink2 : x.now ? t.gold : t.ink3} style={x.now ? { fontWeight: '700' } : undefined}>{x.label}</T>
+          </View>
+        </React.Fragment>
+      ))}
+    </View>
+  );
+}
+
+/** 两个透镜叠在一起（你的名片 agent 和对方的）。 */
+function PairLens({ bg, size = 22 }: { bg: string; size?: number }) {
+  return (
+    <View style={{ width: size * 1.6, height: size + 2 }}>
+      <View style={{ position: 'absolute', left: 0, top: 1 }}><AgentLens mine size={size} /></View>
+      <View style={{ position: 'absolute', left: size * 0.6 - 1, top: 0, width: size + 2, height: size + 2, borderRadius: size / 2 + 1, backgroundColor: bg,
+        alignItems: 'center', justifyContent: 'center' }}><AgentLens mine={false} size={size} /></View>
+    </View>
+  );
+}
+
+/** 你的名片 agent 去问朋友的 agent 的一条：你问的、对方 agent 回的（带它说用了什么）、走到哪一步、对方本人的决定。
+ * 聊天里（onOpen 进「agent 之间」）和「agent 之间」页都用它。对方想换时间时 onMore =「再提一个时间」。 */
+export function AskOutCard({ o, name, onOpen, onMore }: { o: A2AOut; name: string; onOpen?: () => void; onMore?: () => void }) {
+  const t = useTheme();
+  const local = isLocalOut(o);
+  const st = local ? null : outState(o, name);
+  const more = !local && !!onMore && needsMore(o);
+  return (
+    <Pressable onPress={onOpen} disabled={!onOpen} accessibilityRole={onOpen ? 'button' : undefined}
+      accessibilityHint={onOpen ? L('打开「agent 之间」', 'Opens Agent to agent') : undefined}
+      style={({ pressed }) => [styles.askCard, { backgroundColor: t.surface, borderColor: t.goldSoft, opacity: pressed && onOpen ? 0.8 : 1 }]}>
+      <View style={styles.askHead}>
+        <PairLens bg={t.surface} />
+        <T v="caption" color={t.gold} style={{ flex: 1, fontWeight: '700' }} numberOfLines={1}>{L(`你的名片 agent 去问 ${name} 的 agent`, `Your card agent asked ${name}'s agent`)}</T>
+        {o.createdAt && !local ? <T v="caption" color={t.ink3}>{timeLabel(o.createdAt)}</T> : null}
+        {onOpen ? <ChevronRight size={14} color={t.ink3} /> : null}
+      </View>
+      <T v="body" selectable>{o.text}</T>
+      {local ? (
+        <View style={styles.waitRow}>
+          <ActivityIndicator size="small" color={t.gold} />
+          <T v="caption" color={t.ink3}>{L(`等 ${name} 的 agent 回…（它要想一下）`, `Waiting for ${name}'s agent… (it takes a moment)`)}</T>
+        </View>
+      ) : o.reply ? (
+        <View style={styles.replyRow}>
+          <AgentLens mine={false} size={22} />
+          <View style={[styles.replyBubble, { backgroundColor: t.bg, borderColor: t.line }]}>
+            <T v="caption" color={t.tints.pink.fg} style={{ fontWeight: '700' }}>{L(`${name} 的 agent`, `${name}'s agent`)}</T>
+            <T v="callout" selectable>{o.reply}</T>
+            {o.usedLabel ? <View style={{ flexDirection: 'row' }}><Pill label={o.usedLabel} tone="good" /></View> : null}
+          </View>
+        </View>
+      ) : null}
+      {o.taskId && !local ? <Steps o={o} name={name} /> : null}
+      {st || more ? (
+        <View style={styles.askFoot}>
+          {st ? <Pill label={st.label} tone={st.tone} /> : null}
+          <View style={{ flex: 1 }} />
+          {more ? (
+            <Pressable onPress={onMore} accessibilityRole="button" hitSlop={6} style={({ pressed }) => [styles.moreBtn, { backgroundColor: t.goldSoft, opacity: pressed ? 0.7 : 1 }]}>
+              <T v="callout" color={t.gold} style={{ fontWeight: '700' }}>{L('再提一个时间', 'Suggest another time')}</T>
+            </Pressable>
+          ) : null}
+        </View>
+      ) : null}
+    </Pressable>
+  );
+}
+
+function OutRound({ r, name, onMore }: { r: Extract<Round, { kind: 'out' }>; name: string; onMore: (o: A2AOut) => void }) {
   const t = useTheme();
   return (
     <View style={{ gap: space.md }}>
       <T v="caption" color={t.ink3} style={{ textAlign: 'center' }}>
         {L(`你的名片 agent 去问了 ${name} 的 agent · ${timeLabel(r.items[0].createdAt)}`, `Your card agent asked ${name}'s agent · ${timeLabel(r.items[0].createdAt)}`)}
       </T>
-      {r.items.map((o) => {
-        const st = outState(o, name);
-        return (
-          <View key={o.id} style={{ gap: space.md }}>
-            <View style={styles.line}>
-              <AgentLens mine />
-              <View style={[styles.bubble, { backgroundColor: t.goldSoft, borderColor: t.goldSoft }]}>
-                <T v="caption" color={t.gold} style={styles.who}>{L('你的名片 agent', 'Your card agent')}</T>
-                <T v="body" selectable>{o.text}</T>
-              </View>
-            </View>
-            {o.reply ? <TheirLine name={name} text={o.reply} chip={o.usedLabel || undefined} /> : null}
-            {st ? <View style={{ alignSelf: 'center' }}><Pill label={st.label} tone={st.tone} /></View> : null}
-          </View>
-        );
-      })}
+      {r.items.map((o, i) => (
+        // 同一件事里只有最后一条能「再提一个时间」
+        <AskOutCard key={o.id} o={o} name={name} onMore={i === r.items.length - 1 ? () => onMore(o) : undefined} />
+      ))}
     </View>
   );
 }
@@ -275,9 +355,16 @@ export function FriendAgentsScreen() {
   const [card, setCard] = useState<CardSettings | null>(null);
   const [inboxReady, setInboxReady] = useState(false);
   const [err, setErr] = useState('');
+  const [draft, setDraft] = useState('');
+  const [prev, setPrev] = useState<A2AOut | null>(null);  // 接着哪一件事说（对方想换个时间）
+  const [pend, setPend] = useState<A2AOut[]>([]);          // 发出去、还在等对方 agent 回的
   const scroller = useRef<ScrollView>(null);
+  const input = useRef<TextInput>(null);
+  const root = useRef<View>(null);
+  const bottom = useBottomInset(root);
 
-  const refresh = useCallback(() => Promise.all([fr.cardLog(id), fr.a2aOut(id).catch(() => [] as A2AOut[])])
+  // refresh=true：还在等对方本人点头的，服务器顺手问一下对方到哪了（一分钟最多一次）
+  const refresh = useCallback(() => Promise.all([fr.cardLog(id), fr.a2aOut(id, true).catch(() => [] as A2AOut[])])
     .then(([l, o]) => { setLog(l); setOut(o); setErr(''); }), [id]);
   const load = useCallback(() => Promise.all([
     fr.home().then((h) => setFriend(h.friends.find((f) => f.id === id) ?? null)),
@@ -292,9 +379,9 @@ export function FriendAgentsScreen() {
     return () => clearInterval(h);
   }, [refresh]));
 
-  const rounds = toRounds(log ?? [], out);
+  const rounds = toRounds(log ?? [], [...pend, ...out]);
   const lastIn = [...rounds].reverse().find((r): r is Extract<Round, { kind: 'in' }> => r.kind === 'in');
-  const n = rounds.length;
+  const n = rounds.length + pend.length;
   useEffect(() => {
     if (!n) return undefined;
     const h = setTimeout(() => scroller.current?.scrollToEnd({ animated: false }), 80);
@@ -302,10 +389,34 @@ export function FriendAgentsScreen() {
   }, [n]);
 
   const name = friend?.name ?? L('朋友', 'Friend');
+  const canAsk = !!friend && friend.status === 'active' && friend.caps.includes('a2a');
+  const ask = () => {
+    const text = draft.trim();
+    if (!text || !friend) return;
+    const p = prev;
+    const tmp: A2AOut = { id: `local-${Date.now()}`, friend: friend.id, contextId: p?.contextId ?? null, taskId: p?.taskId ?? null, state: 'local',
+      text, reply: null, outcome: '', usedLabel: '', createdAt: new Date().toISOString(), updatedAt: '' };
+    setPend((c) => [...c, tmp]);
+    setDraft('');
+    setPrev(null);
+    fr.a2aSend(friend.id, text, p)
+      .then((o) => setOut((c) => [o, ...c.filter((x) => x.id !== o.id)]))
+      .catch((e) => { setDraft(text); setPrev(p); showError(L('没问成', "Couldn't ask"), e); })
+      .finally(() => setPend((c) => c.filter((x) => x.id !== tmp.id)));
+  };
+  const more = (o: A2AOut) => { setPrev(o); setTimeout(() => input.current?.focus(), 50); };
+  const webEnter = Platform.OS === 'web' ? (e: NativeSyntheticEvent<TextInputKeyPressEventData>) => {
+    const k = e.nativeEvent as unknown as KeyboardEvent;
+    if (k.key !== 'Enter' || k.shiftKey || k.isComposing || k.keyCode === 229) return;
+    e.preventDefault();
+    ask();
+  } : undefined;
   return (
     <Screen>
       <NavHeader title={L(`${name} · agent 之间`, `${name} · Agents`)} sub={L('A2A · 对方身份已核对', 'A2A · identity verified')} onBack={() => nav.goBack()} />
-      <ScrollView ref={scroller} contentContainerStyle={{ padding: space.lg, paddingBottom: space.xxl, gap: space.lg }} refreshControl={<PullRefresh onRefresh={load} />}>
+      <View ref={root} style={{ flex: 1 }} onLayout={bottom.onLayout}>
+      <ChatScroll ref={scroller} offset={bottom.offset} style={{ flex: 1 }} contentContainerStyle={{ padding: space.lg, paddingBottom: space.xxl, gap: space.lg }}
+        keyboardShouldPersistTaps="handled" keyboardDismissMode={dismissMode} refreshControl={<PullRefresh onRefresh={load} />}>
         {err ? <Card><T v="callout" color={t.bad}>{L(`读不到：${err}`, `Couldn't load: ${err}`)}</T></Card> : null}
         {!log && !err ? <ActivityIndicator color={t.gold} style={{ marginTop: space.xl }} /> : null}
         {friend ? (
@@ -328,7 +439,7 @@ export function FriendAgentsScreen() {
             <T v="callout" color={t.ink2}>{L(`${name} 在聊天里对着你的分享追问，代答在聊天里。`, `When ${name} asks about your shares in the chat, the answers stay in the chat.`)}</T>
           </Card>
         ) : null}
-        {friend ? rounds.map((r) => (r.kind === 'out' ? <OutRound key={r.key} r={r} name={name} /> : (
+        {friend ? rounds.map((r) => (r.kind === 'out' ? <OutRound key={r.key} r={r} name={name} onMore={more} /> : (
           <View key={r.key} style={{ gap: space.lg }}>
             <InRound r={r} name={name} ready={inboxReady} />
             {r === lastIn ? <SaidCard r={r} friend={friend} card={card} /> : null}
@@ -341,7 +452,36 @@ export function FriendAgentsScreen() {
             <ChevronRight size={16} color={t.ink3} />
           </Pressable>
         ) : null}
-      </ScrollView>
+      </ChatScroll>
+      {canAsk ? (
+        <KeyboardSticky offset={bottom.offset} style={[styles.composerWrap, { borderTopColor: t.line, backgroundColor: t.bg }]}>
+          <View style={{ paddingHorizontal: space.md, paddingTop: space.sm }}>
+            <View style={[styles.quote, { backgroundColor: t.goldSoft }]}>
+              <AgentLens mine size={16} />
+              <T v="callout" numberOfLines={2} style={{ flex: 1, fontSize: 13 }}>
+                {prev ? L(`接着说那件事：「${prev.text}」`, `Continuing: "${prev.text}"`)
+                  : L(`你的名片 agent 替你去问 ${name} 的 agent；要 ${name} 本人定的，对方会去问 ${name}`, `Your card agent asks ${name}'s agent for you; anything ${name} has to decide goes to ${name}`)}
+              </T>
+              {prev ? (
+                <Pressable onPress={() => setPrev(null)} hitSlop={10} accessibilityRole="button" accessibilityLabel={L('不接着说了', 'Start a new question')}>
+                  <X size={14} color={t.ink3} />
+                </Pressable>
+              ) : null}
+            </View>
+          </View>
+          <View style={styles.composer}>
+            <TextInput ref={input} value={draft} onChangeText={setDraft} multiline numberOfLines={1} onKeyPress={webEnter}
+              placeholder={prev ? L('比如：那周五晚上呢？', 'e.g. How about Friday evening?') : L(`比如：${name} 这周哪天晚上有空？`, `e.g. Which evenings is ${name} free this week?`)}
+              placeholderTextColor={t.ink3} accessibilityLabel={L('要名片 agent 去问的话', 'What your card agent should ask')}
+              style={[type.body, styles.input, { backgroundColor: t.surface, color: t.ink }]} />
+            <Pressable onPress={ask} disabled={!draft.trim()} accessibilityRole="button" accessibilityLabel={L('让它去问', 'Ask')}
+              style={[styles.send, { backgroundColor: draft.trim() ? t.goldFill : t.surface2 }]}>
+              <ArrowUp size={20} color={draft.trim() ? t.onGold : t.ink3} />
+            </Pressable>
+          </View>
+        </KeyboardSticky>
+      ) : null}
+      </View>
     </Screen>
   );
 }
@@ -358,5 +498,21 @@ const styles = StyleSheet.create({
   said: { flexDirection: 'row', gap: 8, alignItems: 'flex-start' },
   dot: { width: 6, height: 6, borderRadius: 3, marginTop: 8 },
   link: { flexDirection: 'row', alignItems: 'center', gap: space.md, borderRadius: radius.lg, padding: space.md },
+  askCard: { borderWidth: 1, borderRadius: 16, padding: space.md, gap: 8 },
+  askHead: { flexDirection: 'row', alignItems: 'center', gap: 8 },
+  waitRow: { flexDirection: 'row', alignItems: 'center', gap: 8 },
+  replyRow: { flexDirection: 'row', gap: 8, alignItems: 'flex-start' },
+  replyBubble: { flex: 1, minWidth: 0, gap: 4, borderWidth: StyleSheet.hairlineWidth, borderRadius: 14, borderTopLeftRadius: 5, paddingHorizontal: 10, paddingVertical: 8 },
+  steps: { flexDirection: 'row', alignItems: 'center', gap: 6, flexWrap: 'wrap' },
+  step: { flexDirection: 'row', alignItems: 'center', gap: 5 },
+  stepDot: { width: 9, height: 9, borderRadius: 5, borderWidth: 1.5 },
+  stepLine: { width: 14, height: 1.5, borderRadius: 1 },
+  askFoot: { flexDirection: 'row', alignItems: 'center', gap: space.sm },
+  moreBtn: { height: 32, paddingHorizontal: 12, borderRadius: 16, alignItems: 'center', justifyContent: 'center' },
+  composerWrap: { borderTopWidth: StyleSheet.hairlineWidth },
+  composer: { flexDirection: 'row', alignItems: 'flex-end', gap: space.sm, paddingHorizontal: space.md, paddingVertical: space.sm },
+  input: { flex: 1, minHeight: 40, maxHeight: 120, borderRadius: 20, paddingHorizontal: 16, paddingTop: 9, paddingBottom: 9 },
+  send: { width: 40, height: 40, borderRadius: 20, alignItems: 'center', justifyContent: 'center' },
+  quote: { flexDirection: 'row', alignItems: 'center', gap: 6, borderRadius: radius.md, paddingHorizontal: 10, paddingVertical: 7 },
   linkIcon: { width: 32, height: 32, borderRadius: 10, alignItems: 'center', justifyContent: 'center' },
 });
