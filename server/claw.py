@@ -88,13 +88,15 @@ def session_mode() -> tuple[str, str, int]:
 
 
 def env_value(name_: str) -> str:
-    """环境变量的值：先看进程环境，再看 settings.env_file（KEY=VALUE 一行一个）。读不到 = 空。不打印、不记日志。"""
+    """环境变量的值：先看进程环境，再看 server.json 的 env_file（每次读，改了不用重启；没写就是 settings.env_file），KEY=VALUE 一行一个。
+    读不到 = 空。不打印、不记日志。"""
     if not name_:
         return ""
     if os.environ.get(name_):
         return os.environ[name_]
+    env_file = Path(str(raw().get("env_file"))).expanduser() if raw().get("env_file") else settings.env_file
     try:
-        for line in Path(settings.env_file).read_text(encoding="utf8").splitlines():
+        for line in env_file.read_text(encoding="utf8").splitlines():
             k, sep, v = line.strip().removeprefix("export ").partition("=")
             if sep and k.strip() == name_:
                 return v.strip().strip("'\"")
