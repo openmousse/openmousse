@@ -29,6 +29,7 @@ import { SaveScreen } from './screens/SaveScreen';
 import { ShareScreen } from './screens/ShareScreen';
 import { SharesScreen } from './screens/SharesScreen';
 import { AddFriendScreen, CardAgentScreen, FriendChatScreen } from './screens/FriendsScreens';
+import { FriendAgentsScreen } from './screens/FriendAgentsScreen';
 import { findCode } from './api/friends';
 import type { PushTarget } from './data/types';
 import { L } from './i18n';
@@ -207,6 +208,8 @@ export function RootNavigator() {
         <Stack.Screen name="FriendChat" component={FriendChatScreen} />
         <Stack.Screen name="AddFriend" component={AddFriendScreen} />
         <Stack.Screen name="CardAgent" component={CardAgentScreen} />
+        {/* agent 之间（社交第三层）：从朋友聊天右上角「…」进 */}
+        <Stack.Screen name="FriendAgents" component={FriendAgentsScreen} />
       </Stack.Navigator>
     </NavigationContainer>
   );

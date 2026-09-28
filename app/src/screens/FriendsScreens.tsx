@@ -1,5 +1,6 @@
 // 朋友（社交第二层，../../server/friends.py）：「对话」页切到「朋友」时的列表（FriendsHome）、和一个朋友的聊天（FriendChatScreen）、
 // 加朋友（AddFriendScreen：给对方一张邀请码 / 用对方给的）、我的名片 agent（CardAgentScreen：谁能问到什么、近况）。
+// 两边 agent 之间的来往（第三层）在 FriendAgentsScreen.tsx，从聊天页右上角「…」进。
 // 服务器之间的事（签名、投递、重试、名片 agent 代答）都在服务器上；这里只画、只调自己的服务器。
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { ActivityIndicator, Alert, Platform, Pressable, ScrollView, Share as NativeShare, StyleSheet, Text, TextInput, View,
@@ -52,7 +53,7 @@ export function FriendAvatar({ id, name, size = 44 }: { id: string; name: string
 }
 
 /** 名片 agent 的小透镜：自己的用自己的形象，朋友的是粉紫色的环。 */
-function AgentLens({ mine, size = 28 }: { mine: boolean; size?: number }) {
+export function AgentLens({ mine, size = 28 }: { mine: boolean; size?: number }) {
   const t = useTheme();
   const { avatar } = useStore();
   if (mine) return <LensAvatar size={size} config={avatar} />;
@@ -66,7 +67,7 @@ function AgentLens({ mine, size = 28 }: { mine: boolean; size?: number }) {
 function ymd(d: Date) { return `${d.getFullYear()}-${d.getMonth() + 1}-${d.getDate()}`; }
 
 /** 列表和气泡上的时间：今天 = 钟点，昨天，今年 = 月/日，更早带年。 */
-function timeLabel(ts: string | null | undefined): string {
+export function timeLabel(ts: string | null | undefined): string {
   if (!ts) return '';
   const d = new Date(ts);
   if (Number.isNaN(d.getTime())) return '';
@@ -369,14 +370,29 @@ function MsgView({ m, friend, onAsk, onReview, onEdit, onRetry, onLong }: {
   );
 }
 
-/** 朋友的设置（从聊天页右上角「…」打开）：档位、备注、指纹、拉黑、删掉。 */
-function FriendSheet({ f, close, onChanged, onGone }: { f: Friend; close: () => void; onChanged: (f: Friend) => void; onGone: () => void }) {
+/** 朋友的设置（从聊天页右上角「…」打开）：agent 之间（第三层，FriendAgentsScreen）、档位、备注、指纹、拉黑、删掉。
+ * 弹层画在导航器外面，用不了 useNavigation：跳转由聊天页传进来（onAgents）。 */
+function FriendSheet({ f, close, onChanged, onGone, onAgents }: {
+  f: Friend; close: () => void; onChanged: (f: Friend) => void; onGone: () => void; onAgents: () => void;
+}) {
   const t = useTheme();
   const [alias, setAlias] = useState(f.alias ?? '');
   const [tier, setTier] = useState<Tier>(f.tier);
   const run = (p: Promise<Friend>) => p.then((x) => { onChanged(x); }).catch((e) => showError(L('没改成', "Couldn't change it"), e));
   return (
     <View style={{ gap: space.md }}>
+      <Pressable onPress={() => { close(); onAgents(); }} accessibilityRole="button"
+        style={({ pressed }) => [styles.linkRow, { backgroundColor: t.surface, opacity: pressed ? 0.7 : 1 }]}>
+        <View style={{ width: 46, height: 30 }}>
+          <View style={{ position: 'absolute', left: 0, top: 1 }}><AgentLens mine /></View>
+          <View style={[styles.lensRing, { backgroundColor: t.surface }]}><AgentLens mine={false} /></View>
+        </View>
+        <View style={{ flex: 1, gap: 2 }}>
+          <T v="headline" style={{ fontSize: 15 }}>{L('agent 之间', 'Agent to agent')}</T>
+          <T v="caption" color={t.ink3}>{L(`两边 agent 替你和 ${f.name} 说过的话、要你点头的卡`, `What the agents said for you and ${f.name}, and cards for you`)}</T>
+        </View>
+        <ChevronRight size={16} color={t.ink3} />
+      </Pressable>
       <View style={{ gap: space.xs }}>
         <T v="label" color={t.ink3}>{L('在哪一档（名片 agent 按这档替你说话）', 'Tier (your card agent answers them by it)')}</T>
         <Segmented<Tier> value={tier} options={TIER_OPTS()} onChange={(v) => { setTier(v); run(fr.patchFriend(f.id, { tier: v })); }} />
@@ -483,7 +499,9 @@ export function FriendChatScreen() {
     () => { fr.revokeMsg(m.id).then(put).catch((e) => showError(L('没收回', "Couldn't withdraw"), e)); });
   const openSheet = () => {
     if (!friend) return;
-    sheet.open({ title: friend.name, content: (close) => <FriendSheet f={friend} close={close} onChanged={setFriend} onGone={() => nav.goBack()} /> });
+    sheet.open({ title: friend.name, content: (close) => (
+      <FriendSheet f={friend} close={close} onChanged={setFriend} onGone={() => nav.goBack()} onAgents={() => nav.navigate('FriendAgents', { id: friend.id })} />
+    ) });
   };
 
   const active = friend?.status === 'active';
@@ -837,4 +855,5 @@ const styles = StyleSheet.create({
   inviteRow: { flexDirection: 'row', alignItems: 'center', gap: space.md, paddingVertical: space.sm },
   scopeRow: { flexDirection: 'row', alignItems: 'center', gap: space.md, paddingVertical: 13 },
   num: { width: 22, height: 22, borderRadius: 11, alignItems: 'center', justifyContent: 'center', marginTop: 1 },
+  lensRing: { position: 'absolute', left: 16, top: 0, width: 30, height: 30, borderRadius: 15, alignItems: 'center', justifyContent: 'center' },
 });

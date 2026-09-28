@@ -83,6 +83,44 @@ export const retry = (msgId: number) =>
 export const sendShare = (sid: string, b: { friends: string[]; ask: boolean; link: boolean; text?: string }) =>
   request<{ share: Share; sent: number }>(`/api/shares/${sid}/send`, { method: 'POST', body: b });
 
+// —— agent 之间（社交第三层，../../server/cardagent.py + a2a.py，协议见 ../../docs/a2a.zh-CN.md） ——
+
+/** 名片 agent 出给你的一张卡（card_asks）：卡过了 7 天不在收件箱里，靠它还能写一行结果 */
+export interface CardAsk {
+  kind: 'decision' | 'private'; status: string; outcome: string; summary: string;
+  proposal: { what?: string; date?: string; start?: string; end?: string; place?: string } | null;
+}
+/** 名片 agent 进出的一句（card_log）。by：them 对方说的 / agent 名片 agent 说的 / owner 你在卡上点了、它替你转告的 */
+export interface CardLogItem {
+  id: string; ts: string; peer: string; peerName: string; tier: string; channel: string; ref: string;
+  dir: 'in' | 'out'; by: 'them' | 'agent' | 'owner'; text: string; used: string[]; usedLabel: string;
+  /** received 收到 / sent 说出去了 / limited 到了今天的上限 / failed 没送到 / retracted、replaced 你收回、改过（text 是空的） */
+  status: string; inboxId: string | null; ask: CardAsk | null; outcome: string;
+  /** 对方要它做、它没照做的；blocked：服务端拦下了它原本要说的（原因），original 是原句（只给你看） */
+  declined: string[]; blocked: string[]; original: string;
+}
+/** 你的名片 agent 去问朋友的 agent（a2a_out）。outcome = 对方本人在卡上的决定 */
+export interface A2AOut {
+  id: string; friend: string; contextId: string | null; taskId: string | null; state: string | null;
+  text: string; reply: string | null; outcome: string; usedLabel: string; createdAt: string; updatedAt: string;
+}
+
+export const cardLog = (peer: string) =>
+  request<{ items: Partial<CardLogItem>[] }>(`/api/card/log?peer=${encodeURIComponent(peer)}&channel=a2a&limit=300`)
+    // 老服务器没有 channel 筛选，也没有 by / usedLabel / ask 这些：补上默认值，只留 A2A 的
+    .then((j) => (j.items ?? []).filter((x) => x.channel === 'a2a').map((x): CardLogItem => ({
+      id: x.id ?? '', ts: x.ts ?? '', peer: x.peer ?? '', peerName: x.peerName ?? '', tier: x.tier ?? '', channel: 'a2a', ref: x.ref ?? '',
+      dir: x.dir === 'in' ? 'in' : 'out', by: x.by ?? (x.dir === 'in' ? 'them' : 'agent'), text: x.text ?? '', used: x.used ?? [],
+      usedLabel: x.usedLabel ?? '', status: x.status ?? '', inboxId: x.inboxId ?? null, ask: x.ask ?? null, outcome: x.outcome ?? '',
+      declined: x.declined ?? [], blocked: x.blocked ?? [], original: x.original ?? '',
+    })));
+export const a2aOut = (friend: string) =>
+  request<{ items: Partial<A2AOut>[] }>(`/api/a2a/out?friend=${encodeURIComponent(friend)}&limit=100`)
+    .then((j) => (j.items ?? []).map((x): A2AOut => ({
+      id: x.id ?? '', friend: x.friend ?? friend, contextId: x.contextId ?? null, taskId: x.taskId ?? null, state: x.state ?? null,
+      text: x.text ?? '', reply: x.reply ?? null, outcome: x.outcome ?? '', usedLabel: x.usedLabel ?? '', createdAt: x.createdAt ?? '', updatedAt: x.updatedAt ?? '',
+    })));
+
 export const card = () => request<CardSettings>('/api/card');
 export const patchCard = (b: { tiers?: Partial<Record<AnyTier, Partial<Record<ScopeKey, string>>>>; status?: string }) =>
   request<CardSettings>('/api/card', { method: 'PATCH', body: b });
