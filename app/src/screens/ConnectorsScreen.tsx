@@ -6,7 +6,7 @@ import { Pressable, ScrollView, StyleSheet, View } from 'react-native';
 import { useNavigation } from '@react-navigation/native';
 import { agentName } from '../brand';
 import {
-  Bell, CalendarDays, CalendarSync, ChevronRight, Dumbbell, FileText, GraduationCap, HardDrive, HeartPulse, Mail, MessagesSquare, Notebook, Plug, Send, TreeDeciduous,
+  Bell, CalendarDays, CalendarSync, ChevronRight, Dumbbell, FileText, GraduationCap, HardDrive, HeartPulse, Mail, MessagesSquare, Notebook, Plug, Send, Server, TreeDeciduous,
 } from '../components/icons';
 import { useSheet } from '../components/Sheet';
 import { Btn, Card, NavHeader, PullRefresh, Screen, SectionLabel, T } from '../components/ui';
@@ -18,6 +18,7 @@ import { radius, space, useTheme, type Theme } from '../theme';
 const ICONS: Record<string, typeof Plug> = {
   dumbbell: Dumbbell, 'heart-pulse': HeartPulse, graduation: GraduationCap, calendar: CalendarDays, mail: Mail, 'calendar-sync': CalendarSync,
   'hard-drive': HardDrive, notebook: Notebook, 'file-text': FileText, tree: TreeDeciduous, send: Send, messages: MessagesSquare, bell: Bell,
+  server: Server,
 };
 
 const statusWord = (s: Connector['status']) => ({ ok: L('在用', 'Working'), warn: L('要注意', 'Needs a look'), off: L('没接', 'Not connected') })[s];
@@ -129,7 +130,7 @@ export function ConnectorsScreen() {
         {state}
         {data?.groups.map((g) => (
           <View key={g.id}>
-            <SectionLabel>{g.title}</SectionLabel>
+            <SectionLabel caps={g.id !== 'claw'}>{g.title}</SectionLabel>
             <Card style={{ paddingVertical: space.xs }}>
               {g.items.map((x, i) => <ConnectorRow key={x.id} c={x} first={i === 0} />)}
             </Card>

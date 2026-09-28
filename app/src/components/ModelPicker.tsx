@@ -43,12 +43,38 @@ function useAllowedModels() {
   return models ? MODELS.filter((m) => models.allowed.includes(m.id)) : MODELS;
 }
 
+/** 别的 claw（不是 OpenClaw）：模型就是服务器 claw 段写的那几个（/api/models 的 allowed），app 的模型目录里没有它们，原样列出。OpenClaw = null。 */
+function useClawModels(): { ids: string[]; name: string } | null {
+  const { claw, models } = useStore();
+  if (claw.kind === 'openclaw') return null;
+  return { ids: models?.allowed ?? [], name: claw.name };
+}
+
+function PlainList({ ids, value, onPick }: { ids: string[]; value: string; onPick: (id: string) => void }) {
+  const t = useTheme();
+  return (
+    <View style={{ gap: space.sm }} accessibilityRole="radiogroup">
+      {ids.map((id) => (
+        <Pressable key={id} onPress={() => onPick(id)} accessibilityRole="radio" accessibilityState={{ selected: id === value }}
+          style={({ pressed }) => [styles.opt, { backgroundColor: t.surface, borderColor: id === value ? t.goldFill : 'transparent', opacity: pressed ? 0.7 : 1 }]}>
+          <T v="headline" style={{ flex: 1 }}>{id}</T>
+          {id === value ? <Check size={20} color={t.gold} /> : null}
+        </Pressable>
+      ))}
+      <T v="callout" color={t.ink3} style={{ marginTop: space.xs }}>{L('切换只影响当前对话。能选哪些模型在服务器的 server.json（claw 段）里配。',
+        "Switching only affects this chat. The models to choose from are set on the server, in server.json's claw section.")}</T>
+    </View>
+  );
+}
+
 function ModelList({ value, onPick }: { value: string; onPick: (id: string) => void }) {
   const t = useTheme();
+  const other = useClawModels();
   const allowed = useAllowedModels();
   const current = modelOf(value);
   const [more, setMore] = useState(current ? !current.featured : false);
   const list = allowed.filter((m) => m.featured || more);
+  if (other) return <PlainList ids={other.ids} value={value} onPick={onPick} />;
   return (
     <View style={{ gap: space.sm }} accessibilityRole="radiogroup">
       {list.map((m) => <Option key={m.id} m={m} on={m.id === value} onPress={() => onPick(m.id)} />)}
@@ -68,13 +94,22 @@ function ModelList({ value, onPick }: { value: string; onPick: (id: string) => v
 export function ModelSwitch({ value, onChange }: { value: string; onChange: (id: string) => void }) {
   const t = useTheme();
   const sheet = useSheet();
+  const other = useClawModels();
   const m = modelOf(value);
+  if (other && other.ids.length <= 1) {  // 别的 claw、只有一个模型：不能换，只写是谁在答
+    return (
+      <View style={[styles.switch, { backgroundColor: t.surface }]} accessibilityLabel={L(`由 ${other.name} 回答`, `Answered by ${other.name}`)}>
+        <View style={{ width: 7, height: 7, borderRadius: 4, backgroundColor: t.chartA }} />
+        <T v="caption" style={{ fontSize: 13 }}>{other.name}</T>
+      </View>
+    );
+  }
   return (
     <Pressable accessibilityRole="button" accessibilityLabel={L(`当前模型 ${m?.name}，点击切换`, `Current model ${m?.name}, tap to switch`)}
       onPress={() => sheet.open({ title: L('这段对话用哪个模型', 'Model for this chat'), content: (close) => <ModelList value={value} onPick={(id) => { onChange(id); close(); }} /> })}
       style={({ pressed }) => [styles.switch, { backgroundColor: t.surface, opacity: pressed ? 0.7 : 1 }]}>
       <View style={{ width: 7, height: 7, borderRadius: 4, backgroundColor: m?.billing === '订阅' ? t.goldFill : t.chartA }} />
-      <T v="caption" style={{ fontSize: 13 }}>{m?.short ?? L('模型', 'Model')}</T>
+      <T v="caption" style={{ fontSize: 13 }} numberOfLines={1}>{other ? value : m?.short ?? L('模型', 'Model')}</T>
       <ChevronDown size={14} color={t.ink2} />
     </Pressable>
   );
@@ -84,12 +119,21 @@ export function ModelSwitch({ value, onChange }: { value: string; onChange: (id:
 export function ModelField({ value, onChange }: { value: string; onChange: (id: string) => void }) {
   const t = useTheme();
   const sheet = useSheet();
+  const other = useClawModels();
   const m = modelOf(value);
+  if (other && other.ids.length <= 1) {  // 别的 claw、只有一个模型：没得选
+    return (
+      <View style={[styles.field, { backgroundColor: t.surface }]}>
+        <T v="body">{other.name}</T>
+        <T v="callout" color={t.ink2}>{other.ids[0] ?? ''}</T>
+      </View>
+    );
+  }
   return (
     <Pressable accessibilityRole="button"
       onPress={() => sheet.open({ title: L('这个 Agent 默认用哪个模型', 'Default model for this agent'), content: (close) => <ModelList value={value} onPick={(id) => { onChange(id); close(); }} /> })}
       style={[styles.field, { backgroundColor: t.surface }]}>
-      <T v="body">{m?.name}</T>
+      <T v="body">{other ? value : m?.name}</T>
       <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
         <T v="callout" color={t.ink2}>{m ? billingLabel(m.billing) : null}</T>
         <ChevronDown size={16} color={t.ink3} />

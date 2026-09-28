@@ -54,7 +54,7 @@ function PickerSheet({ icon, color, onIcon, onColor, close }: { icon: GroupIcon 
 
 function DeleteSheet({ g, close, onDeleted }: { g: Group; close: () => void; onDeleted: () => void }) {
   const t = useTheme();
-  const { removeGroup } = useStore();
+  const { removeGroup, claw } = useStore();
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState('');
   const remove = () => {
@@ -65,7 +65,8 @@ function DeleteSheet({ g, close, onDeleted }: { g: Group; close: () => void; onD
   };
   return (
     <View style={{ gap: space.md }}>
-      <T v="callout" color={t.ink2}>{L('它在服务器上的 OpenClaw agent 会去掉，工作区和记忆归档到 archive/（不删）。这里的对话记录、日志和卡片留着当历史。', 'Its OpenClaw agent on the server is removed, and its workspace and memory are moved to archive/ (not deleted). Its chats, journal and cards here are kept as history.')}</T>
+      <T v="callout" color={t.ink2}>{!claw.caps.agentWorkspaces ? L(`它从 Agents 里拿掉，${claw.name} 那边什么都不动。这里的对话记录、日志和卡片留着当历史。`,
+        `It's removed from Agents; nothing changes on ${claw.name}'s side. Its chat history, journal and cards here stay as history.`) : L('它在服务器上的 OpenClaw agent 会去掉，工作区和记忆归档到 archive/（不删）。这里的对话记录、日志和卡片留着当历史。', 'Its OpenClaw agent on the server is removed, and its workspace and memory are moved to archive/ (not deleted). Its chats, journal and cards here are kept as history.')}</T>
       {err ? <T v="callout" color={t.bad}>{L(`删不了：${err}`, `Couldn't delete it: ${err}`)}</T> : null}
       <View style={{ flexDirection: 'row', gap: space.sm }}>
         <Btn flex kind="quiet" label={L('留着', 'Keep')} onPress={close} />

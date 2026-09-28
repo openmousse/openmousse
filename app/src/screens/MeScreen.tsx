@@ -12,7 +12,7 @@ import { space, useAppearance, useTheme } from '../theme';
 export function MeScreen() {
   const t = useTheme();
   const nav = useNavigation<any>();
-  const { avatar, profile, memories, activity, connected, booting, authFailed, appName, tasks, security, models, journal, tree, connectors, reload } = useStore();
+  const { avatar, profile, memories, activity, connected, booting, authFailed, appName, tasks, security, models, journal, tree, connectors, reload, claw } = useStore();
   const { appearance, setAppearance } = useAppearance();
   const { pref, setPref } = useLang();
   const warn = security?.facts.filter((f) => f.tone === 'warn') ?? [];
@@ -53,7 +53,7 @@ export function MeScreen() {
           <SectionLabel>{L(`${agentName()} 做过的`, `What ${agentName()} did`)}</SectionLabel>
           <Card style={{ paddingVertical: space.xs }}>
             <ListRow icon={<Activity size={20} color={t.cyan} />} title={L('活动记录', 'Activity')} sub={activity[0] ? `${activity[0].time} · ${activity[0].text}` : L('每一次回复、定时任务和你的操作', 'Every reply, scheduled job and action you took')} onPress={() => nav.navigate('Activity')} />
-            <ListRow icon={<ClipboardList size={20} color={t.cyan} />} title={L('任务', 'Tasks')} sub={tasks.length ? L(`${tasks.length} 个子会话${running ? `，${running} 个在跑` : ''}，能看过程`, `${tasks.length} sub-sessions${running ? `, ${running} running` : ''}, steps included`) : L('派出去的子会话', 'Sub-sessions sent out')} onPress={() => nav.navigate('Tasks')} />
+            {claw.caps.tasks ? <ListRow icon={<ClipboardList size={20} color={t.cyan} />} title={L('任务', 'Tasks')} sub={tasks.length ? L(`${tasks.length} 个子会话${running ? `，${running} 个在跑` : ''}，能看过程`, `${tasks.length} sub-sessions${running ? `, ${running} running` : ''}, steps included`) : L('派出去的子会话', 'Sub-sessions sent out')} onPress={() => nav.navigate('Tasks')} /> : null}
             <ListRow icon={<ShieldCheck size={20} color={warn.length ? t.warn : t.cyan} />} title={L('安全', 'Security')} sub={security ? (warn.length ? L(`${warn.length} 项要注意：${warn.map((f) => f.title).join('、')}`, `${warn.length} to check: ${warn.map((f) => f.title).join(', ')}`) : L('都正常', 'All good')) : L('服务器上的实测状态', 'Live status from the server')} onPress={() => nav.navigate('Security')} last />
           </Card>
 
@@ -64,7 +64,7 @@ export function MeScreen() {
               sub={conn ? [L(`${conn.ok} 个在用`, `${conn.ok} working`), conn.warn ? L(`${conn.warn} 个要注意`, `${conn.warn} need a look`) : ''].filter(Boolean).join(L('，', ', ')) : L(`${agentName()} 接着的各项服务，现在怎么样`, `What ${agentName()} is connected to, and how it's doing`)}
               onPress={() => nav.navigate('Connectors')} />
             <ListRow icon={<CalendarDays size={20} color={t.cyan} />} title={L('日程', 'Schedule')} sub={L('在 iPhone 日历里看（订阅链接）', 'See it in your iPhone calendar (subscription)')} onPress={() => nav.navigate('ScheduleFeed')} />
-            <ListRow icon={<Cpu size={20} color={expired.length ? t.warn : t.cyan} />} title={L('模型与计费', 'Models & billing')} sub={expired.length ? L(`${expired.map((p) => p.name).join('、')} 订阅登录已过期`, `Subscription login expired: ${expired.map((p) => p.name).join(', ')}`) : L('订阅、API、回退顺序', 'Subscriptions, API, fallback order')} onPress={() => nav.navigate('Models')} />
+            <ListRow icon={<Cpu size={20} color={expired.length ? t.warn : t.cyan} />} title={L('模型与计费', 'Models & billing')} sub={expired.length ? L(`${expired.map((p) => p.name).join('、')} 订阅登录已过期`, `Subscription login expired: ${expired.map((p) => p.name).join(', ')}`) : claw.kind !== 'openclaw' ? L(`由 ${claw.name} 回答`, `Answered by ${claw.name}`) : L('订阅、API、回退顺序', 'Subscriptions, API, fallback order')} onPress={() => nav.navigate('Models')} />
             <ListRow icon={<Palette size={20} color={t.cyan} />} title={L('形象', 'Look')} sub={L('光环样式和颜色', 'Halo style and color')} onPress={() => nav.navigate('Avatar')} last />
           </Card>
 

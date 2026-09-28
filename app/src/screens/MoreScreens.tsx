@@ -234,7 +234,7 @@ function providerLabel(provider: string): string | undefined {
 
 export function ModelsScreen() {
   const t = useTheme();
-  const { models } = useStore();
+  const { models, claw } = useStore();
   const billing = useBilling();
   const name = (id: string | null | undefined) => (id ? modelOf(id)?.name ?? id : '—');
   const allowed = models ? MODELS.filter((m) => models.allowed.includes(m.id)) : [];
@@ -243,6 +243,21 @@ export function ModelsScreen() {
   const subs = (models?.providers ?? []).filter((p) => p.subscription && used.has(p.provider));
   const keyed = (models?.providers ?? []).filter((p) => !p.subscription && used.has(p.provider)).map((p) => providerLabel(p.provider) ?? p.name);
   const expired = subs.filter((p) => p.status !== 'ok');
+  if (claw.kind !== 'openclaw') {  // 别的 claw：模型和计费是它自己管的，这里只列 app 能切换的那几个（server.json 的 claw 段）
+    return (
+      <Page title={L('模型与计费', 'Models & billing')} refresh={['models']}>
+        <Status k="models" empty={!models} />
+        <SectionLabel caps={false}>{L(`由 ${claw.name} 回答`, `Answered by ${claw.name}`)}</SectionLabel>
+        <Card style={{ paddingVertical: space.xs }}>
+          {(models?.allowed ?? []).map((id, i, all) => <ListRow key={id} title={id} sub={i === 0 ? L('默认', 'Default') : undefined} last={i === all.length - 1} />)}
+        </Card>
+        <T v="caption" color={t.ink3} style={{ marginTop: space.sm, paddingHorizontal: space.xs }}>{L(
+          `模型、回退和计费由 ${claw.name} 自己管，在它那边改。app 里能切换的模型在服务器的 server.json（claw 段的 models）里配。`,
+          `${claw.name} handles models, fallbacks and billing itself; change them there. The models the app can switch between are set in server.json on the server (models in the claw section).`,
+        )}</T>
+      </Page>
+    );
+  }
   return (
     <Page title={L('模型与计费', 'Models & billing')} refresh={['models']}>
       <Status k="models" empty={!models} />

@@ -108,7 +108,7 @@ function Drawer({ active, onPick, onClose }: { active: string; onPick: (id: stri
   const nav = useNavigation<any>();
   const sheet = useSheet();
   const insets = useSafeAreaInsets();
-  const { avatar, sideChats, groups, tasks, unread } = useStore();
+  const { avatar, sideChats, groups, tasks, unread, claw } = useStore();
   const n = (id: string) => unread.threads[id]?.n ?? 0;
   // 按最近活动倒序：折叠掉的永远是最久没碰的。
   const byRecent = (a: SideChat, b: SideChat) => b.updatedAt - a.updatedAt;
@@ -146,10 +146,10 @@ function Drawer({ active, onPick, onClose }: { active: string; onPick: (id: stri
             ))}
           </DrawerSection>
 
-          <DrawerSection title={L('任务', 'Tasks')} count={running}>
+          {claw.caps.tasks ? <DrawerSection title={L('任务', 'Tasks')} count={running}>
             {[<DrawerRow key="tasks" icon={<ClipboardList size={18} color={running ? t.cyan : t.ink3} />} label={running ? L(`${running} 个在跑`, `${running} running`) : L('任务', 'Tasks')} sub={L('派给谁、做到哪、怎么做的', "Who's on it, how far along, how it's done")} onPress={() => { onClose(); nav.navigate('Tasks'); }}
               right={running ? <Pill label={String(running)} tone="cyan" /> : undefined} />]}
-          </DrawerSection>
+          </DrawerSection> : null}
 
           <DrawerSection title={L('已归档', 'Archived')} count={archived.length} defaultOpen={false} empty={L('还没有归档的项目。', 'No archived projects yet.')}>
             {archived.map((c) => (

@@ -49,15 +49,29 @@ export interface LiveData {
 
 const get = <T,>(path: string) => request<T>(path);
 
-/** firstRun：全新的服务器（还没有任何消息、也没建过 Agent），主对话空着时顶上放「从这里开始」。老服务器没有这个字段 = false。 */
-export type ProbeResult = { status: 'ok'; appName: string; sharedChannels: string[]; sources: Sources; firstRun: boolean } | { status: 'auth' | 'down' };
+/** 服务器背后跑 agent 的那个 claw（/api/health 的 claw）：OpenClaw 什么都能做；别的 claw（OpenAI 兼容接口）没有插话、后台任务、
+ *  执行审批、定时任务、模型计费这些，app 按 caps 把入口藏起来。老服务器没有这个字段 = OpenClaw。 */
+export type ClawCaps = { steer: boolean; agentWorkspaces: boolean; tasks: boolean; approvals: boolean; cron: boolean; billing: boolean;
+  channels: boolean; rewind: boolean; modelSwitch: boolean };
+export type ClawInfo = { kind: string; name: string; caps: ClawCaps };
+export const OPENCLAW: ClawInfo = { kind: 'openclaw', name: 'OpenClaw', caps: { steer: true, agentWorkspaces: true, tasks: true, approvals: true, cron: true,
+  billing: true, channels: true, rewind: true, modelSwitch: true } };
 
-type HealthResp = { ok: boolean; app_name?: string; shared_channels?: string[]; sources?: Sources; first_run?: boolean };
+/** firstRun：全新的服务器（还没有任何消息、也没建过 Agent），主对话空着时顶上放「从这里开始」。老服务器没有这个字段 = false。 */
+export type ProbeResult = { status: 'ok'; appName: string; sharedChannels: string[]; sources: Sources; firstRun: boolean; claw: ClawInfo } | { status: 'auth' | 'down' };
+
+type HealthResp = { ok: boolean; app_name?: string; shared_channels?: string[]; sources?: Sources; first_run?: boolean; claw?: Partial<ClawInfo> };
+
+function clawOf(c?: Partial<ClawInfo>): ClawInfo {
+  if (!c?.kind || c.kind === 'openclaw') return OPENCLAW;
+  return { kind: c.kind, name: c.name || c.kind, caps: { ...OPENCLAW.caps, ...(c.caps ?? {}) } };
+}
 
 export async function probe(): Promise<ProbeResult> {
   try {
     const h = await get<HealthResp>('/api/health');
-    return h.ok ? { status: 'ok', appName: h.app_name || 'OpenMousse', sharedChannels: h.shared_channels ?? [], sources: h.sources ?? {}, firstRun: h.first_run === true } : { status: 'down' };
+    return h.ok ? { status: 'ok', appName: h.app_name || 'OpenMousse', sharedChannels: h.shared_channels ?? [], sources: h.sources ?? {}, firstRun: h.first_run === true,
+      claw: clawOf(h.claw) } : { status: 'down' };
   } catch (e) {
     return { status: e instanceof AuthError ? 'auth' : 'down' };
   }
