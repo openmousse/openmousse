@@ -3,8 +3,9 @@
 #   curl -fsSL https://raw.githubusercontent.com/openmousse/openmousse/main/install.sh | bash
 # 或在仓库里：bash install.sh
 #
-# 做的事：clone / 更新仓库到 ~/openmousse → 建 ~/.openmousse/venv 装依赖 → 问四个问题 → packs/core/setup.py 配好一切。
-# 环境变量（非交互）：MOUSSE_LANG（zh|en）、MOUSSE_OPENCLAW_HOME、MOUSSE_TZ、MOUSSE_NAME、MOUSSE_DIR（仓库位置）、MOUSSE_BIND（auto|127.0.0.1|<ip>）
+# 做的事：clone / 更新仓库到 ~/openmousse → 建 ~/.openmousse/venv 装依赖 → 问四个问题 + 两个可以跳过的 → packs/core/setup.py 配好一切。
+# 环境变量（非交互）：MOUSSE_LANG（zh|en）、MOUSSE_OPENCLAW_HOME、MOUSSE_TZ、MOUSSE_NAME、MOUSSE_DIR（仓库位置）、MOUSSE_BIND（auto|127.0.0.1|<ip>）、
+#   MOUSSE_VAULT（服务器上已经在同步的 Obsidian 库文件夹，世界树和思考空间放进去；空 = 跳过）、MOUSSE_TREE_PUBLIC（y|n：用 Tailscale Funnel 让 AI 平台连世界树）
 # 其它参数原样传给 setup.py，比如 --no-systemd、--no-tree。
 set -euo pipefail
 
@@ -50,14 +51,14 @@ fi
 "$VENV/bin/python" -m pip install -q -r "$MOUSSE_DIR/server/requirements.txt"
 "$VENV/bin/python" -m pip install -q "$MOUSSE_DIR/tree"
 
-# 四个问题（有环境变量就不问；管道里跑时从 /dev/tty 读）
-ask() {  # ask <变量名> <提示> <默认值>
+# 问题（有环境变量就不问；管道里跑时从 /dev/tty 读；没有终端就用默认值）
+ask() {  # ask <变量名> <提示> <默认值>（默认值空 = 可以跳过，提示里不显示 []）
   local var="$1" prompt="$2" def="$3" ans=""
   if [ -n "${!var:-}" ]; then return; fi
   if [ -t 0 ]; then
-    read -r -p "$prompt [$def]: " ans || true
-  elif [ -e /dev/tty ]; then
-    read -r -p "$prompt [$def]: " ans < /dev/tty || true
+    read -r -p "$prompt${def:+ [$def]}: " ans || true
+  elif { : < /dev/tty; } 2>/dev/null; then  # 打得开才读：没有控制终端（cron、CI）时 /dev/tty 在但打不开
+    read -r -p "$prompt${def:+ [$def]}: " ans < /dev/tty || true
   fi
   printf -v "$var" '%s' "${ans:-$def}"
 }
@@ -70,14 +71,22 @@ case "${DEF_LANG:-${LC_ALL:-${LANG:-}}}" in zh*|ZH*) DEF_LANG=zh ;; *) DEF_LANG=
 DEF_HOME="${OPENCLAW_STATE_DIR:-$HOME/.openclaw}"
 DEF_TZ="$(cat /etc/timezone 2>/dev/null || timedatectl show -p Timezone --value 2>/dev/null || echo UTC)"
 [ "$DEF_TZ" = "Etc/UTC" ] && DEF_TZ="UTC"
-say "四个问题，直接回车用默认值 / four questions, Enter keeps the default"
+say "四个问题 + 两个可以跳过的，直接回车用默认值 / four questions + two optional ones, Enter keeps the default"
 ask MOUSSE_LANG "语言 / language (zh = 中文, en = English)" "$DEF_LANG"
 case "$(printf '%s' "$MOUSSE_LANG" | tr '[:upper:]' '[:lower:]')" in zh*|cn*|chinese*|中*) MOUSSE_LANG=zh ;; *) MOUSSE_LANG=en ;; esac
 ask MOUSSE_OPENCLAW_HOME "OpenClaw 装在哪 / OpenClaw home (directory with openclaw.json)" "$DEF_HOME"
 ask MOUSSE_TZ "你的时区 / your timezone (IANA name)" "$DEF_TZ"
 ask MOUSSE_NAME "助手叫什么 / assistant name (shown in the app)" "Mousse"
 [ -f "$MOUSSE_OPENCLAW_HOME/openclaw.json" ] || die "$MOUSSE_OPENCLAW_HOME/openclaw.json 不存在 / not found. Install OpenClaw and run openclaw onboard first."
+# 可以跳过的两个：Obsidian 库（世界树和思考空间放进去）、让 AI 平台连世界树（Tailscale Funnel 开公网 HTTPS）
+ask MOUSSE_VAULT "（可跳过）Obsidian 库在这台服务器上的文件夹（已在同步：Obsidian Sync / Syncthing / git），世界树和思考空间放进去，回车跳过 / (optional) Obsidian vault folder on this server (already synced: Obsidian Sync / Syncthing / git) for the memory tree and the thinking space, Enter skips" ""
+ask MOUSSE_TREE_PUBLIC "（可跳过）让 AI 平台连世界树吗？Claude.ai、ChatGPT、Gemini、Notion、DeepSeek、通义、Kimi……支持 MCP 的都行，要用 Tailscale Funnel 开公网 HTTPS / (optional) let AI platforms connect to the memory tree? Claude.ai, ChatGPT, Gemini, Notion, DeepSeek, Qwen, Kimi… any MCP client; needs Tailscale Funnel for public HTTPS (y/n)" "n"
+case "$(printf '%s' "$MOUSSE_TREE_PUBLIC" | tr '[:upper:]' '[:lower:]')" in y|yes|1|true|是*) MOUSSE_TREE_PUBLIC=yes ;; *) MOUSSE_TREE_PUBLIC=no ;; esac
+OPTIONAL=()
+if [ -n "$MOUSSE_VAULT" ]; then OPTIONAL+=("--vault=$MOUSSE_VAULT"); fi
+if [ "$MOUSSE_TREE_PUBLIC" = yes ]; then OPTIONAL+=(--tree-public); fi
 
 say "配置 / configuring"
 exec "$VENV/bin/python" "$MOUSSE_DIR/packs/core/setup.py" --repo "$MOUSSE_DIR" --venv "$VENV" \
-  --openclaw-home "$MOUSSE_OPENCLAW_HOME" --tz "$MOUSSE_TZ" --name "$MOUSSE_NAME" --lang "$MOUSSE_LANG" --bind "${MOUSSE_BIND:-auto}" "$@"
+  --openclaw-home "$MOUSSE_OPENCLAW_HOME" --tz "$MOUSSE_TZ" --name "$MOUSSE_NAME" --lang "$MOUSSE_LANG" --bind "${MOUSSE_BIND:-auto}" \
+  ${OPTIONAL[@]+"${OPTIONAL[@]}"} "$@"
