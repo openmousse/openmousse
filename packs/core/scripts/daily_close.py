@@ -39,6 +39,24 @@ def trigger_text() -> str:
     )
 
 
+def summary_text() -> str:
+    """别的 claw（不是 OpenClaw，见 server/claw.py）：它不一定有 AGENTS.md 的日结规则和记忆文件，就让它把今天写成几行回过来，
+    服务器存下这段回复（/api/chat/trigger 带 digest），明天这个对话的第一句话前面带上它。"""
+    return MARK + L(
+        "日结。用 5–10 行写这个对话今天的要点：做了什么、用户定了什么、明天要接着做的。只回这几行，不要客套；明天你会在对话开头看到它。",
+        "Daily digest. In 5–10 lines, write today's key points for this conversation: what got done, what the user decided, what to pick up "
+        "tomorrow. Reply with just those lines, no pleasantries; you'll see them at the start of tomorrow's conversation.",
+    )
+
+
+def claw_kind() -> str:
+    """服务器配的是哪种 claw（/api/health 的 claw.kind）；旧服务没有这一项 = OpenClaw。"""
+    try:
+        return str((api("/api/health", timeout=10).get("claw") or {}).get("kind") or "openclaw")
+    except Exception:  # noqa: BLE001 — 读不到就按老样子
+        return "openclaw"
+
+
 def project_text() -> str:
     return MARK + L(
         "日结（项目）。按 project skill 的「日结」：用 project_ctl.py 更新这个项目的进度、下一步和今天定的事，今天的要点追加到 "
@@ -114,9 +132,9 @@ def active_today(thread: str, since_iso: str) -> int:
         c.close()
 
 
-def trigger(thread: str, text: str) -> str:
-    try:  # 日结是给 agent 的，回完不推送（level none；notify false 给还不认识 level 的旧服务）
-        api("/api/chat/trigger", {"thread": thread, "text": text, "origin": "auto", "level": "none", "notify": False}, timeout=20)
+def trigger(thread: str, text: str, digest: bool = False) -> str:
+    try:  # 日结是给 agent 的，回完不推送（level none；notify false 给还不认识 level 的旧服务）；digest：回复就是日结，服务器存下来
+        api("/api/chat/trigger", {"thread": thread, "text": text, "origin": "auto", "level": "none", "notify": False, "digest": digest}, timeout=20)
         return "ok"
     except urllib.error.HTTPError as exc:
         return "busy" if exc.code == 409 else f"error {exc.code}"
@@ -132,6 +150,7 @@ def main() -> None:
     now = user_now()
     since = (now - timedelta(hours=4)).replace(hour=4, minute=0, second=0, microsecond=0).isoformat()  # 当前逻辑日的 04:00
     results = []
+    generic = claw_kind() != "openclaw"  # 别的 claw：每个对话回几行今天的要点，服务器存下来
     projs = [] if a.thread else projects()
     for th in ([a.thread] if a.thread else threads() + projs):
         n = active_today(th, since)
@@ -141,16 +160,16 @@ def main() -> None:
         if a.dry_run:
             results.append({"thread": th, "result": f"would trigger ({n} msgs)"})
             continue
-        text = project_text() if th in projs or th.startswith("sc-") else trigger_text()
-        r = trigger(th, text)
+        text = summary_text() if generic else project_text() if th in projs or th.startswith("sc-") else trigger_text()
+        r = trigger(th, text, generic)
         if r == "busy":
             time.sleep(60)
-            r = trigger(th, text)
+            r = trigger(th, text, generic)
         results.append({"thread": th, "result": r, "msgs": n})
         time.sleep(5)
     if not a.dry_run and not a.thread:
         results.append({"review": review()})
-        if any(r.get("msgs") for r in results):
+        if any(r.get("msgs") for r in results) and not generic:  # 日结提案要 proposals skill 和 shell，只有 OpenClaw 那边装着
             results.append({"proposals": propose_when_free()})
     line = f"{now.strftime('%Y-%m-%d %H:%M')} daily_close {json.dumps(results, ensure_ascii=False)}"
     if not a.dry_run:

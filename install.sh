@@ -1,10 +1,12 @@
 #!/usr/bin/env bash
-# OpenMousse 一条命令安装（Linux，已装好 OpenClaw 的机器）：
+# OpenMousse 一条命令安装（Linux，已经跑着一个 claw 的机器：OpenClaw，或者别的有 OpenAI 兼容接口的 claw / agent）：
 #   curl -fsSL https://raw.githubusercontent.com/openmousse/openmousse/main/install.sh | bash
 # 或在仓库里：bash install.sh
 #
-# 做的事：clone / 更新仓库到 ~/openmousse → 建 ~/.openmousse/venv 装依赖 → 问四个问题 + 两个可以跳过的 → packs/core/setup.py 配好一切。
-# 环境变量（非交互）：MOUSSE_LANG（zh|en）、MOUSSE_OPENCLAW_HOME、MOUSSE_TZ、MOUSSE_NAME、MOUSSE_DIR（仓库位置）、MOUSSE_BIND（auto|127.0.0.1|<ip>）、
+# 做的事：clone / 更新仓库到 ~/openmousse → 建 ~/.openmousse/venv 装依赖 → 问几个问题 + 两个可以跳过的 → packs/core/setup.py 配好一切。
+# 环境变量（非交互）：MOUSSE_LANG（zh|en）、MOUSSE_CLAW（openclaw，或别的 claw 的 OpenAI 兼容接口地址 http://…/v1）、MOUSSE_OPENCLAW_HOME、
+#   别的 claw：MOUSSE_CLAW_NAME、MOUSSE_CLAW_TOKEN、MOUSSE_CLAW_MODEL、MOUSSE_CLAW_SKILLS（它的 skills 文件夹）、MOUSSE_CLAW_RULES（它每轮都读的规则文件）；
+#   MOUSSE_TZ、MOUSSE_NAME、MOUSSE_DIR（仓库位置）、MOUSSE_BIND（auto|127.0.0.1|<ip>）、
 #   MOUSSE_VAULT（服务器上已经在同步的 Obsidian 库文件夹，世界树和思考空间放进去；空 = 跳过）、MOUSSE_TREE_PUBLIC（y|n：用 Tailscale Funnel 让 AI 平台连世界树）
 # 其它参数原样传给 setup.py，比如 --no-systemd、--no-tree。
 set -euo pipefail
@@ -31,7 +33,6 @@ EOF
 if ! python3 -c 'import venv, ensurepip' 2>/dev/null; then
   command -v uv >/dev/null || die "缺 venv / ensurepip 模块 / venv module missing (Ubuntu / Debian: sudo apt install python3-venv), or install uv first (https://docs.astral.sh/uv/)"
 fi
-command -v openclaw >/dev/null || echo "提示 / note: openclaw is not on PATH. Install OpenClaw and run openclaw onboard first, then come back."
 
 if [ ! -f "$MOUSSE_DIR/server/run.py" ]; then
   say "拿仓库 / cloning → $MOUSSE_DIR"
@@ -62,6 +63,20 @@ ask() {  # ask <变量名> <提示> <默认值>（默认值空 = 可以跳过，
   fi
   printf -v "$var" '%s' "${ans:-$def}"
 }
+ask_secret() {  # ask_secret <变量名> <提示>：输入不显示（令牌之类）；有环境变量就不问，回车 = 空
+  local var="$1" prompt="$2" ans=""
+  if [ -n "${!var:-}" ]; then return; fi
+  if [ -t 0 ]; then
+    read -r -s -p "$prompt: " ans || true; echo
+  elif { : < /dev/tty; } 2>/dev/null; then
+    read -r -s -p "$prompt: " ans < /dev/tty || true; echo
+  fi
+  printf -v "$var" '%s' "$ans"
+}
+saved() {  # saved <python 表达式，c = server.json>：上次安装存下的值（没有就空），当默认值用
+  [ -f "$HOME/.openmousse/server.json" ] || return 0
+  python3 -c "import json, sys; c = json.load(open(sys.argv[1])); v = $1; print(v or '')" "$HOME/.openmousse/server.json" 2>/dev/null || true
+}
 # 语言默认：上次安装选的（server.json 的 language），没有就看 LC_ALL / LANG：zh 开头 → zh，其它 → en
 DEF_LANG=""
 if [ -f "$HOME/.openmousse/server.json" ]; then
@@ -71,13 +86,34 @@ case "${DEF_LANG:-${LC_ALL:-${LANG:-}}}" in zh*|ZH*) DEF_LANG=zh ;; *) DEF_LANG=
 DEF_HOME="${OPENCLAW_STATE_DIR:-$HOME/.openclaw}"
 DEF_TZ="$(cat /etc/timezone 2>/dev/null || timedatectl show -p Timezone --value 2>/dev/null || echo UTC)"
 [ "$DEF_TZ" = "Etc/UTC" ] && DEF_TZ="UTC"
-say "四个问题 + 两个可以跳过的，直接回车用默认值 / four questions + two optional ones, Enter keeps the default"
+say "几个问题 + 两个可以跳过的，直接回车用默认值 / a few questions + two optional ones, Enter keeps the default"
 ask MOUSSE_LANG "语言 / language (zh = 中文, en = English)" "$DEF_LANG"
 case "$(printf '%s' "$MOUSSE_LANG" | tr '[:upper:]' '[:lower:]')" in zh*|cn*|chinese*|中*) MOUSSE_LANG=zh ;; *) MOUSSE_LANG=en ;; esac
-ask MOUSSE_OPENCLAW_HOME "OpenClaw 装在哪 / OpenClaw home (directory with openclaw.json)" "$DEF_HOME"
+# 你的 claw：回车 = OpenClaw；别的 claw / agent 填它的 OpenAI 兼容接口地址。默认：上次装的那个，没装过就看这台机器上有没有 OpenClaw
+DEF_CLAW="$(saved "(c.get('claw') or {}).get('url') if (c.get('claw') or {}).get('kind') == 'openai' else ''")"
+[ -n "$DEF_CLAW" ] || DEF_CLAW=openclaw
+ask MOUSSE_CLAW "你的 claw：回车 = OpenClaw；别的 claw 或 agent 填它的 OpenAI 兼容接口地址（写到 /v1，比如 http://127.0.0.1:8642/v1） / your claw: Enter = OpenClaw; for another claw or agent, its OpenAI-compatible API URL (up to /v1, e.g. http://127.0.0.1:8642/v1)" "$DEF_CLAW"
+case "$MOUSSE_CLAW" in http://*|https://*) CLAW_KIND=openai ;; *) CLAW_KIND=openclaw ;; esac
+CLAW_ARGS=()
+if [ "$CLAW_KIND" = openclaw ]; then
+  command -v openclaw >/dev/null || echo "提示 / note: openclaw is not on PATH. Install OpenClaw and run openclaw onboard first, then come back."
+  ask MOUSSE_OPENCLAW_HOME "OpenClaw 装在哪 / OpenClaw home (directory with openclaw.json)" "$DEF_HOME"
+else
+  ask MOUSSE_CLAW_NAME "它叫什么（app 里这么叫它） / its name (shown in the app)" "$(saved "(c.get('claw') or {}).get('name')")"
+  ask_secret MOUSSE_CLAW_TOKEN "接口令牌，没有就回车；输入不显示，重装时回车 = 沿用上次的 / API token, Enter if none; hidden, Enter on a rerun keeps the old one"
+  ask MOUSSE_CLAW_MODEL "请求里的模型名（model） / the model name to send (model)" "$(saved "(c.get('claw') or {}).get('model')" | grep . || echo default)"
+  ask MOUSSE_CLAW_SKILLS "（可跳过）它的 skills 文件夹：OpenMousse 的 skill 软链进去 / (optional) its skills folder, OpenMousse's skills get linked in" ""
+  ask MOUSSE_CLAW_RULES "（可跳过）它每轮都读的规则文件（AGENTS.md 之类）：OpenMousse 的规矩追加进去 / (optional) the rules file it reads every turn (AGENTS.md or similar), OpenMousse's rules get appended" ""
+  export MOUSSE_CLAW_TOKEN  # 令牌走环境变量给 setup.py，不放命令行（ps 看得到）
+  CLAW_ARGS=(--claw-url "$MOUSSE_CLAW" --claw-name "${MOUSSE_CLAW_NAME:-My claw}" --claw-model "${MOUSSE_CLAW_MODEL:-default}")
+  if [ -n "$MOUSSE_CLAW_SKILLS" ]; then CLAW_ARGS+=(--claw-skills "$MOUSSE_CLAW_SKILLS"); fi
+  if [ -n "$MOUSSE_CLAW_RULES" ]; then CLAW_ARGS+=(--claw-rules "$MOUSSE_CLAW_RULES"); fi
+fi
 ask MOUSSE_TZ "你的时区 / your timezone (IANA name)" "$DEF_TZ"
 ask MOUSSE_NAME "助手叫什么 / assistant name (shown in the app)" "Mousse"
-[ -f "$MOUSSE_OPENCLAW_HOME/openclaw.json" ] || die "$MOUSSE_OPENCLAW_HOME/openclaw.json 不存在 / not found. Install OpenClaw and run openclaw onboard first."
+if [ "$CLAW_KIND" = openclaw ] && [ ! -f "$MOUSSE_OPENCLAW_HOME/openclaw.json" ]; then
+  die "$MOUSSE_OPENCLAW_HOME/openclaw.json 不存在 / not found. Install OpenClaw and run openclaw onboard first (or give another claw's OpenAI-compatible URL instead)."
+fi
 # 可以跳过的两个：Obsidian 库（世界树和思考空间放进去）、让 AI 平台连世界树（Tailscale Funnel 开公网 HTTPS）
 ask MOUSSE_VAULT "（可跳过）Obsidian 库在这台服务器上的文件夹（已在同步：Obsidian Sync / Syncthing / git），世界树和思考空间放进去，回车跳过 / (optional) Obsidian vault folder on this server (already synced: Obsidian Sync / Syncthing / git) for the memory tree and the thinking space, Enter skips" ""
 ask MOUSSE_TREE_PUBLIC "（可跳过）让 AI 平台连世界树吗？Claude.ai、ChatGPT、Gemini、Notion、DeepSeek、通义、Kimi……支持 MCP 的都行，要用 Tailscale Funnel 开公网 HTTPS / (optional) let AI platforms connect to the memory tree? Claude.ai, ChatGPT, Gemini, Notion, DeepSeek, Qwen, Kimi… any MCP client; needs Tailscale Funnel for public HTTPS (y/n)" "n"
@@ -88,5 +124,5 @@ if [ "$MOUSSE_TREE_PUBLIC" = yes ]; then OPTIONAL+=(--tree-public); fi
 
 say "配置 / configuring"
 exec "$VENV/bin/python" "$MOUSSE_DIR/packs/core/setup.py" --repo "$MOUSSE_DIR" --venv "$VENV" \
-  --openclaw-home "$MOUSSE_OPENCLAW_HOME" --tz "$MOUSSE_TZ" --name "$MOUSSE_NAME" --lang "$MOUSSE_LANG" --bind "${MOUSSE_BIND:-auto}" \
-  ${OPTIONAL[@]+"${OPTIONAL[@]}"} "$@"
+  --openclaw-home "${MOUSSE_OPENCLAW_HOME:-$DEF_HOME}" --tz "$MOUSSE_TZ" --name "$MOUSSE_NAME" --lang "$MOUSSE_LANG" --bind "${MOUSSE_BIND:-auto}" \
+  ${CLAW_ARGS[@]+"${CLAW_ARGS[@]}"} ${OPTIONAL[@]+"${OPTIONAL[@]}"} "$@"

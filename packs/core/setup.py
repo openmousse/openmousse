@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 """OpenMousse 安装器的第二段（第一段是仓库根目录的 install.sh：装依赖、建 venv、问四个问题 + 两个可以跳过的，然后调这里）。
 
-把一台已经装好 OpenClaw 的机器配成能跑 OpenMousse：
+把一台已经跑着 claw 的机器配成能跑 OpenMousse。默认是 OpenClaw（下面 1–6）；--claw-url 给了别的 claw / agent 的 OpenAI 兼容接口，
+就不碰 openclaw.json（没有 4），server.json 写 claw 段（见 server/claw.py），skills 和规矩装到 --claw-skills / --claw-rules 给的位置（没给就跳过）：
   1. ~/.openmousse/repo → 仓库（skills 里的命令都走这个固定路径）
   2. ~/.openmousse/server.json：名字、时区、语言、监听地址、OpenClaw 的位置、令牌（phone 给手机，local 给本机脚本）；
      --vault（服务器上已经在同步的 Obsidian 库）：think.vault = 库的文件夹、think.obsidian_vault = 库名（文件夹名），没设过才写
@@ -26,6 +27,7 @@
 
 用法：setup.py --repo PATH --venv PATH [--openclaw-home ~/.openclaw] [--tz Asia/Shanghai] [--name Mousse] [--lang zh|en] [--bind auto|127.0.0.1|<ip>]
                [--vault PATH] [--tree-public] [--no-systemd] [--no-tree]
+               [--claw-url http://…/v1 --claw-name NAME --claw-model MODEL [--claw-skills DIR] [--claw-rules FILE]]（令牌走环境变量 MOUSSE_CLAW_TOKEN）
 """
 from __future__ import annotations
 
@@ -47,6 +49,7 @@ SERVER_JSON = MOUSSE_HOME / "server.json"
 TREE_HOME = Path(os.environ.get("MOUSSE_TREE_HOME", Path.home() / ".mousse-tree"))  # 世界树的配置和库，和 tree/openmousse_tree/config.py 同一个位置
 FUNNEL_TIMEOUT = 30  # 秒：tailnet 还没开 Funnel 时 tailscale funnel 会一直等你去后台点开，安装不能卡在那
 SKILLS = ("handoff", "agent-builder", "journal", "memory-tree", "inbox", "dispatch", "project", "board", "proposals", "goals", "onboarding")
+GENERIC_SKILLS = tuple(s for s in SKILLS if s not in ("dispatch", "proposals"))  # 别的 claw：派活（sessions_spawn）和日结提案是 OpenClaw 那边的
 MAIN_SKILLS = tuple(s for s in SKILLS if s != "board")  # 主对话用的；board（Agent 自己的表和看板）只给 Agent；proposals（日结提案）只有主对话用
 AGENTS_MARK = "## OpenMousse"
 AGENTS_RULES_ZH = """
@@ -80,6 +83,31 @@ AGENTS_RULES_EN = """
 - **Journal**: feelings, thoughts and decisions the user mentions go into the journal with `skills/journal/`; reply with a single line of confirmation. New facts, preferences, decisions and life updates about the user go into the memory tree (`skills/memory-tree/`).
 - **Ask before you act**: things the user explicitly asked for that can be undone, just do, and say how to undo them; read-only work, just do. Your own ideas (a new skill, a new Agent, filling in a record they didn't ask about), anything that reaches other people or can't be undone (sending, spending money, going over the background budget), new scheduled jobs or notifications, and code / config / credential changes go to the app's "Needs your OK" first with `skills/inbox/`; do them only once the user approves. A message that starts with "【收件箱】", or a reply that quotes an inbox card, continues from there, per that skill.
 - Attachments from the app: images come with the message and you can see them directly; text extracted from PDF / Word / spreadsheets / code, and voice transcripts, are right in the message in `[Attachment N]` blocks, so don't ask the user to send them again.
+"""
+
+GENERIC_RULES_ZH = """
+
+## OpenMousse
+
+> 由 OpenMousse 安装器追加（{date}）。你的消息多半来自用户手机上的 OpenMousse app。
+
+- 以「【自动触发】」开头的消息不是用户在说话，是系统按时间点发的：不要提问，照它说的做，回复两行以内。
+- 消息前面带「（… 给你的说明，用户看不到）」的一段是 app 给你的前情：这个对话是哪个 Agent、它管什么、上一次的日结、项目卡。照着接上，不用复述。
+- 要问用户的问题写在回复里，不要用等待输入的工具：app 那边没人能回答工具里的提问。
+- 装了 OpenMousse 的 skills 的话：记日志、写世界树、看板和表、收件箱（要用户点头的事）、目标、项目、新建 Agent，都按对应的 skill 跑
+  `python3 ~/.openmousse/repo/server/…_ctl.py`。
+"""
+GENERIC_RULES_EN = """
+
+## OpenMousse
+
+> Appended by the OpenMousse installer ({date}). Your messages mostly come from the OpenMousse app on the user's phone.
+
+- A message that starts with "【自动触发】" is not the user talking; the system sends it at a set time. Don't ask questions, do what it says, and keep the reply to two lines or less.
+- A block at the start of a message marked as a note to you that the user doesn't see is context from the app: which Agent this conversation is, what it covers, its last daily digest, the project card. Pick up from it; no need to repeat it.
+- Put questions for the user in your reply; don't use tools that wait for input: nobody can answer them through the app.
+- If OpenMousse's skills are installed: journaling, the memory tree, boards and tables, the inbox (things that need the user's OK), goals, projects and new Agents
+  all run `python3 ~/.openmousse/repo/server/…_ctl.py` per the matching skill.
 """
 
 UI_LANG = "en"  # 这次安装用的语言（"zh" / "en"），main() 一开始就定下来；之后所有输出和写进文件的文字都按它
@@ -238,7 +266,8 @@ def think_vault(cfg: dict, vault: Path) -> None:
               f'"Open in Obsidian" in the app uses the vault name "{vault.name}" (if the vault has another name in Obsidian on your phone, change think.obsidian_vault in server.json)'))
 
 
-def write_server_json(a: argparse.Namespace, oc: dict, home: Path, workspace: Path, repo: Path, vault: Path | None = None) -> tuple[dict, dict[str, str]]:
+def write_server_json(a: argparse.Namespace, oc: dict, home: Path, workspace: Path, repo: Path, vault: Path | None = None,
+                      claw: dict | None = None) -> tuple[dict, dict[str, str]]:
     MOUSSE_HOME.mkdir(parents=True, exist_ok=True)
     link = MOUSSE_HOME / "repo"
     if (link.is_symlink() or link.exists()) and link.resolve() == repo.resolve():
@@ -286,7 +315,14 @@ def write_server_json(a: argparse.Namespace, oc: dict, home: Path, workspace: Pa
     setdefault("data_dir", str(MOUSSE_HOME / "data"))
     setdefault("dist", str(repo / "app" / "dist"))
     setdefault("openclaw_bin", shutil.which("openclaw") or "openclaw")
-    dm = default_model(oc)
+    old_claw = cfg.get("claw") if isinstance(cfg.get("claw"), dict) else {}
+    if claw:  # 别的 claw：令牌这次没给就沿用上次的（重装时回车）
+        keep = {k: v for k, v in old_claw.items() if k in ("token", "token_env", "models", "session", "headers")} if old_claw.get("kind") == "openai" else {}
+        cfg["claw"] = {**keep, **{k: v for k, v in claw.items() if v}}
+    elif old_claw.get("kind") not in (None, "openclaw"):
+        cfg.pop("claw", None)  # 换回了 OpenClaw
+        say(L("server.json 的 claw 段去掉了：换回 OpenClaw", "Removed the claw section from server.json: back to OpenClaw"))
+    dm = default_model(oc) if not claw else claw.get("model")
     if dm:
         setdefault("default_model", dm)
     setdefault("agent_default_skills", ["journal", "memory-tree", "inbox", "board", "goals"])
@@ -318,10 +354,20 @@ def write_server_json(a: argparse.Namespace, oc: dict, home: Path, workspace: Pa
 # —— 3：skills 与 AGENTS.md ——
 
 def link_skills(workspace: Path, repo: Path, home: Path) -> None:
-    sk = workspace / "skills"
-    sk.mkdir(parents=True, exist_ok=True)
+    """OpenClaw：主 agent 工作区的 skills/ 和 AGENTS.md。"""
+    install_skills(workspace / "skills", workspace / "AGENTS.md", repo, home, SKILLS, (AGENTS_RULES_ZH, AGENTS_RULES_EN))
+
+
+def install_skills(sk: Path | None, agents_md: Path | None, repo: Path, home: Path, names: tuple[str, ...], rules: tuple[str, str]) -> None:
+    """把 names 这些 skill 软链进 sk，规矩追加到 agents_md 末尾（已有「## OpenMousse」就不动）。别的 claw 没给文件夹 / 规则文件的那一样跳过。"""
     changed = False
-    for name in SKILLS:
+    if sk is None:
+        say(L("没给这个 claw 的 skills 文件夹，OpenMousse 的 skill 没装（Agent 用不了看板、收件箱这些命令；想装就重跑安装器填上）",
+              "No skills folder given for this claw, so OpenMousse's skills aren't installed (Agents can't use the board, inbox and similar commands; rerun the installer to add it)"))
+        names = ()
+    else:
+        sk.mkdir(parents=True, exist_ok=True)
+    for name in names:
         src = repo / "packs/core/skills" / name
         dst = sk / name
         if dst.is_symlink():
@@ -337,18 +383,21 @@ def link_skills(workspace: Path, repo: Path, home: Path) -> None:
         dst.symlink_to(src)
         changed = True
         say(f"skills/{name} → packs/core")
-    agents_md = workspace / "AGENTS.md"
-    text = agents_md.read_text(encoding="utf8") if agents_md.exists() else "# AGENTS.md\n"
-    if AGENTS_MARK not in text:  # 已有这一节（不管哪种语言）就不动：只补缺的，不覆盖用户改过的规则
+    text = agents_md.read_text(encoding="utf8") if agents_md and agents_md.exists() else "# AGENTS.md\n"
+    if agents_md is None:
+        say(L("没给这个 claw 的规则文件，OpenMousse 的规矩没加（app 发来的前情它照样看得到）",
+              "No rules file given for this claw, so OpenMousse's rules weren't added (it still sees the context the app sends)"))
+    elif AGENTS_MARK not in text:  # 已有这一节（不管哪种语言）就不动：只补缺的，不覆盖用户改过的规则
         digest_root = home / "shared/digest"
-        rules = L(AGENTS_RULES_ZH, AGENTS_RULES_EN)
-        text = text.rstrip("\n") + rules.format(date=datetime.now().strftime("%Y-%m-%d"), digest=digest_root / "main", digest_root=digest_root)
+        text = text.rstrip("\n") + L(*rules).format(date=datetime.now().strftime("%Y-%m-%d"), digest=digest_root / "main", digest_root=digest_root)
+        agents_md.parent.mkdir(parents=True, exist_ok=True)
         agents_md.write_text(text, encoding="utf8")
         changed = True
-        say(L("AGENTS.md 末尾追加了「## OpenMousse」规则", 'Appended the "## OpenMousse" rules to the end of AGENTS.md'))
-    (home / "shared/digest/main").mkdir(parents=True, exist_ok=True)
-    if not changed:
-        say(L("skills 和 AGENTS.md 不用改", "skills and AGENTS.md: nothing to change"))
+        say(L(f"{agents_md.name} 末尾追加了「## OpenMousse」规则", f'Appended the "## OpenMousse" rules to the end of {agents_md.name}'))
+    if rules[0] == AGENTS_RULES_ZH:
+        (home / "shared/digest/main").mkdir(parents=True, exist_ok=True)
+    if not changed and (sk is not None or agents_md is not None):
+        say(L("skills 和规则文件不用改", "skills and the rules file: nothing to change"))
 
 
 # —— 4：openclaw.json ——
@@ -493,7 +542,21 @@ def tree_public(exe: Path) -> tuple[list[str], bool]:
     return todo, True
 
 
-def setup_tree(venv: Path, cfg: dict, home: Path, no_systemd: bool, vault: Path | None = None, public: bool = False) -> list[str] | None:
+def probe_claw(c: dict) -> tuple[bool, str]:
+    """别的 claw 的接口连不连得上：GET <url>/models（多数 OpenAI 兼容接口都有；404 也算连得上，说明服务在）。不打印令牌。"""
+    import urllib.error
+    import urllib.request
+    req = urllib.request.Request(str(c.get("url") or "").rstrip("/") + "/models", headers={"Authorization": f"Bearer {c['token']}"} if c.get("token") else {})
+    try:
+        with urllib.request.urlopen(req, timeout=5) as r:  # noqa: S310 — 用户自己填的地址
+            return True, f"HTTP {r.status}"
+    except urllib.error.HTTPError as e:
+        return e.code not in (401, 403) and e.code < 500, f"HTTP {e.code}"
+    except (urllib.error.URLError, OSError, ValueError) as e:
+        return False, type(e).__name__
+
+
+def setup_tree(venv: Path, cfg: dict, home: Path, no_systemd: bool, vault: Path | None = None, public: bool = False, openclaw: bool = True) -> list[str] | None:
     """→ --tree-public 还要用户手动跑的命令（[] = 都好了；None = 没要公网，或世界树没装）。"""
     exe = venv / "bin/mousse-tree"
     tag = L("世界树：", "Memory tree: ")
@@ -511,11 +574,17 @@ def setup_tree(venv: Path, cfg: dict, home: Path, no_systemd: bool, vault: Path 
     if public:
         todo, added = tree_public(exe)
         changed = changed or added
-    r = run([str(exe), "install-openclaw", "--openclaw-home", str(home)])
-    if r.returncode == 0:
-        say(tag + " / ".join(x.strip() for x in r.stdout.strip().splitlines()[:2]))
-    else:
-        say(L("世界树 install-openclaw 失败：", "Memory tree: install-openclaw failed: ") + (r.stderr or r.stdout).strip()[-300:])
+    if openclaw:
+        r = run([str(exe), "install-openclaw", "--openclaw-home", str(home)])
+        if r.returncode == 0:
+            say(tag + " / ".join(x.strip() for x in r.stdout.strip().splitlines()[:2]))
+        else:
+            say(L("世界树 install-openclaw 失败：", "Memory tree: install-openclaw failed: ") + (r.stderr or r.stdout).strip()[-300:])
+    else:  # 别的 claw：它能连远程 MCP 的话，自己接上世界树（和 Claude.ai、ChatGPT 一样一个平台一个令牌）
+        say(tag + L("你的 claw 能连 MCP 服务的话，让它也接上世界树：`~/.openmousse/venv/bin/mousse-tree rotate myclaw` 给它一个令牌，"
+                    "地址见 `mousse-tree urls` 里 myclaw 那一行（本机用 http://127.0.0.1 开头的就行）",
+                    "if your claw can connect to MCP servers, connect it to the memory tree too: `~/.openmousse/venv/bin/mousse-tree rotate myclaw` "
+                    "gives it a token, and its address is the myclaw line of `mousse-tree urls` (the http://127.0.0.1 one is fine locally)"))
     if not no_systemd and has_systemd():
         # install-service 只 enable --now：已经在跑的服务（再跑一遍安装器）不会换上 pip 刚装的代码，也不读新配置，所以在跑的就重启
         running = run(["systemctl", "--user", "is-active", "mousse-tree.service"]).stdout.strip() == "active"
@@ -575,6 +644,11 @@ def main() -> None:
     ap.add_argument("--tree-public", action="store_true")
     ap.add_argument("--no-systemd", action="store_true")
     ap.add_argument("--no-tree", action="store_true")
+    ap.add_argument("--claw-url", help="another claw / agent's OpenAI-compatible API, up to /v1 (not OpenClaw)")
+    ap.add_argument("--claw-name")
+    ap.add_argument("--claw-model")
+    ap.add_argument("--claw-skills", help="that claw's skills folder: OpenMousse's skills get linked in")
+    ap.add_argument("--claw-rules", help="the rules file that claw reads every turn: OpenMousse's rules get appended")
     a = ap.parse_args()
     try:
         saved_lang = load_json(SERVER_JSON).get("language")
@@ -584,23 +658,40 @@ def main() -> None:
     repo, venv = Path(a.repo).expanduser().resolve(), Path(a.venv).expanduser().resolve()
     home = Path(a.openclaw_home).expanduser()
     oc_path = home / "openclaw.json"
-    if not oc_path.exists():
-        sys.exit(L(f"没找到 {oc_path}。先装好 OpenClaw、配好模型（openclaw onboard），再跑这个。",
-                   f"{oc_path} not found. Install OpenClaw and set up a model first (openclaw onboard), then run this again."))
-    oc = load_json(oc_path)
-    workspace = main_workspace(oc, home)
-    workspace.mkdir(parents=True, exist_ok=True)
+    generic = bool(a.claw_url)  # 别的 claw（OpenAI 兼容接口）：不碰 openclaw.json
+    claw = None
+    if generic:
+        claw = {"kind": "openai", "url": a.claw_url.strip().rstrip("/"), "name": (a.claw_name or "").strip() or "My claw",
+                "model": (a.claw_model or "").strip() or "default", "token": os.environ.get("MOUSSE_CLAW_TOKEN", "").strip(),
+                "skills": str(Path(a.claw_skills).expanduser()) if a.claw_skills else "", "rules": str(Path(a.claw_rules).expanduser()) if a.claw_rules else ""}
+        oc = {}
+        workspace = MOUSSE_HOME / "workspace"  # OpenMousse 自己的：档案 USER.md、记忆页读的 MEMORY.md
+        workspace.mkdir(parents=True, exist_ok=True)
+        if not (workspace / "USER.md").exists():
+            (workspace / "USER.md").write_text(L("# USER.md\n\n## 基本信息\n", "# USER.md\n\n## Basics\n"), encoding="utf8")
+    else:
+        if not oc_path.exists():
+            sys.exit(L(f"没找到 {oc_path}。先装好 OpenClaw、配好模型（openclaw onboard），再跑这个；用别的 claw 就给 --claw-url。",
+                       f"{oc_path} not found. Install OpenClaw and set up a model first (openclaw onboard), then run this again; for another claw, pass --claw-url."))
+        oc = load_json(oc_path)
+        workspace = main_workspace(oc, home)
+        workspace.mkdir(parents=True, exist_ok=True)
     print(L("配置", "Config"))
     vault = vault_dir(a.vault)
-    cfg, new_tokens = write_server_json(a, oc, home, workspace, repo, vault)
+    cfg, new_tokens = write_server_json(a, oc, home, workspace, repo, vault, claw)
     print("skills")
-    link_skills(workspace, repo, home)
-    print("openclaw.json")
-    restart = patch_openclaw(oc_path, home, cfg.get("openclaw_bin") or "openclaw")
+    restart = False
+    if generic:
+        install_skills(Path(claw["skills"]) if claw["skills"] else None, Path(claw["rules"]) if claw["rules"] else None, repo, home,
+                       GENERIC_SKILLS, (GENERIC_RULES_ZH, GENERIC_RULES_EN))
+    else:
+        link_skills(workspace, repo, home)
+        print("openclaw.json")
+        restart = patch_openclaw(oc_path, home, cfg.get("openclaw_bin") or "openclaw")
     public = None
     if not a.no_tree:
         print(L("世界树", "Memory tree"))
-        public = setup_tree(venv, cfg, home, a.no_systemd, vault, a.tree_public)
+        public = setup_tree(venv, cfg, home, a.no_systemd, vault, a.tree_public, openclaw=not generic)
     if not a.no_systemd:
         print("systemd")
         install_systemd(repo, venv, cfg["timezone"])  # 没有 systemctl 它自己说怎么手动跑
@@ -621,6 +712,10 @@ def main() -> None:
     print()
     print("=" * 60)
     print(L(f"装好了。服务地址：{url}", f"Done. Server: {url}"))
+    if generic:
+        ok, detail = probe_claw(cfg.get("claw") or {})
+        print(L(f"你的 claw：{cfg['claw'].get('name')}（{cfg['claw'].get('url')}）" + ("，接口连得上 ✓" if ok else f"，接口现在连不上 ✗（{detail}）：看它在不在跑、地址和令牌对不对，改 server.json 的 claw 段不用重启"),
+                f"Your claw: {cfg['claw'].get('name')} ({cfg['claw'].get('url')})" + (", API reachable ✓" if ok else f", API not reachable right now ✗ ({detail}): check it's running and the URL / token are right; editing the claw section of server.json needs no restart")))
     if "phone" in new_tokens:
         print(L(f"手机令牌，只显示这一次：{new_tokens['phone']}", f"Phone token, shown only this once: {new_tokens['phone']}"))
     else:
