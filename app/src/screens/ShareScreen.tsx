@@ -7,8 +7,10 @@ import { useNavigation, useRoute } from '@react-navigation/native';
 import * as Clipboard from 'expo-clipboard';
 import { getBase } from '../api/base';
 import * as shareApi from '../api/share';
+import * as fr from '../api/friends';
+import type { Friend } from '../api/friends';
 import type { Share, ShareCard, ShareFrom, ShareMask, ShareStyle } from '../api/share';
-import { Check, Copy, Eye, EyeOff, Link2, ShareIcon, ShieldCheck, TriangleAlert } from '../components/icons';
+import { Check, Copy, Eye, EyeOff, Link2, ShareIcon, ShieldCheck, TriangleAlert, Users } from '../components/icons';
 import { Markdown } from '../components/Markdown';
 import { Btn, Card, Disclosure, NavHeader, Screen, SectionLabel, Segmented, T, showError } from '../components/ui';
 import { L } from '../i18n';
@@ -77,6 +79,12 @@ export function ShareScreen() {
   const [busy, setBusy] = useState(false);
   const [note, setNote] = useState('');
   const [showAll, setShowAll] = useState(false);
+  // 发给朋友（社交第二层）：有朋友才出这一块
+  const [friends, setFriends] = useState<Friend[]>([]);
+  const [picked, setPicked] = useState<string[]>([]);
+  const [canAsk, setCanAsk] = useState(true);
+  const [withLink, setWithLink] = useState(false);
+  useEffect(() => { fr.home().then((h) => setFriends(h.friends.filter((f) => f.status === 'active'))).catch(() => setFriends([])); }, []);
 
   const load = useCallback(() => {
     const go = openId ? shareApi.getShare(openId) : from ? shareApi.createShare(from) : Promise.reject(new Error(L('没说分享什么', 'Nothing to share')));
@@ -149,13 +157,25 @@ export function ShareScreen() {
       else await NativeShare.share({ url: data.dataUri });
     } catch (e) { showError(L('没分享出去', "Couldn't share"), e); } finally { setBusy(false); }
   };
+  const sendToFriends = async () => {
+    if (!share || busy || !picked.length) return;
+    setBusy(true);
+    setNote('');
+    try {
+      const r = await fr.sendShare(share.id, { friends: picked, ask: canAsk, link: withLink && share.canLink });
+      setShare(r.share);
+      const names = friends.filter((f) => picked.includes(f.id)).map((f) => f.name);
+      setPicked([]);
+      setNote(L(`发给了 ${names.join('、')}`, `Sent to ${names.join(', ')}`));
+    } catch (e) { showError(L('没发出去', "Couldn't send"), e); } finally { setBusy(false); }
+  };
   const revoke = () => {
     if (!share) return;
     const go = async () => {
       try { await shareApi.revokeShare(share.id); setShare(await shareApi.getShare(share.id)); } catch (e) { showError(L('没收回', "Couldn't withdraw"), e); }
     };
     if (Platform.OS === 'web') { go(); return; }
-    Alert.alert(L('收回这条分享？', 'Withdraw this share?'), L('链接马上打不开，对方看到「已经收回了」。已经存下的图片收不回来。', "The link stops working right away and shows “withdrawn”. Images people already saved can't be taken back."),
+    Alert.alert(L('收回这条分享？', 'Withdraw this share?'), L('链接马上打不开，对方看到「已经收回了」；发给朋友的那几份也一起收回。已经存下的图片收不回来。', "The link stops working right away and shows “withdrawn”; copies sent to friends are withdrawn too. Images people already saved can't be taken back."),
       [{ text: L('取消', 'Cancel'), style: 'cancel' }, { text: L('收回', 'Withdraw'), style: 'destructive', onPress: go }]);
   };
 
@@ -165,7 +185,45 @@ export function ShareScreen() {
   const cardError = !shown && cardErr?.key === cardKey ? cardErr.text : '';
   const fullText = (share?.segments || []).map((s) => (s.m && !s.released ? BLOCK : s.t)).join('');
   const kindLine = share ? [share.kind === 'note' ? L('笔记', 'Note') : share.kind === 'message' ? L('对话里的一条', 'From a chat') : L('一段文字', 'Text'),
-    share.status === 'live' ? L(`已发出 · 看过 ${share.views} 次`, `Shared · ${share.views} view${share.views === 1 ? '' : 's'}`) : share.status === 'revoked' ? L('已收回', 'Withdrawn') : ''].filter(Boolean).join(' · ') : '';
+    share.status === 'live' ? L(`已发出 · 看过 ${share.views} 次`, `Shared · ${share.views} view${share.views === 1 ? '' : 's'}`) : share.status === 'friends' ? L('只发给了朋友', 'Sent to friends only')
+      : share.status === 'revoked' ? L('已收回', 'Withdrawn') : ''].filter(Boolean).join(' · ') : '';
+  const sentTo = share?.sentTo ?? [];
+  const notYet = friends.filter((f) => !sentTo.some((x) => x.id === f.id));  // 发过的不再列出来（在下面「已经发给」里）
+  const friendsBlock = share && share.status !== 'revoked' && (notYet.length || sentTo.length) ? (
+    <>
+      <SectionLabel>{L('发给朋友', 'Send to friends')}</SectionLabel>
+      <Card style={{ gap: space.md }}>
+        {notYet.length ? <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: space.sm }}>
+          {notYet.map((f) => {
+            const on = picked.includes(f.id);
+            return (
+              <Pressable key={f.id} onPress={() => setPicked(on ? picked.filter((x) => x !== f.id) : [...picked, f.id])} accessibilityRole="button" accessibilityState={{ selected: on }}
+                style={[styles.pill, { borderColor: on ? t.ink : t.line, backgroundColor: on ? t.ink : t.surface }]}>
+                <T v="callout" color={on ? t.bg : t.ink} style={{ fontWeight: '600' }}>{f.name}</T>
+              </Pressable>
+            );
+          })}
+        </View> : null}
+        {notYet.length ? <><View style={styles.switchRow}>
+          <View style={{ flex: 1, gap: 2 }}>
+            <T v="body">{L('朋友能追问', 'Friends can ask about it')}</T>
+            <T v="caption" color={t.ink3} style={{ fontSize: 13 }}>{L('你的名片 agent 按对方那一档答（「同学」只能看）', 'Your card agent answers by their tier (Classmates can only read)')}</T>
+          </View>
+          <Switch value={canAsk} onValueChange={setCanAsk} accessibilityLabel={L('朋友能追问', 'Friends can ask about it')} trackColor={{ true: t.cyan, false: t.track }} thumbColor="#FFFFFF" />
+        </View>
+        {share.canLink && share.status !== 'live' ? (
+          <View style={{ gap: space.xs }}>
+            <T v="caption" color={t.ink3}>{L('谁能看', 'Who can see it')}</T>
+            <Segmented<'only' | 'link'> value={withLink ? 'link' : 'only'} onChange={(v) => setWithLink(v === 'link')}
+              options={[{ value: 'only', label: L('只发给的人', 'Only them') }, { value: 'link', label: L('有链接的人', 'Anyone with the link') }]} />
+          </View>
+        ) : null}
+        <Btn label={busy ? L('正在发…', 'Sending…') : picked.length ? (picked.length === 1 ? L(`发给 ${friends.find((f) => f.id === picked[0])?.name}`, `Send to ${friends.find((f) => f.id === picked[0])?.name}`) : L(`发给这 ${picked.length} 个`, `Send to these ${picked.length}`)) : L('先选发给谁', 'Pick who to send it to')}
+          icon={<Users size={17} color={t.onGold} />} onPress={sendToFriends} /></> : null}
+        {sentTo.length ? <T v="caption" color={t.ink3}>{L(`已经发给：${sentTo.map((x) => x.name).join('、')}`, `Already sent to: ${sentTo.map((x) => x.name).join(', ')}`)}</T> : null}
+      </Card>
+    </>
+  ) : null;
 
   return (
     <Screen>
@@ -244,6 +302,8 @@ export function ShareScreen() {
             </Pressable>
             {showAll ? <Card><Markdown text={fullText} /></Card> : null}
 
+            {friendsBlock}
+
             {style === 'link' && !share.canLink ? (
               <View style={[styles.warn, { backgroundColor: t.warnSoft }]}>
                 <TriangleAlert size={17} color={t.warn} />
@@ -261,6 +321,12 @@ export function ShareScreen() {
             )}
             {note ? <View style={styles.noteRow}><Check size={16} color={t.good} /><T v="callout" color={t.good}>{note}</T></View> : null}
 
+            {share.status === 'friends' ? (
+              <Card style={{ gap: space.sm, marginTop: space.sm }}>
+                <T v="callout" color={t.ink2}>{L('这条只发给了朋友，链接没开。', 'Sent to friends only; the link is closed.')}</T>
+                <Btn label={L('收回（朋友那边也收回）', 'Withdraw (from friends too)')} kind="danger" onPress={revoke} />
+              </Card>
+            ) : null}
             {share.status === 'live' ? (
               <Card style={{ gap: space.sm, marginTop: space.sm }}>
                 <View style={styles.noteRow}>
@@ -290,4 +356,5 @@ const styles = StyleSheet.create({
   fold: { flexDirection: 'row', alignItems: 'center', gap: space.sm, paddingVertical: space.xs, paddingHorizontal: space.xs },
   warn: { flexDirection: 'row', gap: space.sm, alignItems: 'flex-start', padding: space.md, borderRadius: radius.md },
   noteRow: { flexDirection: 'row', alignItems: 'center', gap: space.sm },
+  pill: { height: 36, paddingHorizontal: 14, borderRadius: 18, borderWidth: 1, alignItems: 'center', justifyContent: 'center' },
 });

@@ -1,5 +1,5 @@
-import React from 'react';
-import { Platform } from 'react-native';
+import React, { useEffect } from 'react';
+import { Linking, Platform } from 'react-native';
 import { createNavigationContainerRef, DarkTheme, DefaultTheme, NavigationContainer } from '@react-navigation/native';
 import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
@@ -28,6 +28,8 @@ import { ThinkHistoryScreen, ThinkKeywordScreen, ThinkSearchScreen } from './scr
 import { SaveScreen } from './screens/SaveScreen';
 import { ShareScreen } from './screens/ShareScreen';
 import { SharesScreen } from './screens/SharesScreen';
+import { AddFriendScreen, CardAgentScreen, FriendChatScreen } from './screens/FriendsScreens';
+import { findCode } from './api/friends';
 import type { PushTarget } from './data/types';
 import { L } from './i18n';
 import { useStore } from './store';
@@ -41,9 +43,10 @@ function Tabs() {
   const t = useTheme();
   const { inbox, unread, groups, sideChats } = useStore();
   const insets = useSafeAreaInsets();
-  // 未读（青色）：「对话」= 主对话 + 项目，「Agents」= 各个 Agent，「Zen」（路由名「思考」）= 聊聊里的回复。「今天」（金色）= 等你点头的。
+  // 未读（青色）：「对话」= 主对话 + 项目 + 朋友，「Agents」= 各个 Agent，「Zen」（路由名「思考」）= 聊聊里的回复。「今天」（金色）= 等你点头的。
   const n = (id: string) => unread.threads[id]?.n ?? 0;
-  const chatUnread = n('main') + sideChats.reduce((sum, c) => sum + n(c.id), 0);
+  const friendsUnread = Object.values(unread.friends ?? {}).reduce((sum, u) => sum + u.n, 0);  // 朋友发来还没看的（「对话」页的「朋友」）
+  const chatUnread = n('main') + sideChats.reduce((sum, c) => sum + n(c.id), 0) + friendsUnread;
   const agentUnread = groups.reduce((sum, g) => sum + n(g.id), 0);
   const thinkUnread = Object.entries(unread.threads).reduce((sum, [tid, u]) => sum + (tid.startsWith('tp-') ? u.n : 0), 0);
   const cyanBadge = { backgroundColor: t.cyan, color: t.surface };
@@ -118,6 +121,9 @@ export function openTarget(target: PushTarget, isGroup = false, quote?: ChatQuot
     case 'board':
       navigationRef.navigate('Group', { id: target.agent, tab: 'board', at });
       return;
+    case 'friend':
+      navigationRef.navigate('FriendChat', { id: target.id, at });
+      return;
     default:
       tab('今天', { at });
   }
@@ -126,7 +132,22 @@ export function openTarget(target: PushTarget, isGroup = false, quote?: ChatQuot
 /** 打开某个对话（quote：顺带一条收件箱引用；focus：滚到这条消息（"db<id>"）闪一下，比如点转交卡去看 Agent 那边的那个问题）。 */
 export const openThread = (thread: string, isGroup: boolean, quote?: ChatQuote, focus?: string) => openTarget({ type: 'thread', thread }, isGroup, quote, focus);
 
+// 邀请码的深链（落地页上「在 app 里打开」：<scheme>://friends/add?code=<邀请码>）：打开「加朋友」并直接看看是谁
+let queuedCode: string | null = null;
+
+export function openAddFriend(code: string) {
+  if (!navigationRef.isReady()) { queuedCode = code; return; }
+  navigationRef.navigate('AddFriend', { code, at: Date.now() });
+}
+
+function handleUrl(url: string | null) {
+  if (!url || !/friends\/add/.test(url)) return;
+  const code = findCode(url);
+  if (code) openAddFriend(code);
+}
+
 function flushQueued() {
+  if (queuedCode && navigationRef.isReady()) { const c = queuedCode; queuedCode = null; openAddFriend(c); }
   if (!queued || !navigationRef.isReady()) return;
   const q = queued;
   queued = null;
@@ -137,6 +158,12 @@ export function RootNavigator() {
   const t = useTheme();
   const { configLoaded, needsServer } = useStore();
   const base = t.mode === 'dark' ? DarkTheme : DefaultTheme;
+  useEffect(() => {
+    if (Platform.OS === 'web') return undefined;
+    Linking.getInitialURL().then(handleUrl).catch(() => {});
+    const sub = Linking.addEventListener('url', (e) => handleUrl(e.url));
+    return () => sub.remove();
+  }, []);
   if (!configLoaded) return null;  // 先读本机的服务器配置，决定首页是连接页还是 Tabs
   // 不配置 linking：导航状态只存在内存里，不读写浏览器地址栏，网页预览放在任何路径下都能跑。
   return (
@@ -176,6 +203,10 @@ export function RootNavigator() {
         {/* 分享（社交第一层，2026-09-28）：先挡私事，再发链接或干净版卡片 */}
         <Stack.Screen name="Share" component={ShareScreen} />
         <Stack.Screen name="Shares" component={SharesScreen} />
+        {/* 朋友（社交第二层，2026-09-28）：朋友列表在「对话」页里切，这几页叠在上面 */}
+        <Stack.Screen name="FriendChat" component={FriendChatScreen} />
+        <Stack.Screen name="AddFriend" component={AddFriendScreen} />
+        <Stack.Screen name="CardAgent" component={CardAgentScreen} />
       </Stack.Navigator>
     </NavigationContainer>
   );

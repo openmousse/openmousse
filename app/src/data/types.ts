@@ -100,7 +100,9 @@ export interface Receipt { item: InboxItem; day: string }
 
 /** 未读：只列出 n > 0 的线程。last.id 是消息的数字 id（app 里的消息 id 是 "db<id>"）。 */
 export interface UnreadThread { n: number; mine: number; last?: { id: number; text: string; ts: string; origin: string } }
-export interface UnreadSummary { threads: Record<string, UnreadThread>; feedNew: string[]; inbox: number; badge: number }
+/** 朋友发来还没看的（社交第二层）：{朋友 id: {n, last}}。老服务器没有这个字段（= 没有朋友功能）。 */
+export interface UnreadFriend { n: number; last?: { text: string; ts: string; kind: string } | null }
+export interface UnreadSummary { threads: Record<string, UnreadThread>; feedNew: string[]; inbox: number; badge: number; friends?: Record<string, UnreadFriend> }
 
 /** 推送 / 小窗点开去哪。 */
 export type PushTarget =
@@ -108,6 +110,7 @@ export type PushTarget =
   | { type: 'card'; id: string; thread?: string }
   | { type: 'inbox'; id: string; thread?: string }
   | { type: 'board'; agent: string; thread?: string }   // 某个 Agent 的看板（Agent 的提醒点开到这里）
+  | { type: 'friend'; id: string; thread?: string }    // 和一个朋友的聊天（社交第二层）
   | { type: 'today' };
 
 /** 对话附件。url 是服务器地址（/api/files/id），还没上传完的用本地 uri。 */

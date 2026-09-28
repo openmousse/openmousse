@@ -112,6 +112,7 @@ function targetOf(data: Record<string, unknown> | null | undefined): PushTarget 
     if (o.type === 'card' && id) return { type: 'card', id, thread };
     if (o.type === 'inbox' && id) return { type: 'inbox', id, thread };
     if (o.type === 'board' && str('agent')) return { type: 'board', agent: str('agent') as string, thread };
+    if (o.type === 'friend' && id) return { type: 'friend', id };
     if (o.type === 'today') return { type: 'today' };
   }
   const th = data?.thread;

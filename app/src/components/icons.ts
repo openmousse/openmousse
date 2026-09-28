@@ -123,3 +123,8 @@ export { default as CircleCheck } from 'lucide-react-native/icons/circle-check';
 export { default as TriangleAlert } from 'lucide-react-native/icons/triangle-alert';
 export { default as NotebookText } from 'lucide-react-native/icons/notebook-text';
 export { default as ShareIcon } from 'lucide-react-native/icons/share';
+// 朋友（社交第二层）
+export { default as UserPlus } from 'lucide-react-native/icons/user-plus';
+export { default as UserX } from 'lucide-react-native/icons/user-x';
+export { default as Users } from 'lucide-react-native/icons/users';
+export { default as QrCode } from 'lucide-react-native/icons/qr-code';

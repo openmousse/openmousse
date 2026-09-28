@@ -10,7 +10,8 @@ import { LensAvatar } from '../components/LensAvatar';
 import { ModelSwitch } from '../components/ModelPicker';
 import { ArchiveSheet, NewProjectSheet, ProjectPanel, leftWords, projectLine } from '../components/ProjectCard';
 import { useSheet } from '../components/Sheet';
-import { Btn, Card, CountPill, Pill, Screen, T } from '../components/ui';
+import { Btn, Card, CountPill, Pill, Screen, Segmented, T } from '../components/ui';
+import { FriendsHome } from './FriendsScreens';
 import type { SideChat } from '../data/types';
 import type { ChatQuote } from '../navigation';
 import { L } from '../i18n';
@@ -220,13 +221,34 @@ export function ChatScreen() {
   useThreadOnScreen(active);
   // 侧栏里别的对话有没看的：菜单按钮上也亮一个点
   const elsewhere = Object.entries(unread.threads).some(([tid, u]) => tid !== active && u.n > 0);
+  // 顶上切「Grava | 朋友」（社交第二层）：服务器的未读里有 friends 才有朋友功能。点通知 / 小窗跳到某个对话时切回来。
+  const friendsOn = unread.friends !== undefined;
+  const friendsN = Object.values(unread.friends ?? {}).reduce((sum, u) => sum + u.n, 0);
+  const [mode, setMode] = useState<'grava' | 'friends'>(() => (Platform.OS === 'web' && typeof window !== 'undefined' && new URLSearchParams(window.location.search).get('friends') === '1' ? 'friends' : 'grava'));
+  const [seenAt, setSeenAt] = useState(wantedAt);
+  if (wantedAt !== seenAt) { setSeenAt(wantedAt); if (wanted) setMode('grava'); }
   // 新实例第一次打开：主对话空着时顶上放「从这里开始」。开场白按 app 的语言发，onboarding skill 认这两句
   const welcome = active === 'main' && connected && firstRun && !welcomeOff ? (
     <WelcomeCard onStart={() => send('main', L('我第一次用，带我走一遍。', "It's my first time here. Walk me through it."))}
       onDismiss={() => { hideWelcome(); setWelcomeOff(true); }} />
   ) : undefined;
+  const segBar = friendsOn ? (
+    <View style={styles.segBar}>
+      <Segmented<'grava' | 'friends'> value={mode} onChange={(v) => { Keyboard.dismiss(); setMode(v); }}
+        options={[{ value: 'grava', label: agentName() }, { value: 'friends', label: friendsN ? L(`朋友 · ${friendsN}`, `Friends · ${friendsN}`) : L('朋友', 'Friends') }]} />
+    </View>
+  ) : null;
+  if (friendsOn && mode === 'friends') {
+    return (
+      <Screen>
+        {segBar}
+        <FriendsHome />
+      </Screen>
+    );
+  }
   return (
     <Screen>
+      {segBar}
       <View style={[styles.head, { borderBottomColor: t.line }]}>
         <Pressable onPress={() => { Keyboard.dismiss(); setOpen(true); }} hitSlop={10} accessibilityRole="button" accessibilityLabel={L('打开侧栏', 'Open sidebar')} style={styles.menuBtn}>
           <Menu size={22} color={t.ink} />
@@ -260,6 +282,7 @@ export function ChatScreen() {
 
 const styles = StyleSheet.create({
   head: { flexDirection: 'row', alignItems: 'center', gap: space.sm, paddingHorizontal: space.md, paddingVertical: space.sm, borderBottomWidth: StyleSheet.hairlineWidth },
+  segBar: { paddingHorizontal: space.lg, paddingTop: space.xs, paddingBottom: space.xs },
   menuBtn: { width: 36, height: 36, alignItems: 'center', justifyContent: 'center' },
   dot: { position: 'absolute', top: 7, right: 6, width: 7, height: 7, borderRadius: 4 },
   sideIcon: { width: 34, height: 34, borderRadius: 17, alignItems: 'center', justifyContent: 'center' },

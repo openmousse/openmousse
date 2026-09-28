@@ -11,7 +11,8 @@ export interface ShareMask {
 /** 正文切成段：m 有值的是一处挡着（或放出来了）的地方 */
 export interface ShareSegment { t: string; m?: string; label?: string; released?: boolean }
 export interface Share {
-  id: string; kind: ShareKind; status: 'draft' | 'live' | 'revoked'; title: string; titleCustom: boolean; quote: string; quoteCustom: boolean;
+  /** friends：只发给了朋友（链接不开，社交第二层） */
+  id: string; kind: ShareKind; status: 'draft' | 'live' | 'friends' | 'revoked'; title: string; titleCustom: boolean; quote: string; quoteCustom: boolean;
   views: number; createdAt: string; publishedAt: string | null; revokedAt: string | null; day: string; time: string;
   /** 还挡着几处 / 一共认出几处 */ blocked: number; maskCount: number;
   /** 别人打得开的链接（发出去了、服务器配了对外地址才有） */ url: string | null;
@@ -19,6 +20,8 @@ export interface Share {
   /** 服务器配了对外地址没有：没配的话链接只有你自己的设备打得开 */ canLink: boolean;
   source: { thread?: string; message?: number; withQuestion?: boolean; /** 回复前面有你问的那句（能选带不带） */ hasQuestion?: boolean; path?: string; topic?: string };
   masks?: ShareMask[]; segments?: ShareSegment[];
+  /** 发给过哪些朋友（社交第二层；老服务器没有） */
+  sentTo?: { id: string; name: string }[];
 }
 export type ShareFrom = { kind: 'message'; thread: string; id: string } | { kind: 'note'; topic?: string; path?: string } | { kind: 'text'; title?: string; text: string };
 export interface ShareCard { dataUri: string; width: number; height: number }

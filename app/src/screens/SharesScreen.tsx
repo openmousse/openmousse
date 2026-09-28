@@ -22,7 +22,7 @@ export function SharesScreen() {
   // 从分享页回来（刚发出去 / 收回）时重读
   useEffect(() => nav.addListener('focus', () => { load(); }), [nav, load]);
 
-  const live = (shares || []).filter((s) => s.status === 'live');
+  const live = (shares || []).filter((s) => s.status === 'live' || s.status === 'friends');
   const gone = (shares || []).filter((s) => s.status === 'revoked');
   return (
     <Screen>
@@ -46,7 +46,10 @@ export function SharesScreen() {
           <Card style={{ paddingVertical: space.xs }}>
             {live.map((s, i) => (
               <ListRow key={s.id} icon={<Link2 size={20} color={t.cyan} />} title={s.title || L('（没有标题）', '(untitled)')}
-                sub={L(`${s.day} · 看过 ${s.views} 次${s.blocked ? ` · 挡着 ${s.blocked} 处` : ''}`, `${s.day} · ${s.views} view${s.views === 1 ? '' : 's'}${s.blocked ? ` · ${s.blocked} hidden` : ''}`)}
+                sub={s.status === 'friends'
+                  ? L(`${s.day} · 只发给了 ${(s.sentTo ?? []).map((x) => x.name).join('、') || '朋友'}`, `${s.day} · sent to ${(s.sentTo ?? []).map((x) => x.name).join(', ') || 'friends'} only`)
+                  : L(`${s.day} · 看过 ${s.views} 次${s.blocked ? ` · 挡着 ${s.blocked} 处` : ''}${s.sentTo?.length ? ` · 发给了 ${s.sentTo.map((x) => x.name).join('、')}` : ''}`,
+                    `${s.day} · ${s.views} view${s.views === 1 ? '' : 's'}${s.blocked ? ` · ${s.blocked} hidden` : ''}${s.sentTo?.length ? ` · sent to ${s.sentTo.map((x) => x.name).join(', ')}` : ''}`)}
                 onPress={() => nav.navigate('Share', { id: s.id })} last={i === live.length - 1} />
             ))}
           </Card>
