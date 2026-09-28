@@ -14,7 +14,7 @@ import { useStore } from '../store';
 import { agentTint, radius, space, type, useTheme } from '../theme';
 import { Check, ChevronLeft, ChevronRight, CircleAlert, FolderKanban, MapPin, Plus } from './icons';
 import { useSheet } from './Sheet';
-import { Btn, Disclosure, Pill, Segmented, T, showError } from './ui';
+import { Btn, Disclosure, Pill, Segmented, T, showError, useScaledWidth } from './ui';
 
 // —— 日子 ————————————————————————————————————————————————————————————
 
@@ -145,6 +145,7 @@ function EntryRow({ e, first, past, editable, onTick, onChanged }: {
 }) {
   const t = useTheme();
   const sheet = useSheet();
+  const timeW = useScaledWidth(48);
   const [open, setOpen] = useState(false);
   const dim = e.skip || e.done || (!past && e.past);
   const openEditor = () => {
@@ -172,14 +173,17 @@ function EntryRow({ e, first, past, editable, onTick, onChanged }: {
   const showActual = done && e.actualStart && (e.kind === 'event' || e.kind === 'class');
   const attendLabel = e.kind === 'class' ? [L('去了', 'Went'), L('没去', "Didn't go")] : [L('做了', 'Done'), L('没做', "Didn't")];
   const trainingDone = e.actualFrom === 'workouts';
+  const top = showActual ? e.actualStart : timeTop;
+  // 钟点只占一行（字号调大时宁可缩一点字，也不折成「11:0」「0」）；「全天」「All day」照常可以折
+  const clock = { numberOfLines: 1, adjustsFontSizeToFit: true, minimumFontScale: 0.6 } as const;
   return (
     <View style={[styles.row, !first && { borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: t.line }]}>
       <Pressable onPress={openEditor} disabled={!editable} accessibilityRole={editable ? 'button' : undefined}
         accessibilityLabel={`${timeTop} ${e.title}`} style={({ pressed }) => [styles.rowMain, { opacity: pressed ? 0.6 : 1 }]}>
-        <View style={styles.time}>
-          <T v="callout" style={[styles.tnum, { fontWeight: '600', fontSize: 15 }, dim && { color: t.ink3 }]}>{showActual ? e.actualStart : timeTop}</T>
-          {showActual ? <T v="caption" color={t.ink3} style={styles.tnum}>{e.actualEnd}</T>
-            : timeSub ? <T v="caption" color={t.ink3} style={styles.tnum}>{timeSub}</T> : null}
+        <View style={[styles.time, { width: timeW }]}>
+          <T v="callout" {...(toMin(top) != null ? clock : null)} style={[styles.tnum, { fontWeight: '600', fontSize: 15 }, dim && { color: t.ink3 }]}>{top}</T>
+          {showActual ? <T v="caption" color={t.ink3} {...clock} style={styles.tnum}>{e.actualEnd}</T>
+            : timeSub ? <T v="caption" color={t.ink3} {...clock} style={styles.tnum}>{timeSub}</T> : null}
         </View>
         <View style={{ flex: 1, minWidth: 0, gap: 3 }}>
           <T v="body" numberOfLines={2} color={dim ? t.ink3 : t.ink} style={(e.skip || e.done) ? { textDecorationLine: 'line-through' } : undefined}>
@@ -611,7 +615,7 @@ const styles = StyleSheet.create({
   card: { borderRadius: radius.lg, paddingHorizontal: space.lg, paddingVertical: space.xs },
   row: { flexDirection: 'row', gap: space.md, paddingVertical: 12, alignItems: 'flex-start' },
   rowMain: { flex: 1, minWidth: 0, flexDirection: 'row', gap: space.md },
-  time: { width: 46, gap: 1 },
+  time: { gap: 1, flexShrink: 0 },  // 宽度按系统字号算（useScaledWidth）
   tnum: { fontVariant: ['tabular-nums'] },
   tick: { width: 24, height: 24, borderRadius: 12, borderWidth: 2, alignItems: 'center', justifyContent: 'center', marginTop: 1 },
   chip: { flexDirection: 'row', alignItems: 'center', gap: 4, height: 28, borderRadius: 14, paddingHorizontal: 10 },

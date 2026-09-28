@@ -2,15 +2,17 @@
 // 同意 → 卡片收成一行回执，Agent 去做，做完回执变成结果；不要 → 记下来，同样的事不再提。
 // 想改：「今天」页上点「有要改的？去对话里说」，带着这件事的引用回到那个对话，直接说；对话里就直接打字。
 // 执行命令（OpenClaw 的审批）沿用「拒绝 / 这一次同意」：同意只放行这一次，不会变成长期授权。
-import React, { useState } from 'react';
+// 处理过的（回执、「已处理」列表的一行）点开是详情：做了什么、为什么、结果、时间；没做完可以「跟进」，带着这件事回到那个对话接着说。
+import React, { useCallback, useState } from 'react';
 import { ActivityIndicator, Platform, Pressable, StyleSheet, Text, View } from 'react-native';
 import type { InboxAction, InboxItem, InboxKind, InboxProposalInfo, InboxStatus } from '../data/types';
 import { L } from '../i18n';
-import { openThread } from '../navigation';
+import { navigationRef, openThread } from '../navigation';
 import { useStore } from '../store';
 import { radius, space, type, useTheme } from '../theme';
-import { Check, ChevronRight, CircleAlert, Flag, LoaderCircle, Pencil, Pin, Target, X } from './icons';
+import { Check, ChevronRight, CircleAlert, Flag, LoaderCircle, MessageCircle, Pencil, Pin, Target, X } from './icons';
 import { Markdown } from './Markdown';
+import { useSheet } from './Sheet';
 import { SourceBadge, useSourceName } from './SourceBadge';
 import { Pill, T, showError } from './ui';
 import { AlertPreview, BoardPreview } from './blocks/BoardPreview';
@@ -62,7 +64,9 @@ export function receiptText(item: InboxItem, name: string): { head: string; sub:
     case 'approved':
       return exec
         ? { head: L(`这一次同意 · ${title}`, `Allowed once · ${title}`), sub: L(zh(name, '接着往下做了'), `${name} is carrying on`) }
-        : { head: L(`已同意 · ${title}`, `Approved · ${title}`), sub: L(zh(name, '在做，做完这里会变成结果'), `${name} is on it. The result will show up here.`) };
+        : item.followedAt
+          ? { head: L(`跟进了 · ${title}`, `Followed up · ${title}`), sub: L(zh(name, '在接着做，做完这里会变成结果'), `${name} is back on it. The result will show up here.`) }
+          : { head: L(`已同意 · ${title}`, `Approved · ${title}`), sub: L(zh(name, '在做，做完这里会变成结果'), `${name} is on it. The result will show up here.`) };
     case 'done':
       return { head: L(`做完了 · ${title}`, `Done · ${title}`), sub: item.result || L(zh(name, '做完了'), `${name} finished it`) };
     case 'failed':
@@ -90,7 +94,9 @@ export function handledText(item: InboxItem, name: string): string {
   switch (item.status) {
     case 'done': return `${name} · ${L('完成', 'Done')}${extra(item.result)}`;
     case 'failed': return `${name} · ${L('没做成', 'Failed')}${extra(item.result)}`;
-    case 'approved': return exec ? `${name} · ${L('这一次同意', 'Allowed once')}${extra(item.result)}` : `${name} · ${L('进行中', 'In progress')}${extra(item.result)}`;
+    case 'approved': return exec ? `${name} · ${L('这一次同意', 'Allowed once')}${extra(item.result)}`
+      : item.followedAt ? `${name} · ${L('你跟进了，在接着做', 'Followed up, in progress')}${extra(item.followNote ?? '')}`
+        : `${name} · ${L('进行中', 'In progress')}${extra(item.result)}`;
     case 'revising': return `${name} · ${L('你让它改', 'You asked for changes')}${extra(item.note)}${L('。改好会再交回来', '. It will come back once changed')}`;
     case 'rejected': return `${name} · ${exec ? L('已拒绝', 'Denied') : L('没要，不会再提', "Declined, won't come up again")}${extra(item.result)}`;
     case 'withdrawn': return `${name} · ${L('撤回了', 'Withdrawn')}${extra(item.result)}`;
@@ -230,15 +236,17 @@ function PendingCard({ item, chat }: { item: InboxItem; chat: boolean }) {
   );
 }
 
-/** 处理过的：一行回执（状态圆点 + 「已同意 · 标题」+ 说明 / 结果）。开好了的项目右边是「去看看」。 */
+/** 处理过的：一行回执（状态圆点 + 「已同意 · 标题」+ 说明 / 结果），点开看详情、跟进。开好了的项目右边是「去看看」。 */
 function InboxReceipt({ item, chat }: { item: InboxItem; chat: boolean }) {
   const t = useTheme();
   const nameOf = useSourceName();
+  const openDetail = useInboxDetail();
   const name = item.sourceName || nameOf(item.source);
   const r = receiptText(item, name);
   const project = item.kind === 'project' && item.project?.action === 'open' && item.status === 'done' ? item.project.project : undefined;
   return (
-    <View style={[styles.rcpt, chat && styles.chatRcpt, { backgroundColor: t.surface, borderColor: t.line }]} accessible={!project} accessibilityLabel={`${r.head}${L('，', ', ')}${r.sub}`}>
+    <Pressable onPress={() => openDetail(item)} accessible={!project} accessibilityRole="button" accessibilityLabel={`${r.head}${L('，', ', ')}${r.sub}`} accessibilityHint={L('看详情', 'Shows the details')}
+      style={({ pressed }) => [styles.rcpt, chat && styles.chatRcpt, { backgroundColor: t.surface, borderColor: t.line, opacity: pressed ? 0.7 : 1 }]}>
       <StatusCircle status={item.status} exec={item.kind === 'exec'} />
       <View style={{ flex: 1, gap: 2 }}>
         <T v="headline" numberOfLines={1} style={{ fontSize: 15 }}>{r.head}</T>
@@ -250,7 +258,178 @@ function InboxReceipt({ item, chat }: { item: InboxItem; chat: boolean }) {
           <T v="callout" color={t.gold} style={{ fontWeight: '600' }}>{L('去看看', 'Open')}</T>
           <ChevronRight size={15} color={t.gold} />
         </Pressable>
-      ) : <T v="caption" color={t.ink3}>{relTime(item.decidedAt)}</T>}
+      ) : (
+        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 2 }}>
+          <T v="caption" color={t.ink3}>{relTime(item.followedAt || item.decidedAt)}</T>
+          <ChevronRight size={14} color={t.ink3} />
+        </View>
+      )}
+    </Pressable>
+  );
+}
+
+// —— 详情：处理过的一件事点开 ——
+
+/** 时间点：今天 20:01 / 昨天 20:01 / 9月27日 20:01。 */
+function stamp(iso: string | null | undefined): string {
+  const ms = iso ? Date.parse(iso) : NaN;
+  if (Number.isNaN(ms)) return '';
+  const d = new Date(ms);
+  const hm = `${pad(d.getHours())}:${pad(d.getMinutes())}`;
+  const day = (x: Date) => x.toLocaleDateString('en-CA');
+  const yest = new Date(); yest.setDate(yest.getDate() - 1);
+  if (day(d) === day(new Date())) return L(`今天 ${hm}`, `Today ${hm}`);
+  if (day(d) === day(yest)) return L(`昨天 ${hm}`, `Yesterday ${hm}`);
+  return `${d.toLocaleDateString(L('zh-CN', 'en'), { month: 'short', day: 'numeric' })} ${hm}`;
+}
+
+/** 中文里名字是英文（比如 Grava）时，前面空一格。 */
+const lead = (name: string) => (/^[A-Za-z0-9]/.test(name) ? ` ${name}` : name);
+
+/** 详情顶上那一句：现在是什么状态。 */
+function statusWord(item: InboxItem): string {
+  const exec = item.kind === 'exec';
+  switch (item.status) {
+    case 'approved':
+      return exec ? L('这一次同意了', 'Allowed once') : item.followedAt ? L('你跟进了，在接着做', 'Followed up, back in progress') : L('同意了，在做', 'Approved, in progress');
+    case 'done': return L('做完了', 'Done');
+    case 'failed': return L('没做成', "Didn't work");
+    case 'rejected': return exec ? L('已拒绝', 'Denied') : L('没要', 'Declined');
+    case 'revising': return L('你让它改，等它交回来', 'Changes asked, waiting for it');
+    case 'withdrawn': return L('撤回了', 'Withdrawn');
+    case 'expired': return L('过期作废了', 'Expired');
+    default: return L('等你点头', 'Waiting for your OK');
+  }
+}
+
+/** 「跟进」上面那句：点了会怎样。 */
+function followHint(item: InboxItem, name: string): string {
+  switch (item.status) {
+    case 'approved':
+      return L(zh(name, '还没报结果。跟进：带着这件事去对话里问问进展。'), `${name} hasn't reported back yet. Follow up to ask how it's going, with this item attached.`);
+    case 'done':
+    case 'failed':
+      return L(`${item.status === 'done' ? '还差点什么？' : '想再试，或者换个办法？'}跟进会把它改回「在做」，你说的话连同这件事一起交给${lead(name)}。`,
+        `${item.status === 'done' ? 'Something still missing?' : 'Try again, or another way?'} Following up puts it back in progress and hands ${name} what you say along with this item.`);
+    case 'revising':
+      return L('跟进：带着这件事去对话里接着说要怎么改。', 'Follow up to keep talking about the changes, with this item attached.');
+    default:
+      return L(`改主意了？跟进：带着这件事去对话里跟${zh(lead(name), '说')}，要做的话它会重新提一条等你点头。`,
+        `Changed your mind? Follow up to tell ${name}; if it should happen after all, it will ask for your OK again.`);
+  }
+}
+
+/** 打开一件事的详情（弹层）。「已处理」列表、「今天」和对话里的回执都用它。 */
+export function useInboxDetail() {
+  const sheet = useSheet();
+  return useCallback((item: InboxItem) => sheet.open({ title: item.title, content: (close) => <InboxDetail item={item} close={close} /> }), [sheet]);
+}
+
+/** 详情：状态、结果、你跟进过的话，接着「看原对话」「跟进」，再往下是为什么、会改什么、细节、时间。弹层画在导航外面：跳转走 navigationRef。 */
+function InboxDetail({ item, close }: { item: InboxItem; close: () => void }) {
+  const t = useTheme();
+  const { groups } = useStore();
+  const nameOf = useSourceName();
+  const name = item.sourceName || nameOf(item.source);
+  const exec = item.kind === 'exec';
+  const canFollow = !exec && !!item.thread && item.status !== 'pending';
+  // 跟进：回到提这件事的对话，输入框上面是「跟进：标题」；发出去时服务器给模型带上这件事的前情，做完 / 没做成的改回在做
+  const follow = () => { close(); openThread(item.thread, groups.some((g) => g.id === item.thread), { inboxId: item.id, title: item.title, follow: true }); };
+  // 看原对话：那天的记录，滚到提它的那条回复
+  const original = item.messageId != null && item.day && item.thread
+    ? () => { close(); navigationRef.navigate('HistoryDay', { thread: item.thread, day: item.day, focus: `db${item.messageId}` }); }
+    : undefined;
+  const fields = item.fields ?? [];
+  const keyW = Math.min(96, Math.max(28, ...fields.map((f) => [...f.k].reduce((w, ch) => w + (/[　-鿿]/.test(ch) ? 13 : 8), 0))));
+  const times: [string, string][] = [[L('提出', 'Raised'), stamp(item.createdAt)]];
+  if (item.decidedAt) times.push([item.status === 'rejected' ? L('你没要', 'You declined') : item.status === 'revising' ? L('你让它改', 'You asked for changes') : L('你同意', 'You approved'), stamp(item.decidedAt)]);
+  if (item.followedAt) times.push([L('你跟进', 'You followed up'), stamp(item.followedAt)]);
+  const last = Math.max(Date.parse(item.decidedAt ?? '') || 0, Date.parse(item.followedAt ?? '') || 0, Date.parse(item.createdAt) || 0);
+  if (item.updatedAt && (Date.parse(item.updatedAt) || 0) - last > 60_000) {
+    times.push([item.status === 'done' ? L('做完', 'Finished') : item.status === 'failed' ? L('报没做成', 'Reported failed') : L('最后更新', 'Last update'), stamp(item.updatedAt)]);
+  }
+  return (
+    <View style={{ gap: space.md, paddingBottom: space.sm }}>
+      <View style={styles.dHead}>
+        <StatusCircle status={item.status} exec={exec} size={36} />
+        <View style={{ flex: 1, gap: 4 }}>
+          <T v="headline" style={{ fontSize: 17 }}>{statusWord(item)}</T>
+          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+            <SourceBadge source={item.source} size={20} />
+            <T v="caption" color={t.ink2} numberOfLines={1} style={{ fontSize: 13, fontWeight: '600', flexShrink: 1 }}>{name}</T>
+            <Pill label={kindLabel(item.kind)} tone={kindTone(item.kind)} />
+          </View>
+        </View>
+      </View>
+      {item.result ? (
+        <View style={[styles.box, { backgroundColor: item.status === 'failed' ? t.badSoft : t.surface, borderColor: t.line }]}>
+          <T v="caption" color={t.ink3} style={{ fontWeight: '600' }}>{item.status === 'failed' ? L('没做成的原因', "Why it didn't work") : L('结果', 'Result')}</T>
+          <T v="callout" selectable style={{ lineHeight: 21 }}>{item.result}</T>
+        </View>
+      ) : null}
+      {item.followedAt && item.followNote ? (
+        <View style={[styles.box, { backgroundColor: t.goldSoft, borderColor: t.line }]}>
+          <T v="caption" color={t.ink3} style={{ fontWeight: '600' }}>{L(`你跟进时说 · ${stamp(item.followedAt)}`, `You said when following up · ${stamp(item.followedAt)}`)}</T>
+          <T v="callout" selectable style={{ lineHeight: 21 }}>{item.followNote}</T>
+        </View>
+      ) : null}
+      {item.note && (item.status === 'revising' || item.status === 'rejected') ? (
+        <View style={[styles.box, { backgroundColor: t.surface, borderColor: t.line }]}>
+          <T v="caption" color={t.ink3} style={{ fontWeight: '600' }}>{item.status === 'revising' ? L('你让它这样改', 'Your changes') : L('你说的理由', 'Your reason')}</T>
+          <T v="callout" selectable style={{ lineHeight: 21 }}>{item.note}</T>
+        </View>
+      ) : null}
+      {/* 跟进放在结果下面、细节上面：细节可能很长，按钮不能沉到底 */}
+      {canFollow ? <T v="callout" color={t.ink2} style={{ lineHeight: 20 }}>{followHint(item, name)}</T> : null}
+      {canFollow || original ? (
+        <View style={styles.actions}>
+          {original ? <CardBtn kind="quiet" label={L('看原对话', 'See the chat')} icon={MessageCircle} onPress={original} /> : null}
+          {canFollow ? <CardBtn kind="primary" label={L('跟进', 'Follow up')} icon={ChevronRight} onPress={follow} /> : null}
+        </View>
+      ) : null}
+      {item.why ? (
+        <View style={{ gap: 4 }}>
+          <T v="caption" color={t.ink3} style={{ fontWeight: '600' }}>{L('为什么', 'Why')}</T>
+          <T v="callout" color={t.ink2} selectable style={{ lineHeight: 21 }}>{item.why}</T>
+        </View>
+      ) : null}
+      {item.changes.length ? (
+        <View style={[styles.box, { backgroundColor: t.surface, borderColor: t.line }]}>
+          <T v="caption" color={t.ink3} style={{ fontWeight: '600' }}>{L('会改什么', 'What changes')}</T>
+          {item.changes.map((c, i) => (
+            <View key={`${i}-${c}`} style={styles.li}>
+              <View style={[styles.dot, { backgroundColor: t.ink3 }]} />
+              <T v="callout" style={{ flex: 1 }}>{c}</T>
+            </View>
+          ))}
+        </View>
+      ) : null}
+      {item.skill || item.agent ? <ProposalPreview info={(item.skill ?? item.agent) as InboxProposalInfo} kind={item.kind} /> : null}
+      {item.kind === 'project' && item.project?.action === 'open' ? <ProjectPreview info={item.project} /> : null}
+      {item.detail && !(item.kind === 'project' && item.project?.action === 'open') ? (
+        <View style={[styles.box, { backgroundColor: t.surface, borderColor: t.line }]}>
+          <T v="caption" color={t.ink3} style={{ fontWeight: '600' }}>{L('细节', 'Details')}</T>
+          <Markdown text={item.detail} color={t.ink2} compact />
+        </View>
+      ) : null}
+      {fields.length ? (
+        <View style={[styles.box, { backgroundColor: t.surface, borderColor: t.line, gap: 4 }]}>
+          {fields.map((f, i) => (
+            <View key={`${i}-${f.k}`} style={{ flexDirection: 'row', gap: 10 }}>
+              <Text style={[styles.mono, { color: t.ink3, width: keyW }]}>{f.k}</Text>
+              <Text selectable style={[styles.mono, { color: t.ink, flex: 1 }]}>{f.v}</Text>
+            </View>
+          ))}
+        </View>
+      ) : null}
+      <View style={{ gap: 3 }}>
+        {times.map(([k, v]) => (
+          <View key={k} style={{ flexDirection: 'row', gap: 8 }}>
+            <T v="caption" color={t.ink3} style={{ fontSize: 13, minWidth: 64 }}>{k}</T>
+            <T v="caption" color={t.ink2} style={{ fontSize: 13, fontVariant: ['tabular-nums'] }}>{v}</T>
+          </View>
+        ))}
+      </View>
     </View>
   );
 }
@@ -335,6 +514,7 @@ const styles = StyleSheet.create({
   actions: { flexDirection: 'row', gap: space.sm, paddingTop: 2 },
   btn: { flexDirection: 'row', gap: 6, alignItems: 'center', justifyContent: 'center', borderRadius: radius.md, paddingHorizontal: space.lg, height: 44 },
   rcpt: { flexDirection: 'row', alignItems: 'center', gap: space.md, borderRadius: 14, paddingVertical: space.md, paddingHorizontal: 14 },
+  dHead: { flexDirection: 'row', alignItems: 'center', gap: space.md },
   prev: { flexDirection: 'row', alignItems: 'flex-start', gap: 10, paddingVertical: 8 },
   quote: { gap: 1, paddingVertical: 2 },
   prevIcon: { width: 24, height: 24, borderRadius: 8, alignItems: 'center', justifyContent: 'center' },

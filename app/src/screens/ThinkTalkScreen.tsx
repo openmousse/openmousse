@@ -77,7 +77,7 @@ export function ThinkTalkScreen() {
 
   return (
     <Screen>
-      <Header title={topic?.title ?? L('思考', 'Thinking')} sub={L(`主题 · ${talking.length} 条碎片 · 不进主对话`, `Topic · ${talking.length} thoughts · separate from the main chat`)}
+      <Header title={topic?.title ?? 'Zen'} sub={L(`主题 · ${talking.length} 条碎片 · 不进主对话`, `Topic · ${talking.length} thoughts · separate from the main chat`)}
         onBack={() => nav.goBack()} icon={<Pressable onPress={rename} accessibilityRole="button" accessibilityLabel={L('改主题名字', 'Rename the topic')} style={[styles.icon, { backgroundColor: t.tints.gold.soft }]}><Lightbulb size={18} color={t.tints.gold.fg} /></Pressable>}
         right={<View style={{ flexDirection: 'row', alignItems: 'center', gap: space.sm }}><Pressable onPress={rename} hitSlop={8} accessibilityRole="button"><T v="callout" color={t.gold}>{L('改名', 'Rename')}</T></Pressable><Pressable onPress={finish} accessibilityRole="button" style={({ pressed }) => [styles.doneBtn, { backgroundColor: t.goldFill, opacity: pressed ? 0.8 : 1 }]}>
           <Check size={14} color={t.onGold} strokeWidth={3} /><Text style={[type.callout, { color: t.onGold, fontWeight: '700' }]}>{L('想完了', 'Done')}</Text>
@@ -223,7 +223,7 @@ export function ThinkDoneScreen() {
             <T v="callout" color={t.good}>{L(`库 › ${saved.path}，Obsidian 里也能看。${saved.tree ? '世界树记了一条。' : ''}用到的碎片挪进了「已想完」。`, `Vault › ${saved.path}, also in Obsidian.${saved.tree ? ' One memory-tree leaf added.' : ''} The thoughts moved to Done.`)}</T>
             <View style={{ flexDirection: 'row', gap: space.sm, marginTop: 4 }}>
               {obsidian ? <Btn label={L('在 Obsidian 里打开', 'Open in Obsidian')} kind="quiet" onPress={() => Linking.openURL(`obsidian://open?vault=${encodeURIComponent(obsidian)}&file=${encodeURIComponent(saved.path.replace(/\.md$/, ''))}`).catch(() => {})} /> : null}
-              <Btn label={L('回到思考', 'Back to Think')} onPress={() => nav.navigate('Tabs', { screen: '思考' })} />
+              <Btn label={L('回到 Zen', 'Back to Zen')} onPress={() => nav.navigate('Tabs', { screen: '思考' })} />
             </View>
           </View>
         ) : null}

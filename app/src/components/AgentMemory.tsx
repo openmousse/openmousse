@@ -11,7 +11,7 @@ import { space, useTheme } from '../theme';
 import { ForgetSheet } from './MemoryList';
 import { clean, memoryDate, memoryTitle, memoryWho } from './memoryText';
 import { useSheet } from './Sheet';
-import { Btn, Card, Disclosure, SectionLabel, T } from './ui';
+import { Btn, Card, Disclosure, SectionLabel, T, useScaledWidth } from './ui';
 
 const RULES = /规则|偏好|原则|习惯|rule|prefer|principle|habit/i;
 type Bucket = 'rules' | 'state';
@@ -100,13 +100,14 @@ const KIND = (t: ReturnType<typeof useTheme>): Record<JournalEntry['kind'], { la
 function JournalRow({ e }: { e: JournalEntry }) {
   const t = useTheme();
   const sheet = useSheet();
+  const timeW = useScaledWidth(42);
   const [open, setOpen] = useState(false);
   const k = KIND(t)[e.kind] ?? KIND(t).note;
   return (
     <View>
       <Pressable onPress={() => setOpen((v) => !v)} accessibilityRole="button" accessibilityState={{ expanded: open }}
         style={({ pressed }) => [styles.jr, { opacity: pressed ? 0.6 : 1 }]}>
-        <T v="caption" color={t.ink3} style={styles.jt}>{e.time}</T>
+        <T v="caption" color={t.ink3} numberOfLines={1} adjustsFontSizeToFit minimumFontScale={0.6} style={[styles.jt, { width: timeW }]}>{e.time}</T>
         <View style={[styles.jd, { backgroundColor: k.dot }]} />
         <T v="body" style={{ flex: 1, fontSize: 15, lineHeight: 22 }}>
           <T v="caption" color={k.fg} style={{ fontWeight: '600' }}>{k.label}{'  '}</T>{e.text}
@@ -219,7 +220,7 @@ const styles = StyleSheet.create({
   title: { fontSize: 15, fontWeight: '600', lineHeight: 20 },
   full: { borderRadius: 12, paddingVertical: 10, paddingHorizontal: space.md },
   jr: { flexDirection: 'row', alignItems: 'flex-start', gap: 8, paddingVertical: 9 },
-  jt: { width: 42, fontWeight: '400', marginTop: 3, fontVariant: ['tabular-nums'] },
+  jt: { fontWeight: '400', marginTop: 3, fontVariant: ['tabular-nums'] },  // 宽度按系统字号算（useScaledWidth）
   jd: { width: 8, height: 8, borderRadius: 4, marginTop: 7 },
   jmore: { marginLeft: 58, gap: 6, paddingBottom: 8 },
   foot: { marginTop: space.lg, paddingHorizontal: space.xs, lineHeight: 18, fontWeight: '400' },

@@ -52,7 +52,7 @@ export function ThinkScreen() {
 
   return (
     <Screen>
-      <LargeHeader title={L('思考', 'Think')} sub={tab === 'ideas' ? L('想到什么先扔进来，它不看', "Drop thoughts here. It won't read them.") : L('别人的好东西，先存着', "Keep other people's good stuff")} right={right} />
+      <LargeHeader title="Zen" sub={tab === 'ideas' ? L('想到什么先扔进来，它不看', "Drop thoughts here. It won't read them.") : L('别人的好东西，先存着', "Keep other people's good stuff")} right={right} />
       <View style={{ paddingHorizontal: space.lg, gap: 10, paddingBottom: space.sm }}>
         <View style={[styles.seg, { backgroundColor: t.surface2 }]} accessibilityRole="tablist">
           {([['ideas', L('想法', 'Thoughts'), 0], ['saves', L('收藏', 'Saved'), savesNew]] as const).map(([k, label, n]) => {

@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { Alert, Platform, Pressable, RefreshControl, StyleSheet, Text, TextProps, View, ViewProps, type RefreshControlProps } from 'react-native';
+import { Alert, Platform, Pressable, RefreshControl, StyleSheet, Text, TextProps, View, ViewProps, useWindowDimensions, type RefreshControlProps } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { ChevronLeft, ChevronRight, ChevronUp, Pencil } from './icons';
 import { L } from '../i18n';
@@ -33,6 +33,15 @@ export function PullRefresh({ onRefresh, ...rest }: Omit<RefreshControlProps, 'r
 export function T({ v = 'body', color, style, ...rest }: TextProps & { v?: keyof typeof type; color?: string }) {
   const t = useTheme();
   return <Text style={[type[v], { color: color ?? t.ink }, style]} {...rest} />;
+}
+
+/**
+ * 放钟点的定宽列（日程左边的「11:00」、日志的时间）跟着系统字号一起放宽：字号调大以后，固定的宽度会把「11:00」折成「11:0」「0」两行。
+ * 最多放宽到 1.6 倍，再大的辅助字号由那一行自己缩字（numberOfLines={1} + adjustsFontSizeToFit）。
+ */
+export function useScaledWidth(base: number): number {
+  const { fontScale } = useWindowDimensions();
+  return Math.round(base * Math.min(Math.max(fontScale || 1, 1), 1.6));
 }
 
 export function LargeHeader({ title, sub, right }: { title: string; sub?: string; right?: React.ReactNode }) {

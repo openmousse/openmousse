@@ -85,7 +85,7 @@ export function SaveScreen() {
   const actions = [
     { Icon: MessageCircle, label: L('问问', 'Ask'), sub: L('带着这篇去主对话', 'Take it to the main chat'), color: t.cyan, go: ask },
     { Icon: Forward, label: L('交给 Agent', 'Hand to an Agent'), sub: sent ? L(`交给了「${sent}」`, `Handed to "${sent}"`) : L('求职、饮食记录……', 'Jobs, diet…'), color: t.cyan, go: give },
-    { Icon: Lightbulb, label: L('放进思考', 'Into Think'), sub: L('变成一条想法', 'Becomes a thought'), color: t.gold, go: toIdea },
+    { Icon: Lightbulb, label: L('放进 Zen', 'Into Zen'), sub: L('变成一条想法', 'Becomes a thought'), color: t.gold, go: toIdea },
     { Icon: Languages, label: L('翻译', 'Translate'), sub: L('整篇译成中文', 'The whole thing'), color: t.cyan, go: translate },
     { Icon: BookOpen, label: L('提炼进库', 'Distill'), sub: L('写成你的笔记', 'Into your own note'), color: t.good, go: distill },
     { Icon: Trash2, label: L('删掉', 'Delete'), sub: L('能恢复', 'Recoverable'), color: t.bad, go: menu },

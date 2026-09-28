@@ -126,7 +126,8 @@ interface Actions {
   syncHealthNow(full?: boolean): Promise<void>;
   /** 点了「我起来了」：告诉服务器，马上出起床报告。 */
   imUp(): Promise<void>;
-  /** inboxId：这条是对收件箱里某件事的修改意见（从「今天」的「去对话里说」带过来），那件事在本地先标成「改一下」。 */
+  /** inboxId：这条引用了收件箱里的一件事。还没定下来的 = 修改意见（「今天」的「去对话里说」），本地先标成「改一下」；
+   *  定下来的 = 跟进（「已处理」详情里的「跟进」），做完 / 没做成的本地先标回「在做」，记下跟进的话。 */
   send(threadId: string, text: string, files?: PendingFile[], opts?: { inboxId?: string; ref?: string; save?: string }): void;
   deleteJournal(id: string): Promise<void>;
   /** 下拉刷新看板：只重读看板数据（训记 / 健康 / 派生指标）和建议、日志、申请，不重连、不重读全部。 */
@@ -880,9 +881,17 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
     if (opts?.inboxId) LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut);
     setS((st) => {
       const next = { ...appendMsg(st, threadId, mine), typing: { ...st.typing, [threadId]: true }, sideChats: st.sideChats.map((c) => (c.id === threadId ? { ...c, updatedAt: Date.now() } : c)) };
-      // 对收件箱里某件事的修改意见：那件事先在本地标成「改一下」（服务器收到 inboxId 会把它退回去改）
-      const item = opts?.inboxId ? st.inbox.find((i) => i.id === opts.inboxId) ?? Object.values(st.inboxByThread).flat().find((i) => i.id === opts.inboxId) : undefined;
-      return item ? settle(next, { ...item, status: 'revising', note: text, decidedAt: new Date().toISOString() }) : next;
+      // 引用了收件箱里的一件事：和服务器（inbox.py 的 reply_context / follow_context）一样先在本地改好
+      const item = opts?.inboxId ? st.inbox.find((i) => i.id === opts.inboxId) ?? Object.values(st.inboxByThread).flat().find((i) => i.id === opts.inboxId)
+        ?? st.inboxRecent.find((i) => i.id === opts.inboxId) : undefined;
+      if (!item || item.kind === 'exec') return next;
+      const now = new Date().toISOString();
+      // 还没定下来的：修改意见，标成「改一下」（服务器把它退回去改）
+      if (item.status === 'pending' || item.status === 'revising') return settle(next, { ...item, status: 'revising', note: text, decidedAt: now });
+      // 定下来的：跟进。做完 / 没做成的回到「在做」，「今天」上出一条「跟进了」的回执；没要 / 撤回 / 过期的只记下跟进
+      const followed: InboxItem = { ...item, status: item.status === 'done' || item.status === 'failed' ? 'approved' : item.status, followedAt: now, followNote: text };
+      const withRecent = { ...next, inboxRecent: next.inboxRecent.map((i) => (i.id === item.id ? followed : i)) };
+      return followed.status === 'approved' ? settle(withRecent, followed) : withRecent;
     });
     const swapId = (userId: string) => setS((st) => ({ ...st, threads: { ...st.threads, [threadId]: (st.threads[threadId] ?? []).map((m) => (m.id === mine.id ? { ...m, id: userId } : m)) } }));
     api.current.send(threadId, text, modelId, (partial) => setS((st) => ({ ...st, streaming: { ...st.streaming, [threadId]: partial } })), swapId, files,
@@ -891,6 +900,7 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
       // 可能刚写了一张建议卡、提了一件要你点头的事、转给了某个 Agent、派了任务
       .then((reply) => {
         reload('feed', 'schedule', 'remember', 'goals'); loadThreadInbox(threadId).catch(() => {}); loadThreadCards(threadId, true).catch(() => {});
+        if (opts?.inboxId) reload('inboxRecent');  // 跟进过的那件事：它可能已经报了新结果
         if (latest.current.sideChats.some((c) => c.id === threadId)) { loadProjectRef.current(threadId).catch(() => {}); reload('sideChats').catch(() => {}); }  // 它可能改了项目卡
         return reply;
       })

@@ -6,7 +6,7 @@ import { ChevronLeft, ChevronRight, LoaderCircle, X } from '../components/icons'
 import { InboxCard } from '../components/InboxCard';
 import { SourcePill } from '../components/SourceBadge';
 import { modelName, originName } from '../components/TaskCard';
-import { Card, LargeHeader, ListRow, Pill, PullRefresh, Screen, SectionLabel, T } from '../components/ui';
+import { Card, LargeHeader, ListRow, Pill, PullRefresh, Screen, SectionLabel, T, useScaledWidth } from '../components/ui';
 import type { FeedItem, InboxItem, JournalEntry, ScheduleEntry, UpcomingTask } from '../data/types';
 import { dataApi } from '../api/data';
 import * as sched from '../api/schedule';
@@ -128,6 +128,7 @@ type DayData = { events: ScheduleEntry[]; editable: boolean; feed: FeedItem[]; e
 /** 翻到别的日子：那天的日程（过去的记实际发生的）、Grava 的建议卡、日志。审批 / 后台任务 / 定时任务只跟"现在"有关，只在今天显示。 */
 function DayView({ iso, offset, refreshKey }: { iso: string; offset: number; refreshKey: number }) {
   const t = useTheme();
+  const timeW = useScaledWidth(52);
   const { journal, connected, reload } = useStore();
   // 按日期缓存，翻回来不用重读；下拉刷新（refreshKey 变）或在这一页改了日程（edits 变）时重读当前这天。
   const [days, setDays] = useState<Record<string, DayData>>({});
@@ -169,7 +170,7 @@ function DayView({ iso, offset, refreshKey }: { iso: string; offset: number; ref
           <Card style={{ paddingVertical: space.xs }}>
             {entries.map((e, i) => (
               <View key={e.id} style={[styles.ev, i < entries.length - 1 && { borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: t.line }]}>
-                <View style={{ width: 52 }}><T v="callout" color={t.ink3} style={{ fontVariant: ['tabular-nums'] }}>{e.time}</T></View>
+                <View style={{ width: timeW }}><T v="callout" color={t.ink3} numberOfLines={1} adjustsFontSizeToFit minimumFontScale={0.6} style={{ fontVariant: ['tabular-nums'] }}>{e.time}</T></View>
                 <View style={{ flex: 1, gap: 4 }}>
                   <View style={{ flexDirection: 'row', gap: 6 }}><Pill label={kindLabel(e.kind) ?? e.kind} /><SourcePill source={e.groupId} /></View>
                   <T v="body">{e.text}</T>

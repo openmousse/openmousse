@@ -84,6 +84,13 @@ export interface InboxItem {
   level: 'ring' | 'quiet' | 'none';
   createdAt: string;
   decidedAt: string | null;
+  /** 最后一次变化（报结果、跟进）的时间。老服务器没有 */
+  updatedAt?: string;
+  /** 提这件事的那天（服务器的逻辑日，04:00 为界）：「看原对话」打开那天的记录。老服务器没有 */
+  day?: string;
+  /** 「已处理」里点了「跟进」、在对话里接着说过这件事（server/inbox.py 的 follow_context）：最近一次的时间和那句话 */
+  followedAt?: string | null;
+  followNote?: string;
   /** app 自己加的：老服务器（/api/approvals）没有 ISO 时间，只有显示用的文字 */
   whenText?: string;
 }

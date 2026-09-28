@@ -421,7 +421,7 @@ export function ChatView({ threadId, placeholder, empty, quote: quoteProp, quote
       return;
     }
     if ((!text && !pending.length) || busy || transcribing) return;
-    // 带着引用：这条是对收件箱里那件事的修改意见（服务器收到 inboxId 会把它退回去改）；收藏：模型另外看到那条收藏
+    // 带着引用：收件箱里还没定下来的那件事 = 修改意见（服务器收到 inboxId 会把它退回去改），处理过的 = 跟进；收藏：模型另外看到那条收藏
     send(threadId, text, pending.length ? pending : undefined, quote?.inboxId ? { inboxId: quote.inboxId } : quote?.ref ? { ref: quote.ref } : quote?.saveId ? { save: quote.saveId } : undefined);
     setDraft('');
     setPending([]);
@@ -473,8 +473,8 @@ export function ChatView({ threadId, placeholder, empty, quote: quoteProp, quote
         <View style={{ gap: space.sm }}>
           <Action icon={Copy} label={L('复制', 'Copy')} onPress={() => { close(); Clipboard.setStringAsync(text).catch(() => {}); }} />
           {m.id.startsWith('db') && m.role !== 'auto' ? (
-            <Action icon={Bookmark} label={L('收藏', 'Save')} note={L('存进「思考 → 收藏」，以后能搜、能交给 Agent', 'Keep it in Think → Saved to search or hand to an Agent later')}
-              onPress={() => { close(); saveMessage(threadId, m.id).then(() => Alert.alert(L('收藏好了', 'Saved'), L('在「思考 → 收藏」里', 'In Think → Saved'))).catch(fail); }} />
+            <Action icon={Bookmark} label={L('收藏', 'Save')} note={L('存进「Zen → 收藏」，以后能搜、能交给 Agent', 'Keep it in Zen → Saved to search or hand to an Agent later')}
+              onPress={() => { close(); saveMessage(threadId, m.id).then(() => Alert.alert(L('收藏好了', 'Saved'), L('在「Zen → 收藏」里', 'In Zen → Saved'))).catch(fail); }} />
           ) : null}
           {m.role === 'user' && !busy ? <>
             <Action icon={Pencil} label={L('重新编辑', 'Edit')} note={L(`放回输入框改完再发。${tail}${agentName()} 也会忘掉这段。${shared}${m.body.attachments?.length ? '附件要重新加。' : ''}`, `Puts it back in the input box to edit and resend. ${tail}${agentName()} will forget it too.${shared}${m.body.attachments?.length ? ' Attachments need to be added again.' : ''}`)} onPress={() => rewind(true)} />
@@ -568,7 +568,8 @@ export function ChatView({ threadId, placeholder, empty, quote: quoteProp, quote
               <T v="callout" numberOfLines={1} style={{ flex: 1, fontSize: 13 }}>
                 {quote.taskId
                   ? L(`改「${quote.title}」· 直接发给做它的 ${modelLabel(quote.model)}`, `Revise "${quote.title}" · goes straight to ${modelLabel(quote.model)}`)
-                  : quote.ref ? L(`说的是：${quote.title}`, `About: ${quote.title}`) : quote.saveId ? L(`关于收藏：${quote.title}`, `About the saved item: ${quote.title}`) : L(`回复：${quote.title}`, `Re: ${quote.title}`)}
+                  : quote.ref ? L(`说的是：${quote.title}`, `About: ${quote.title}`) : quote.saveId ? L(`关于收藏：${quote.title}`, `About the saved item: ${quote.title}`)
+                    : quote.follow ? L(`跟进：${quote.title}`, `Follow up: ${quote.title}`) : L(`回复：${quote.title}`, `Re: ${quote.title}`)}
               </T>
               <Pressable onPress={() => setQuote(null)} hitSlop={10} accessibilityRole="button" accessibilityLabel={L('不带这条引用', 'Remove the quote')}>
                 <X size={14} color={t.ink3} />
@@ -610,7 +611,7 @@ export function ChatView({ threadId, placeholder, empty, quote: quoteProp, quote
             </Pressable>
             <TextInput
               ref={input}
-              value={draft} onChangeText={setDraft} placeholder={transcribing ? L('正在转文字…', 'Transcribing…') : quote ? L('说说要改什么', 'Say what should change') : placeholder} placeholderTextColor={t.ink3}
+              value={draft} onChangeText={setDraft} placeholder={transcribing ? L('正在转文字…', 'Transcribing…') : quote?.follow ? L('问问进展，或者说还差什么', "Ask how it's going, or say what's missing") : quote ? L('说说要改什么', 'Say what should change') : placeholder} placeholderTextColor={t.ink3}
               multiline numberOfLines={1} onSubmitEditing={submit} submitBehavior="submit" returnKeyType="send" enablesReturnKeyAutomatically onKeyPress={webEnter}
               accessibilityLabel={L('消息输入框', 'Message')} editable={!transcribing}
               style={[type.body, styles.input, { backgroundColor: t.surface, color: t.ink }]}

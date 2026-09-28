@@ -266,7 +266,7 @@ export function ZenEndScreen() {
         {s.inbox ? <T v="callout" color={t.ink2}>{L(`等你点头的有 ${s.inbox} 件。`, `${s.inbox} waiting for your OK.`)}</T> : null}
         <Btn label={L('去「今天」一起看', 'Open Today')} onPress={() => nav.navigate('Tabs', { screen: '今天' })} />
         <T v="caption" color={t.ink3} style={{ textAlign: 'center' }}>{L('没推送、没响，都攒在这里', 'Nothing buzzed; it all waited here')}</T>
-        <Btn label={L('回到思考', 'Back to Think')} kind="quiet" icon={<TextIcon size={15} color={t.ink} />} onPress={() => nav.navigate('Tabs', { screen: '思考' })} />
+        <Btn label={L('回到 Zen', 'Back to Zen')} kind="quiet" icon={<TextIcon size={15} color={t.ink} />} onPress={() => nav.navigate('Tabs', { screen: '思考' })} />
       </ScrollView>
     </Screen>
   );
