@@ -14,6 +14,8 @@
 - 帧：请求 {type: req, id, method, params} → 回应 {type: res, id, ok, payload | error}；事件 {type: event, event, payload}。
 - chat 事件 {runId, sessionKey, seq, state: status | delta | final | aborted | error}：delta 带 deltaText（replace = 整段换掉），
   final / aborted 带 message（content 数组）。要收到某个会话的事件先 sessions.messages.subscribe {key}，断线重连后重新订阅。
+  （实测 2026-09-28：chat 事件对 operator 连接是广播的，没订阅的会话也收得到，所以 Telegram、别的 Agent 的轮次也会经过这里。）
+- 没人认领的一轮第一次出事件时问 ADOPT（settle.py 挂上：后台任务做完后派它的会话里那一轮 announce:…，是 app 派的就接过去）。
 """
 from __future__ import annotations
 
@@ -24,7 +26,7 @@ import json
 import time
 import uuid
 from pathlib import Path
-from typing import Any, AsyncIterator
+from typing import Any, AsyncIterator, Callable
 
 import aiohttp
 from cryptography.hazmat.primitives import serialization
@@ -36,6 +38,8 @@ CLIENT = {"id": "webchat", "version": "openmousse-server", "platform": "linux", 
 ROLE, SCOPES = "operator", ["operator.read", "operator.write"]
 PROTOCOL = 4
 BUFFER_SECONDS = 30  # 还没人认领的 runId 的事件留多久（chat.send 的回应和它第一批事件谁先到说不准）
+# 没人认领的一轮第一次出事件时调它（同步）：(payload) → True = 它已经 watch 了这个 runId，这个事件和之后的都进那个队列
+ADOPT: Callable[[dict], bool] | None = None
 
 
 class GatewayError(Exception):
@@ -74,6 +78,7 @@ class GatewayWS:
         self.pending: dict[str, asyncio.Future] = {}
         self.runs: dict[str, asyncio.Queue] = {}  # runId → 这一轮的 chat 事件
         self.early: dict[str, list[tuple[float, dict]]] = {}  # 还没人认领的 runId 的事件
+        self.asked: dict[str, float] = {}  # 问过 ADOPT 的 runId（每个只问一次）→ 问的时间
         self.subscribed: set[str] = set()
         self.models: dict[str, str] = {}  # 会话 → 现在用的模型（provider/model），发之前对一下
 
@@ -169,10 +174,19 @@ class GatewayWS:
         if not rid:
             return
         q = self.runs.get(rid)
+        now = time.time()
+        if q is None and ADOPT is not None and rid not in self.asked and rid not in self.early:
+            self.asked[rid] = now
+            if len(self.asked) > 2000:
+                self.asked = {k: t for k, t in self.asked.items() if now - t < 3600}
+            try:
+                if ADOPT(p):
+                    q = self.runs.get(rid)
+            except Exception:  # noqa: BLE001 — 钩子出错：当没人认领
+                pass
         if q is not None:
             q.put_nowait(p)
             return
-        now = time.time()
         self.early.setdefault(rid, []).append((now, p))
         for k in [k for k, v in self.early.items() if v and now - v[-1][0] > BUFFER_SECONDS]:
             self.early.pop(k, None)

@@ -16,6 +16,7 @@
 - 「正在做哪一步」：台账只有最后一个工具的名字；读哪个文件、搜什么要读子会话记录（chat.history，起 node 进程），
   进行中的任务最多 20 秒读一次，做完的读一次就留着（顺带拿 token 用量）。
 - 改一下：POST /api/tasks/{id}/revise 把意见发给同一个子会话（app 线程 task:<id>）；第几轮、意见、这一轮的结果从这个线程的记录算。
+- 做完以后派它的那个对话里模型再回的一轮（announce）：settle.py 接回 app。
 
 接口
 - GET /api/chat/cards?thread=&day=：这个线程这一天（04:00 起）的转交卡和任务卡，旧的在前（messageId = 挂在哪条回复下面，

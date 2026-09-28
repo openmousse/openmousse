@@ -44,6 +44,7 @@ import study  # noqa: E402
 import cards  # noqa: E402
 import schedule  # noqa: E402
 import chat  # noqa: E402
+import settle  # noqa: E402
 from chat import router as chat_router  # noqa: E402
 from cards import router as cards_router  # noqa: E402
 from health import router as health_router  # noqa: E402
@@ -91,6 +92,7 @@ async def lifespan(_app: FastAPI):
     cards.start()  # 盯 OpenClaw 的任务台账：后台任务做完了静默推一条
     chat.resume_queued()  # 上次重启前还排着没发的消息：接着发
     asyncio.create_task(chat.resume_ws())  # 走对话通道的：重启前发出去、还没拿到回复的，接回来或补回回复
+    settle.start()  # 从 app 派的后台任务做完后，派它的对话里那一轮回话接回 app（实时接管 + 从 chat.history 补漏）
     alerts.start()  # Agent 的提醒：到点查表，有东西就推
     yield
 
