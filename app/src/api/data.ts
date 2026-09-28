@@ -106,12 +106,16 @@ function normalizeCard(raw: any): ChatCard | null {
 export const cardOf = normalizeCard;
 
 /** 未读摘要：只留 n > 0 的线程。回来的不像摘要（比如只有 {ok}）就返回 null，别拿它把本地的清空。 */
+/** 服务器给的消息 id 是 "db<数字>"（和对话记录里一样），老版本给过数字：都换成数字，store 拿它比新旧。 */
+const lastMsgId = (v: unknown): number | null => (typeof v === 'number' ? v : typeof v === 'string' && /^db\d+$/.test(v) ? Number(v.slice(2)) : null);
+
 function normalizeUnread(j: Partial<UnreadSummary> | null | undefined): UnreadSummary | null {
   if (!j || typeof j.threads !== 'object' || j.threads === null) return null;
   const threads: UnreadSummary['threads'] = {};
   for (const [tid, u] of Object.entries(j.threads)) {
     const n = Number(u?.n) || 0;
-    if (n > 0) threads[tid] = { n, mine: Number(u?.mine) || 0, last: u?.last && typeof u.last.id === 'number' ? u.last : undefined };
+    const id = u?.last ? lastMsgId(u.last.id) : null;
+    if (n > 0) threads[tid] = { n, mine: Number(u?.mine) || 0, last: u?.last && id != null ? { ...u.last, id } : undefined };
   }
   return {
     threads,

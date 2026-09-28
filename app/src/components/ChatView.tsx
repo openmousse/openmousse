@@ -105,6 +105,13 @@ const PLACEHOLDER_TEXT = '（见附件）';  // 只发附件时服务端（chat.
 const SPEECH_PRESET = { ...RecordingPresets.HIGH_QUALITY, sampleRate: 16000, numberOfChannels: 1, bitRate: 32000 };
 
 const human = (n: number) => (n >= 1024 * 1024 ? `${(n / 1024 / 1024).toFixed(1)} MB` : `${Math.max(1, Math.round(n / 1024))} KB`);
+
+/** 【收件箱】那一行给你看的部分：卡片 id 和写给模型的指令（「现在去做；做完运行 `…`」「改好后用 `…` 重新提交」这些）不显示。句式见 server/inbox.py。 */
+function inboxLine(text: string): string {
+  const s = text.replace(/^【收件箱】\s*/, '').replace(/\s*[（(]ib-[0-9a-f]+[）)]/g, '');
+  const head = s.split(/现在去做|，?不用再报 done|有要接着做的|改好后用|Do it now|It has taken effect|If something follows|When it is revised/)[0].trim();
+  return /[一-鿿」]$/.test(head) ? `${head}。` : head;
+}
 const KIND_ICON = { doc: FileText, audio: FileAudio, video: Film, file: Paperclip, image: ImageIcon } as const;
 
 function ModelTag({ m }: { m: Message }) {
@@ -231,7 +238,7 @@ export function Bubble({ m, showAvatar, onLongPress, before, from, highlight, on
       return (
         <View style={{ flexDirection: 'row', justifyContent: 'center', alignItems: 'flex-start', gap: 4, paddingVertical: 2, paddingHorizontal: space.lg }}>
           <View style={{ paddingTop: 1 }}><Inbox size={13} color={t.ink3} /></View>
-          <T v="caption" color={t.ink3} style={{ textAlign: 'center', flexShrink: 1 }}>{text.replace(/^【收件箱】\s*/, '')} · {m.time}</T>
+          <T v="caption" color={t.ink3} style={{ textAlign: 'center', flexShrink: 1 }}>{inboxLine(text)} · {m.time}</T>
         </View>
       );
     }

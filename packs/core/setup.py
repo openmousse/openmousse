@@ -15,6 +15,7 @@
      - session.reset = daily 04:00（对话页按天，日结在 03:45）
      - tools.deny 加 ask_user（app 通道没人能回答工具里的提问，会卡死）
      - memory.search.extraPaths 加 shared/digest（主对话能查各 Agent 的日结）
+     - skills.load.allowSymlinkTargets 加 packs/core/skills（OpenClaw 不加载指到工作区外面的 skill 软链；单独 validate，老版本不认就不加）
   5. 世界树：mousse-tree init（同一种语言）+ install-openclaw（+ systemd 服务）
      - --vault：还是 SQLite 存储就换成 Markdown，一条记忆一篇笔记放进 <库>/世界树（英文 Memory tree），档案放一份 档案.md / Profile.md
        （和 USER.md 双向同步）；已有的记忆导成笔记，一条不丢。已经是 Markdown 的不动
@@ -505,6 +506,31 @@ def patch_openclaw(oc_path: Path, home: Path, openclaw_bin: str) -> bool:
     return restart
 
 
+def allow_skill_links(oc_path: Path, skills_dir: Path, home: Path, openclaw_bin: str) -> bool:
+    """OpenClaw（2026.9 起）不加载指到工作区外面的 skill 软链（Gateway 日志 reason=symlink-escape），除非目标在
+    skills.load.allowSymlinkTargets 里：把 packs/core/skills 的真实路径加进去。单独备份、单独 validate，不认这个键的老版本就只撤这一项。
+    返回是否要重启 Gateway。"""
+    oc = load_json(oc_path)
+    real = str(skills_dir.resolve())
+    targets = oc.setdefault("skills", {}).setdefault("load", {}).setdefault("allowSymlinkTargets", [])
+    if not isinstance(targets, list) or real in targets:
+        return False
+    targets.append(real)
+    backups = MOUSSE_HOME / "backups"
+    backups.mkdir(parents=True, exist_ok=True)
+    backup = backups / f"openclaw.json.{datetime.now():%Y%m%d-%H%M%S}.skill-links"
+    shutil.copy2(oc_path, backup)
+    dump_json(oc_path, oc, mode=0o600)
+    if run([openclaw_bin, "config", "validate"], env=openclaw_env(home)).returncode != 0:
+        shutil.copy2(backup, oc_path)
+        say(L("这个版本的 OpenClaw 不认 skills.load.allowSymlinkTargets，没加（它也不拦 skill 软链）",
+              "This OpenClaw doesn't know skills.load.allowSymlinkTargets; left out (it doesn't block skill symlinks either)"))
+        return False
+    say(L(f"openclaw.json：skills.load.allowSymlinkTargets + {real}（OpenClaw 才肯加载软链进来的 skill）",
+          f"openclaw.json: skills.load.allowSymlinkTargets + {real} (so OpenClaw loads the linked skills)"))
+    return True
+
+
 # —— 5：世界树 ——
 
 def tree_to_vault(exe: Path, vault: Path, lang: str) -> bool:
@@ -778,6 +804,7 @@ def main() -> None:
         adopt_fresh_workspace(workspace, cfg["app_name"])
         print("openclaw.json")
         restart = patch_openclaw(oc_path, home, cfg.get("openclaw_bin") or "openclaw")
+        restart = allow_skill_links(oc_path, repo / "packs/core/skills", home, cfg.get("openclaw_bin") or "openclaw") or restart
     public = None
     if not a.no_tree:
         print(L("世界树", "Memory tree"))
