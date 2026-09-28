@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { agentName } from '../brand';
 import { useNavigation } from '@react-navigation/native';
 import { Alert, Image, Linking, Platform, Pressable, ScrollView, StyleSheet, TextInput, View, type LayoutChangeEvent, type NativeScrollEvent, type NativeSyntheticEvent, type TextInputKeyPressEventData } from 'react-native';
@@ -266,18 +266,27 @@ export function ChatView({ threadId, placeholder, empty, quote: quoteProp, quote
   const t = useTheme();
   const { threads, typing, send, avatar, streaming, connected, booting, deleteMessage, rewindMessage, transcribe, refreshThread, sharedChannels, inboxByThread, cardsByThread, liveCards, reviseTask } = useStore();
   const sheet = useSheet();
-  const msgs = threads[threadId] ?? [];
+  const threadMsgs = threads[threadId];
+  const msgs = useMemo(() => threadMsgs ?? [], [threadMsgs]);
   // 这个对话里的收件箱卡片：跟在提它的那条消息下面（处理过的显示成回执）
-  const slots = placeInbox(inboxByThread[threadId] ?? [], msgs);
+  // 打字时整页会重算（输入框的字记在这个组件里）：消息列表用 useMemo 包起来，只在消息、卡片变了时重排，
+  // 每按一个键不再把整段对话重新排版一遍（2026-09-28：主对话攒了一天几十条长回复，打字每个字母都卡）。
+  const threadInbox = inboxByThread[threadId];
+  const slots = useMemo(() => placeInbox(threadInbox ?? [], msgs), [threadInbox, msgs]);
   const inboxCount = inboxByThread[threadId]?.length ?? 0;
   // 转交卡、任务卡：服务器记的，加上进行中的回复里刚出的（同一张卡以新的为准，挂在哪条回复下面以服务器的为准）
-  const liveHere = liveCards[threadId] ?? {};
-  const serverCards = cardsByThread[threadId]?.cards ?? [];
-  const allCards: ChatCard[] = [
-    ...serverCards.map((c) => (liveHere[c.id] ? ({ ...c, ...liveHere[c.id], messageId: c.messageId ?? liveHere[c.id].messageId } as ChatCard) : c)),
-    ...Object.values(liveHere).filter((c) => !serverCards.some((x) => x.id === c.id)),
-  ];
-  const incoming = cardsByThread[threadId]?.incoming ?? [];
+  const liveRaw = liveCards[threadId];
+  const serverRaw = cardsByThread[threadId]?.cards;
+  const allCards: ChatCard[] = useMemo(() => {
+    const liveHere = liveRaw ?? {};
+    const serverCards = serverRaw ?? [];
+    return [
+      ...serverCards.map((c) => (liveHere[c.id] ? ({ ...c, ...liveHere[c.id], messageId: c.messageId ?? liveHere[c.id].messageId } as ChatCard) : c)),
+      ...Object.values(liveHere).filter((c) => !serverCards.some((x) => x.id === c.id)),
+    ];
+  }, [liveRaw, serverRaw]);
+  const incomingRaw = cardsByThread[threadId]?.incoming;
+  const incoming = useMemo(() => incomingRaw ?? [], [incomingRaw]);
   const cardCount = allCards.length;
   const cardState = allCards.map((c) => `${c.id}:${c.status}:${c.kind === 'task' ? `${c.round}${c.roundStatus}` : ''}`).join(',');
   // 引用：跳转带来的新引用替换旧的；发出去或点 × 就没了
@@ -313,7 +322,7 @@ export function ChatView({ threadId, placeholder, empty, quote: quoteProp, quote
   const list = useRef({ y: 0, content: 0, height: 0 });
   const nav = useNavigation<any>();
   const busy = !!typing[threadId];
-  const placed = placeCards(allCards, msgs, busy);
+  const placed = useMemo(() => placeCards(allCards, msgs, busy), [allCards, msgs, busy]);
   const liveHandoffs = placed.live.filter((c): c is HandoffCard => c.kind === 'handoff');
   const liveTasks = placed.live.filter((c) => c.kind !== 'handoff');  // 任务卡、日程卡
   // 每条消息在列表里的位置（定位到某一条用）；从转交卡点过来的那一条闪一下
@@ -475,6 +484,28 @@ export function ChatView({ threadId, placeholder, empty, quote: quoteProp, quote
     });
   };
 
+  // 列表里的回调走 ref：拿到的永远是最新的（reviseCard 要读当前草稿），又不让列表因为回调换了而重排。
+  const handlers = useRef({ openActions, reviseCard });
+  useEffect(() => { handlers.current = { openActions, reviseCard }; });  // 每次渲染后更新（回调只在点按时才用，提交后再换不影响）
+  const messageList = useMemo(() => (
+    <>
+        {msgs.map((m, i) => {
+          const above = placed.above.get(i);
+          return (
+            <React.Fragment key={m.id}>
+              <View onLayout={(e) => { ys.current[m.id] = e.nativeEvent.layout.y; }}>
+                <Bubble m={m} showAvatar={m.role === 'grava' && msgs[i - 1]?.role !== 'grava'} onLongPress={() => handlers.current.openActions(m)}
+                  before={above?.length ? above.map((c) => <HandoffChip key={c.id} card={c} />) : undefined}
+                  from={m.role === 'auto' ? incoming.find((h) => h.relayId === m.id) : undefined} highlight={flash === m.id} />
+              </View>
+              <ChatTasks cards={placed.below.get(i)} onRevise={(c) => handlers.current.reviseCard(c)} thread={threadId} />
+              <ChatInbox items={slots.get(i)} />
+            </React.Fragment>
+          );
+        })}
+    </>
+  ), [msgs, placed, slots, incoming, flash, threadId]);
+
   // 改一下任务不经过这个对话：这边正在回复也能发
   const canSend = quote?.taskId ? !!draft.trim() && !transcribing : (!!draft.trim() || pending.length > 0) && !busy && !transcribing;
   // 手机上回车键是「发送」，发完键盘留着接着打（submitBehavior）。网页的多行输入框不认 submitBehavior，
@@ -510,20 +541,7 @@ export function ChatView({ threadId, placeholder, empty, quote: quoteProp, quote
         ) : null}
         <ChatInbox items={slots.get(-1)} />
         <ChatTasks cards={placed.below.get(-1)} onRevise={reviseCard} thread={threadId} />
-        {msgs.map((m, i) => {
-          const above = placed.above.get(i);
-          return (
-            <React.Fragment key={m.id}>
-              <View onLayout={(e) => { ys.current[m.id] = e.nativeEvent.layout.y; }}>
-                <Bubble m={m} showAvatar={m.role === 'grava' && msgs[i - 1]?.role !== 'grava'} onLongPress={() => openActions(m)}
-                  before={above?.length ? above.map((c) => <HandoffChip key={c.id} card={c} />) : undefined}
-                  from={m.role === 'auto' ? incoming.find((h) => h.relayId === m.id) : undefined} highlight={flash === m.id} />
-              </View>
-              <ChatTasks cards={placed.below.get(i)} onRevise={reviseCard} thread={threadId} />
-              <ChatInbox items={slots.get(i)} />
-            </React.Fragment>
-          );
-        })}
+        {messageList}
         {busy ? (
           <View style={{ flexDirection: 'row', gap: space.sm, alignItems: partial || liveHandoffs.length ? 'flex-start' : 'center' }}>
             <LensAvatar size={28} config={avatar} />
