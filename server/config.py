@@ -46,6 +46,8 @@
   social            朋友（社交第二层，见 social.py、friends.py、docs/social-protocol.zh-CN.md）：{"push": {"message": "ring", "answered": "quiet",
                     "friend": "quiet"}（不写 = 朋友的事不推）, "allow_http": false（只给同一台机器上的测试服）}。要先有 share.public_url 和
                     share.public_port（朋友经小服务的 /f 找到你）。每次读文件，不用重启
+  podcast           播客（见 podcast.py，全部可选）：{"dir": 原声放哪（默认 <data_dir>/podcast）, "text_model": "gpt-transcribe",
+                    "time_model": "whisper-1"（"" = 不要逐句时间）, "thinking": "low", "model": llm-task 的模型覆盖}。每次读文件，不用重启
   wake              起床信号：{"notify_cmd": [...], "notify_hours": ["05:30", "13:00"]}：早上收到信号（快捷指令、app 回到前台、「我起来了」）
                     时跑一下这个命令，比如立刻跑一次出起床报告的定时脚本（见 health.py；每次读文件，不用重启）
 

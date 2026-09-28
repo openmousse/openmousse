@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import re
 import secrets
 import shutil
 import subprocess
@@ -62,6 +63,7 @@ from goals import router as goals_router  # noqa: E402
 import alerts  # noqa: E402
 from alerts import router as alerts_router  # noqa: E402
 from packs import router as packs_router  # noqa: E402
+from podcast import router as podcast_router  # noqa: E402
 from proposals import router as proposals_router  # noqa: E402 — 顺带挂上 kind=skill / agent 的收件箱钩子（日结提案）
 from memtree import router as tree_router  # noqa: E402
 from connectors import router as connectors_router  # noqa: E402
@@ -126,12 +128,14 @@ app.include_router(saves_router)  # 在 think 之前：/api/think/saves/… 不�
 app.include_router(live_router)
 app.include_router(widget_router)
 app.include_router(think_router)
+app.include_router(podcast_router)
 app.include_router(share_router)
 app.include_router(share_public_router)  # /s/<令牌>：分享的链接页，公开（这里只在自己的设备上开得到；外网走 public.py）
 app.include_router(friends.router)  # 在 share 之后注册也行：/api/shares/{sid}/send 和 share 的路由不重叠
 app.include_router(a2a_router)
 app.add_exception_handler(sources.NoSource, sources.no_source_handler)
 _whois: dict[str, tuple[float, str | None]] = {}
+TOKEN_URL = re.compile(r"^/api/(?:files/|think/file/|think/saves/[^/]+/file$|podcast/episodes/pe-[0-9a-f]{8}/audio/\d+$)")
 _lock = threading.Lock()
 
 
@@ -157,8 +161,9 @@ def principal_of(request: Request) -> str | None:
     """这个请求是谁：token:<名字> / tailscale:<设备> / loopback，都不是就 None。"""
     auth = request.headers.get("authorization", "")
     token = auth[7:].strip() if auth.lower().startswith("bearer ") else (request.headers.get("x-api-key") or "").strip()
-    # ?token= 只给 <Image> 这类带不了请求头的地方用：只认 GET /api/files/…，别的接口不收 URL 里的令牌（会进日志和浏览记录）
-    if not token and request.method == "GET" and request.url.path.startswith("/api/files/"):
+    # ?token= 只给 <Image>、网页版的 <audio> 这类带不了请求头的地方用：只认 GET 文件（聊天附件、思考里的语音照片和收藏的文件、
+    # 播客原声），别的接口不收 URL 里的令牌（会进日志和浏览记录）
+    if not token and request.method == "GET" and TOKEN_URL.match(request.url.path):
         token = (request.query_params.get("token") or "").strip()
     if token:
         for name, tok in settings.tokens().items():

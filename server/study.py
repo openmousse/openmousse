@@ -22,6 +22,8 @@
 问答走 chat.py 的同一条通道：每个学习页（或单个课件）一个线程 study-<hash>。每个逻辑日的第一条消息把学习页和课件全文
 作为前情一起发给模型（会话每天 04:00 重置），对话记录里只显示提问本身。生成闪卡 / 小测 / 学习路线每次用一个新的 session key，互不累积。
 学习路线的打勾进度存在 pages/<课程>/.gen/progress.json。
+复习（2026-09-28）：播客的费曼讲错和漏了的，一键加进这门课的复习（pages/<课程>/.gen/review.json，挂在那一节上），
+学习台打开那一节时顶上一个「复习」框，点「复习过了」划掉。
 """
 from __future__ import annotations
 
@@ -34,6 +36,7 @@ import shutil
 import subprocess
 import threading
 import time
+import uuid
 from datetime import datetime
 from pathlib import Path
 
@@ -1087,6 +1090,77 @@ class ProgressBody(BaseModel):
     page: str
     step: int
     done: bool
+
+
+# —— 复习 ——
+
+_review_lock = threading.Lock()
+
+
+def review_path(course: str) -> Path:
+    return gen_dir(course) / "review.json"
+
+
+def read_review(course: str) -> list[dict]:
+    d = load_json(review_path(course))
+    return [x for x in ((d or {}).get("items") if isinstance(d, dict) else None) or [] if isinstance(x, dict) and x.get("id")]
+
+
+def add_review(course: str, page: str | None, items: list[dict], origin: dict | None = None) -> int:
+    """加几条复习（同一节里一样的字不重复加）→ 加了几条。"""
+    if course not in courses():
+        raise HTTPException(404, L("没有这门课", "No such course"))
+    with _review_lock:
+        cur = read_review(course)
+        have = {(x.get("page"), x.get("text")) for x in cur if not x.get("done_at")}
+        n = 0
+        for it in items:
+            text = re.sub(r"\s+", " ", str(it.get("text") or "")).strip()[:500]
+            if not text or (page, text) in have:
+                continue
+            cur.append({"id": uuid.uuid4().hex[:8], "page": page, "text": text, "kind": str(it.get("kind") or "")[:10],
+                        "source": str(it.get("source") or "")[:120], "from": origin or None, "created_at": chat.now_iso(), "done_at": None})
+            have.add((page, text))
+            n += 1
+        path = review_path(course)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        tmp = path.with_name("." + path.name + ".tmp")
+        tmp.write_text(json.dumps({"items": cur}, ensure_ascii=False, indent=1), encoding="utf8")
+        tmp.replace(path)
+    return n
+
+
+@router.get("/api/study/review")
+def review(course: str, page: str | None = None, all: int = 0):  # noqa: A002 — 查询参数名
+    """这门课（或这一节）的复习：没复习过的在前。all=1 连复习过的一起给。"""
+    if course not in courses():
+        raise HTTPException(404, L("没有这门课", "No such course"))
+    items = [x for x in read_review(course) if (page is None or x.get("page") in (page, None)) and (all or not x.get("done_at"))]
+    items.sort(key=lambda x: (bool(x.get("done_at")), x.get("created_at") or ""))
+    return {"ok": True, "items": items}
+
+
+class ReviewDone(BaseModel):
+    course: str
+    id: str
+    done: bool = True
+
+
+@router.post("/api/study/review/done")
+def review_done(body: ReviewDone):
+    if body.course not in courses():
+        raise HTTPException(404, L("没有这门课", "No such course"))
+    with _review_lock:
+        cur = read_review(body.course)
+        hit = next((x for x in cur if x["id"] == body.id), None)
+        if not hit:
+            raise HTTPException(404, L("没有这一条", "No such item"))
+        hit["done_at"] = chat.now_iso() if body.done else None
+        path = review_path(body.course)
+        tmp = path.with_name("." + path.name + ".tmp")
+        tmp.write_text(json.dumps({"items": cur}, ensure_ascii=False, indent=1), encoding="utf8")
+        tmp.replace(path)
+    return {"ok": True, "item": hit}
 
 
 @router.post("/api/study/progress")

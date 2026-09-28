@@ -193,6 +193,16 @@ pre.code { max-width: 1000px; margin: 0 auto; background: var(--surface); border
 .mats > summary { cursor: pointer; font-weight: 600; list-style: none; }
 .mats > summary::-webkit-details-marker { display: none; }
 .mats[open] > summary { margin-bottom: 6px; }
+/* 复习（播客的费曼：讲错和漏了的） */
+.review { margin: 8px 0 10px; border-color: var(--warn); background: var(--warnSoft); }
+.review .rv { display: flex; align-items: flex-start; gap: 10px; padding: 6px 0; border-top: 1px solid var(--line); }
+.review .rv:first-of-type { border-top: none; }
+.review .rvk { flex: none; font-size: 12px; font-weight: 700; padding: 2px 8px; border-radius: 999px; background: var(--surface); color: var(--warn); }
+.review .rvk.wrong { color: var(--bad); }
+.review .rvt { flex: 1; line-height: 1.5; }
+.review .rvs { color: var(--ink3); }
+.review .pill { flex: none; padding: 4px 10px; font-size: 12.5px; }
+.review .rvf { color: var(--ink3); font-size: 12px; margin-top: 4px; }
 .mrow { display: flex; gap: 8px; align-items: baseline; padding: 4px 0; width: 100%; text-align: left; border-radius: 6px; }
 button.mrow:hover .mt { color: var(--cyan); }
 .mrow .st { flex: none; width: 18px; text-align: center; }
@@ -597,8 +607,39 @@ function openUnit(u, tab) {
   $('#uhead').append(h('div', { class: 'crumb' }, [S.course, mod?.title].filter(Boolean).join(' · ')), h('h1', {}, u.title),
     h('div', { class: 'tabs', id: 'tabs' }, tabs.map(t => h('button', { class: 'tab' + (t.gen ? ' gen' : ''), 'data-id': t.id, onclick: () => selectTab(t.id) }, t.label))));
   selectTab(tabs.some(t => t.id === tab) ? tab : tabs[0].id);
+  paintReview(u);
   if (u.kind !== 'video') loadChat();
   else { $('#msgs').innerHTML = ''; $('#askSub').textContent = ''; }
+}
+// —— 复习：播客里费曼讲错和漏了的，加进来的挂在那一节上 ——
+async function paintReview(u) {
+  const old = $('#review');
+  if (old) old.remove();
+  if (!u || u.kind !== 'page') return;
+  let d;
+  try { d = await api('/api/study/review?' + qs({ course: S.course, page: u.path })); } catch { return; }
+  if (S.unit !== u || !d.items?.length || $('#review')) return;
+  const n = d.items.length;
+  const wrap = h('details', { class: 'mats review', id: 'review', open: true }, h('summary', {}, L(`复习 · ${n} 条`, `To review · ${n}`)));
+  for (const it of d.items) {
+    const btn = h('button', { class: 'pill ghost' }, L('复习过了', 'Reviewed'));
+    const row = h('div', { class: 'rv' },
+      h('span', { class: 'rvk ' + (it.kind || '') }, it.kind === 'wrong' ? L('讲错', 'Wrong') : it.kind === 'missed' ? L('漏了', 'Missed') : L('复习', 'Review')),
+      h('span', { class: 'rvt' }, it.text, it.source ? h('span', { class: 'rvs' }, ' · ' + it.source) : null), btn);
+    btn.addEventListener('click', async () => {
+      btn.disabled = true;
+      try {
+        await api('/api/study/review/done', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ course: S.course, id: it.id }) });
+        row.remove();
+        const left = wrap.querySelectorAll('.rv').length;
+        if (!left) wrap.remove(); else wrap.querySelector('summary').textContent = L(`复习 · ${left} 条`, `To review · ${left}`);
+      } catch (e) { btn.disabled = false; alert(e.message); }
+    });
+    wrap.append(row);
+  }
+  const from = d.items.find(x => x.from && x.from.title);
+  if (from) wrap.append(h('div', { class: 'rvf' }, L(`来自播客「${from.from.title}」`, `From the episode “${from.from.title}”`)));
+  $('#uhead').insertBefore(wrap, $('#tabs'));
 }
 function renderEmpty(msg) {
   $('#uhead').innerHTML = '';
