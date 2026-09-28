@@ -303,8 +303,10 @@ function Action({ icon: Icon, label, note, danger, onPress }: { icon: typeof Cop
   );
 }
 
-export function ChatView({ threadId, placeholder, empty, quote: quoteProp, quoteAt = 0, focus, focusAt = 0, hideHistoryLink, composerTop, intercept }: {
+export function ChatView({ threadId, placeholder, empty, welcome, quote: quoteProp, quoteAt = 0, focus, focusAt = 0, hideHistoryLink, composerTop, intercept }: {
   threadId: string; placeholder: string; empty?: string;
+  /** 对话空着时放在最上面、代替空白提示的一张卡（主对话在新实例上：「从这里开始」）。它在的时候不显示「这里只有今天的」：还没有历史 */
+  welcome?: React.ReactNode;
   /** 不显示顶上「这里只有今天的」（思考主题整段都给） */
   hideHistoryLink?: boolean;
   /** 输入框上面的一条（思考主题：说给它 / 只记下） */
@@ -595,6 +597,8 @@ export function ChatView({ threadId, placeholder, empty, quote: quoteProp, quote
   const canSend = quote?.taskId ? !!draft.trim() && !transcribing : (!!draft.trim() || pending.length > 0) && !transcribing;
   // 正在回复、输入框空着：发送键换成「停」
   const showStop = busy && !draft.trim() && !pending.length && !quote?.taskId;
+  // 「从这里开始」只在对话还空着时出现，占住空白提示的位置；发出第一条就没了
+  const showWelcome = !!welcome && !msgs.length && !busy;
   // 手机上回车键是「发送」，发完键盘留着接着打（submitBehavior）。网页的多行输入框不认 submitBehavior，
   // 自己接 Enter：发送、不丢焦点；Shift+Enter 换行；输入法选字时按的 Enter 不算。
   const webEnter = Platform.OS === 'web' ? (e: NativeSyntheticEvent<TextInputKeyPressEventData>) => {
@@ -626,12 +630,12 @@ export function ChatView({ threadId, placeholder, empty, quote: quoteProp, quote
         onContentSizeChange={(_w, h) => { list.current.content = h; }}
         onInsetChange={setInset}
         refreshControl={<PullRefresh onRefresh={() => refreshThread(threadId)} />}>
-        {connected && !hideHistoryLink ? (
+        {connected && !hideHistoryLink && !showWelcome ? (
           <Pressable onPress={() => nav.navigate('History', { thread: threadId })} accessibilityRole="button" style={{ alignSelf: 'center', paddingVertical: 2 }}>
             <T v="caption" color={t.ink3}>{L('这里只有今天的（04:00 起）· ', 'Today only (from 04:00) · ')}<T v="caption" color={t.gold}>{L('之前的在历史里', 'Earlier in History')}</T></T>
           </Pressable>
         ) : null}
-        {!msgs.length && !busy ? (
+        {showWelcome ? welcome : !msgs.length && !busy ? (
           <View style={{ alignItems: 'center', gap: space.sm, paddingVertical: space.xxl, paddingHorizontal: space.lg }}>
             <LensAvatar size={40} config={avatar} />
             <T v="callout" color={t.ink3} style={{ textAlign: 'center' }}>

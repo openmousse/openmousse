@@ -10,12 +10,13 @@ import { LensAvatar } from '../components/LensAvatar';
 import { ModelSwitch } from '../components/ModelPicker';
 import { ArchiveSheet, NewProjectSheet, ProjectPanel, leftWords, projectLine } from '../components/ProjectCard';
 import { useSheet } from '../components/Sheet';
-import { Btn, CountPill, Pill, Screen, T } from '../components/ui';
+import { Btn, Card, CountPill, Pill, Screen, T } from '../components/ui';
 import type { SideChat } from '../data/types';
 import type { ChatQuote } from '../navigation';
 import { L } from '../i18n';
 import { useStore, useThreadOnScreen } from '../store';
 import { radius, space, type, useTheme } from '../theme';
+import { hideWelcome, welcomeHidden } from '../welcome';
 
 /** 一个项目的"…"菜单：重命名 / 归档（先写结论）/ 恢复 / 删除。 */
 function SideChatMenu({ chat, close, onDeleted, onArchive }: { chat: SideChat; close: () => void; onDeleted: () => void; onArchive: () => void }) {
@@ -173,10 +174,32 @@ function Drawer({ active, onPick, onClose }: { active: string; onPick: (id: stri
   );
 }
 
+/**
+ * 新实例第一次打开、主对话还空着时的「从这里开始」（服务器说 first_run）。
+ * 「带我走一遍」替你发一句开场白，主对话的 onboarding skill 接着一步一步带；「我自己来」这台设备上不再显示。发出任何一条它就没了。
+ */
+function WelcomeCard({ onStart, onDismiss }: { onStart: () => void; onDismiss: () => void }) {
+  const t = useTheme();
+  return (
+    <Card style={{ gap: space.sm }}>
+      <T v="headline">{L('从这里开始', 'Start here')}</T>
+      <T v="callout" color={t.ink2}>{L('一开始是空的。说说你想让它管什么，它就给你建一个 Agent。', 'It starts empty. Tell it what you want looked after, and it builds an Agent for you.')}</T>
+      <T v="callout" color={t.ink2}>{L('也可以先让它认识一下你。', 'It can also get to know you first.')}</T>
+      {/* 上下排：英文的两个按钮并排放不下，手机字号调大也不会挤成两行 */}
+      <View style={{ gap: space.sm, marginTop: space.xs }}>
+        <Btn label={L('带我走一遍', 'Walk me through it')} onPress={onStart} />
+        <Btn label={L('我自己来', "I'll explore myself")} kind="quiet" onPress={onDismiss} />
+      </View>
+    </Card>
+  );
+}
+
 export function ChatScreen() {
   const t = useTheme();
   const nav = useNavigation<any>();
-  const { threadModel, setThreadModel, connected, booting, sideChats, tasks, avatar, sharedChannels, unread } = useStore();
+  const { threadModel, setThreadModel, connected, booting, sideChats, tasks, avatar, sharedChannels, unread, firstRun, send } = useStore();
+  // 「从这里开始」这台设备上收起来过没有（本机记着，见 welcome.ts）
+  const [welcomeOff, setWelcomeOff] = useState(welcomeHidden);
   // 调试用：网页版 ?thread=<id> 直接打开某个线程，方便截图。
   // 当前线程：自己在侧栏选的，或者推送通知点进来带的导航参数（thread + at 时间戳；at 比上次选择新就以它为准）。
   const route = useRoute<any>();
@@ -197,6 +220,11 @@ export function ChatScreen() {
   useThreadOnScreen(active);
   // 侧栏里别的对话有没看的：菜单按钮上也亮一个点
   const elsewhere = Object.entries(unread.threads).some(([tid, u]) => tid !== active && u.n > 0);
+  // 新实例第一次打开：主对话空着时顶上放「从这里开始」。开场白按 app 的语言发，onboarding skill 认这两句
+  const welcome = active === 'main' && connected && firstRun && !welcomeOff ? (
+    <WelcomeCard onStart={() => send('main', L('我第一次用，带我走一遍。', "It's my first time here. Walk me through it."))}
+      onDismiss={() => { hideWelcome(); setWelcomeOff(true); }} />
+  ) : undefined;
   return (
     <Screen>
       <View style={[styles.head, { borderBottomColor: t.line }]}>
@@ -221,7 +249,10 @@ export function ChatScreen() {
       {side ? <ProjectPanel key={`p-${active}`} id={active} /> : null}
       <ChatView key={active} threadId={active} quote={quote} quoteAt={quote ? wantedAt : 0} focus={focus} focusAt={focus ? wantedAt : 0} placeholder={side ? L(`跟「${side.title}」说点什么`, `Message "${side.title}"`) : L(`跟 ${agentName()} 说点什么`, `Message ${agentName()}`)}
         empty={side ? (side.archived ? L('已归档，今天没有新消息。以前的对话在历史里（右上角的日历）。', 'Archived; nothing new today. Earlier messages are in History (calendar icon, top right).')
-          : L('这个项目今天还没聊过。它每天会先看一遍上面的项目卡，接着昨天做。', 'Nothing here today yet. It reads the project card above first each day and picks up where it left off.')) : L('主对话和 Telegram 共用同一个会话，这里还没有 app 发出的消息。', 'The main chat shares one session with Telegram. No messages from the app here yet.')} />
+          : L('这个项目今天还没聊过。它每天会先看一遍上面的项目卡，接着昨天做。', 'Nothing here today yet. It reads the project card above first each day and picks up where it left off.'))
+          : sharedChannels.length ? L(`主对话和 ${sharedChannels.join('、')} 共用同一个会话，这里还没有 app 发出的消息。`, `The main chat shares one session with ${sharedChannels.join(', ')}. No messages from the app here yet.`)
+            : L('今天还没聊过。', 'Nothing here today yet.')}
+        welcome={welcome} />
       {open ? <Drawer active={active} onPick={setActive} onClose={() => setOpen(false)} /> : null}
     </Screen>
   );

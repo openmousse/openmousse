@@ -1,11 +1,14 @@
 import React, { useState } from 'react';
-import { ScrollView, StyleSheet, TextInput, View } from 'react-native';
+import { Linking, Pressable, ScrollView, StyleSheet, TextInput, View } from 'react-native';
 import { useNavigation } from '@react-navigation/native';
-import { Btn, Card, NavHeader, Pill, Screen, SectionLabel, T } from '../components/ui';
+import { Btn, Card, NavHeader, Pill, Screen, SectionLabel, T, showError } from '../components/ui';
 import { defaultBase, getBase, getToken, saveServerConfig, testServer } from '../api/base';
 import { L } from '../i18n';
 import { useStore } from '../store';
 import { radius, space, type, useTheme } from '../theme';
+
+/** 网站上的新手指南：从装服务到在手机上说第一句话。 */
+const GUIDE_URL = 'https://openmousse.ai/start.html';
 
 /** 连接页：填自己服务器的地址和接入令牌。第一次打开 app、或在「我 → 服务器」里都能进来。 */
 export function ConnectScreen() {
@@ -37,6 +40,12 @@ export function ConnectScreen() {
           {L('这个 app 是一个壳，所有对话、记忆和数据都在你自己的服务器上。填服务器的地址和接入令牌就能用。',
             'This app connects to your own server, where all your chats, memory and data live. Enter the server address and access token to get started.')}
         </T>
+        {/* 还没连上时才有用：没有服务器的人从这里去看怎么装 */}
+        {connected ? null : (
+          <Pressable onPress={() => { Linking.openURL(GUIDE_URL).catch((e) => showError(L('打不开', "Couldn't open it"), e)); }} accessibilityRole="link" hitSlop={6} style={{ alignSelf: 'flex-start' }}>
+            <T v="callout" color={t.gold} style={{ fontWeight: '600' }}>{L('还没有服务器？看新手指南 →', 'No server yet? See the getting-started guide →')}</T>
+          </Pressable>
+        )}
         <SectionLabel>{L('服务器地址', 'Server address')}</SectionLabel>
         <TextInput value={base} onChangeText={(v) => { setBase(v); setMsg(null); }} placeholder={L('https://你的域名 或 http://100.x.x.x:8080', 'https://your-domain.com or http://100.x.x.x:8080')}
           placeholderTextColor={t.ink3} autoCapitalize="none" autoCorrect={false} keyboardType="url" accessibilityLabel={L('服务器地址', 'Server address')}

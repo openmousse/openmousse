@@ -42,6 +42,8 @@ interface State {
   appName: string;
   /** 主会话还接着哪些聊天渠道（比如 Telegram），撤回时要提醒 */
   sharedChannels: string[];
+  /** 全新的服务器：还没有任何消息、也没建过 Agent（/api/health 的 first_run）。主对话空着时顶上放「从这里开始」 */
+  firstRun: boolean;
   /** 训记、日历、Apple 健康。null 表示没连上。 */
   live: LiveData | null;
   liveLoading: boolean;
@@ -314,6 +316,7 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
     authFailed: false,
     appName: agentName(),
     sharedChannels: [],
+    firstRun: false,
     live: null,
     liveLoading: true,
     liveErrors: {},
@@ -810,7 +813,7 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
       lastMarked.current = {};
       setAgentName(p.appName);
       persistAgentName(p.appName).catch(() => {});
-      setS((st) => ({ ...st, configLoaded: true, needsServer: false, authFailed: false, appName: agentName(), sharedChannels: p.sharedChannels, connected: true, booting: false }));
+      setS((st) => ({ ...st, configLoaded: true, needsServer: false, authFailed: false, appName: agentName(), sharedChannels: p.sharedChannels, firstRun: p.firstRun, connected: true, booting: false }));
       // 原生扩展（1.0.5 起）：地址和令牌给分享 / 小组件扩展，补传分享扩展没传上去的，实时活动和小组件对一遍
       const fg = AppState.currentState === 'active';  // 也可能是 iOS 在后台叫醒来同步健康数据的
       shareConfig();
@@ -906,7 +909,8 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
     const modelId = latest.current.threadModel[threadId] ?? latest.current.threadModel.main;
     if (opts?.inboxId) LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut);
     setS((st) => {
-      const next = { ...appendMsg(st, threadId, mine), typing: { ...st.typing, [threadId]: true }, sideChats: st.sideChats.map((c) => (c.id === threadId ? { ...c, updatedAt: Date.now() } : c)) };
+      // 发出第一条就不算新实例了（服务器下次也会这么说）：「从这里开始」收起来
+      const next = { ...appendMsg(st, threadId, mine), typing: { ...st.typing, [threadId]: true }, sideChats: st.sideChats.map((c) => (c.id === threadId ? { ...c, updatedAt: Date.now() } : c)), firstRun: false };
       // 引用了收件箱里的一件事：和服务器（inbox.py 的 reply_context / follow_context）一样先在本地改好
       const item = opts?.inboxId ? st.inbox.find((i) => i.id === opts.inboxId) ?? Object.values(st.inboxByThread).flat().find((i) => i.id === opts.inboxId)
         ?? st.inboxRecent.find((i) => i.id === opts.inboxId) : undefined;
@@ -1041,7 +1045,7 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
     },
     addGroup: async (g) => {
       const gid = await dataApi.createGroup({ name: g.name, purpose: g.purpose, icon: g.icon, color: g.color, model: g.modelId });
-      setS((st) => ({ ...st, threads: { ...st.threads, [gid]: [] }, threadModel: { ...st.threadModel, [gid]: g.modelId } }));
+      setS((st) => ({ ...st, threads: { ...st.threads, [gid]: [] }, threadModel: { ...st.threadModel, [gid]: g.modelId }, firstRun: false }));  // 有 Agent 了：不再是新实例
       await reload('groups', 'activity');
       return gid;
     },

@@ -49,14 +49,15 @@ export interface LiveData {
 
 const get = <T,>(path: string) => request<T>(path);
 
-export type ProbeResult = { status: 'ok'; appName: string; sharedChannels: string[]; sources: Sources } | { status: 'auth' | 'down' };
+/** firstRun：全新的服务器（还没有任何消息、也没建过 Agent），主对话空着时顶上放「从这里开始」。老服务器没有这个字段 = false。 */
+export type ProbeResult = { status: 'ok'; appName: string; sharedChannels: string[]; sources: Sources; firstRun: boolean } | { status: 'auth' | 'down' };
 
-type HealthResp = { ok: boolean; app_name?: string; shared_channels?: string[]; sources?: Sources };
+type HealthResp = { ok: boolean; app_name?: string; shared_channels?: string[]; sources?: Sources; first_run?: boolean };
 
 export async function probe(): Promise<ProbeResult> {
   try {
     const h = await get<HealthResp>('/api/health');
-    return h.ok ? { status: 'ok', appName: h.app_name || 'OpenMousse', sharedChannels: h.shared_channels ?? [], sources: h.sources ?? {} } : { status: 'down' };
+    return h.ok ? { status: 'ok', appName: h.app_name || 'OpenMousse', sharedChannels: h.shared_channels ?? [], sources: h.sources ?? {}, firstRun: h.first_run === true } : { status: 'down' };
   } catch (e) {
     return { status: e instanceof AuthError ? 'auth' : 'down' };
   }
