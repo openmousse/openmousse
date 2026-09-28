@@ -8,6 +8,7 @@
 #   别的 claw：MOUSSE_CLAW_NAME、MOUSSE_CLAW_TOKEN、MOUSSE_CLAW_MODEL、MOUSSE_CLAW_SKILLS（它的 skills 文件夹）、MOUSSE_CLAW_RULES（它每轮都读的规则文件）；
 #   MOUSSE_TZ、MOUSSE_NAME、MOUSSE_DIR（仓库位置）、MOUSSE_BIND（auto|127.0.0.1|<ip>）、
 #   MOUSSE_VAULT（服务器上已经在同步的 Obsidian 库文件夹，世界树和思考空间放进去；空 = 跳过）、MOUSSE_TREE_PUBLIC（y|n：用 Tailscale Funnel 开公网：AI 平台连世界树、分享链接、加朋友）
+#   MOUSSE_NONINTERACTIVE=1：一个问题都不问，没给的用默认值（claw 替人装时用，见 docs/connect.md）
 # 其它参数原样传给 setup.py，比如 --no-systemd、--no-tree。
 set -euo pipefail
 
@@ -56,6 +57,7 @@ fi
 ask() {  # ask <变量名> <提示> <默认值>（默认值空 = 可以跳过，提示里不显示 []）
   local var="$1" prompt="$2" def="$3" ans=""
   if [ -n "${!var:-}" ]; then return; fi
+  if [ -n "${MOUSSE_NONINTERACTIVE:-}" ]; then printf -v "$var" '%s' "$def"; return; fi  # claw 替人装：不等人回答（它的命令行可能带伪终端，读 /dev/tty 会一直卡住）
   if [ -t 0 ]; then
     read -r -p "$prompt${def:+ [$def]}: " ans || true
   elif { : < /dev/tty; } 2>/dev/null; then  # 打得开才读：没有控制终端（cron、CI）时 /dev/tty 在但打不开
@@ -66,6 +68,7 @@ ask() {  # ask <变量名> <提示> <默认值>（默认值空 = 可以跳过，
 ask_secret() {  # ask_secret <变量名> <提示>：输入不显示（令牌之类）；有环境变量就不问，回车 = 空
   local var="$1" prompt="$2" ans=""
   if [ -n "${!var:-}" ]; then return; fi
+  if [ -n "${MOUSSE_NONINTERACTIVE:-}" ]; then return; fi
   if [ -t 0 ]; then
     read -r -s -p "$prompt: " ans || true; echo
   elif { : < /dev/tty; } 2>/dev/null; then

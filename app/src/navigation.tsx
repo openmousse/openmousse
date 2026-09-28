@@ -18,6 +18,7 @@ import { ScheduleFeedScreen } from './screens/ScheduleFeedScreen';
 import { TodayScreen } from './screens/TodayScreen';
 import { HistoryDayScreen, HistoryScreen } from './screens/HistoryScreen';
 import { ConnectScreen } from './screens/ConnectScreen';
+import { parsePairing } from './api/base';
 import { InboxScreen } from './screens/InboxScreen';
 import { TreeScreen } from './screens/TreeScreen';
 import { ConnectorsScreen } from './screens/ConnectorsScreen';
@@ -142,13 +143,28 @@ export function openAddFriend(code: string) {
   navigationRef.navigate('AddFriend', { code, at: Date.now() });
 }
 
+// 配对链接（服务器上 tokens.py pair 出的 <scheme>://pair?s=<服务器>&c=<码>）：打开连接页、填好地址和配对码，用户看过地址再点「连接」
+// （不自动连：别人发来的链接可能想把 app 接到他的服务器上）
+let queuedPair: { server: string; code: string } | null = null;
+
+export function openPair(server: string, code: string) {
+  if (!navigationRef.isReady()) { queuedPair = { server, code }; return; }
+  navigationRef.navigate('Connect', { pairServer: server, pairCode: code, at: Date.now() });
+}
+
 function handleUrl(url: string | null) {
+  if (url && /^[a-z]+:\/\/pair\?/i.test(url)) {
+    const p = parsePairing(url.replace(/^[a-z]+:\/\//i, 'openmousse://'));
+    if (p.server && p.code) openPair(p.server, p.code);
+    return;
+  }
   if (!url || !/friends\/add/.test(url)) return;
   const code = findCode(url);
   if (code) openAddFriend(code);
 }
 
 function flushQueued() {
+  if (queuedPair && navigationRef.isReady()) { const p = queuedPair; queuedPair = null; openPair(p.server, p.code); }
   if (queuedCode && navigationRef.isReady()) { const c = queuedCode; queuedCode = null; openAddFriend(c); }
   if (!queued || !navigationRef.isReady()) return;
   const q = queued;

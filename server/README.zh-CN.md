@@ -25,6 +25,7 @@ python3 run.py                   # 或按 openmousse-server.service.example 装�
 ## 让手机连上
 
 - **Tailscale**（最省事）：服务绑 Tailscale 地址，手机装 Tailscale，app 里填 `http://100.x.x.x:8080`。
+- **配对码**（不用抄令牌）：`python3 tokens.py pair` 出一个一次性配对码（[`pairing.py`](pairing.py)：10 分钟、只能用一次、只存哈希、猜错多了锁 10 分钟），终端里画二维码，旁边是 `openmousse://pair?s=<地址>&c=<码>` 链接。手机相机扫码或点链接 → app 的连接页填好地址和码 → 点「用配对码连接」→ `POST /api/pair` 换一把新令牌（`device-<设备>-<时间>`，能 `tokens.py remove`）。`--json` 给 claw 读（见 [`docs/connect.zh-CN.md`](../docs/connect.zh-CN.md)）。`/api/pair` 在 `/api` 下，只在 Tailscale 私网里。安装器装完会直接打一个（30 分钟）。
 - **公网 HTTPS**：`tailscale serve` / `tailscale funnel`，或 Caddy / nginx 反向代理到 127.0.0.1:8080，app 里填 `https://你的域名`。
 
 ## 别的 claw

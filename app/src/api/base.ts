@@ -133,6 +133,51 @@ export async function testServer(b: string, tok: string): Promise<{ ok: true; ap
   }
 }
 
+/** 从贴进来的文字里找配对信息：openmousse://pair?s=<服务器>&c=<码> 的链接，或者只有 8 位配对码（服务器上 tokens.py pair 出的，见 server/pairing.py）。 */
+export function parsePairing(text: string): { server?: string; code?: string } {
+  const s = (text || '').trim();
+  const m = /openmousse:\/\/pair\?([^\s]+)/.exec(s);
+  if (m) {
+    const out: { server?: string; code?: string } = {};
+    for (const kv of m[1].split('&')) {
+      const [k, v = ''] = kv.split('=');
+      let val = v;
+      try { val = decodeURIComponent(v.replace(/\+/g, ' ')); } catch { /* 原样 */ }
+      if (k === 's') out.server = val;
+      if (k === 'c') out.code = val;
+    }
+    return out;
+  }
+  const code = s.replace(/[\s-]/g, '').toUpperCase();
+  return /^[23456789ABCDEFGHJKMNPQRSTUVWXYZ]{8}$/.test(code) ? { code } : {};
+}
+
+/** 配对码换一个自己的接入令牌，换到了就存好地址和令牌（长期令牌不用抄，也不经过聊天）。 */
+export async function pairWithCode(b: string, code: string, device: string): Promise<{ ok: true; appName: string } | { ok: false; message: string }> {
+  const ctl = new AbortController();
+  const timer = setTimeout(() => ctl.abort(), 12000);
+  try {
+    const r = await fetch(`${normalizeBase(b)}/api/pair`, {
+      method: 'POST', signal: ctl.signal,
+      headers: { 'Content-Type': 'application/json', Accept: 'application/json', 'Accept-Language': acceptLanguage() },
+      body: JSON.stringify({ code, device }),
+    });
+    const j = await r.json().catch(() => ({}));
+    if (!r.ok || !j.ok || !j.token) return { ok: false, message: j.error || j.detail || `HTTP ${r.status}` };
+    await saveServerConfig(b, j.token);
+    return { ok: true, appName: j.appName || 'OpenMousse' };
+  } catch (e) {
+    return {
+      ok: false,
+      message: e instanceof Error && e.name === 'AbortError'
+        ? L('连接超时：手机连上 Tailscale 了吗？', 'Timed out. Is the phone on Tailscale?')
+        : L('连不上服务器：手机要先连上 Tailscale（和服务器同一个账号）。', "Can't reach the server. The phone needs Tailscale first (the same account as the server)."),
+    };
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 /** JSON 请求：超时、错误信息统一处理。服务端的错误说明（detail / error）原样抛出来给界面显示。 */
 export async function request<T>(path: string, init?: { method?: string; body?: unknown; timeoutMs?: number }): Promise<T> {
   const ctl = new AbortController();

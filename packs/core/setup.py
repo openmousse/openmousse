@@ -1052,8 +1052,12 @@ def main() -> None:
     print(L("手机怎么连：", "Connecting the phone:"))
     tok_zh, tok_en = ("上面的令牌", "the token above") if "phone" in new_tokens else ("手机令牌", "your phone token")
     if b["host"].startswith("100."):
-        print(L(f"  这台机器在 Tailscale 里：手机也装 Tailscale、登同一个账号，app 连接页填 {url} 和{tok_zh}。",
-                f"  This machine is on Tailscale: install Tailscale on the phone (same account), then enter {url} and {tok_en} in the app."))
+        print(L("  这台机器在 Tailscale 里：手机也装 Tailscale、登同一个账号，装好 OpenMousse app，再用手机相机扫下面的码（或者点码下面的链接）：",
+                "  This machine is on Tailscale: install Tailscale on the phone (same account) and the OpenMousse app, then scan the code below with the phone's camera (or tap the link under it):"))
+        r = run([str(venv / "bin/python"), str(repo / "server/tokens.py"), "pair", "--name", "phone", "--minutes", "30"], cwd=str(repo / "server"))
+        if r.returncode == 0 and r.stdout.strip():
+            print(r.stdout.rstrip())
+        print(L(f"  扫不了的话，app 连接页手填 {url} 和{tok_zh}。", f"  If scanning doesn't work, enter {url} and {tok_en} on the app's connect page."))
     elif b["host"] in ("127.0.0.1", "localhost"):
         print(L("  现在只监听本机。装 Tailscale（`curl -fsSL https://tailscale.com/install.sh | sh && sudo tailscale up`）后再跑一遍安装器，",
                 "  Listening on this machine only. Install Tailscale (`curl -fsSL https://tailscale.com/install.sh | sh && sudo tailscale up`) and run the installer again,"))

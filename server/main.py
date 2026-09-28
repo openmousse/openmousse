@@ -63,6 +63,7 @@ from inbox import router as inbox_router  # noqa: E402
 from unread import router as unread_router  # noqa: E402
 from schedule import router as schedule_router  # noqa: E402
 from boards import router as boards_router  # noqa: E402
+from pairing import router as pairing_router  # noqa: E402
 from projects import router as projects_router  # noqa: E402 — 顺带把 kind=project 的收件箱钩子挂上
 from goals import router as goals_router  # noqa: E402
 import alerts  # noqa: E402
@@ -118,6 +119,7 @@ app = FastAPI(title=f"{settings.app_name} API", docs_url=None, redoc_url=None, o
 if mcp_bridge is not None:  # 放最前面：/mcp 不走 /api 的令牌检查，它自己认 mcp 令牌；/mcp 不带斜杠也要接住（MCP 客户端不跟 POST 的重定向）
     app.router.routes[:0] = [Route("/mcp", endpoint=mcp_bridge.gate, methods=["GET", "POST", "DELETE"]), Mount("/mcp", app=mcp_bridge.gate)]
 app.include_router(chat_router)
+app.include_router(pairing_router)
 app.include_router(cards_router)  # 在 data 之前：/api/tasks/quota 不能被 /api/tasks/{tid} 先接走
 app.include_router(health_router)
 app.include_router(data_router)
@@ -197,7 +199,7 @@ async def guard(request: Request, call_next):
     lang_token = i18n.use(request.headers.get("accept-language"))
     try:
         # 网页版的静态文件公开；/api/* 要认证。
-        if request.url.path.startswith("/api/"):
+        if request.url.path.startswith("/api/") and request.url.path != "/api/pair":  # 配对码换令牌：本来就没令牌（见 pairing.py）
             who = principal_of(request)
             if not who:
                 return JSONResponse({"ok": False, "error": L("没有有效的接入令牌。在服务器上运行 python3 tokens.py add <名字> 生成一个，填进 app 的连接页。",
