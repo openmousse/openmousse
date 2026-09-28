@@ -14,6 +14,7 @@
 - 要你表态（定时间、花钱、答应什么）、问你私事的：出收件箱卡（kind social，默认不推送，server.json 的 social.push 开了才静音推）。
   你点了以后，服务端自己告诉对方（经注册的渠道 DELIVER：a2a / chat），同意的约会进日程。这类卡的钩子不往主 agent 的线程里发任何话。
 - 说出去的每一句都记下来（card_log + activity_log），每个人每天有条数上限、每条有长度上限。
+- 陌生人（不在好友表里的、签名认不出的、删掉的朋友）默认一律不理：server.json 的 card.strangers 是 true 才答（只有固定句子、不出卡）。
 
 表（grava.db）
 - card_log：进来的（dir in）和说出去的（dir out）每一句。status：in = received；out = sent / blocked（被服务端拦下、没发出去）
@@ -21,6 +22,7 @@
 - card_asks：出给你的卡（inbox_id 一行）：谁、哪个渠道、哪段对话（ref）、决定还是私事、提议的时间地点、结果。
 
 server.json 的 card 段（都可选，每次读文件）
+  strangers  陌生人能不能来问（默认 false：A2A 回 403，这里不调模型、不记一句）
   llm        纯模型接口，见上
   model / thinking / agent   走 llm-task 时的模型覆盖、思考档位（默认 low）、按哪个 OpenClaw agent 的工具策略（默认 main）
   limits     {"in_per_day": {"close": 80, "friend": 50, "mate": 30, "stranger": 10}, "anon_per_day": 30, "in_chars": 1000, "out_chars": 400}
@@ -95,6 +97,11 @@ class CardLLMError(RuntimeError):
 def cfg() -> dict:
     c = raw().get("card")
     return c if isinstance(c, dict) else {}
+
+
+def strangers_allowed() -> bool:
+    """陌生人能不能来问（server.json 的 card.strangers，默认不能）。"""
+    return cfg().get("strangers") is True
 
 
 def limits() -> dict:
@@ -689,10 +696,14 @@ async def answer(friend: dict | None, question: str, *, channel: str = "chat", m
     """名片 agent 答对方一句。friend = 好友表一行（None = 陌生：kid 是签了名的钥匙，name 是对方自称的名字，只拿来显示）。
     material = 调用方递进来的资料（分享的快照），history = 这段对话之前几轮 [{from: them|you, text}]（不给就按 ref 从记录里取），
     ref = 这段对话（share:<id> / a2a:<context>）。
-    → {text, used, usedNames, usedLabel, defer, declined, limited, log_id, via}：used 是资料的 id，usedNames 是给人看的名字；
+    → {text, used, usedNames, usedLabel, defer, declined, limited, log_id, via}（陌生人不让问时 text 是空的、refused 为真）：used 是资料的 id，usedNames 是给人看的名字；
       text 发给对方的话；defer = None 或 {kind: decision|private, inbox_id, summary}（出了卡、等你点）；limited = 到了今天的上限（text 是一句客气话，
       发不发调用方定）；log_id 给「收回」「我来改」用。"""
     peer = peer_of(friend, kid, name)
+    if peer["tier"] == "stranger" and not strangers_allowed():
+        # 陌生人不理：不调模型、不出卡、不记一句（A2A 接口在前面就回 403 了，这里是第二道）
+        return {"text": "", "used": [], "usedNames": [], "usedLabel": "", "defer": None, "declined": [], "limited": False,
+                "refused": True, "log_id": None, "via": "refused"}
     ref = (ref or "")[:120]
     lim = limits()
     q = clean_text(question, lim["in_chars"])

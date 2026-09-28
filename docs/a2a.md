@@ -62,7 +62,7 @@ The rules go in the task instructions (llm-task's TASK / the system message); th
 - **Leaks**: a reply containing an address, phone, email, body number, a partner's or family member's name or one of your private words that wasn't released (`share.find_private`), or a health word not in the material, is not sent; it becomes "I can't answer that — you'd need to ask <you> directly." The original stays in the log for you (`card_log.meta.original`).
 - **Agreeing for you**: if they are proposing something (a time plus a question or invitation, or money) and the reply sounds like a yes ("sure", "confirmed", "see you", "好的", "定了"…), it becomes "That's <you>'s call — I'll ask." and a card.
 - **No card without a concrete time**: "When is he free for dinner?" is answered from the calendar; a day, a time or money makes it a card.
-- **Strangers**: no model call (their tier has no material); proposals and private questions get "You'd need to be <you>'s friend for that." and **no card** (strangers can't put things in your inbox).
+- **Strangers** are refused by default (with `card.strangers` off the A2A endpoint answers 403, the card agent makes no model call and logs nothing, and the signed-requests extension is marked `required: true` in the card). With it on there is still no model call (their tier has no material); proposals and private questions get "You'd need to be <you>'s friend for that." and **no card** (strangers can't put things in your inbox).
 
 ### 2.5 Things that need you: inbox cards
 
@@ -123,7 +123,7 @@ A card still waiting in the same conversation is replaced in place when they cha
 
 ## 4. The endpoint `POST /f/a2a` (JSON-RPC 2.0, A2A 1.0)
 
-Who is talking comes from `social.authenticate()`: a signed, listed, active friend gets their tier; unsigned or an unknown key is a stranger; a signature that is present but wrong is a 401 (never downgraded to a stranger); a blocked friend gets `TASK_STATE_REJECTED` with no model call, no card and nothing of theirs logged.
+Who is talking comes from `social.authenticate()`: a signed, listed, active friend gets their tier; unsigned, an unknown key or a removed friend is a stranger and gets a **403** by default (JSON-RPC error `-32008` ExtensionSupportRequired: sign with signed-requests; only with `card.strangers` on are they answered at the stranger tier); a signature that is present but wrong is a 401 (never downgraded to a stranger); a blocked friend gets `TASK_STATE_REJECTED` with no model call, no card and nothing of theirs logged.
 
 | Method | Support |
 |---|---|
@@ -169,6 +169,7 @@ When we ask someone (section 7), `configuration.taskPushNotificationConfig` carr
 
 ```json
 "card": {
+  "strangers": false,
   "llm": {"url": "https://…/v1", "token_env": "…", "model": "…"},
   "model": "…", "thinking": "low", "agent": "main",
   "limits": {"in_per_day": {"close": 80, "friend": 50, "mate": 30, "stranger": 10}, "anon_per_day": 30, "in_chars": 1000, "out_chars": 400},
@@ -176,7 +177,7 @@ When we ask someone (section 7), `configuration.taskPushNotificationConfig` carr
 }
 ```
 
-`model` / `thinking` / `agent` apply to llm-task: model override, thinking level, and whose OpenClaw tool policy the invoke goes through.
+`strangers`: whether strangers may ask at all (default `false`). `model` / `thinking` / `agent` apply to llm-task: model override, thinking level, and whose OpenClaw tool policy the invoke goes through (that agent must allow llm-task: `agents.entries.<id>.tools.alsoAllow`).
 
 ## 9. For layer ②
 
@@ -204,4 +205,4 @@ Each `history` item is `{"from": "friend" | "owner" | "agent", "text"}`; `used` 
 
 - Two test servers on one machine act as two people (`~/openmousse-wt/tools/mk-test-env.py`): layer ③ uses 8124 / 8125 (A) and 8126 / 8127 (B), `share.public_url` = `http://127.0.0.1:<public port>`, `social.allow_http: true`.
 - Regression: a fake model (OpenAI-compatible, scripted) runs dinner end to end plus the edge cases; the official a2a-sdk plays another vendor: parses the card, checks its signature after the proto round trip, sends `SendMessage`, and stored tasks parse as proto `Task`; a real model is spot-checked on the rules.
-- Going live needs the owner's OK for: the Funnel path `/f` (together with layer ②); OpenClaw's llm-task (an `openclaw.json` change and a Gateway restart); pushes for social cards (`social.push`); whether strangers may ask at all (now: yes, fixed sentences only, no cards, 30 a day).
+- Going live needs the owner's OK for: the Funnel path `/f` (together with layer ②); OpenClaw's llm-task (an `openclaw.json` change and a Gateway restart); pushes for social cards (`social.push`); whether strangers may ask at all (the owner chose no on 2026-09-28: `card.strangers` stays false).

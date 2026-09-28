@@ -5,7 +5,8 @@
                                  名片里声明两个 extension：signed-requests（请求签名，就是社交的 RFC 9421 那一套，required: false）、
                                  decision（「同意 / 不去 / 换个时间」只用它的 DataPart 表达，文字从来不算数）。
 - POST /f/a2a                   JSON-RPC：SendMessage、GetTask、ListTasks、CancelTask、推送设置四个；流式和扩展名片不支持。
-                                 谁在说话由 social.authenticate() 定：签了名的在册朋友按他的档，其余（没签名、钥匙不认识、删掉的）都是陌生；
+                                 谁在说话由 social.authenticate() 定：签了名的在册朋友按他的档，其余（没签名、钥匙不认识、删掉的）都是陌生，
+                                 陌生人默认回 403（A2A 的 ExtensionSupportRequired：要带签名；server.json 的 card.strangers 开了才答）；
                                  blocked 的回 REJECTED，不调模型、不出卡。
 - POST /f/a2a/push              别的 OpenMousse 把我们问过的任务的进展推回来（签名 + 当初给的令牌）。
 一句普通的问答回一条 Message（不建任务）；要你表态的建一个任务：先是 TASK_STATE_AUTH_REQUIRED（等本人点头，A2A 7.6 的「人来批准」），
@@ -56,9 +57,11 @@ METHODS_03 = {"message/send", "message/stream", "tasks/get", "tasks/list", "task
 ID_RE = re.compile(r"^[A-Za-z0-9_.:-]{1,100}$")
 # A2A 5.4 的错误码
 E_PARSE, E_REQUEST, E_METHOD, E_PARAMS, E_INTERNAL = -32700, -32600, -32601, -32602, -32603
-E_NOT_FOUND, E_NOT_CANCELABLE, E_PUSH, E_UNSUPPORTED, E_CONTENT, E_VERSION = -32001, -32002, -32003, -32004, -32005, -32009
+E_NOT_FOUND, E_NOT_CANCELABLE, E_PUSH, E_UNSUPPORTED, E_CONTENT = -32001, -32002, -32003, -32004, -32005
+E_EXTENSION, E_VERSION = -32008, -32009
 REASONS = {E_NOT_FOUND: "TASK_NOT_FOUND", E_NOT_CANCELABLE: "TASK_NOT_CANCELABLE", E_PUSH: "PUSH_NOTIFICATION_NOT_SUPPORTED",
-           E_UNSUPPORTED: "UNSUPPORTED_OPERATION", E_CONTENT: "CONTENT_TYPE_NOT_SUPPORTED", E_VERSION: "VERSION_NOT_SUPPORTED"}
+           E_UNSUPPORTED: "UNSUPPORTED_OPERATION", E_CONTENT: "CONTENT_TYPE_NOT_SUPPORTED", E_EXTENSION: "EXTENSION_SUPPORT_REQUIRED",
+           E_VERSION: "VERSION_NOT_SUPPORTED"}
 _bg: set[asyncio.Task] = set()
 
 
@@ -106,6 +109,7 @@ def agent_card() -> dict | None:
         return None
     ident = social.identity()
     who = settings.user_name or settings.app_name
+    strangers = cardagent.strangers_allowed()  # 不理陌生人时，签名这个 extension 是 required（A2A 3.3.4）
     zh = settings.language == "zh"
     return {
         "name": f"{who} 的名片 agent" if zh else f"{who}'s card agent",
@@ -119,7 +123,9 @@ def agent_card() -> dict | None:
         "documentationUrl": "https://github.com/openmousse/openmousse/blob/main/docs/a2a.md",
         "capabilities": {"streaming": False, "pushNotifications": True, "extensions": [
             {"uri": EXT_SIGNED, "description": "Requests from friends are signed (RFC 9421: @method @path content-digest mousse-to; created, nonce, "
-                                              "keyid, alg ed25519, tag openmousse/1). Unsigned requests are answered as a stranger.",
+                                              "keyid, alg ed25519, tag openmousse/1). " + ("Unsigned requests are answered as a stranger."
+                                                                                            if strangers else "Only friends' signed requests are answered."),
+             **({} if strangers else {"required": True}),
              "params": {"kid": ident["kid"], "x": ident["x"], "alg": "ed25519", "card": f"{url}/f/card", "jwks": f"{url}/f/jwks.json"}},
             {"uri": EXT_DECISION, "description": f"Only {DECISION_TYPE} data parts carry {who}'s decisions (yes, no, another time); "
                                                 "they are sent after the owner decides. Text never commits anyone."},
@@ -545,6 +551,11 @@ async def rpc(request: Request):
     if not isinstance(req, dict) or req.get("jsonrpc") != "2.0" or not isinstance(req.get("method"), str):
         return rpc_err(req.get("id") if isinstance(req, dict) else None, E_REQUEST, "Request payload validation error")
     id_ = req.get("id")
+    if not peer.friend and not peer.blocked and not cardagent.strangers_allowed():
+        # 只理朋友：没签名、钥匙不认识、删掉的一律 403（A2A 的 ExtensionSupportRequired：请求要用 signed-requests 签名）
+        r = rpc_err(id_, E_EXTENSION, "This agent only answers its owner's friends: sign requests with a key it knows", extension=EXT_SIGNED)
+        r.status_code = 403
+        return r
     ver = (request.headers.get("a2a-version") or request.query_params.get("A2A-Version") or "").strip()
     if ver and ver not in ("1.0", "1"):
         return rpc_err(id_, E_VERSION, f"A2A version {ver} is not supported", supportedVersions=VERSION)

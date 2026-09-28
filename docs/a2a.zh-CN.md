@@ -62,7 +62,7 @@ claw 的对话接口是完整的 agent：OpenClaw 的 `/v1/chat/completions` 跑
 - **泄露检查**：回复里有没放出来的住址、电话、邮箱、身体数字、伴侣和家人的名字、你设的词（`share.find_private`），或者资料里没有的健康词 → 这句不发，换成「这个我答不了，得问 Leo 本人。」原句只留在记录里给你看（`card_log.meta.original`）。
 - **替你答应检查**：对方在约（说了时间又在问 / 约，或者涉及钱），它却像是答应了（「好的」「定了」「see you」…）→ 改成「这个得 Leo 本人定，我去问一下。」并出卡。
 - **没说哪天几点不出卡**：「想约他吃饭，哪天有空？」按日程答就够了；说了哪天、几点或者涉及钱，才出卡。
-- **陌生人**：不调模型（他这一档什么资料都没有），在约、问私事的一律「这个得先加 Leo 为朋友。」，**不出卡**（不能往你的收件箱里塞东西）。
+- **陌生人**：默认一律不理（`card.strangers` 不开：A2A 接口回 403，名片 agent 不调模型、不记一句；名片上签名那个 extension 标成 `required: true`）。开了以后也不调模型（他这一档什么资料都没有），在约、问私事的一律「这个得先加 Leo 为朋友。」，**不出卡**（不能往你的收件箱里塞东西）。
 
 ### 2.5 要你表态：收件箱卡
 
@@ -123,7 +123,7 @@ claw 的对话接口是完整的 agent：OpenClaw 的 `/v1/chat/completions` 跑
 
 ## 4. 接口 `POST /f/a2a`（JSON-RPC 2.0，A2A 1.0）
 
-谁在说话由 `social.authenticate()` 定：签了名、在册、active 的朋友按他那一档；没签名或钥匙不认识的是陌生人；签名在但不对一律 401（不降级成陌生人）；blocked 的回 `TASK_STATE_REJECTED`，不调模型、不出卡、不记对方的话。
+谁在说话由 `social.authenticate()` 定：签了名、在册、active 的朋友按他那一档；没签名、钥匙不认识、删掉的朋友是陌生人，默认回 **403**（JSON-RPC 错误 `-32008` ExtensionSupportRequired：要用 signed-requests 签名；`card.strangers` 开了才按陌生档答）；签名在但不对一律 401（不降级成陌生人）；blocked 的回 `TASK_STATE_REJECTED`，不调模型、不出卡、不记对方的话。
 
 | 方法 | 支持 |
 |---|---|
@@ -169,6 +169,7 @@ claw 的对话接口是完整的 agent：OpenClaw 的 `/v1/chat/completions` 跑
 
 ```json
 "card": {
+  "strangers": false,
   "llm": {"url": "https://…/v1", "token_env": "…", "model": "…"},
   "model": "…", "thinking": "low", "agent": "main",
   "limits": {"in_per_day": {"close": 80, "friend": 50, "mate": 30, "stranger": 10}, "anon_per_day": 30, "in_chars": 1000, "out_chars": 400},
@@ -176,7 +177,7 @@ claw 的对话接口是完整的 agent：OpenClaw 的 `/v1/chat/completions` 跑
 }
 ```
 
-`model` / `thinking` / `agent` 是走 llm-task 时的模型覆盖、思考档位、按哪个 OpenClaw agent 的工具策略。
+`strangers`：陌生人能不能来问（默认 `false`）。`model` / `thinking` / `agent` 是走 llm-task 时的模型覆盖、思考档位、按哪个 OpenClaw agent 的工具策略（那个 agent 要放行 llm-task：`agents.entries.<id>.tools.alsoAllow`）。
 
 ## 9. 给第二层的
 
@@ -204,4 +205,4 @@ cardagent.SOCIAL_HOOKS["friend"] = async fn(item, action, note)  # 第二层自�
 
 - 本机两套测试服当两个人（`~/openmousse-wt/tools/mk-test-env.py`）：第三层用 8124 / 8125（A = Leo）、8126 / 8127（B = 朋友），`share.public_url` 填 `http://127.0.0.1:<公网端口>`，`social.allow_http: true`。
 - 回归：假模型（OpenAI 兼容，按剧本回）跑「约饭」全程和各种边角；官方 a2a-sdk 当别家：解析名片、按 proto 来回转后验签、客户端发 `SendMessage`、存下的任务按 proto 解析；真模型抽查守不守规矩。
-- 上线要 Leo 点头的：开 Funnel `/f`（和第二层一起）；开 OpenClaw 的 llm-task（改 `openclaw.json`、重启 Gateway）；社交卡要不要推送（`social.push`）；陌生人能不能来问（现在：能问，但只有固定句子、不出卡、每天 30 条）。
+- 上线要 Leo 点头的：开 Funnel `/f`（和第二层一起）；开 OpenClaw 的 llm-task（改 `openclaw.json`、重启 Gateway）；社交卡要不要推送（`social.push`）；陌生人能不能来问（Leo 9/28 定：不让，`card.strangers` 保持 false）。
