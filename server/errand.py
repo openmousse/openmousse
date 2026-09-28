@@ -13,7 +13,7 @@
   主机上跑的（web_fetch、web_search、发消息、记忆检索、派子会话）一律关掉：它们不经过沙箱，会绕开 Sentinel。skills 一个都没有。
 - 网络 mousse-errand（br-mousse-err，172.30.99.0/24）：不做 NAT；openmousse-errand-net.service（root）让这个网桥上的包哪儿也转发不出去、
   对主机只开 172.30.99.1:3128（Sentinel）。
-- 代理：user 服务 openmousse-sentinel（mitmdump + egress_proxy.py，自己的 venv），听 172.30.99.1:3128，用令牌 sentinel 问服务端。
+- 代理：user 服务 openmousse-sentinel（sentinel_run.py 把 egress_proxy.py 挂进 mitmproxy，自己的 venv），听 172.30.99.1:3128，用令牌 sentinel 问服务端。
 - 收件箱：Sentinel 扣下的请求是 kind egress 的卡（响铃），见 egress.py。
 """
 from __future__ import annotations
@@ -317,7 +317,8 @@ After=network-online.target
 [Service]
 Environment=MOUSSE_SENTINEL_DIR={d}
 ExecStartPre=/bin/sh -c '{wait}'
-ExecStart={venv()}/bin/mitmdump -q -s {REPO}/server/egress_proxy.py --listen-host {GATEWAY} --listen-port {PORT} --set confdir={d}/mitm --set connection_strategy=lazy --set body_size_limit=25m --set rawtcp=false
+WorkingDirectory={REPO}/server
+ExecStart={venv()}/bin/python {REPO}/server/sentinel_run.py --host {GATEWAY} --port {PORT} --confdir {d}/mitm
 Restart=always
 RestartSec=3
 MemoryMax=500M
@@ -329,7 +330,7 @@ WantedBy=default.target
 
 
 def ensure_proxy_service() -> list[str]:
-    if not (venv() / "bin/mitmdump").exists():
+    if not (venv() / "bin/python").exists() or run([str(venv() / "bin/python"), "-c", "import mitmproxy"]).returncode != 0:
         raise RuntimeError(L(f"没有 mitmproxy：python3 -m venv {venv()} && {venv()}/bin/pip install mitmproxy",
                              f"mitmproxy is missing: python3 -m venv {venv()} && {venv()}/bin/pip install mitmproxy"))
     unit = Path.home() / f".config/systemd/user/{UNIT}.service"

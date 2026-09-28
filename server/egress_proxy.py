@@ -1,8 +1,7 @@
 """Sentinel 出口代理：mitmproxy 插件。「代办」Agent 的沙箱（Docker 网络 mousse-errand）只能连到这里，规矩见 egress.py。
 
-跑法（errand.py 写好的 user 服务 openmousse-sentinel）：
-  <venv>/bin/mitmdump -q -s server/egress_proxy.py --listen-host 172.30.99.1 --listen-port 3128 \
-      --set confdir=<data_dir>/sentinel/mitm --set connection_strategy=lazy --set body_size_limit=25m --set rawtcp=false
+跑法（errand.py 写好的 user 服务 openmousse-sentinel）：sentinel_run.py 把这里的插件直接挂进 mitmproxy（别用 mitmdump -s：
+  脚本一变它就重新加载，加载失败会不带规则接着当普通代理）。钩子里出任何错都按挡下处理（fail closed）。
   环境变量 MOUSSE_SENTINEL_DIR=<data_dir>/sentinel：里面的 proxy.json（{"server": 服务端地址, "token": sentinel 令牌, "hold_wait": 秒}，600）
   和 secrets.json（{"名字": {"value": 真值, "hosts": ["api.example.com"]}}，600，只有这个进程读）。
 
@@ -129,6 +128,13 @@ class Sentinel:
 
     # —— 连接：只许公网地址 ——
     async def server_connect(self, data) -> None:
+        try:
+            await self._server_connect(data)
+        except Exception as e:  # noqa: BLE001 — 查不了就不连（fail closed）
+            log.error("sentinel: server_connect failed: %s", type(e).__name__)
+            data.server.error = "Sentinel: internal error, not connecting"
+
+    async def _server_connect(self, data) -> None:
         host, port = data.server.address
         if port not in PORTS:
             data.server.error = f"Sentinel: port {port} is not allowed"
@@ -192,6 +198,13 @@ class Sentinel:
             return json.loads(r.read().decode("utf8"))
 
     async def request(self, flow: http.HTTPFlow) -> None:
+        try:
+            await self._request(flow)
+        except Exception as e:  # noqa: BLE001 — 规则出错：这一个请求挡下（fail closed），不能让它原样出去
+            log.error("sentinel: request hook failed: %s", type(e).__name__)
+            reply(flow, 403, "denied", "Sentinel hit an internal error, so this request is blocked.")
+
+    async def _request(self, flow: http.HTTPFlow) -> None:
         req = flow.request
         # 按真正要连的目标判断（CONNECT / 网址里的主机），不信 Host 头：两个对不上就挡，免得「连 A、头里写 B」骗过绑定检查
         host = (req.host or "").lower().rstrip(".")
@@ -279,6 +292,13 @@ class Sentinel:
 
     # —— 回来的内容：真值换回占位符 ——
     def response(self, flow: http.HTTPFlow) -> None:
+        try:
+            self._response(flow)
+        except Exception as e:  # noqa: BLE001 — 没法确认里面没有真值：不交给沙箱
+            log.error("sentinel: response hook failed: %s", type(e).__name__)
+            flow.response = http.Response.make(502, b"Sentinel couldn't check this response.", {"X-Sentinel": "denied"})
+
+    def _response(self, flow: http.HTTPFlow) -> None:
         sec = self.load_secrets()
         if not sec or not flow.response or flow.response.headers.get("X-Sentinel"):
             return
