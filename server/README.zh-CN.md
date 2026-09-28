@@ -249,6 +249,14 @@ python3 proposals_ctl.py agent --slug reading --name 读书 --purpose "…" --ic
 
 回复期间写了建议卡（`feed_items` 多了一行、group_id 是这个线程；main 认没挂 Agent 的卡）就推卡片（副标题是卡的类型，正文是「卡标题 · 第一条要点」），否则推回复的开头（去掉 Markdown，按句子截断）。`data` 带 `thread`（老版本 app 只认它）、`target`（`{type: thread | card | inbox | today, …}`）、`level`（算过静默时段后实际用的档位）、`kind`（reply / card / inbox / done / report）。角标 = 收件箱待你点头 + 给你的未读回复。`/api/push/send` 收 `{title, body, thread?, thread_id?, subtitle?, level?, category?, collapse?, target?}`。
 
+卡片和收件箱的推送另带 `data.card`，长按通知时 app 的通知内容扩展（1.0.5 起）把它画成一张卡：`k` 类型、`t` 标题、`s` 最多 3 个 `[标签, 值]` 数字、`r` 进度环 `[值, 满值, 标签]`、`l` 最多 5 条要点、`f` 脚注、`c` 颜色（Agent 的颜色名或 `#RRGGBB`）。键名短是因为整条推送只有 4 KB；`push.py` 的 `rich_card` 认三餐建议和训练建议，别的用卡片正文的前几行。
+
+## 小组件和实时活动
+
+`GET /api/widget`（`widget.py`）是 iOS 小组件（app 1.0.5）要的一小份：今天的恢复分（有了昨晚的睡眠才给）、今天最新一张 `meal_plan` 卡里的下一餐、今明两天还没过去的日程（`start` / `end` 是 Unix 秒，小组件自己按它把「下一件」往后挪；`time` 标签、`title`、`place`、`kind` class / training / deadline / event，最多 8 条），一周内「要记得的」有几件。文字按请求的语言排好；每块单独出错；按语言缓存 60 秒。
+
+实时活动（`live.py`）：`GET /api/live` 列出现在锁屏 / 灵动岛上该有的，`{key, kind, state, staleAt}`（`state` 就是 Swift 的 `ContentState`：`title`、`subtitle`、`icon`（SF Symbol）、`accent`、`startAt` / `endAt`（Unix 秒）、`progress`、`lines`、`done`）。自带两种：冥想时间（`focus:<id>`，从 `think_focus` 推出来）和练后餐倒计时（`meal:post`：一次回复写了 `meal_plan` 卡、里面有还没到点的「练后」一餐就开，倒到那一餐的时刻；新卡里没有练后餐了就关）。别的用 `POST /api/live {key, kind, state, staleAt?, endsAt?, minutes?}` 开，`POST /api/live/{key}/end {state?}` 关。app 在前台时照着开、改、关；push-to-start 令牌和每个活动的令牌交到 `POST /api/live/token {type: start | activity, token, key?, id?}`，在锁屏上划掉的交 `POST /api/live/dismissed {key}`（同一个 key 下次新开之前不再开）。`server.json` 配了 `apns`（`{key_file, key_id, team_id, topic: <bundle id>, sandbox?}`，APNs 的 `.p8` 密钥；Expo 的推送服务不转发实时活动）以后，服务器还直接用 HTTP/2（`curl --http2`）推给苹果开、改、关，不用打开 app。
+
 ## 未读
 
 `GET /api/unread` → `{threads: {<线程>: {n, mine, last: {id, text, ts, origin}}}, feedNew: [卡片 id], inbox, badge}`。只列有未读的线程（main、各 Agent、没归档的独立空间）；n = 读到的位置之后助手回了几条，mine = 其中回的是你发的话（`messages.origin = user`，定时器和收件箱触发的不算）；inbox = 等你点头的条数（含执行审批）；badge = inbox + 各线程 mine 之和。`POST /api/unread/read {thread, upto?}` 标成已读（只往后挪），返回同样的摘要。「今天」页的新卡片：`GET /api/feed` 每张带 `seen`，`POST /api/feed/seen {ids}` 标成看过。
