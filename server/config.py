@@ -4,7 +4,7 @@
 
 字段（都可省略）：
   app_name          界面上助手的名字（默认 OpenMousse）
-  user_name         你的称呼：给模型的中文说明里用它指你（默认「用户」）
+  user_name         你的称呼：给模型的中文说明里用它指你（默认「用户」；settings_ctl.py user-name 改，每次读文件，不用重启）
   timezone          IANA 时区，逻辑日和时间显示都按它算
   language          "zh" 或 "en"：没带 Accept-Language 的请求、推送、定时器用的语言（默认 en；app 的请求按它自己的语言）
   bind              {"host", "port"}：服务监听地址。loopback 给反向代理 / Tailscale Serve；Tailscale 私网地址只给自己的设备
@@ -89,7 +89,6 @@ class Settings:
     def __init__(self) -> None:
         c = raw(fresh=True)
         self.app_name: str = c.get("app_name") or "OpenMousse"
-        self.user_name: str = str(c.get("user_name") or "").strip()
         self.timezone: str = c.get("timezone") or "UTC"
         self.tz = ZoneInfo(self.timezone)
         self.language: str = "zh" if str(c.get("language") or "en").lower().startswith("zh") else "en"
@@ -116,6 +115,11 @@ class Settings:
         self.transcribe_url: str = c.get("transcribe_url") or "https://api.openai.com/v1/audio/transcriptions"
 
     # —— 会变的部分，每次读文件 ——
+    @property
+    def user_name(self) -> str:
+        """你的称呼（settings_ctl.py user-name 写；新手带路时主对话问了就写进来）。空 = 没设。"""
+        return str(raw().get("user_name") or "").strip()
+
     @property
     def agent_workspaces(self) -> dict[str, Path]:
         """有独立 workspace 的 Agent（新建 / 删除 Agent 时由 agents.py 改写 server.json）。"""
@@ -160,7 +164,8 @@ TZ = settings.tz
 
 
 def user_word() -> str:
-    """给模型的中文说明里怎么称呼用户：server.json 的 user_name（英文名两边带空格，排进中文句子里好看），没写就是「用户」。"""
+    """给模型的中文说明里怎么称呼用户：server.json 的 user_name（英文名两边带空格，排进中文句子里好看），没写就是「用户」。
+    每次从 raw() 读（按 mtime 缓存）：settings_ctl.py user-name 改了，下一句就用新的，不用重启。"""
     n = settings.user_name
     if not n:
         return "用户"

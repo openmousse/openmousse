@@ -47,7 +47,7 @@ import chat  # noqa: E402
 from chat import router as chat_router  # noqa: E402
 from cards import router as cards_router  # noqa: E402
 from health import router as health_router  # noqa: E402
-from data import router as data_router  # noqa: E402
+from data import first_run, router as data_router  # noqa: E402
 from files import router as files_router  # noqa: E402
 from push import router as push_router  # noqa: E402
 from study import router as study_router  # noqa: E402
@@ -253,7 +253,8 @@ def shared_channels() -> list[str]:
 def health(request: Request):
     return {"ok": True, "app_name": settings.app_name, "time": datetime.now(TZ).strftime("%Y-%m-%d %H:%M"), "timezone": settings.timezone,
             "principal": getattr(request.state, "principal", None), "shared_channels": shared_channels(),
-            "sources": sources.AVAILABLE, "chat": "live"}
+            "sources": sources.AVAILABLE, "chat": "live",
+            "first_run": first_run()}  # 新实例（还没有消息、没有 Agent）：app 在主对话顶上放「从这里开始」
 
 
 @app.get("/api/fitness/week")

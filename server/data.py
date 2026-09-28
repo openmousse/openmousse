@@ -3,6 +3,7 @@
 | 页面 | 真源 |
 |---|---|
 | Groups、独立空间、建议、形象设置、app 侧活动 | grava.db（记忆规范的 L4） |
+| 主对话顶上的「从这里开始」（新实例第一次打开） | `/api/health` 的 `first_run`：grava.db 的 `messages` 和 `groups` 都还是空的（见 first_run） |
 | 目标（你和 Agent 都能加、改、标完成、不做了，每次改动能撤销） | grava.db `goals` + `goal_log`（Agent 经 `server/goals_ctl.py` 写）；体重、体脂的当前值和趋势读训记（真源）+ Apple 健康 `health_metrics`（对照），不自动算体脂（见 goals.py） |
 | 编辑 Agent（`PATCH /api/groups/{id}`：名字 / 图标 / 颜色 / 职责 / 模型） | grava.db `groups`（color：NULL = 默认色）+ `threads.model`；名字、职责同时换掉 Agent 工作区 IDENTITY.md 里 `<!-- mousse:role -->` 那一段，模型同时写 openclaw.json 的 `agents.entries.<id>.model`（见 agents.py） |
 | 等你点头（收件箱） | grava.db `inbox`（各 Agent 经 `server/inbox_ctl.py` 写：要你同意才做的事、它们自己的提议；见 inbox.py）+ OpenClaw 执行审批队列（`openclaw approvals pending / resolve`，旧的 /api/approvals 仍在） |
@@ -35,6 +36,7 @@ import hashlib
 import json
 import re
 import shutil
+import sqlite3
 import time
 import uuid
 from datetime import date, datetime, timedelta
@@ -195,6 +197,16 @@ def last_lines() -> dict[str, tuple[str, str]]:
         rows = conn.execute("""SELECT m.thread, m.text, m.ts FROM messages m
             JOIN (SELECT thread, MAX(id) mid FROM messages GROUP BY thread) x ON x.mid = m.id""").fetchall()
     return {r["thread"]: (r["text"], r["ts"]) for r in rows}
+
+
+def first_run() -> bool:
+    """全新的实例：app 里一条消息都没有，也没建过 Agent。/api/health 带上它，app 在空着的主对话顶上放「从这里开始」。
+    两个 EXISTS 各看到第一行就停，/api/health 调得再勤也不费事；库读不了就当不是（宁可不出引导卡，也别让连接探测失败）。"""
+    try:
+        with _lock, ddb() as conn:
+            return not conn.execute("SELECT EXISTS(SELECT 1 FROM messages) OR EXISTS(SELECT 1 FROM groups)").fetchone()[0]
+    except (OSError, sqlite3.Error):
+        return False
 
 
 def short(text: str, n: int = 60) -> str:
