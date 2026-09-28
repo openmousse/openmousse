@@ -818,6 +818,16 @@ def probe_claw(c: dict) -> tuple[bool, str]:
         return False, type(e).__name__
 
 
+def gateway_applies_config(oc_path: Path) -> bool:
+    """Gateway 自己套用 openclaw.json 的改动吗：gateway.reload.mode 默认 hybrid（2026.8 起只剩 hybrid / off）= 能热加载的马上生效，
+    要重启的（比如 memory.search）等手头的对话做完它自己重启；off 和早先的 hot 要人重启。
+    自己套用的时候安装器不去重启它：claw 在自己的一轮里跑安装器时，同步的 `systemctl restart` 会互相等住（Gateway 重启前先排空，
+    等这一轮做完；这一轮在等安装器；安装器在等 systemctl），最多 5 分钟后 Gateway 退出，systemd（KillMode=mixed）把同一组里
+    还在跑的安装器一起杀掉：小结和配对码都出不来。要重启时也用 --no-block，不等。"""
+    mode = ((load_json(oc_path).get("gateway") or {}).get("reload") or {}).get("mode") if oc_path.exists() else None
+    return str(mode or "hybrid") not in ("off", "hot")
+
+
 def probe_gateway(url: str, oc_path: Path, wait: float = 0) -> tuple[bool, str]:
     """OpenClaw Gateway 连不连得上（app 的对话走它）：GET <gateway>/v1/models，带 openclaw.json 里 Gateway 的令牌，不打印。
     刚重启过的 Gateway 要二三十秒才起来：wait 秒内连不上就接着等。"""
@@ -1002,19 +1012,17 @@ def main() -> None:
         print(L("分享和朋友", "Sharing and friends"))
         social = share_public()
     restarted = False
+    self_apply = restart and gateway_applies_config(oc_path)
     if not a.no_systemd:
         print("systemd")
         install_systemd(repo, venv, cfg["timezone"])  # 没有 systemctl 它自己说怎么手动跑
-        if restart and not has_systemd():
-            say(L("openclaw.json 改了，重启你的 Gateway 生效", "openclaw.json changed: restart your Gateway to apply it"))
-        elif restart:
-            r = run(["systemctl", "--user", "is-active", "openclaw-gateway"])
-            if r.stdout.strip() == "active":
-                run(["systemctl", "--user", "restart", "openclaw-gateway"])
-                restarted = True
-                say(L("openclaw-gateway 已重启（配置改了）", "Restarted openclaw-gateway (its config changed)"))
-            else:
-                say(L("openclaw.json 改了，重启你的 Gateway 生效", "openclaw.json changed: restart your Gateway to apply it"))
+    if self_apply:
+        say(L("openclaw.json 改了，Gateway 自己会套用：能热加载的马上生效，要重启的它等手头的对话做完自己重启",
+              "openclaw.json changed; the Gateway applies it by itself: hot where it can, otherwise it restarts on its own once the turns in progress finish"))
+    elif restart and not a.no_systemd and has_systemd() and run(["systemctl", "--user", "is-active", "openclaw-gateway"]).stdout.strip() == "active":
+        run(["systemctl", "--user", "restart", "--no-block", "openclaw-gateway"])  # 不等：原因见 gateway_applies_config
+        restarted = True
+        say(L("openclaw-gateway 在重启（配置改了；手头的对话做完才重启）", "Restarting openclaw-gateway (its config changed; it finishes the turns in progress first)"))
     elif restart:
         say(L("openclaw.json 改了，重启你的 Gateway 生效", "openclaw.json changed: restart your Gateway to apply it"))
     gw_line = ""
@@ -1024,11 +1032,15 @@ def main() -> None:
         gw = str(cfg.get("gateway") or gateway_default(oc_path))
         if restarted:
             say(L("等 Gateway 重启好（最多一分钟）…", "Waiting for the Gateway to come back (up to a minute)…"))
-        ok, detail = probe_gateway(gw, oc_path, wait=60 if restarted else 5)
-        gw_line = L(f"OpenClaw Gateway：{gw}" + ("，连得上 ✓" if ok else f"，现在连不上 ✗（{detail}）：`openclaw gateway status` 看它在不在跑；"
-                                                        "它不在这个地址的话，server.json 里写 \"gateway\": \"http://127.0.0.1:<端口>\" 再重启服务"),
-                    f"OpenClaw Gateway: {gw}" + (", reachable ✓" if ok else f", not reachable right now ✗ ({detail}): check `openclaw gateway status`; "
-                                                        "if it listens somewhere else, set \"gateway\": \"http://127.0.0.1:<port>\" in server.json and restart the server"))
+        ok, detail = probe_gateway(gw, oc_path, wait=60 if restarted or self_apply else 5)
+        if not ok and (restarted or self_apply):  # 可能正在套用刚才的改动、自己重启：别让人（或 claw）去折腾它
+            gw_line = L(f"OpenClaw Gateway：{gw}，现在连不上（{detail}）：它可能正在套用刚才的改动、自己重启，过一两分钟跑 check.sh 再看",
+                        f"OpenClaw Gateway: {gw}, not reachable right now ({detail}): it may be applying the change and restarting itself; run check.sh again in a minute or two")
+        else:
+            gw_line = L(f"OpenClaw Gateway：{gw}" + ("，连得上 ✓" if ok else f"，现在连不上 ✗（{detail}）：`openclaw gateway status` 看它在不在跑；"
+                                                            "它不在这个地址的话，server.json 里写 \"gateway\": \"http://127.0.0.1:<端口>\" 再重启服务"),
+                        f"OpenClaw Gateway: {gw}" + (", reachable ✓" if ok else f", not reachable right now ✗ ({detail}): check `openclaw gateway status`; "
+                                                            "if it listens somewhere else, set \"gateway\": \"http://127.0.0.1:<port>\" in server.json and restart the server"))
 
     b = cfg["bind"]
     url = f"http://{b['host']}:{b['port']}"
@@ -1065,8 +1077,8 @@ def main() -> None:
                 f"  or reverse-proxy 127.0.0.1:{b['port']} as HTTPS with `tailscale serve` / Caddy / nginx and enter that address in the app."))
     else:
         print(L(f"  app 连接页填 {url} 和令牌", f"  Enter {url} and the token in the app"))
-    print(L("  app：作者的 TestFlight 链接（仓库 README），或自己构建 app/",
-            "  The app: the author's TestFlight link (see the repository README), or build app/ yourself."))
+    print(L("  app：怎么装见仓库 README 的「两种用法」（作者的 TestFlight，或自己构建 app/）",
+            "  The app: see \"Two ways to get the app\" in the repository README (the author's TestFlight, or build app/ yourself)."))
     if public is not None:
         print()
         print(L("AI 平台怎么连世界树：", "Connecting AI platforms to the memory tree:"))

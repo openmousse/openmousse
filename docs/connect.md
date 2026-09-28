@@ -65,7 +65,7 @@ The installer ends with a summary. For claws other than OpenClaw it also prints 
 
 ## 5. Give yourself OpenMousse's tools
 
-- **OpenClaw:** the installer already added `openmousse` under `mcp.servers`, and the Gateway hot-reloads it. To check: `openclaw mcp probe openmousse` should list 11 tools.
+- **OpenClaw:** the installer already added `openmousse` under `mcp.servers`, and the Gateway hot-reloads it. To check: `openclaw mcp probe openmousse` should list 12 tools (11 if the memory tree was skipped).
 - **Hermes:** under `mcp_servers:` in `~/.hermes/config.yaml` add `openmousse: {url: "<the MCP address>"}`, then run `/reload-mcp`.
 - **nanobot:** in `~/.nanobot/config.json`, under `tools.mcpServers`, add `"openmousse": {"url": "<the MCP address>"}`, then restart nanobot.
 - **Letta Code:** `/mcp add --transport http openmousse <the MCP address>`

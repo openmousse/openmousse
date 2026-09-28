@@ -65,7 +65,7 @@ curl -fsSL https://raw.githubusercontent.com/openmousse/openmousse/main/install.
 
 ## 5. 给自己加上 OpenMousse 的工具
 
-- **OpenClaw：** 安装器已经在 `mcp.servers` 里加了 `openmousse`，Gateway 会自己热加载。核对：`openclaw mcp probe openmousse` 应该列出 11 个工具。
+- **OpenClaw：** 安装器已经在 `mcp.servers` 里加了 `openmousse`，Gateway 会自己热加载。核对：`openclaw mcp probe openmousse` 应该列出 12 个工具（没装世界树是 11 个）。
 - **Hermes：** `~/.hermes/config.yaml` 的 `mcp_servers:` 下面加 `openmousse: {url: "<MCP 地址>"}`，然后跑 `/reload-mcp`。
 - **nanobot：** `~/.nanobot/config.json` 的 `tools.mcpServers` 下面加 `"openmousse": {"url": "<MCP 地址>"}`，然后重启 nanobot。
 - **Letta Code：** `/mcp add --transport http openmousse <MCP 地址>`
