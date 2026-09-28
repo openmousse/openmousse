@@ -82,4 +82,8 @@ OpenMousse 从作者的个人系统 Grava 抽出来。Grava 是作者自己的�
 
 ## 许可
 
-MIT
+[AGPL-3.0](LICENSE)，© 2026 Leo Zhou。你可以免费运行、研究、修改和分发 OpenMousse；如果把改过的版本通过网络提供给别人用，就要按同样的许可证公开你的改动。原样装来自己用、或者只为自己改，都没有任何要求。
+
+想把它放进自己的产品又不公开改动，或者拿来做收费服务？开一个 [GitHub issue](https://github.com/openmousse/openmousse/issues) 谈商业授权。
+
+2026 年 9 月 28 日之前发布的版本（到 `b8902a8` 为止）是 MIT 许可，仍然可以按 MIT 使用；之后的都是 AGPL-3.0。`app/` 里来自 Expo 模板的代码保留它的 MIT 声明（[app/LICENSE-EXPO](app/LICENSE-EXPO)）。

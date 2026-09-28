@@ -44,6 +44,10 @@ The CI workflow (`.github/workflows/ci.yml`) shows exactly what is checked: app 
 - **Memory first**: facts about the user go to the memory tree, not into an Agent's private notes.
 - **The app is a shell**: no sample data, no fake replies; when the server is unreachable it says so.
 
+## License of contributions
+
+OpenMousse is [AGPL-3.0](LICENSE), and its author also offers it under a commercial license. By opening a pull request you agree that your contribution is licensed under AGPL-3.0, and you grant Leo Zhou a perpetual, worldwide, non-exclusive, royalty-free, irrevocable license to use, modify, sublicense and relicense it, including under commercial terms. You also confirm it is your own work, or that you have the right to submit it. If that doesn't work for you, say so in the pull request before it is merged.
+
 ## Labels
 
 `good first issue` — small, self-contained, described well enough to start without asking · `pack` — a new feature pack · `data-source` — an adapter for some app or API · `app` / `server` / `tree` — which part.

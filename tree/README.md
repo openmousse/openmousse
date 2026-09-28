@@ -118,4 +118,4 @@ mousse-tree rebuild    # Markdown storage: rebuild the index from the notes
 
 ## License
 
-MIT
+[AGPL-3.0](LICENSE), like the rest of OpenMousse; for a commercial license open a [GitHub issue](https://github.com/openmousse/openmousse/issues). Versions published before 28 September 2026 were MIT and remain available under it.

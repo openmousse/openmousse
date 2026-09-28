@@ -82,4 +82,8 @@ See [CONTRIBUTING.md](CONTRIBUTING.md). Install reports and data-source adapters
 
 ## License
 
-MIT
+[AGPL-3.0](LICENSE), © 2026 Leo Zhou. You can run, study, change and share OpenMousse for free. If you offer a changed version to other people over a network, you have to publish your changes under the same license. Running it unchanged, or changing it just for yourself, asks nothing of you.
+
+Want to build it into a product without publishing your changes, or run it as a paid service? Open a [GitHub issue](https://github.com/openmousse/openmousse/issues) about a commercial license.
+
+Versions published before 28 September 2026 (up to commit `b8902a8`) were released under the MIT license and remain available under it; everything after is AGPL-3.0. Template code from Expo in `app/` keeps its MIT notice ([app/LICENSE-EXPO](app/LICENSE-EXPO)).

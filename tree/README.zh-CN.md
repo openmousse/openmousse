@@ -118,4 +118,4 @@ mousse-tree rebuild    # Markdown 存储：从笔记重建索引
 
 ## 许可
 
-MIT
+[AGPL-3.0](LICENSE)，和 OpenMousse 其余部分一样；商业授权开一个 [GitHub issue](https://github.com/openmousse/openmousse/issues)。2026 年 9 月 28 日之前发布的版本是 MIT，仍然可以按 MIT 使用。
