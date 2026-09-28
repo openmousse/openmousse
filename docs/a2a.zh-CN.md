@@ -163,7 +163,11 @@ claw 的对话接口是完整的 agent：OpenClaw 的 `/v1/chat/completions` 跑
 
 ## 7. 我们问别人 `POST /api/a2a/send`
 
-`{friend, text, contextId?, taskId?}`（要令牌，app 用）：取对方的 A2A 名片（必须是好友表里那把钥匙签的，接口地址必须在他的根地址下），签名发 `SendMessage`（`A2A-Version: 1.0`、`A2A-Extensions: …/signed-requests/v1`），原样发你的话。回 `{id, contextId, taskId, state, reply, used}`；`GET /api/a2a/out` 看问过的和对方推回来的（`outcome` = 对方本人的决定，`usedLabel` = 对方名片 agent 用了什么）。
+`{friend, text, contextId?, taskId?}`（要令牌，app 用）：取对方的 A2A 名片（必须是好友表里那把钥匙签的，接口地址必须在他的根地址下），签名发 `SendMessage`（`A2A-Version: 1.0`、`A2A-Extensions: …/signed-requests/v1`），原样发你的话。回 `{id, contextId, taskId, state, reply, used, item}`（`item` 就是 `GET /api/a2a/out` 列出来的那一条，app 拿到就能画）；`GET /api/a2a/out` 看问过的和对方推回来的（`outcome` = 对方本人的决定，`usedLabel` = 对方名片 agent 用了什么）。
+
+- **到哪一步了**：对方的服务器把任务的进展推到 `/f/a2a/push`（签名 + 当初给的令牌）。对方那边卡过期了，要被问到才收尾，所以 `GET /api/a2a/out?friend=…&refresh=true` 会在后台去问对方（签名的 `GetTask`；每条一分钟最多一次，只问还在 `SUBMITTED` / `WORKING` / `AUTH_REQUIRED`、一分钟没动静的），`POST /api/a2a/out/{id}/refresh` 马上问。对方回的只存着给你看，不进任何 agent。
+- **推送**：对方本人定了（带 decision）、任务结束、或者轮到我们这边再提（`INPUT_REQUIRED`），按 `server.json` 的 `social.push.agents` 推；没写就跟着 `answered`（朋友问了你的名片 agent）那一档，默认都是静音。
+- **app 里**：朋友聊天输入框左边是名片 agent 的小圆，点一下，打的字就发给对方的 agent 而不是对方本人。每问一次在聊天里是一张卡，和消息按时间排在一起：你问的、对方 agent 回的（带它用了什么）、走到哪一步（问了 → 对方 agent 回了 → 对方本人定）、对方本人的决定；对方想换个时间，点「再提一个时间」接着同一个任务说（带上 `contextId` + `taskId`）。「agent 之间」页底下也有同样的输入框。
 
 ## 8. `server.json` 的 `card` 段（都可选，每次读文件）
 

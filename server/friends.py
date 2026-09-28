@@ -436,9 +436,12 @@ def run_on_main(coro) -> None:
 # —— 推送 ——
 
 def push_level(kind: str) -> str:
-    """server.json social.push：{"message": "ring", "answered": "quiet", "friend": "quiet"}；不写 = 不推（新的推送类型要你点头才开）。"""
+    """server.json social.push：{"message": "ring", "answered": "quiet", "friend": "quiet", "agents": "quiet"}；不写 = 不推（新的推送类型要你点头才开）。
+    agents（你的名片 agent 问过的事、对方本人定了）没写就跟着 answered（朋友问了你的名片 agent）那一档（2026-09-28 定）。"""
     p = social.cfg().get("push")
     lv = p.get(kind) if isinstance(p, dict) else None
+    if lv is None and kind == "agents" and isinstance(p, dict):
+        lv = p.get("answered")
     return lv if lv in ("ring", "quiet") else "none"
 
 

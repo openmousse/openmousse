@@ -26,6 +26,7 @@ import json
 import re
 import secrets
 import sqlite3
+import time
 import uuid
 from datetime import datetime, timedelta, timezone
 
@@ -591,6 +592,17 @@ async def remote_card(fr: dict) -> dict:
     return card
 
 
+async def remote_iface(fr: dict) -> dict:
+    """对方名片上能用的 A2A 1.0 JSON-RPC 接口（地址必须在他自己的根地址下）。"""
+    card = await remote_card(fr)
+    root = str(fr.get("url") or "").rstrip("/")
+    iface = next((i for i in card.get("supportedInterfaces") or [] if isinstance(i, dict) and i.get("protocolBinding") == "JSONRPC"
+                  and str(i.get("protocolVersion")) in ("1.0", "1") and str(i.get("url") or "").startswith(root + "/")), None)
+    if not iface:
+        raise HTTPException(502, L("对方没有能用的 A2A 1.0 接口", "They have no usable A2A 1.0 endpoint"))
+    return iface
+
+
 @router.post("/api/a2a/send")
 async def send(body: SendIn):
     """让名片 agent 替你问一个朋友的 agent 一句（原样发过去；对方回的话只给你看，不进任何 Agent）。"""
@@ -600,12 +612,7 @@ async def send(body: SendIn):
     text = cardagent.clean_text(body.text, 2000)
     if not text:
         raise HTTPException(400, L("要问的话是空的", "Nothing to ask"))
-    card = await remote_card(fr)
-    root = str(fr.get("url") or "").rstrip("/")
-    iface = next((i for i in card.get("supportedInterfaces") or [] if isinstance(i, dict) and i.get("protocolBinding") == "JSONRPC"
-                  and str(i.get("protocolVersion")) in ("1.0", "1") and str(i.get("url") or "").startswith(root + "/")), None)
-    if not iface:
-        raise HTTPException(502, L("对方没有能用的 A2A 1.0 接口", "They have no usable A2A 1.0 endpoint"))
+    iface = await remote_iface(fr)
     oid, token = f"ao-{uuid.uuid4().hex[:10]}", secrets.token_urlsafe(24)
     msg: dict = {"messageId": uuid.uuid4().hex, "role": "ROLE_USER", "parts": [{"text": text, "mediaType": "text/plain"}]}
     if body.contextId:
@@ -637,8 +644,10 @@ async def send(body: SendIn):
                      "VALUES(?,?,?,?,?,?,?,?,?,?,?)", (oid, fr["id"], ctx, got.get("id"), state, text, reply[:4000], token,
                                                        json.dumps(result, ensure_ascii=False)[:20000], now_iso(), now_iso()))
     log_activity(L(f"问{fr['name']}的 agent：「{text}」", f'Asked {fr["name"]}\'s agent: "{text}"'), "social", actor=L("名片 agent", "Card agent"))
+    with _lock, adb() as conn:
+        row = conn.execute("SELECT * FROM a2a_out WHERE id=?", (oid,)).fetchone()
     return {"ok": True, "id": oid, "contextId": ctx, "taskId": got.get("id"), "state": state, "reply": reply,
-            "used": ((m.get("metadata") or {}).get(EXT_CARD) or {}).get("label") or ""}
+            "used": ((m.get("metadata") or {}).get(EXT_CARD) or {}).get("label") or "", "item": out_item(row)}
 
 
 @public_router.post("/f/a2a/push")
@@ -669,7 +678,28 @@ async def push_in(request: Request):
     outcome = (dec or {}).get("outcome") if isinstance(dec, dict) else None
     log_activity(L(f"{peer.friend['name']}那边回了：「{cardagent.clean_line(text, 200)}」", f'{peer.friend["name"]} replied: "{cardagent.clean_line(text, 200)}"')
                  + (f" [{outcome}]" if outcome else ""), "social", actor=L("名片 agent", "Card agent"))
+    state = str(st.get("state") or "")
+    if outcome or state in TERMINAL or state == "TASK_STATE_INPUT_REQUIRED":
+        spawn(notify_out(peer.friend, str(outcome or ""), text))
     return {"ok": True}
+
+
+def outcome_line(name: str, outcome: str) -> str:
+    """对方本人的决定，一句给你看的（推送、活动记录用；对方写的原话另外附上）。"""
+    return {"accepted": L(f"{name}同意了", f"{name} said yes"), "declined": L(f"{name}这次去不了", f"{name} can't make it"),
+            "counter": L(f"{name}想换个时间", f"{name} wants another time"), "ack": L(f"{name}看到了，会自己回你", f"{name} saw it and will reply"),
+            "private_declined": L(f"{name}不方便说", f"{name} would rather not say"),
+            "expired": L(f"{name}没来得及回", f"{name} didn't get to it")}.get(outcome, L(f"{name}那边回了", f"{name} replied"))
+
+
+async def notify_out(fr: dict, outcome: str, text: str) -> None:
+    """你的名片 agent 问过的事，对方那边有了结果：按 server.json 的 social.push.agents 推（没写就跟着 answered 那一档）。"""
+    try:
+        import friends
+        line = cardagent.clean_line(text, 120)
+        await friends.notify(fr, "agents", outcome_line(fr["name"], outcome) + (L(f"：「{line}」", f': "{line}"') if line else ""))
+    except Exception:  # noqa: BLE001 — 推不出去不影响收进展
+        pass
 
 
 def out_facts(data: str | None) -> tuple[str, str]:
@@ -688,18 +718,83 @@ def out_facts(data: str | None) -> tuple[str, str]:
     return str((dec or {}).get("outcome") or "") if isinstance(dec, dict) else "", str(card.get("label") or "") if isinstance(card, dict) else ""
 
 
+def out_item(r: sqlite3.Row) -> dict:
+    outcome, label = out_facts(r["data"])
+    return {"id": r["id"], "friend": r["friend_id"], "contextId": r["context_id"], "taskId": r["task_id"], "state": r["state"],
+            "text": r["text"], "reply": r["reply"], "outcome": outcome, "usedLabel": label, "createdAt": r["created_at"],
+            "updatedAt": r["updated_at"]}
+
+
+OPEN_STATES = ("TASK_STATE_SUBMITTED", "TASK_STATE_WORKING", "TASK_STATE_AUTH_REQUIRED")
+_asked_at: dict[str, float] = {}   # 每个任务上一次去问对方是什么时候（进程里记着，免得轮询时一直敲对方的门）
+
+
+async def refresh_out(oid: str) -> bool:
+    """问对方这个任务现在到哪了（签名的 GetTask）：推送没送到、或者对方那边过期了（过期是对方被问到时才收尾的）。
+    对方回的一律只存着给你看。→ 有没有变。"""
+    with _lock, adb() as conn:
+        r = conn.execute("SELECT * FROM a2a_out WHERE id=?", (oid,)).fetchone()
+    fr = social.friend(r["friend_id"]) if r and r["task_id"] else None
+    if not r or not fr or fr.get("status") != "active":
+        return False
+    try:
+        iface = await remote_iface(fr)
+        req = {"jsonrpc": "2.0", "id": f"get-{oid}", "method": "GetTask", "params": {"id": r["task_id"], "historyLength": 0}}
+        res = await social.signed_post(str(iface["url"]), req, to_kid=fr["kid"], headers={"A2A-Version": VERSION, "A2A-Extensions": EXT_SIGNED},
+                                       timeout=20)
+        j = res.json()
+    except (HTTPException, httpx.HTTPError, ValueError):
+        return False
+    t = j.get("result") if isinstance(j, dict) else None
+    if not isinstance(t, dict) or t.get("id") != r["task_id"]:
+        return False
+    st = t.get("status") if isinstance(t.get("status"), dict) else {}
+    state = str(st.get("state") or "")[:40]
+    m = st.get("message") if isinstance(st.get("message"), dict) else {}
+    text = "\n".join(p.get("text") for p in m.get("parts") or [] if isinstance(p, dict) and isinstance(p.get("text"), str))
+    if state == (r["state"] or "") and (text[:4000] == (r["reply"] or "") or not text):
+        return False
+    with _lock, adb() as conn:
+        conn.execute("UPDATE a2a_out SET state=?, reply=?, data=?, updated_at=? WHERE id=?",
+                     (state, text[:4000] or r["reply"], json.dumps({"task": t}, ensure_ascii=False)[:20000], now_iso(), oid))
+    return True
+
+
+def refresh_due(rows: list[sqlite3.Row], limit: int = 5, every: float = 60) -> None:
+    """还没定的（等对方本人点头）、一分钟没动静的：后台去问一下对方，下一次读就是新的。"""
+    now = time.time()
+    n = 0
+    for r in rows:
+        if n >= limit or r["state"] not in OPEN_STATES or not r["task_id"]:
+            continue
+        if now - _asked_at.get(r["id"], 0) < every or now - datetime.fromisoformat(r["updated_at"]).timestamp() < every:
+            continue
+        _asked_at[r["id"]] = now
+        spawn(refresh_out(r["id"]))
+        n += 1
+
+
 @router.get("/api/a2a/out")
-async def out_list(friend: str | None = None, limit: int = 50):
+async def out_list(friend: str | None = None, limit: int = 50, refresh: bool = False):
     """我们问过别人的（对方的回话原样给你看）。outcome = 对方本人在卡上的决定（accepted / declined / counter / ack / private_declined / expired），
-    usedLabel = 对方的名片 agent 说它用了什么。"""
+    usedLabel = 对方的名片 agent 说它用了什么。refresh=true：还在等对方本人的，后台问一下对方到哪了（最多一分钟一次）。"""
     limit = max(1, min(limit, 200))
     with _lock, adb() as conn:
         rows = conn.execute("SELECT * FROM a2a_out" + (" WHERE friend_id=?" if friend else "") + " ORDER BY created_at DESC LIMIT ?",
                             ([friend] if friend else []) + [limit]).fetchall()
-    items = []
-    for r in rows:
-        outcome, label = out_facts(r["data"])
-        items.append({"id": r["id"], "friend": r["friend_id"], "contextId": r["context_id"], "taskId": r["task_id"], "state": r["state"],
-                      "text": r["text"], "reply": r["reply"], "outcome": outcome, "usedLabel": label, "createdAt": r["created_at"],
-                      "updatedAt": r["updated_at"]})
-    return {"ok": True, "items": items}
+    if refresh:
+        refresh_due(rows)
+    return {"ok": True, "items": [out_item(r) for r in rows]}
+
+
+@router.post("/api/a2a/out/{oid}/refresh")
+async def out_refresh(oid: str):
+    """马上问对方这一条到哪了（下拉刷新用）。"""
+    with _lock, adb() as conn:
+        r = conn.execute("SELECT * FROM a2a_out WHERE id=?", (oid,)).fetchone()
+    if not r:
+        raise HTTPException(404, L("没有这一条", "Not found"))
+    changed = await refresh_out(oid) if r["state"] in OPEN_STATES else False
+    with _lock, adb() as conn:
+        r = conn.execute("SELECT * FROM a2a_out WHERE id=?", (oid,)).fetchone()
+    return {"ok": True, "changed": changed, "item": out_item(r)}
