@@ -25,10 +25,17 @@ export interface GravaApi {
   deleteMessage(threadId: string, msgId: string): Promise<void>;
   /** 会话退回到这条用户消息之前（它和之后的都去掉，Grava 也忘掉），返回原文。 */
   rewind(threadId: string, msgId: string): Promise<string>;
+  /** 停掉这个对话正在进行的回复（已经说了的留着）。排着的消息接着发。 */
+  stop(threadId: string): Promise<void>;
 }
 
-/** save：问的是哪条收藏（「问问」「翻译」带过来的），模型另外看到它的来源、备注和正文。 */
-export interface SendExtra { inboxId?: string; ref?: string; save?: string; onCard?: (card: ChatCard) => void }
+/** save：问的是哪条收藏（「问问」「翻译」带过来的），模型另外看到它的来源、备注和正文。
+ *  replyTo：长按「引用」着发的，引的是哪条消息（"db<id>"）。
+ *  onQueued / onDequeued：它正在回复时发的这条先排队（服务器的 queued 事件，带这条的 id），排着的那一轮开跑时再叫一次。老服务器直接 409。 */
+export interface SendExtra {
+  inboxId?: string; ref?: string; save?: string; replyTo?: string; onCard?: (card: ChatCard) => void;
+  onQueued?: (userId: string) => void; onDequeued?: () => void;
+}
 
 const now = () => {
   const d = new Date();
@@ -45,6 +52,7 @@ export class OfflineApi implements GravaApi {
   async setModel() {}
   async deleteMessage() { throw new Error(L('没连上服务器', 'Not connected to the server')); }
   async rewind(): Promise<string> { throw new Error(L('没连上服务器', 'Not connected to the server')); }
+  async stop() {}
 }
 
 /** 解析 SSE：每个事件是 `event: x\ndata: {...}\n\n`。 */
@@ -69,7 +77,8 @@ async function readSse(body: ReadableStream<Uint8Array>, onEvent: (event: string
   }
 }
 
-async function consume(r: Response, onDelta?: (partial: string) => void, onStart?: (userId: string) => void, onCard?: (card: ChatCard) => void): Promise<Message> {
+async function consume(r: Response, onDelta?: (partial: string) => void, onStart?: (userId: string) => void, onCard?: (card: ChatCard) => void,
+  onQueued?: (userId: string) => void, onDequeued?: () => void): Promise<Message> {
   if (!r.ok) {
     const j = await r.json().catch(() => ({}));
     throw new Error(j.detail ?? j.error ?? `HTTP ${r.status}`);
@@ -77,8 +86,10 @@ async function consume(r: Response, onDelta?: (partial: string) => void, onStart
   if (!r.body) throw new Error(L('没有收到回复流', 'No reply stream received'));
   let partial = '';
   let done: any = null;
+  let queued = false;  // 排队的：start 带的是合成那一轮的 id，不是这条的
   await readSse(r.body as unknown as ReadableStream<Uint8Array>, (event, data) => {
-    if (event === 'start') onStart?.(data.userId);
+    if (event === 'queued') { queued = true; onQueued?.(data.userId); }
+    else if (event === 'start') { if (queued) onDequeued?.(); else onStart?.(data.userId); }
     else if (event === 'delta') { partial += data.text; onDelta?.(partial); }
     else if (event === 'done') done = data;
     else if (event === 'card' && data && (data.kind === 'handoff' || data.kind === 'task' || data.kind === 'schedule' || data.kind === 'project')) onCard?.(data as ChatCard);
@@ -130,7 +141,7 @@ export class HttpApi implements GravaApi {
     const attachments = files?.length ? (await uploadFiles(threadId, files)).map((a) => a.id) : [];
     const r = await expoFetch(`${getBase()}/api/chat/send`, {
       method: 'POST', headers: { 'Content-Type': 'application/json', Accept: 'text/event-stream', ...authHeaders() },
-      body: JSON.stringify({ thread: threadId, text, model: modelId, attachments, ...(extra?.inboxId ? { inboxId: extra.inboxId } : {}), ...(extra?.ref ? { ref: extra.ref } : {}), ...(extra?.save ? { save: extra.save } : {}) }),
+      body: JSON.stringify({ thread: threadId, text, model: modelId, attachments, ...(extra?.inboxId ? { inboxId: extra.inboxId } : {}), ...(extra?.ref ? { ref: extra.ref } : {}), ...(extra?.save ? { save: extra.save } : {}), ...(extra?.replyTo ? { replyTo: extra.replyTo } : {}) }),
     });
     if (!r.ok) {
       const j = await r.json().catch(() => ({}));
@@ -138,8 +149,9 @@ export class HttpApi implements GravaApi {
     }
     let userId: string | null = null;
     const started = (id: string) => { userId = id; onStart?.(id); };
+    const queuedAs = (id: string) => { userId = id; extra?.onQueued?.(id); };
     try {
-      return await consume(r as unknown as Response, onDelta, started, extra?.onCard);
+      return await consume(r as unknown as Response, onDelta, started, extra?.onCard, queuedAs, extra?.onDequeued);
     } catch (e) {
       // 流断了（切后台、锁屏、5G/Wi-Fi 切换）：服务端照样跑完。先重新接上（15 分钟内回完的也接得上）；
       // 再不行就去历史记录里找这条之后的回复。只有都找不到才算真的没发出去。
@@ -162,7 +174,11 @@ export class HttpApi implements GravaApi {
     const r = await expoFetch(`${getBase()}/api/chat/history?thread=${encodeURIComponent(threadId)}${day ? `&day=${day}` : ''}`, { headers: { Accept: 'application/json', ...authHeaders() } });
     if (!r.ok) return null;
     const j = await r.json();
-    const messages: Message[] = (j.messages as any[]).map((m) => ({ id: m.id, role: m.role, time: m.time, modelId: m.modelId ?? undefined, fallbackFrom: m.fallbackFrom ?? undefined, body: { type: 'text', text: m.text, attachments: withBase(m) }, error: m.status === 'error' ? L('上次没拿到回复', 'No reply was received') : undefined }));
+    const messages: Message[] = (j.messages as any[]).map((m) => ({
+      id: m.id, role: m.role, time: m.time, modelId: m.modelId ?? undefined, fallbackFrom: m.fallbackFrom ?? undefined, body: { type: 'text', text: m.text, attachments: withBase(m) },
+      error: m.status === 'error' ? L('上次没拿到回复', 'No reply was received') : undefined,
+      ...(m.status === 'queued' ? { queued: true } : {}), ...(m.replyTo?.id ? { replyTo: m.replyTo } : {}),
+    }));
     return { messages, modelId: j.modelId as string, inFlight: j.inFlight ?? null };
   }
   async setModel(threadId: string, modelId: string) {
@@ -185,6 +201,9 @@ export class HttpApi implements GravaApi {
   }
   async rewind(threadId: string, msgId: string) {
     return (await this.post('/api/chat/rewind', { thread: threadId, id: msgId })).text as string;
+  }
+  async stop(threadId: string) {
+    await this.post('/api/chat/stop', { thread: threadId });
   }
 }
 

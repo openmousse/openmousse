@@ -128,7 +128,9 @@ interface Actions {
   imUp(): Promise<void>;
   /** inboxId：这条引用了收件箱里的一件事。还没定下来的 = 修改意见（「今天」的「去对话里说」），本地先标成「改一下」；
    *  定下来的 = 跟进（「已处理」详情里的「跟进」），做完 / 没做成的本地先标回「在做」，记下跟进的话。 */
-  send(threadId: string, text: string, files?: PendingFile[], opts?: { inboxId?: string; ref?: string; save?: string }): void;
+  send(threadId: string, text: string, files?: PendingFile[], opts?: { inboxId?: string; ref?: string; save?: string; replyTo?: string }): void;
+  /** 停掉这个对话正在进行的回复（已经说了的留着，末尾标「停了」）。排着的消息接着发。 */
+  stop(threadId: string): Promise<void>;
   deleteJournal(id: string): Promise<void>;
   /** 下拉刷新看板：只重读看板数据（训记 / 健康 / 派生指标）和建议、日志、申请，不重连、不重读全部。 */
   refreshBoards(): Promise<void>;
@@ -366,6 +368,10 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
   const loadProjectRef = useRef<(pid: string) => Promise<void>>(async () => {});
   latest.current = s;
   const timers = useRef<ReturnType<typeof setTimeout>[]>([]);
+  /** 每个对话还没拿到回复的发送数：回复进行中发的会排队，好几条同时在等；全部回完才算不在「输入中」 */
+  const sending = useRef<Record<string, number>>({});
+  /** refreshThread 定义在后面：接上的回复回完、库里还有排队的消息时，用它再读一次接上合成的下一轮 */
+  const refreshRef = useRef<(threadId: string) => Promise<void>>(async () => {});
   useEffect(() => () => timers.current.forEach(clearTimeout), []);
 
   // —— 未读的簿记（都在 ref 里：只给比较用，不上界面） ——
@@ -476,13 +482,19 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
       return { ...st, threads, threadModel, typing, streaming, inboxByThread, cardsByThread };
     });
     for (const tid of inFlight) {
+      const still = () => (sending.current[tid] ?? 0) > 0;
+      const queued = !!hist.find(([x]) => x === tid)?.[1]?.messages.some((m) => m.queued);
       api.current.attach(tid, (partial) => setS((st) => ({ ...st, streaming: { ...st.streaming, [tid]: partial } })), onLiveCard(tid))
         .then((reply) => setS((st) => {
           const streaming = { ...st.streaming }; delete streaming[tid];
-          return reply ? { ...appendMsg(st, tid, reply), typing: { ...st.typing, [tid]: false }, streaming } : { ...st, typing: { ...st.typing, [tid]: false }, streaming };
+          return reply ? { ...appendMsg(st, tid, reply), typing: { ...st.typing, [tid]: still() }, streaming } : { ...st, typing: { ...st.typing, [tid]: still() }, streaming };
         }))
-        .catch(() => setS((st) => ({ ...st, typing: { ...st.typing, [tid]: false } })))
-        .finally(() => { loadThreadCards(tid, true).catch(() => {}); });
+        .catch(() => setS((st) => ({ ...st, typing: { ...st.typing, [tid]: still() } })))
+        .finally(() => {
+          loadThreadCards(tid, true).catch(() => {});
+          // 回复进行中排着的消息：这一轮回完会合成下一轮发出去，再读一次接上它
+          if (queued && !still()) timers.current.push(setTimeout(() => { refreshRef.current(tid).catch(() => {}); }, 500));
+        });
     }
   }, [loadThreadCards, onLiveCard]);
 
@@ -503,12 +515,19 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
     setS((st) => ({ ...st, threads: { ...st.threads, [threadId]: h.messages }, threadModel: h.modelId ? { ...st.threadModel, [threadId]: h.modelId } : st.threadModel }));
     if (h.inFlight && !latest.current.typing[threadId]) {
       setS((st) => ({ ...st, typing: { ...st.typing, [threadId]: true }, streaming: { ...st.streaming, [threadId]: h.inFlight?.text ?? '' } }));
+      // 还有这边发出去、没拿到回复的：别把「输入中」关掉（它们各自回完再关）
+      const still = () => (sending.current[threadId] ?? 0) > 0;
       api.current.attach(threadId, (partial) => setS((st) => ({ ...st, streaming: { ...st.streaming, [threadId]: partial } })), onLiveCard(threadId))
-        .then((reply) => setS((st) => { const streaming = { ...st.streaming }; delete streaming[threadId]; return reply ? { ...appendMsg(st, threadId, reply), typing: { ...st.typing, [threadId]: false }, streaming } : { ...st, typing: { ...st.typing, [threadId]: false }, streaming }; }))
-        .catch(() => setS((st) => ({ ...st, typing: { ...st.typing, [threadId]: false } })))
-        .finally(() => { loadThreadCards(threadId, true).catch(() => {}); });
+        .then((reply) => setS((st) => { const streaming = { ...st.streaming }; delete streaming[threadId]; return reply ? { ...appendMsg(st, threadId, reply), typing: { ...st.typing, [threadId]: still() }, streaming } : { ...st, typing: { ...st.typing, [threadId]: still() }, streaming }; }))
+        .catch(() => setS((st) => ({ ...st, typing: { ...st.typing, [threadId]: still() } })))
+        .finally(() => {
+          loadThreadCards(threadId, true).catch(() => {});
+          // 回复进行中排着的消息：这一轮回完会合成下一轮发出去，再读一次接上它
+          if (h.messages.some((m) => m.queued) && !still()) timers.current.push(setTimeout(() => { refreshRef.current(threadId).catch(() => {}); }, 500));
+        });
     }
   }, [loadThreadInbox, loadThreadCards, onLiveCard]);
+  useEffect(() => { refreshRef.current = refreshThread; }, [refreshThread]);
 
   /** 收件箱变了：对话里的卡也重读。新出现的待处理在哪些对话、哪些对话里还有没办完的、正看着的那个。 */
   const refreshThreadInboxes = useCallback((pending?: InboxItem[]) => {
@@ -873,10 +892,17 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
     await Promise.all([loadProject(pid), reload('sideChats'), deadlines ? reload('schedule', 'remember') : null]);
   }, [loadProject, reload]);
 
-  const send = useCallback((threadId: string, text: string, files?: PendingFile[], opts?: { inboxId?: string; ref?: string; save?: string }) => {
+  const send = useCallback((threadId: string, text: string, files?: PendingFile[], opts?: { inboxId?: string; ref?: string; save?: string; replyTo?: string }) => {
     const pending = files?.map((f, i) => ({ id: `local${i}`, name: f.name, mime: f.mime, size: f.size, kind: kindOf(f.name, f.mime), url: f.uri }));
+    // 长按「引用」着发的：气泡上面马上带上原话
+    const quoted = opts?.replyTo ? (latest.current.threads[threadId] ?? []).find((m) => m.id === opts.replyTo) : undefined;
     // '（见附件）' 是占位标记，和服务端 chat.py 一致，ChatView 按原文比较后隐藏：不翻译。
-    const mine: Message = { id: id('u'), role: 'user', time: timeNow(), body: { type: 'text', text: text || '（见附件）', attachments: pending } };
+    const mine: Message = {
+      id: id('u'), role: 'user', time: timeNow(), body: { type: 'text', text: text || '（见附件）', attachments: pending },
+      ...(quoted ? { replyTo: { id: quoted.id, role: quoted.role === 'user' ? 'user' : 'grava', text: quoted.body.text.replace(/\s+/g, ' ').slice(0, 200) } } : {}),
+    };
+    let myId = mine.id;  // 服务器给了 id 以后换成 "db<id>"
+    sending.current[threadId] = (sending.current[threadId] ?? 0) + 1;
     const modelId = latest.current.threadModel[threadId] ?? latest.current.threadModel.main;
     if (opts?.inboxId) LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut);
     setS((st) => {
@@ -893,9 +919,14 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
       const withRecent = { ...next, inboxRecent: next.inboxRecent.map((i) => (i.id === item.id ? followed : i)) };
       return followed.status === 'approved' ? settle(withRecent, followed) : withRecent;
     });
-    const swapId = (userId: string) => setS((st) => ({ ...st, threads: { ...st.threads, [threadId]: (st.threads[threadId] ?? []).map((m) => (m.id === mine.id ? { ...m, id: userId } : m)) } }));
+    const patchMine = (patch: Partial<Message>) => setS((st) => ({ ...st, threads: { ...st.threads, [threadId]: (st.threads[threadId] ?? []).map((m) => (m.id === myId ? { ...m, ...patch } : m)) } }));
+    const swapId = (userId: string) => { const from = myId; myId = userId; setS((st) => ({ ...st, threads: { ...st.threads, [threadId]: (st.threads[threadId] ?? []).map((m) => (m.id === from ? { ...m, id: userId } : m)) } })); };
+    // 它正在回复时发的：先排队（气泡下面标「排队」），排着的那一轮开跑时去掉
+    const queuedAs = (userId: string) => { swapId(userId); patchMine({ queued: true }); };
+    const dequeued = () => patchMine({ queued: false });
     api.current.send(threadId, text, modelId, (partial) => setS((st) => ({ ...st, streaming: { ...st.streaming, [threadId]: partial } })), swapId, files,
-      { ...(opts?.inboxId ? { inboxId: opts.inboxId } : {}), ...(opts?.ref ? { ref: opts.ref } : {}), ...(opts?.save ? { save: opts.save } : {}), onCard: onLiveCard(threadId) })
+      { ...(opts?.inboxId ? { inboxId: opts.inboxId } : {}), ...(opts?.ref ? { ref: opts.ref } : {}), ...(opts?.save ? { save: opts.save } : {}), ...(opts?.replyTo ? { replyTo: opts.replyTo } : {}),
+        onCard: onLiveCard(threadId), onQueued: queuedAs, onDequeued: dequeued })
       .catch((e: unknown): Message => ({ id: id('r'), role: 'grava', time: timeNow(), modelId, body: { type: 'text', text: L('（这条没发出去。）', "(This message wasn't sent.)") }, error: errText(e) }))
       // 可能刚写了一张建议卡、提了一件要你点头的事、转给了某个 Agent、派了任务
       .then((reply) => {
@@ -905,10 +936,14 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
         return reply;
       })
       .then((reply) => setS((st) => {
+        // 排着的几条拿到的是同一条回复（appendMsg 按 id 去重）；都回完了才不算「输入中」
+        const left = Math.max(0, (sending.current[threadId] ?? 1) - 1);
+        sending.current[threadId] = left;
         const streaming = { ...st.streaming }; delete streaming[threadId];
+        const list = (st.threads[threadId] ?? []).map((m) => (m.id === myId && m.queued ? { ...m, queued: false } : m));
         return {
-          ...appendMsg(st, threadId, reply),
-          typing: { ...st.typing, [threadId]: false },
+          ...appendMsg({ ...st, threads: { ...st.threads, [threadId]: list } }, threadId, reply),
+          typing: { ...st.typing, [threadId]: left > 0 },
           streaming,
           groups: st.groups.map((g) => (g.id === threadId ? { ...g, lastLine: reply.body.text } : g)),
           sideChats: st.sideChats.map((c) => (c.id === threadId ? { ...c, lastLine: reply.body.text, updatedAt: Date.now() } : c)),
@@ -940,6 +975,7 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
       await reload('wake');
     },
     send,
+    stop: async (threadId) => { await api.current.stop(threadId); },
     transcribe: (file) => api.current.transcribe(file),
     refreshBoards: async () => {
       setS((st) => ({ ...st, liveLoading: true }));

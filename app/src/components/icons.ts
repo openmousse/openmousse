@@ -68,6 +68,7 @@ export { default as Mic } from 'lucide-react-native/icons/mic';
 export { default as Camera } from 'lucide-react-native/icons/camera';
 export { default as ImageIcon } from 'lucide-react-native/icons/image';
 export { default as Square } from 'lucide-react-native/icons/square';
+export { default as Quote } from 'lucide-react-native/icons/quote';
 export { default as FileAudio } from 'lucide-react-native/icons/audio-lines';
 export { default as Film } from 'lucide-react-native/icons/film';
 export { default as Search } from 'lucide-react-native/icons/search';

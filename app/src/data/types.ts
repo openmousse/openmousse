@@ -373,6 +373,10 @@ export interface Message {
   fallbackFrom?: string;
   /** 这一条没拿到回复时的原因 */
   error?: string;
+  /** 回复进行中发的，还在排队（服务器 status queued）：这条回完和排着的一起发给它 */
+  queued?: boolean;
+  /** 长按「引用」着发的：引的是这个对话里哪条（app 在气泡上面显示原话，点了跳回去） */
+  replyTo?: { id: string; role: 'user' | 'grava'; text: string };
 }
 
 /** Grava 的建议（起床报告、主动提醒，第 8 步起才有）。 */

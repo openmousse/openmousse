@@ -5,7 +5,7 @@ import { Alert, Image, Linking, Platform, Pressable, ScrollView, StyleSheet, Tex
 import * as Clipboard from 'expo-clipboard';
 import * as Haptics from 'expo-haptics';
 import { AudioModule, RecordingPresets, setAudioModeAsync, useAudioRecorder, useAudioRecorderState } from 'expo-audio';
-import { ArrowUp, Bookmark, Camera, Copy, EyeOff, FileAudio, FileText, Film, ImageIcon, Inbox, ListChecks, Mic, Paperclip, Pencil, Square, Trash2, Undo2, X } from './icons';
+import { ArrowUp, Bookmark, Camera, ChevronRight, Copy, EyeOff, FileAudio, FileText, Film, ImageIcon, Inbox, ListChecks, LoaderCircle, Mic, Paperclip, Pencil, Quote, Square, Trash2, Undo2, X } from './icons';
 import type { Attachment, ChatCard, HandoffCard, InboxItem, Message, PendingFile, TaskCardInfo } from '../data/types';
 import { L } from '../i18n';
 import type { ChatQuote } from '../navigation';
@@ -164,7 +164,51 @@ function AttachmentList({ items, mine }: { items: Attachment[]; mine: boolean })
   );
 }
 
-export function Bubble({ m, showAvatar, onLongPress, before, from, highlight }: {
+// —— 引用（2026-09-28）——————————————————————————————————————————————————————
+
+/** 回复里单独一行的「> 「原话」」：它一次答你好几条时，每段开头引用那条（服务器 chat.py 的 BATCH_HEAD 让它这么写）。 */
+const QUOTE_LINE = /^>\s*「([^」\n]{1,160})」\s*$/;
+
+/** 把回复拆成引用行和正文段。没有引用就是整段正文。 */
+export function splitQuotes(text: string): { quote?: string; text: string }[] {
+  const out: { quote?: string; text: string }[] = [];
+  let buf: string[] = [];
+  const flush = () => { const x = buf.join('\n').trim(); if (x) out.push({ text: x }); buf = []; };
+  for (const line of text.split('\n')) {
+    const m = QUOTE_LINE.exec(line.trim());
+    if (m) { flush(); out.push({ quote: m[1], text: '' }); } else buf.push(line);
+  }
+  flush();
+  return out;
+}
+
+/** 引用条：金色竖线 + 原话；找得到那条的能点，点了跳回去。 */
+function QuoteChip({ text, onPress, spaced }: { text: string; onPress?: () => void; spaced?: boolean }) {
+  const t = useTheme();
+  return (
+    <Pressable onPress={onPress} disabled={!onPress} hitSlop={4} accessibilityRole={onPress ? 'button' : undefined} accessibilityLabel={L(`引用：${text}`, `Quote: ${text}`)}
+      style={({ pressed }) => [styles.quoteChip, { borderLeftColor: t.gold, opacity: pressed ? 0.6 : 1 }, spaced && { marginTop: 8 }]}>
+      <T v="callout" color={t.ink2} numberOfLines={2} style={{ fontSize: 13, lineHeight: 18 }}>{text}</T>
+    </Pressable>
+  );
+}
+
+/** 回复正文：引用行画成引用条，其余照常 Markdown。 */
+function ReplyText({ text, resolveQuote, onJump }: { text: string; resolveQuote?: (q: string) => string | undefined; onJump?: (id: string) => void }) {
+  const parts = splitQuotes(text);
+  if (!parts.some((x) => x.quote)) return <Markdown text={text} />;
+  return (
+    <View style={{ gap: 4 }}>
+      {parts.map((x, i) => {
+        if (!x.quote) return <Markdown key={i} text={x.text} />;
+        const id = resolveQuote?.(x.quote);
+        return <QuoteChip key={i} text={x.quote} spaced={i > 0} onPress={id && onJump ? () => onJump(id) : undefined} />;
+      })}
+    </View>
+  );
+}
+
+export function Bubble({ m, showAvatar, onLongPress, before, from, highlight, onJump, resolveQuote }: {
   m: Message; showAvatar: boolean; onLongPress?: () => void;
   /** 回复文字上面的东西（这条回复里转出去的转交卡） */
   before?: React.ReactNode;
@@ -172,6 +216,10 @@ export function Bubble({ m, showAvatar, onLongPress, before, from, highlight }: 
   from?: HandoffCard;
   /** 从别处点过来定位到这一条：闪一下金边 */
   highlight?: boolean;
+  /** 点引用：跳到那条（"db<id>"） */
+  onJump?: (id: string) => void;
+  /** 回复里引用的原话是哪条消息（找不到 = 不能点） */
+  resolveQuote?: (q: string) => string | undefined;
 }) {
   const t = useTheme();
   const { avatar } = useStore();
@@ -214,11 +262,15 @@ export function Bubble({ m, showAvatar, onLongPress, before, from, highlight }: 
       <View style={{ alignItems: 'flex-end', gap: 6 }}>
         {att.length ? <AttachmentList items={att} mine /> : null}
         {text ? (
-          <Pressable onLongPress={onLongPress} delayLongPress={350} accessibilityHint={L('长按可以复制、撤回、重新编辑或删除', 'Long-press to copy, unsend, edit or delete')}
-            style={({ pressed }) => [styles.userBubble, { backgroundColor: t.surface2, opacity: pressed ? 0.75 : 1 }]}>
+          <Pressable onLongPress={onLongPress} delayLongPress={350} accessibilityHint={L('长按可以复制、引用、撤回、重新编辑或删除', 'Long-press to copy, quote, unsend, edit or delete')}
+            style={({ pressed }) => [styles.userBubble, { backgroundColor: t.surface2, opacity: pressed ? 0.75 : 1, gap: m.replyTo ? 6 : 0 }]}>
+            {/* 长按「引用」着发的：上面一行原话，点了跳回去 */}
+            {m.replyTo ? <QuoteChip text={m.replyTo.text} onPress={onJump && m.replyTo ? () => onJump(m.replyTo!.id) : undefined} /> : null}
             <T v="body">{text}</T>
           </Pressable>
         ) : null}
+        {/* 它正在回复时发的：先排队，这条回完和排着的一起发给它 */}
+        {m.queued ? <T v="caption" color={t.ink3} style={{ marginRight: 4 }}>{L('排队中 · 这条回完一起发给它', 'Queued · goes to it when this reply ends')}</T> : null}
       </View>
     );
   }
@@ -227,7 +279,7 @@ export function Bubble({ m, showAvatar, onLongPress, before, from, highlight }: 
       <View style={{ width: 28 }}>{showAvatar || before ? <LensAvatar size={28} config={avatar} /> : null}</View>
       <View style={{ flex: 1 }}>
         {before ? <View style={{ gap: 8, marginBottom: 8 }}>{before}</View> : null}
-        <Markdown text={m.body.text} />
+        <ReplyText text={m.body.text} resolveQuote={resolveQuote} onJump={onJump} />
         {att.length ? <View style={{ marginTop: 6 }}><AttachmentList items={att} mine={false} /></View> : null}
         <ModelTag m={m} />
       </View>
@@ -264,7 +316,7 @@ export function ChatView({ threadId, placeholder, empty, quote: quoteProp, quote
   focus?: string; focusAt?: number;
 }) {
   const t = useTheme();
-  const { threads, typing, send, avatar, streaming, connected, booting, deleteMessage, rewindMessage, transcribe, refreshThread, sharedChannels, inboxByThread, cardsByThread, liveCards, reviseTask } = useStore();
+  const { threads, typing, send, stop, avatar, streaming, connected, booting, deleteMessage, rewindMessage, transcribe, refreshThread, sharedChannels, inboxByThread, cardsByThread, liveCards, reviseTask } = useStore();
   const sheet = useSheet();
   const threadMsgs = threads[threadId];
   const msgs = useMemo(() => threadMsgs ?? [], [threadMsgs]);
@@ -285,6 +337,8 @@ export function ChatView({ threadId, placeholder, empty, quote: quoteProp, quote
       ...Object.values(liveHere).filter((c) => !serverCards.some((x) => x.id === c.id)),
     ];
   }, [liveRaw, serverRaw]);
+  // 这个对话派出去、还在跑的后台任务：顶上一条「后台在跑」，点进任务页（它们在后台做，不占着对话）
+  const running = useMemo(() => allCards.filter((c): c is TaskCardInfo => c.kind === 'task' && (c.status === '进行中' || (c.round > 1 && c.roundStatus === 'running'))), [allCards]);
   const incomingRaw = cardsByThread[threadId]?.incoming;
   const incoming = useMemo(() => incomingRaw ?? [], [incomingRaw]);
   const cardCount = allCards.length;
@@ -420,9 +474,10 @@ export function ChatView({ threadId, placeholder, empty, quote: quoteProp, quote
       taken.then(() => setDraft('')).catch(fail);
       return;
     }
-    if ((!text && !pending.length) || busy || transcribing) return;
-    // 带着引用：收件箱里还没定下来的那件事 = 修改意见（服务器收到 inboxId 会把它退回去改），处理过的 = 跟进；收藏：模型另外看到那条收藏
-    send(threadId, text, pending.length ? pending : undefined, quote?.inboxId ? { inboxId: quote.inboxId } : quote?.ref ? { ref: quote.ref } : quote?.saveId ? { save: quote.saveId } : undefined);
+    if ((!text && !pending.length) || transcribing) return;  // 它正在回复也能发：服务器先排队，这条回完一起发给它
+    // 带着引用：收件箱里还没定下来的那件事 = 修改意见（服务器收到 inboxId 会把它退回去改），处理过的 = 跟进；收藏：模型另外看到那条收藏；长按「引用」的：模型看到原话
+    send(threadId, text, pending.length ? pending : undefined,
+      quote?.inboxId ? { inboxId: quote.inboxId } : quote?.ref ? { ref: quote.ref } : quote?.saveId ? { save: quote.saveId } : quote?.replyTo ? { replyTo: quote.replyTo } : undefined);
     setDraft('');
     setPending([]);
     setQuote(null);
@@ -472,6 +527,10 @@ export function ChatView({ threadId, placeholder, empty, quote: quoteProp, quote
       content: () => (
         <View style={{ gap: space.sm }}>
           <Action icon={Copy} label={L('复制', 'Copy')} onPress={() => { close(); Clipboard.setStringAsync(text).catch(() => {}); }} />
+          {m.id.startsWith('db') && m.role !== 'auto' && text.trim() ? (
+            <Action icon={Quote} label={L('引用', 'Quote')} note={L('引着这条接着说：它知道你说的是哪句，你的消息上面也带着原话', 'Reply to this one: it knows which line you mean, and your message shows it')}
+              onPress={() => { close(); setQuote({ replyTo: m.id, title: text.replace(/\s+/g, ' ').slice(0, 40) }); setTimeout(() => input.current?.focus(), 250); }} />
+          ) : null}
           {m.id.startsWith('db') && m.role !== 'auto' ? (
             <Action icon={Bookmark} label={L('收藏', 'Save')} note={L('存进「Zen → 收藏」，以后能搜、能交给 Agent', 'Keep it in Zen → Saved to search or hand to an Agent later')}
               onPress={() => { close(); saveMessage(threadId, m.id).then(() => Alert.alert(L('收藏好了', 'Saved'), L('在「Zen → 收藏」里', 'In Zen → Saved'))).catch(fail); }} />
@@ -487,9 +546,30 @@ export function ChatView({ threadId, placeholder, empty, quote: quoteProp, quote
     });
   };
 
+  // 点引用：滚到那条，闪一下金边
+  const jumpTo = (mid: string) => {
+    const y = ys.current[mid];
+    if (y == null) return;
+    scroller.current?.scrollTo({ y: Math.max(0, y - 24), animated: true });
+    list.current.y = Math.max(0, y - 24);
+    setFlash(mid);
+    setTimeout(() => setFlash((f) => (f === mid ? null : f)), 2200);
+  };
+  // 回复里引用的原话是哪条：最近一条包含它的你的消息（模型可能截了前半句，结尾带省略号）
+  const resolveQuote = (q: string) => {
+    const needle = q.replace(/[…\.]+$/, '').replace(/\s+/g, ' ').trim();
+    if (!needle) return undefined;
+    for (let i = msgs.length - 1; i >= 0; i--) {
+      const m = msgs[i];
+      if (m.role === 'user' && m.body.text.replace(/\s+/g, ' ').includes(needle)) return m.id;
+    }
+    return undefined;
+  };
   // 列表里的回调走 ref：拿到的永远是最新的（reviseCard 要读当前草稿），又不让列表因为回调换了而重排。
-  const handlers = useRef({ openActions, reviseCard });
-  useEffect(() => { handlers.current = { openActions, reviseCard }; });  // 每次渲染后更新（回调只在点按时才用，提交后再换不影响）
+  const handlers = useRef({ openActions, reviseCard, jumpTo, resolveQuote });
+  useEffect(() => { handlers.current = { openActions, reviseCard, jumpTo, resolveQuote }; });  // 每次渲染后更新（回调只在点按时才用，提交后再换不影响）
+  const onJump = useCallback((mid: string) => handlers.current.jumpTo(mid), []);
+  const findQuote = useCallback((q: string) => handlers.current.resolveQuote(q), []);
   const messageList = useMemo(() => (
     <>
         {msgs.map((m, i) => {
@@ -499,7 +579,8 @@ export function ChatView({ threadId, placeholder, empty, quote: quoteProp, quote
               <View onLayout={(e) => { ys.current[m.id] = e.nativeEvent.layout.y; }}>
                 <Bubble m={m} showAvatar={m.role === 'grava' && msgs[i - 1]?.role !== 'grava'} onLongPress={() => handlers.current.openActions(m)}
                   before={above?.length ? above.map((c) => <HandoffChip key={c.id} card={c} />) : undefined}
-                  from={m.role === 'auto' ? incoming.find((h) => h.relayId === m.id) : undefined} highlight={flash === m.id} />
+                  from={m.role === 'auto' ? incoming.find((h) => h.relayId === m.id) : undefined} highlight={flash === m.id}
+                  onJump={onJump} resolveQuote={findQuote} />
               </View>
               <ChatTasks cards={placed.below.get(i)} onRevise={(c) => handlers.current.reviseCard(c)} thread={threadId} />
               <ChatInbox items={slots.get(i)} />
@@ -507,10 +588,12 @@ export function ChatView({ threadId, placeholder, empty, quote: quoteProp, quote
           );
         })}
     </>
-  ), [msgs, placed, slots, incoming, flash, threadId]);
+  ), [msgs, placed, slots, incoming, flash, threadId, onJump, findQuote]);
 
-  // 改一下任务不经过这个对话：这边正在回复也能发
-  const canSend = quote?.taskId ? !!draft.trim() && !transcribing : (!!draft.trim() || pending.length > 0) && !busy && !transcribing;
+  // 它正在回复也能发（服务器排队，回完一起发给它）；改一下任务不经过这个对话
+  const canSend = quote?.taskId ? !!draft.trim() && !transcribing : (!!draft.trim() || pending.length > 0) && !transcribing;
+  // 正在回复、输入框空着：发送键换成「停」
+  const showStop = busy && !draft.trim() && !pending.length && !quote?.taskId;
   // 手机上回车键是「发送」，发完键盘留着接着打（submitBehavior）。网页的多行输入框不认 submitBehavior，
   // 自己接 Enter：发送、不丢焦点；Shift+Enter 换行；输入法选字时按的 Enter 不算。
   const webEnter = Platform.OS === 'web' ? (e: NativeSyntheticEvent<TextInputKeyPressEventData>) => {
@@ -523,6 +606,18 @@ export function ChatView({ threadId, placeholder, empty, quote: quoteProp, quote
 
   return (
     <View ref={root} onLayout={bottom.onLayout} style={{ flex: 1, paddingBottom: bottom.home }}>
+      {running.length ? (
+        <Pressable onPress={() => (running.length === 1 ? nav.navigate('Task', { id: running[0].id }) : nav.navigate('Tasks'))} accessibilityRole="button"
+          style={({ pressed }) => [styles.bgStrip, { backgroundColor: t.cyanSoft, opacity: pressed ? 0.7 : 1 }]}>
+          <LoaderCircle size={15} color={t.cyan} />
+          <T v="caption" color={t.cyan} numberOfLines={1} style={{ flex: 1, fontSize: 13, fontWeight: '600' }}>
+            {running.length === 1
+              ? L(`后台在做 · ${running[0].title}${running[0].step ? ` · ${running[0].step}` : ''}`, `Running in the background · ${running[0].title}${running[0].step ? ` · ${running[0].step}` : ''}`)
+              : L(`后台 ${running.length} 个在做 · ${running[0].title} 等`, `${running.length} running in the background · ${running[0].title} and more`)}
+          </T>
+          <ChevronRight size={15} color={t.cyan} />
+        </Pressable>
+      ) : null}
       {/* 键盘开着时点消息区任何地方先收键盘（点到的消息不响应，再点一次才算）；iOS 上往下拖，键盘跟着手指收下去，输入栏和内容一起落下。
           网页不开：react-native-web 在任何滚动（包括新回复自动滚到底）时都会让输入框失焦。 */}
       <ChatScroll ref={scroller} offset={bottom.offset} style={{ flex: 1 }} contentContainerStyle={{ padding: space.lg, gap: space.lg }} keyboardShouldPersistTaps="never" keyboardDismissMode={dismissMode}
@@ -552,7 +647,7 @@ export function ChatView({ threadId, placeholder, empty, quote: quoteProp, quote
             <View style={{ flex: 1, gap: 8 }}>
               {/* 这次回复里正在转给 Agent 的：先问，问完它再接着写 */}
               {liveHandoffs.map((c) => <HandoffChip key={c.id} card={c} />)}
-              {partial ? <Markdown text={partial} />
+              {partial ? <ReplyText text={partial} resolveQuote={findQuote} onJump={onJump} />
                 : liveHandoffs.length ? null : <T v="callout" color={t.ink3}>{L(`发给 ${agentName()} 了，等回复…`, `Sent to ${agentName()}, waiting for a reply…`)}</T>}
             </View>
           </View>
@@ -564,12 +659,12 @@ export function ChatView({ threadId, placeholder, empty, quote: quoteProp, quote
         {quote ? (
           <View style={{ paddingHorizontal: space.md, paddingTop: space.sm }}>
             <View style={[styles.quote, { backgroundColor: t.goldSoft }]}>
-              {quote.taskId ? <Pencil size={14} color={t.gold} /> : quote.ref ? <ListChecks size={14} color={t.gold} /> : quote.saveId ? <Bookmark size={14} color={t.gold} /> : <Inbox size={14} color={t.gold} />}
+              {quote.taskId ? <Pencil size={14} color={t.gold} /> : quote.ref ? <ListChecks size={14} color={t.gold} /> : quote.saveId ? <Bookmark size={14} color={t.gold} /> : quote.replyTo ? <Quote size={14} color={t.gold} /> : <Inbox size={14} color={t.gold} />}
               <T v="callout" numberOfLines={1} style={{ flex: 1, fontSize: 13 }}>
                 {quote.taskId
                   ? L(`改「${quote.title}」· 直接发给做它的 ${modelLabel(quote.model)}`, `Revise "${quote.title}" · goes straight to ${modelLabel(quote.model)}`)
                   : quote.ref ? L(`说的是：${quote.title}`, `About: ${quote.title}`) : quote.saveId ? L(`关于收藏：${quote.title}`, `About the saved item: ${quote.title}`)
-                    : quote.follow ? L(`跟进：${quote.title}`, `Follow up: ${quote.title}`) : L(`回复：${quote.title}`, `Re: ${quote.title}`)}
+                    : quote.follow ? L(`跟进：${quote.title}`, `Follow up: ${quote.title}`) : quote.replyTo ? L(`引用：${quote.title}`, `Quoting: ${quote.title}`) : L(`回复：${quote.title}`, `Re: ${quote.title}`)}
               </T>
               <Pressable onPress={() => setQuote(null)} hitSlop={10} accessibilityRole="button" accessibilityLabel={L('不带这条引用', 'Remove the quote')}>
                 <X size={14} color={t.ink3} />
@@ -606,17 +701,24 @@ export function ChatView({ threadId, placeholder, empty, quote: quoteProp, quote
           </View>
         ) : (
           <View style={styles.composer}>
-            <Pressable onPress={openAttach} disabled={busy} hitSlop={6} accessibilityRole="button" accessibilityLabel={L('添加附件', 'Add attachment')} style={styles.iconBtn}>
-              <Paperclip size={22} color={busy ? t.ink3 : t.ink2} />
+            <Pressable onPress={openAttach} hitSlop={6} accessibilityRole="button" accessibilityLabel={L('添加附件', 'Add attachment')} style={styles.iconBtn}>
+              <Paperclip size={22} color={t.ink2} />
             </Pressable>
             <TextInput
               ref={input}
-              value={draft} onChangeText={setDraft} placeholder={transcribing ? L('正在转文字…', 'Transcribing…') : quote?.follow ? L('问问进展，或者说还差什么', "Ask how it's going, or say what's missing") : quote ? L('说说要改什么', 'Say what should change') : placeholder} placeholderTextColor={t.ink3}
+              value={draft} onChangeText={setDraft} placeholder={transcribing ? L('正在转文字…', 'Transcribing…') : quote?.follow ? L('问问进展，或者说还差什么', "Ask how it's going, or say what's missing")
+                : quote?.replyTo ? L('接着这句说…', 'Say something about it…') : quote ? L('说说要改什么', 'Say what should change')
+                  : busy ? L(`${agentName()} 还在回，现在发的先排队`, `${agentName()} is replying; new messages wait their turn`) : placeholder} placeholderTextColor={t.ink3}
               multiline numberOfLines={1} onSubmitEditing={submit} submitBehavior="submit" returnKeyType="send" enablesReturnKeyAutomatically onKeyPress={webEnter}
               accessibilityLabel={L('消息输入框', 'Message')} editable={!transcribing}
               style={[type.body, styles.input, { backgroundColor: t.surface, color: t.ink }]}
             />
-            {canRecord && !draft.trim() && !pending.length && !transcribing ? (
+            {showStop ? (
+              <Pressable onPress={() => { stop(threadId).catch(fail); }} accessibilityRole="button" accessibilityLabel={L('停止回复', 'Stop the reply')}
+                style={[styles.send, { backgroundColor: t.surface2 }]}>
+                <Square size={14} color={t.ink} fill={t.ink} />
+              </Pressable>
+            ) : canRecord && !draft.trim() && !pending.length && !transcribing ? (
               <Pressable onPress={startRecording} disabled={busy} accessibilityRole="button" accessibilityLabel={L('录音输入', 'Voice input')}
                 style={[styles.send, { backgroundColor: t.surface2 }]}>
                 <Mic size={20} color={busy ? t.ink3 : t.ink} />
@@ -646,4 +748,6 @@ const styles = StyleSheet.create({
   recording: { flex: 1, flexDirection: 'row', alignItems: 'center', gap: 8, minHeight: 40, borderRadius: 20, paddingHorizontal: 14 },
   removeDot: { position: 'absolute', top: -6, right: -6, width: 20, height: 20, borderRadius: 10, alignItems: 'center', justifyContent: 'center' },
   quote: { flexDirection: 'row', alignItems: 'center', gap: 6, borderRadius: radius.md, paddingHorizontal: 10, paddingVertical: 7 },
+  quoteChip: { borderLeftWidth: 3, borderRadius: 0, paddingLeft: 8, paddingVertical: 1, alignSelf: 'stretch' },
+  bgStrip: { flexDirection: 'row', alignItems: 'center', gap: 6, marginHorizontal: space.md, marginTop: space.sm, paddingHorizontal: 12, paddingVertical: 8, borderRadius: radius.md },
 });
