@@ -33,8 +33,8 @@
   "openmousse": "1",
   "kid": "<kid>",
   "key": {"kty": "OKP", "crv": "Ed25519", "x": "<x>"},
-  "url": "https://grava.tail9b832e.ts.net",
-  "name": "Leo",
+  "url": "https://alex.example.ts.net",
+  "name": "Alex",
   "caps": ["chat", "ask"],
   "updated_at": "2026-09-28T17:00:00+01:00",
   "signatures": [{"protected": "<b64url 头>", "signature": "<b64url 签名>"}]
@@ -62,20 +62,20 @@
 **样子**：一个网址
 
 ```
-https://grava.tail9b832e.ts.net/f/i/<令牌>/<x>
+https://alex.example.ts.net/f/i/<令牌>/<x>
 ```
 
 - 令牌：16 字节随机数 base64url（22 个字符），一次性，默认 7 天过期（最长 30 天）。服务器只存 `sha256(令牌)`。
 - `x`：邀请人的公钥（43 个字符）。拿到邀请码的一方用它核对对方的名片和回应，不光信域名。
 - 相机扫二维码 → 打开落地页；复制粘贴 → 粘进 app 的「加朋友」。app 认任何含 `/f/i/<令牌>/<x>` 的文字。
 
-**落地页** `GET /f/i/<令牌>/<x>`：一页纯 HTML（和分享页一样 noindex、no-referrer、不带脚本）：「Leo 邀请你在 OpenMousse 里加他为朋友」、怎么加（打开 app → 对话 → 朋友 → 加朋友 → 粘贴这个链接）、「在 app 里打开」（`openmousse://friends/add?code=<整个网址>`）。**GET 从不消耗令牌**（聊天软件的链接预览会先打开一次）。令牌不对只说「这个邀请码用过了或者过期了」。
+**落地页** `GET /f/i/<令牌>/<x>`：一页纯 HTML（和分享页一样 noindex、no-referrer、不带脚本）：「Alex 邀请你在 OpenMousse 里加他为朋友」、怎么加（打开 app → 对话 → 朋友 → 加朋友 → 粘贴这个链接）、「在 app 里打开」（`openmousse://friends/add?code=<整个网址>`）。**GET 从不消耗令牌**（聊天软件的链接预览会先打开一次）。令牌不对只说「这个邀请码用过了或者过期了」。
 
 **生成**（邀请人在 app 里）：选「给谁」（备注，只自己看）、他进来以后在哪一档（默认朋友）、几天有效 → 二维码 + 链接。没用过的能收回。同时最多 20 张有效的。
 
 **兑换**：
 
-1. 被邀请的人在 app 里粘贴 / 扫码 → 她的服务器拆出根地址、令牌、`x`，`GET <根地址>/f/card`，核对 `key.x == x`、签名对 → app 显示「加 Leo 为朋友？指纹 K7Q2M 9XJ4P」，她选档位。
+1. 被邀请的人在 app 里粘贴 / 扫码 → 她的服务器拆出根地址、令牌、`x`，`GET <根地址>/f/card`，核对 `key.x == x`、签名对 → app 显示「加 Alex 为朋友？指纹 K7Q2M 9XJ4P」，她选档位。
 2. 她的服务器发签名请求（见 5）`POST <根地址>/f/hello`：
 
    ```json
@@ -168,7 +168,7 @@ Signature: om=:<base64(签名)>:
 
 ## 6. 公网路径
 
-公网只多开一条：Tailscale Funnel（或反向代理）`/f` → `http://127.0.0.1:<share.public_port>/f`，和 `/s` 同一个小服务（`public.py`），没有 `/api`、不认令牌也不认设备。**开之前问 Leo**（他点的「上线并开公网链接」只覆盖 `/s`）。
+公网只多开一条：Tailscale Funnel（或反向代理）`/f` → `http://127.0.0.1:<share.public_port>/f`，和 `/s` 同一个小服务（`public.py`），没有 `/api`、不认令牌也不认设备。要加朋友才开：安装器问「开公网」时答 y 就会开，或者自己跑那条 `tailscale funnel` 命令。
 
 | 路径 | 谁调 | 签名 | 做什么 |
 |---|---|---|---|
@@ -179,7 +179,7 @@ Signature: om=:<base64(签名)>:
 | `POST /f/msg` | 朋友的服务器 | 要 | 投一条消息（7） |
 | `/f/a2a`、`/f/a2a/agent-card.json` | 别的 agent | 可选 | 第三层（A2A JSON-RPC 和名片） |
 
-`/.well-known/agent-card.json`（让陌生人 / 别家 agent 凭域名找到 Leo 的名片 agent）要再开一条 Funnel 路径，先不开，和 `/f` 一起问 Leo 一句。
+`/.well-known/agent-card.json`（让陌生人 / 别家 agent 凭域名找到 Alex 的名片 agent）要再开一条 Funnel 路径，先不开。
 
 主服务（私网 8080）不挂 `/f`：朋友只从公网来。app 用的是 `/api/friends…`、`/api/card`（要令牌）。
 
@@ -201,8 +201,8 @@ Signature: om=:<base64(签名)>:
 | `share` | `share: {sid, kind, title, text, quote, when, link?, can_ask}`、`text?` | 分享发给朋友：挡过私事以后的快照（挡住的地方是 `▇▇▇`，原文不出服务器）；`link` 只在「有链接的人都能看」时带；`can_ask` = 这条能不能追问（分享页的开关 × 对方的档位） |
 | `ask` | `about`（分享那条消息的 id）、`text` | 对着分享追问对方的名片 agent |
 | `answer` | `about`（追问那条的 id）、`text`、`used`（用了什么，比如 `["这期节目"]`）、`defer`（true = 「得问他本人」） | 名片 agent 代答（`by = agent`） |
-| `edit` | `target`、`text`、`by?` | 改我先前发的一条（Leo 改名片 agent 的代答时 `by = person`，对方显示「Leo 改过」） |
-| `revoke` | `target` | 收回我先前发的一条（对方那边清空正文，显示「Leo 收回了这条」） |
+| `edit` | `target`、`text`、`by?` | 改我先前发的一条（Alex 改名片 agent 的代答时 `by = person`，对方显示「Alex 改过」） |
+| `revoke` | `target` | 收回我先前发的一条（对方那边清空正文，显示「Alex 收回了这条」） |
 | `card` | `card` | 我的名片变了（换了地址、改了名字、多了能力）：对方验签、kid 一样就更新 |
 | `bye` | — | 我把你删了：对方标 `gone`，不再往这边发 |
 
@@ -212,17 +212,17 @@ Signature: om=:<base64(签名)>:
 
 **分享的追问（名片 agent 代答）**：
 
-1. 朋友那边在分享下面点「追问」→ `ask` 发到 Leo 的服务器。
-2. Leo 的服务器核对：`about` 是我发给这个朋友的一条分享、分享没收回、`can_ask` 还开着、对方这一档的 `shares` 还是 `ask`。不满足 → 不调模型，回一条 `answer`（`defer: true`，「这个得问他本人」）。
+1. 朋友那边在分享下面点「追问」→ `ask` 发到 Alex 的服务器。
+2. Alex 的服务器核对：`about` 是我发给这个朋友的一条分享、分享没收回、`can_ask` 还开着、对方这一档的 `shares` 还是 `ask`。不满足 → 不调模型，回一条 `answer`（`defer: true`，「这个得问他本人」）。
 3. 满足 → `cardagent.answer(friend, 问题, channel="chat", material=[{"id": "share:<sid>", "kind": "share", "title", "text"}], history=<这段聊天最近几轮>, ref="share:<sid>")`（第三层）→ `{text, used, defer, declined, limited, log_id}`，存成一条 `answer`（`by = agent`、`review = pending`、`data.log_id`），发出去。
-4. Leo 的 app 里这条下面有一个只有他看得到的框：「没问题」（`review = ok`）/「我来改」（发 `edit`，`by = person`；`cardagent.retract(log_id, replaced=True)`，活动记录写「改了一条代答」）/「收回」（发 `revoke`；`cardagent.retract(log_id)`）。收回和改过的原文不再给名片 agent 当上下文。
-5. `cardagent.py` 还没有（第三层没上线）时，追问一律不自动答，只出现在 Leo 的聊天里等他自己回。
+4. Alex 的 app 里这条下面有一个只有他看得到的框：「没问题」（`review = ok`）/「我来改」（发 `edit`，`by = person`；`cardagent.retract(log_id, replaced=True)`，活动记录写「改了一条代答」）/「收回」（发 `revoke`；`cardagent.retract(log_id)`）。收回和改过的原文不再给名片 agent 当上下文。
+5. `cardagent.py` 还没有（第三层没上线）时，追问一律不自动答，只出现在 Alex 的聊天里等他自己回。
 
 **v1 不做**：群聊（「CS 小组 · 4 人」）、只收链接的联系人（「爸爸」这种没装 OpenMousse 的，第一层的链接已经够用）、图片和语音附件、已读回执、正在输入、换钥匙、朋友的朋友。
 
 ## 8. 档位
 
-名片 agent 按人分档，每档能问到什么 Leo 在「我的名片 agent」里定：
+名片 agent 按人分档，每档能问到什么 Alex 在「我的名片 agent」里定：
 
 | 键 | 取值 | 亲近 `close` | 朋友 `friend` | 同学 `mate` | 陌生 `stranger` |
 |---|---|---|---|---|---|
@@ -234,7 +234,7 @@ Signature: om=:<base64(签名)>:
 
 - 陌生 = 好友表里没有的：没签名、签名认不出、别家的 agent。它没有好友行，档位不能给某个人选。
 - **健康和身体、世界树不是键**：没有能打开的开关，名片 agent 自己也看不到。
-- 近况 = Leo 在名片页自己写的一段（`some` 给全部，`line` 只给第一行）；学习笔记只给 Leo 标了能分享的（默认一篇都没有）；住址读档案；日程读日程层（`busy` = 只给空闲时段）。取这些内容是第三层的事，存档位和设置页是第二层的事。
+- 近况 = Alex 在名片页自己写的一段（`some` 给全部，`line` 只给第一行）；学习笔记只给 Alex 标了能分享的（默认一篇都没有）；住址读档案；日程读日程层（`busy` = 只给空闲时段）。取这些内容是第三层的事，存档位和设置页是第二层的事。
 - 存在 `social_settings.tiers`；没存过就是上面的默认值。朋友不知道自己在哪一档。
 
 ## 9. `social.py` 给第三层的函数
@@ -249,17 +249,17 @@ await authenticate(request) -> (body: bytes, peer: Peer)   # Peer(kid, friend, t
 await signed_post(url, payload, *, to_kid, headers=None) -> httpx.Response
 tier_scopes(tier) -> dict
 friend(fid) / friend_by_kid(kid) -> dict | None       # friends 表一行；name 已按 alias 优先
-card_status() -> str                                  # Leo 在名片页写的近况原文，没写就空（第三层按档位切）
+card_status() -> str                                  # Alex 在名片页写的近况原文，没写就空（第三层按档位切）
 ```
 
-反过来第二层用第三层的：`cardagent.answer(...)`、`cardagent.retract(log_id, *, replaced=False)`。名片 agent 要 Leo 表态的卡是收件箱的 `social` 类（`inbox.py` 的改动归第三层）；第二层要出社交卡的话 dedupe 用 `friend:` 开头，处理函数注册进 `cardagent.SOCIAL_HOOKS["friend"]`。这类卡的钩子不往主 agent 的线程里发任何话：对方说的一个字都不进主 agent。
+反过来第二层用第三层的：`cardagent.answer(...)`、`cardagent.retract(log_id, *, replaced=False)`。名片 agent 要 Alex 表态的卡是收件箱的 `social` 类（`inbox.py` 的改动归第三层）；第二层要出社交卡的话 dedupe 用 `friend:` 开头，处理函数注册进 `cardagent.SOCIAL_HOOKS["friend"]`。这类卡的钩子不往主 agent 的线程里发任何话：对方说的一个字都不进主 agent。
 
 ## 10. 推送、未读
 
 - 朋友发来的 `text` / `share` / `ask` 算未读（「对话」tab 的「朋友」段和 app 角标都算）；app 开着那段聊天时标为已读。
-- 推送是新的推送类型，**要 Leo 点头才开**（server.json `social.push`）：提议朋友发来的话 → 响（静默时段降成静音）；名片 agent 替你答了一条 → 静音；有人用了你的邀请码 → 静音。
+- 推送是新的推送类型，**默认不开，主人同意了才开**（server.json `social.push`）：提议朋友发来的话 → 响（静默时段降成静音）；名片 agent 替你答了一条 → 静音；有人用了你的邀请码 → 静音。
 
 ## 11. 测试和上线
 
-- 本机起两套测试服当两个人（`~/openmousse-wt/tools/mk-test-env.py`，各自的库和钥匙）：第二层用 8120–8123（A 的主服务 / 公网小服务 8120 / 8121，B 的 8122 / 8123），第三层 8124–8127。`share.public_url` 填 `http://127.0.0.1:<公网端口>`，`social.allow_http: true`。
-- 上线：开 Funnel `/f` 先问 Leo；朋友那台（开源版）要用上，得推公开库 + 发 OpenMousse，跟下次发版一起，先问 Leo。
+- 本机起两套测试服就能当两个人（各自的数据目录和钥匙）。`share.public_url` 填 `http://127.0.0.1:<公网端口>`，`social.allow_http: true`。
+- 上线：两边都要有公网地址、上面开着 `/f`（安装器问「开公网」时答 y，会写 `share.public_url` / `share.public_port` 并开 Funnel `/s` 和 `/f`）。

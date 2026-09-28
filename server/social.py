@@ -398,7 +398,7 @@ def set_tier_scopes(changes: dict[str, dict[str, str]]) -> dict[str, dict[str, s
 
 
 def card_status() -> str:
-    """Leo 在「我的名片 agent」里自己写的近况原文，没写就空（名片 agent 按档位切：some 全文，line 第一行）。"""
+    """用户在「我的名片 agent」里自己写的近况原文，没写就空（名片 agent 按档位切：some 全文，line 第一行）。"""
     return get_setting("status") or ""
 
 

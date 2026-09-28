@@ -33,8 +33,8 @@ The card agent calls a model only through `cardagent.py`, **never through the cl
   "openmousse": "1",
   "kid": "<kid>",
   "key": {"kty": "OKP", "crv": "Ed25519", "x": "<x>"},
-  "url": "https://grava.tail9b832e.ts.net",
-  "name": "Leo",
+  "url": "https://alex.example.ts.net",
+  "name": "Alex",
   "caps": ["chat", "ask"],
   "updated_at": "2026-09-28T17:00:00+01:00",
   "signatures": [{"protected": "<b64url header>", "signature": "<b64url signature>"}]
@@ -62,20 +62,20 @@ The card agent calls a model only through `cardagent.py`, **never through the cl
 **Shape**: a URL
 
 ```
-https://grava.tail9b832e.ts.net/f/i/<token>/<x>
+https://alex.example.ts.net/f/i/<token>/<x>
 ```
 
 - Token: 16 random bytes, base64url (22 characters), one use, expires after 7 days by default (30 at most). The server stores only `sha256(token)`.
 - `x`: the inviter's public key (43 characters). Whoever redeems the code checks the inviter's card and reply against it instead of trusting the domain alone.
 - Scanning the QR code with a phone camera opens the landing page; copying and pasting goes into the app's "Add a friend". The app accepts any text containing `/f/i/<token>/<x>`.
 
-**Landing page** `GET /f/i/<token>/<x>`: one plain HTML page (noindex, no-referrer, no scripts, like share pages): "Leo invited you to be friends on OpenMousse", how (open the app → Chat → Friends → Add a friend → paste this link), and "Open in the app" (`openmousse://friends/add?code=<the whole URL>`). **A GET never uses up the token** (chat apps fetch links for previews). An invalid token only says "This invite has been used or has expired".
+**Landing page** `GET /f/i/<token>/<x>`: one plain HTML page (noindex, no-referrer, no scripts, like share pages): "Alex invited you to be friends on OpenMousse", how (open the app → Chat → Friends → Add a friend → paste this link), and "Open in the app" (`openmousse://friends/add?code=<the whole URL>`). **A GET never uses up the token** (chat apps fetch links for previews). An invalid token only says "This invite has been used or has expired".
 
 **Creating one** (the inviter, in the app): who it's for (a note only you see), the tier they land in (Friend by default), how many days → QR code + link. Unused invites can be withdrawn. At most 20 open invites at a time.
 
 **Redeeming**:
 
-1. The invitee pastes or scans it in her app → her server splits out origin, token and `x`, fetches `GET <origin>/f/card` and checks `key.x == x` and the signature → the app shows "Add Leo as a friend? Fingerprint K7Q2M 9XJ4P" and she picks a tier.
+1. The invitee pastes or scans it in her app → her server splits out origin, token and `x`, fetches `GET <origin>/f/card` and checks `key.x == x` and the signature → the app shows "Add Alex as a friend? Fingerprint K7Q2M 9XJ4P" and she picks a tier.
 2. Her server sends a signed request (section 5) `POST <origin>/f/hello`:
 
    ```json
@@ -168,7 +168,7 @@ Responses are not signed (HTTPS already says which server answered); the card in
 
 ## 6. Public paths
 
-One more public path: Tailscale Funnel (or a reverse proxy) `/f` → `http://127.0.0.1:<share.public_port>/f`, the same small app as `/s` (`public.py`): no `/api`, no tokens, no device trust. **Ask the owner before opening it** (Leo's "go live with a public link" covered `/s` only).
+One more public path: Tailscale Funnel (or a reverse proxy) `/f` → `http://127.0.0.1:<share.public_port>/f`, the same small app as `/s` (`public.py`): no `/api`, no tokens, no device trust. It is open only if you want friends: the installer's public question opens it, or run the `tailscale funnel` command yourself.
 
 | Path | Caller | Signed | What |
 |---|---|---|---|
@@ -201,8 +201,8 @@ One message per request:
 | `share` | `share: {sid, kind, title, text, quote, when, link?, can_ask}`, `text?` | a share sent to a friend: the snapshot after private bits were hidden (hidden spots are `▇▇▇`; the original never leaves the server); `link` only when anyone with the link may see it; `can_ask` = whether it takes follow-up questions (the share's switch × the friend's tier) |
 | `ask` | `about` (the share message's id), `text` | a follow-up question for the other person's card agent |
 | `answer` | `about` (the question's id), `text`, `used` (what it drew on, e.g. `["this episode"]`), `defer` (true = "you'd have to ask him") | the card agent's answer (`by = agent`) |
-| `edit` | `target`, `text`, `by?` | replace the text of a message I sent (when Leo rewrites the card agent's answer, `by = person` and the friend sees "edited by Leo") |
-| `revoke` | `target` | withdraw a message I sent (their copy is emptied and shows "Leo withdrew this") |
+| `edit` | `target`, `text`, `by?` | replace the text of a message I sent (when Alex rewrites the card agent's answer, `by = person` and the friend sees "edited by Alex") |
+| `revoke` | `target` | withdraw a message I sent (their copy is emptied and shows "Alex withdrew this") |
 | `card` | `card` | my card changed (new address, new name, new caps): verified and applied when the kid matches |
 | `bye` | — | I removed you: mark me `gone` and stop sending |
 
@@ -212,17 +212,17 @@ The receiver answers `200 {"ok": true, "id": "<id>", "dup": false}` (`dup: true`
 
 **Follow-up questions on a share (answered by the card agent)**:
 
-1. On the friend's side, "Ask" under a share sends an `ask` to Leo's server.
-2. Leo's server checks: `about` is a share I sent to this friend, it hasn't been withdrawn, `can_ask` is still on, and the friend's tier still has `shares = ask`. If not, no model is called and an `answer` goes back with `defer: true` ("you'd have to ask him").
+1. On the friend's side, "Ask" under a share sends an `ask` to Alex's server.
+2. Alex's server checks: `about` is a share I sent to this friend, it hasn't been withdrawn, `can_ask` is still on, and the friend's tier still has `shares = ask`. If not, no model is called and an `answer` goes back with `defer: true` ("you'd have to ask him").
 3. Otherwise `cardagent.answer(friend, question, channel="chat", material=[{"id": "share:<sid>", "kind": "share", "title", "text"}], history=<the last few turns of this chat>, ref="share:<sid>")` (layer ③) → `{text, used, defer, declined, limited, log_id}` is stored as an `answer` (`by = agent`, `review = pending`, `data.log_id`) and sent.
-4. In Leo's app the answer carries a box only he sees: "Fine" (`review = ok`) / "I'll rewrite it" (sends `edit` with `by = person`; `cardagent.retract(log_id, replaced=True)`, logged as "rewrote an answer") / "Withdraw" (sends `revoke`; `cardagent.retract(log_id)`). Withdrawn and rewritten originals are no longer given to the card agent as context.
-5. Until `cardagent.py` exists (layer ③ not live), questions are never answered automatically: they just show up in Leo's chat for him to answer.
+4. In Alex's app the answer carries a box only he sees: "Fine" (`review = ok`) / "I'll rewrite it" (sends `edit` with `by = person`; `cardagent.retract(log_id, replaced=True)`, logged as "rewrote an answer") / "Withdraw" (sends `revoke`; `cardagent.retract(log_id)`). Withdrawn and rewritten originals are no longer given to the card agent as context.
+5. Until `cardagent.py` exists (layer ③ not live), questions are never answered automatically: they just show up in Alex's chat for him to answer.
 
 **Not in v1**: group chats ("CS group · 4 people"), link-only contacts (people without OpenMousse, like Dad: layer ①'s links already cover them), image and voice attachments, read receipts, typing indicators, key rotation, friends of friends.
 
 ## 8. Tiers
 
-The card agent answers people by tier, and Leo decides what each tier can get in "My card agent":
+The card agent answers people by tier, and Alex decides what each tier can get in "My card agent":
 
 | Key | Values | Close `close` | Friend `friend` | Classmate `mate` | Stranger `stranger` |
 |---|---|---|---|---|---|
@@ -234,7 +234,7 @@ The card agent answers people by tier, and Leo decides what each tier can get in
 
 - A stranger is anyone not in the friends table: unsigned, signed by an unknown key, another vendor's agent. Strangers have no row, so nobody can be put in that tier.
 - **Health and body, and the memory tree, are not keys**: there is no switch that could open them, and the card agent can't see them either.
-- Status = a paragraph Leo writes on the card page (`some` gives all of it, `line` the first line); study notes = only those Leo marked shareable (none by default); address from the profile; calendar from the schedule layer (`busy` = free slots only). Fetching these is layer ③'s job; storing tiers and the settings page are layer ②'s.
+- Status = a paragraph Alex writes on the card page (`some` gives all of it, `line` the first line); study notes = only those Alex marked shareable (none by default); address from the profile; calendar from the schedule layer (`busy` = free slots only). Fetching these is layer ③'s job; storing tiers and the settings page are layer ②'s.
 - Stored in `social_settings.tiers`; the defaults above apply until changed. Friends never learn their tier.
 
 ## 9. What `social.py` gives layer ③
@@ -249,7 +249,7 @@ await authenticate(request) -> (body: bytes, peer: Peer)   # Peer(kid, friend, t
 await signed_post(url, payload, *, to_kid, headers=None) -> httpx.Response
 tier_scopes(tier) -> dict
 friend(fid) / friend_by_kid(kid) -> dict | None       # a friends row; name already prefers alias
-card_status() -> str                                  # the status text Leo wrote on the card page, empty if none (layer ③ cuts it by tier)
+card_status() -> str                                  # the status text Alex wrote on the card page, empty if none (layer ③ cuts it by tier)
 ```
 
 In the other direction layer ② uses layer ③'s `cardagent.answer(...)` and `cardagent.retract(log_id, *, replaced=False)`. Cards where the card agent needs the owner's say are inbox items of kind `social` (the `inbox.py` changes belong to layer ③); if layer ② ever needs a social card it uses a dedupe starting with `friend:` and registers its handler in `cardagent.SOCIAL_HOOKS["friend"]`. Hooks for this kind never post anything into the main agent's thread: not one word the other side wrote reaches the main agent.
@@ -261,5 +261,5 @@ In the other direction layer ② uses layer ③'s `cardagent.answer(...)` and `c
 
 ## 11. Testing and going live
 
-- Two test servers on one machine act as two people (`~/openmousse-wt/tools/mk-test-env.py`, each with its own database and key): layer ② uses 8120–8123 (A's main / public app 8120 / 8121, B's 8122 / 8123), layer ③ 8124–8127. `share.public_url` is `http://127.0.0.1:<public port>` and `social.allow_http: true`.
-- Going live: ask Leo before opening Funnel `/f`; for a friend's (open-source) server to use it the public repo has to be pushed and OpenMousse released, together with the next friend release, after asking Leo.
+- Two test servers on one machine can act as two people, each with its own data directory and key. `share.public_url` is `http://127.0.0.1:<public port>` and `social.allow_http: true`.
+- Going live: both sides need a public address with `/f` on it (the installer's public question sets `share.public_url` / `share.public_port` and opens Funnel `/s` and `/f`).

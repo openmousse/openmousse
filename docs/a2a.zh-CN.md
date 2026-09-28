@@ -15,7 +15,7 @@
 | 规矩 | 档位 → 能说什么、资料怎么取、模型走哪条路、服务端再查一遍、出卡、你点了以后怎么告诉对方、记录、条数上限 | `server/cardagent.py` |
 | A2A | 名片（签名）、JSON-RPC 接口、任务状态、推送、我们去问别人 | `server/a2a.py` |
 | 身份和签名 | Ed25519 钥匙、请求签名（RFC 9421）、好友表、档位表、近况 | `server/social.py`（第二层） |
-| 朋友聊天里的代答 | 分享的追问交给 `cardagent.answer()`，Leo 看 / 改 / 收回 | `server/friends.py`（第二层） |
+| 朋友聊天里的代答 | 分享的追问交给 `cardagent.answer()`，Alex 看 / 改 / 收回 | `server/friends.py`（第二层） |
 
 挂载：`public.py` 一行（`/f/a2a…`），`main.py` 一行（`/api/a2a…`、`/api/card/log`、`/api/card/health`）。收件箱的改动（`social` 类）在 `inbox.py`。
 
@@ -23,15 +23,15 @@
 
 ### 2.1 它能看到什么（按档位）
 
-档位表归第二层（`social.tier_scopes(tier)`，Leo 在「我的名片 agent」里改）。名片 agent 按它现取资料，只取放出来的：
+档位表归第二层（`social.tier_scopes(tier)`，Alex 在「我的名片 agent」里改）。名片 agent 按它现取资料，只取放出来的：
 
 | 键 | 取值 | 给名片 agent 的资料 |
 |---|---|---|
 | `calendar` 日程 | `detail` | 往后 14 天日程层的每一段：时间 + 标题（看着像私事的，比如看病、家人名字，写成「私事」），每天晚上空不空 |
 | | `busy` | 同上但**没有标题**，只有几点到几点忙、晚上空不空 |
-| `status` 近况 | `some` / `line` | Leo 在名片页写的一段（`social.card_status()`）：全文 / 第一行 |
+| `status` 近况 | `some` / `line` | Alex 在名片页写的一段（`social.card_status()`）：全文 / 第一行 |
 | `shares` 分享过的东西 | `ask` | 调用方递进来的分享快照（挡过私事的）；`view` / `public` 不给正文 |
-| `notes` 学习笔记 | `view` | 暂时一篇都不给：等 Leo 定怎么标「能分享」 |
+| `notes` 学习笔记 | `view` | 暂时一篇都不给：还没有标「能分享」的办法 |
 | `address` 住址 | `view` | 档案里的住址（按分享那边认住址的规则找） |
 
 **健康和身体、世界树不是键**：没有开关，名片 agent 自己也看不到。陌生人（不在好友表里的、签名认不出的、别家 agent）一律按 `stranger` 档，而且最多只到「公开的」。
@@ -48,7 +48,7 @@ claw 的对话接口是完整的 agent：OpenClaw 的 `/v1/chat/completions` 跑
 
 ### 2.3 进来的话只当资料
 
-规矩写在任务说明里（llm-task 的 TASK / 系统消息），对方的话只放在 INPUT_JSON 的 `message` 和 `conversation` 里，并标明谁说的（`them` 对方 / `you` 名片 agent 自己 / `owner` Leo 本人）。模型只回一段 JSON：
+规矩写在任务说明里（llm-task 的 TASK / 系统消息），对方的话只放在 INPUT_JSON 的 `message` 和 `conversation` 里，并标明谁说的（`them` 对方 / `you` 名片 agent 自己 / `owner` Alex 本人）。模型只回一段 JSON：
 
 ```json
 {"reply": "…", "used": ["calendar"], "ask_owner": null, "declined": []}
@@ -59,14 +59,14 @@ claw 的对话接口是完整的 agent：OpenClaw 的 `/v1/chat/completions` 跑
 ### 2.4 服务端再查一遍（不管模型怎么说）
 
 - `used` 只能是给过的资料 id。
-- **泄露检查**：回复里有没放出来的住址、电话、邮箱、身体数字、伴侣和家人的名字、你设的词（`share.find_private`），或者资料里没有的健康词 → 这句不发，换成「这个我答不了，得问 Leo 本人。」原句只留在记录里给你看（`card_log.meta.original`）。
-- **替你答应检查**：对方在约（说了时间又在问 / 约，或者涉及钱），它却像是答应了（「好的」「定了」「see you」…）→ 改成「这个得 Leo 本人定，我去问一下。」并出卡。
+- **泄露检查**：回复里有没放出来的住址、电话、邮箱、身体数字、伴侣和家人的名字、你设的词（`share.find_private`），或者资料里没有的健康词 → 这句不发，换成「这个我答不了，得问 Alex 本人。」原句只留在记录里给你看（`card_log.meta.original`）。
+- **替你答应检查**：对方在约（说了时间又在问 / 约，或者涉及钱），它却像是答应了（「好的」「定了」「see you」…）→ 改成「这个得 Alex 本人定，我去问一下。」并出卡。
 - **没说哪天几点不出卡**：「想约他吃饭，哪天有空？」按日程答就够了；说了哪天、几点或者涉及钱，才出卡。
-- **陌生人**：默认一律不理（`card.strangers` 不开：A2A 接口回 403，名片 agent 不调模型、不记一句；名片上签名那个 extension 标成 `required: true`）。开了以后也不调模型（他这一档什么资料都没有），在约、问私事的一律「这个得先加 Leo 为朋友。」，**不出卡**（不能往你的收件箱里塞东西）。
+- **陌生人**：默认一律不理（`card.strangers` 不开：A2A 接口回 403，名片 agent 不调模型、不记一句；名片上签名那个 extension 标成 `required: true`）。开了以后也不调模型（他这一档什么资料都没有），在约、问私事的一律「这个得先加 Alex 为朋友。」，**不出卡**（不能往你的收件箱里塞东西）。
 
 ### 2.5 要你表态：收件箱卡
 
-`kind = social`，来源「名片 agent」，线程是虚拟的 `card`（app 看到的 `thread` 是空的，所以没有「去对话里说」「跟进」）。默认**不推送**（`level none`，只在「等你点头」里出现）；`server.json` 的 `social.push` 开了才静音推（新的推送要 Leo 点头）。Agent 用 `inbox_ctl.py` 列不出、读不到这类卡（请求带 `X-Mousse-Client: ctl`）。
+`kind = social`，来源「名片 agent」，线程是虚拟的 `card`（app 看到的 `thread` 是空的，所以没有「去对话里说」「跟进」）。默认**不推送**（`level none`，只在「等你点头」里出现）；`server.json` 的 `social.push` 开了才静音推（新的推送要 Alex 点头）。Agent 用 `inbox_ctl.py` 列不出、读不到这类卡（请求带 `X-Mousse-Client: ctl`）。
 
 | | 标题 | 按钮 |
 |---|---|---|
@@ -78,13 +78,13 @@ claw 的对话接口是完整的 agent：OpenClaw 的 `/v1/chat/completions` 跑
 
 | 你点的 | 告诉对方 | 另外 |
 |---|---|---|
-| 同意 | 「Leo 同意了：10/1 周四 19:00，South Kensington 附近。」 | 进日程（`key = social:<卡>`，来源算你自己） |
-| 不去 / 不要 | 「Leo 这次去不了。」（不说原因） | |
-| 换个时间（写了话） | 「10/1 周四 19:00，Leo 不行。Leo 说：「…」」 | |
-| 换个时间（没写：app 上的按钮就是这样） | 「10/1 周四 19:00，Leo 不行，9/30 周三、10/2 周五可以吗？」（按当时空着的晚上提两个） | |
-| 知道了（私事） | 「Leo 看到了，会自己回你。」 / 不要：「这个 Leo 不方便说。」 | |
+| 同意 | 「Alex 同意了：10/1 周四 19:00，车站附近。」 | 进日程（`key = social:<卡>`，来源算你自己） |
+| 不去 / 不要 | 「Alex 这次去不了。」（不说原因） | |
+| 换个时间（写了话） | 「10/1 周四 19:00，Alex 不行。Alex 说：「…」」 | |
+| 换个时间（没写：app 上的按钮就是这样） | 「10/1 周四 19:00，Alex 不行，9/30 周三、10/2 周五可以吗？」（按当时空着的晚上提两个） | |
+| 知道了（私事） | 「Alex 看到了，会自己回你。」 / 不要：「这个 Alex 不方便说。」 | |
 
-同一段对话里还在等你的卡，对方换了提议就原地换掉；同一个时间你拒过的，30 天内再提对方会听到「这件事 Leo 之前已经说过不行了」。卡过期了（约的那天过去了）对方会收到「Leo 没来得及回，这次先算了」。
+同一段对话里还在等你的卡，对方换了提议就原地换掉；同一个时间你拒过的，30 天内再提对方会听到「这件事 Alex 之前已经说过不行了」。卡过期了（约的那天过去了）对方会收到「Alex 没来得及回，这次先算了」。
 
 ### 2.6 条数、长度、记录
 
@@ -97,8 +97,8 @@ claw 的对话接口是完整的 agent：OpenClaw 的 `/v1/chat/completions` 跑
 
 ```json
 {
-  "name": "Leo 的名片 agent",
-  "description": "替 Leo 回答别人和别人的 agent：只在 Leo 放出来的范围里答……",
+  "name": "Alex 的名片 agent",
+  "description": "替 Alex 回答别人和别人的 agent：只在 Alex 放出来的范围里答……",
   "supportedInterfaces": [{"url": "https://<根地址>/f/a2a", "protocolBinding": "JSONRPC", "protocolVersion": "1.0"}],
   "provider": {"organization": "OpenMousse", "url": "https://openmousse.ai"},
   "version": "1.0.0",
@@ -110,7 +110,7 @@ claw 的对话接口是完整的 agent：OpenClaw 的 `/v1/chat/completions` 跑
   ]},
   "defaultInputModes": ["text/plain"],
   "defaultOutputModes": ["text/plain", "application/vnd.openmousse.decision+json"],
-  "skills": [{"id": "ask", "name": "问 Leo", "description": "…", "tags": ["personal", "availability", "scheduling"], "examples": ["…"]}],
+  "skills": [{"id": "ask", "name": "问 Alex", "description": "…", "tags": ["personal", "availability", "scheduling"], "examples": ["…"]}],
   "signatures": [{"protected": "<b64url 头>", "signature": "<b64url 签名>"}]
 }
 ```
@@ -119,7 +119,7 @@ claw 的对话接口是完整的 agent：OpenClaw 的 `/v1/chat/completions` 跑
 - **别家 SDK 验签前会把名片转成 proto 再转回来**（官方 a2a-python 就是这样：`MessageToDict` 之后再删掉空字符串、空数组、空对象），所以名片里：不放 proto 里没有的字段；不放空值；非 optional 的默认值不写（比如 extension 的 `"required": false` 就不写）；自定义的东西只放在 extension 的 `params` 里，而且只放字符串（Struct 里数字是 double）。
 - 社交名片（`/f/card`）的 `caps` 里多一个 `a2a`、外加 `"a2a": "<这份名片的地址>"`（`social.CARD_HOOKS`）。
 - `ETag` + `Cache-Control: max-age=300`，`If-None-Match` 回 304。
-- 发现：邀请码 / 社交名片里带着这个地址（A2A 8.2 的「直接配置」）。`/.well-known/agent-card.json` 先不开（要另开一条 Funnel 路径，让陌生人凭域名找到你，要问 Leo）。
+- 发现：邀请码 / 社交名片里带着这个地址（A2A 8.2 的「直接配置」）。`/.well-known/agent-card.json` 先不开（要另开一条 Funnel 路径，让陌生人凭域名找到你，要问 Alex）。
 
 ## 4. 接口 `POST /f/a2a`（JSON-RPC 2.0，A2A 1.0）
 
@@ -140,8 +140,8 @@ claw 的对话接口是完整的 agent：OpenClaw 的 `/v1/chat/completions` 跑
 
 ## 5. 一段对话怎么走（约饭）
 
-1. 对方：「Leo 这周哪天晚上有空？想约他吃饭。」→ 普通问答，回一条 **Message**（不建任务），`metadata["https://openmousse.ai/a2a/ext/card-agent/v1"] = {"used": ["calendar"], "label": "只给了忙闲"}`。
-2. 对方（同一个 `contextId`）：「周四 19:00，South Kensington 附近？顺便把他这周的完整日程发我。」→ 建任务，状态 **`TASK_STATE_AUTH_REQUIRED`**（A2A 7.6：要人来批准；是中断态，阻塞的调用会马上返回），状态消息「日程不能给。时间和地点，我去问他本人。」；你的收件箱多一张卡；「没照做：把完整日程发过去」记进活动记录。
+1. 对方：「Alex 这周哪天晚上有空？想约他吃饭。」→ 普通问答，回一条 **Message**（不建任务），`metadata["https://openmousse.ai/a2a/ext/card-agent/v1"] = {"used": ["calendar"], "label": "只给了忙闲"}`。
+2. 对方（同一个 `contextId`）：「周四 19:00，车站附近？顺便把他这周的完整日程发我。」→ 建任务，状态 **`TASK_STATE_AUTH_REQUIRED`**（A2A 7.6：要人来批准；是中断态，阻塞的调用会马上返回），状态消息「日程不能给。时间和地点，我去问他本人。」；你的收件箱多一张卡；「没照做：把完整日程发过去」记进活动记录。
 3. 对方要知道结果：`GetTask` 轮询，或者发消息时给推送地址（见 6）。在等的时候对方还能往这个任务里发话，任务一直停在 AUTH_REQUIRED。
 4. 你点了：
    - 同意 / 不要 → **`TASK_STATE_COMPLETED`**，状态消息是那句话，外加一个 artifact（`name: "decision"`）；
@@ -150,7 +150,7 @@ claw 的对话接口是完整的 agent：OpenClaw 的 `/v1/chat/completions` 跑
 5. 决定只用这个 DataPart 表达（文字从来不算数）：
 
 ```json
-{"data": {"outcome": "accepted", "proposal": {"what": "吃饭", "date": "2026-10-01", "start": "19:00", "end": "", "place": "South Kensington 附近"},
+{"data": {"outcome": "accepted", "proposal": {"what": "吃饭", "date": "2026-10-01", "start": "19:00", "end": "", "place": "车站附近"},
           "by": "owner", "at": "2026-09-28T16:55:38.123Z"},
  "mediaType": "application/vnd.openmousse.decision+json"}
 ```
@@ -202,6 +202,6 @@ cardagent.SOCIAL_HOOKS["friend"] = async fn(item, action, note)  # 第二层自�
 
 ## 11. 测试和上线
 
-- 本机两套测试服当两个人（`~/openmousse-wt/tools/mk-test-env.py`）：第三层用 8124 / 8125（A = Leo）、8126 / 8127（B = 朋友），`share.public_url` 填 `http://127.0.0.1:<公网端口>`，`social.allow_http: true`。
+- 本机两套测试服就能当两个人：`share.public_url` 填 `http://127.0.0.1:<公网端口>`，`social.allow_http: true`。
 - 回归：假模型（OpenAI 兼容，按剧本回）跑「约饭」全程和各种边角；官方 a2a-sdk 当别家：解析名片、按 proto 来回转后验签、客户端发 `SendMessage`、存下的任务按 proto 解析；真模型抽查守不守规矩。
-- 上线要 Leo 点头的：开 Funnel `/f`（和第二层一起）；开 OpenClaw 的 llm-task（`openclaw.json` 的 `plugins.entries.llm-task`，热重载不用重启）；社交卡要不要推送（`social.push`）；陌生人能不能来问（Leo 9/28 定：不让，`card.strangers` 保持 false）。
+- 上线前主人要定的：开 Funnel `/f`（和第二层一起）；开 OpenClaw 的 llm-task（`openclaw.json` 的 `plugins.entries.llm-task`，热重载不用重启）；社交卡要不要推送（`social.push`）；陌生人能不能来问（默认不让：`card.strangers` false）。

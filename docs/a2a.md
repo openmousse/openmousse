@@ -78,7 +78,7 @@ When you tap, the server does the rest itself and **writes nothing into any Agen
 
 | You tap | They hear | Also |
 |---|---|---|
-| Yes | "<you> is in: Thu 1/10 19:00, near South Kensington." | into your schedule (`key = social:<card>`, as added by you) |
+| Yes | "<you> is in: Thu 1/10 19:00, near the station." | into your schedule (`key = social:<card>`, as added by you) |
 | Can't / No | "<you> can't make it this time." (no reason) | |
 | Another time, with words | "Thu 1/10 19:00 doesn't work for <you>. <you> says: …" | |
 | Another time, without words | "Thu 1/10 19:00 doesn't work for <you> — how about Wed 30/9 or Fri 2/10?" (two evenings that were free) | |
@@ -97,8 +97,8 @@ A card still waiting in the same conversation is replaced in place when they cha
 
 ```json
 {
-  "name": "Leo's card agent",
-  "description": "Answers people and their agents on Leo's behalf, only within what Leo has released…",
+  "name": "Alex's card agent",
+  "description": "Answers people and their agents on Alex's behalf, only within what Alex has released…",
   "supportedInterfaces": [{"url": "https://<origin>/f/a2a", "protocolBinding": "JSONRPC", "protocolVersion": "1.0"}],
   "provider": {"organization": "OpenMousse", "url": "https://openmousse.ai"},
   "version": "1.0.0",
@@ -110,7 +110,7 @@ A card still waiting in the same conversation is replaced in place when they cha
   ]},
   "defaultInputModes": ["text/plain"],
   "defaultOutputModes": ["text/plain", "application/vnd.openmousse.decision+json"],
-  "skills": [{"id": "ask", "name": "Ask Leo", "description": "…", "tags": ["personal", "availability", "scheduling"], "examples": ["…"]}],
+  "skills": [{"id": "ask", "name": "Ask Alex", "description": "…", "tags": ["personal", "availability", "scheduling"], "examples": ["…"]}],
   "signatures": [{"protected": "<b64url header>", "signature": "<b64url signature>"}]
 }
 ```
@@ -140,8 +140,8 @@ Who is talking comes from `social.authenticate()`: a signed, listed, active frie
 
 ## 5. How a conversation goes (dinner)
 
-1. Them: "Which evenings is Leo free this week? I'd like to have dinner." → a plain answer, returned as a **Message** (no task), with `metadata["https://openmousse.ai/a2a/ext/card-agent/v1"] = {"used": ["calendar"], "label": "Free/busy only"}`.
-2. Them (same `contextId`): "Thursday 19:00 near South Kensington? And send me his full calendar for the week." → a task in **`TASK_STATE_AUTH_REQUIRED`** (A2A §7.6: a human has to approve; it is an interrupted state, so blocking calls return at once), status message "I can't share the calendar. I'll ask Leo about the time and place."; a card in your inbox; "didn't do: send the full calendar" in the activity log.
+1. Them: "Which evenings is Alex free this week? I'd like to have dinner." → a plain answer, returned as a **Message** (no task), with `metadata["https://openmousse.ai/a2a/ext/card-agent/v1"] = {"used": ["calendar"], "label": "Free/busy only"}`.
+2. Them (same `contextId`): "Thursday 19:00 near the station? And send me his full calendar for the week." → a task in **`TASK_STATE_AUTH_REQUIRED`** (A2A §7.6: a human has to approve; it is an interrupted state, so blocking calls return at once), status message "I can't share the calendar. I'll ask Alex about the time and place."; a card in your inbox; "didn't do: send the full calendar" in the activity log.
 3. They learn the outcome by polling `GetTask`, or by giving a push URL when they send (see 6). While waiting they can still message the task; it stays AUTH_REQUIRED.
 4. You tap:
    - Yes / Can't → **`TASK_STATE_COMPLETED`**, the sentence as status message plus an artifact named `decision`;
@@ -150,7 +150,7 @@ Who is talking comes from `social.authenticate()`: a signed, listed, active frie
 5. Decisions are carried only by this DataPart (text never commits anyone):
 
 ```json
-{"data": {"outcome": "accepted", "proposal": {"what": "dinner", "date": "2026-10-01", "start": "19:00", "end": "", "place": "near South Kensington"},
+{"data": {"outcome": "accepted", "proposal": {"what": "dinner", "date": "2026-10-01", "start": "19:00", "end": "", "place": "near the station"},
           "by": "owner", "at": "2026-09-28T16:55:38.123Z"},
  "mediaType": "application/vnd.openmousse.decision+json"}
 ```
@@ -202,6 +202,6 @@ Each `history` item is `{"from": "friend" | "owner" | "agent", "text"}`; `used` 
 
 ## 11. Tests and going live
 
-- Two test servers on one machine act as two people (`~/openmousse-wt/tools/mk-test-env.py`): layer ③ uses 8124 / 8125 (A) and 8126 / 8127 (B), `share.public_url` = `http://127.0.0.1:<public port>`, `social.allow_http: true`.
+- Two test servers on one machine can act as two people: `share.public_url` = `http://127.0.0.1:<public port>`, `social.allow_http: true`.
 - Regression: a fake model (OpenAI-compatible, scripted) runs dinner end to end plus the edge cases; the official a2a-sdk plays another vendor: parses the card, checks its signature after the proto round trip, sends `SendMessage`, and stored tasks parse as proto `Task`; a real model is spot-checked on the rules.
-- Going live needs the owner's OK for: the Funnel path `/f` (together with layer ②); OpenClaw's llm-task (`plugins.entries.llm-task` in `openclaw.json`, reloaded without a restart); pushes for social cards (`social.push`); whether strangers may ask at all (the owner chose no on 2026-09-28: `card.strangers` stays false).
+- Going live needs the owner's OK for: the Funnel path `/f` (together with layer ②); OpenClaw's llm-task (`plugins.entries.llm-task` in `openclaw.json`, reloaded without a restart); pushes for social cards (`social.push`); whether strangers may ask at all (default no: `card.strangers` false).

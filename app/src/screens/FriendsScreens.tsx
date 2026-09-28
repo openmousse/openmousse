@@ -38,7 +38,7 @@ function initials(name: string): string {
   if (/^[㐀-鿿]/.test(s)) return s[0];
   const words = s.split(/\s+/).filter(Boolean);
   const second = words[1]?.[0] ?? '';
-  // 两个词都是拉丁字母才取两个首字母（「Imperial 同学」只取 I）
+  // 两个词都是拉丁字母才取两个首字母（「Acme 同事」只取 A）
   return ((words[0]?.[0] ?? '?') + (/[A-Za-z]/.test(second) ? second : '')).toUpperCase();
 }
 
@@ -696,7 +696,7 @@ export function AddFriendScreen() {
           </Card>
         ) : (
           <Card style={{ gap: space.sm }}>
-            <TextInput value={note} onChangeText={setNote} placeholder={L('给谁的（只你自己看，比如「NYU 老同学」）', 'Who is it for (only you see this)')} placeholderTextColor={t.ink3}
+            <TextInput value={note} onChangeText={setNote} placeholder={L('给谁的（只你自己看，比如「大学同学」）', 'Who is it for (only you see this)')} placeholderTextColor={t.ink3}
               maxLength={80} style={[type.body, styles.field, { color: t.ink, borderColor: t.line }]} accessibilityLabel={L('给谁的', 'Who is it for')} />
             <T v="caption" color={t.ink3}>{L('他加进来以后在哪一档', 'Which tier they land in')}</T>
             <Segmented<Tier> value={tier} options={TIER_OPTS()} onChange={setTier} />
@@ -810,7 +810,7 @@ export function CardAgentScreen() {
             <SectionLabel caps={false}>{L('近况（名片 agent 说你最近在干嘛时用它）', 'What you are up to (used when it says what you are doing)')}</SectionLabel>
             <Card style={{ gap: space.sm }}>
               <TextInput value={status ?? data.status} onChangeText={(v) => { setStatus(v); setSaved(false); }} onBlur={saveStatus} multiline maxLength={1000}
-                placeholder={L('比如：在伦敦读 ESB；最近在做 OpenMousse', 'e.g. Studying in London; building OpenMousse lately')} placeholderTextColor={t.ink3}
+                placeholder={L('比如：在读研；最近在做一个开源项目', 'e.g. In grad school; building an open-source project lately')} placeholderTextColor={t.ink3}
                 style={[type.body, styles.field, { color: t.ink, borderColor: t.line, minHeight: 72, textAlignVertical: 'top' }]} accessibilityLabel={L('近况', 'Status')} />
               <T v="caption" color={t.ink3}>{L('「几句话」给全部，「一句话」只给第一行。', '"A few lines" gives all of it, "One line" only the first line.')}</T>
               {status != null ? <Btn label={L('存', 'Save')} kind="quiet" onPress={saveStatus} /> : saved ? <T v="callout" color={t.good}>{L('存好了', 'Saved')}</T> : null}

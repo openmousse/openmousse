@@ -57,7 +57,7 @@ router = APIRouter()
 CATEGORIES = ("calendar", "status", "shares", "notes", "address")
 LEVELS = {"calendar": ("detail", "busy", "none"), "status": ("some", "line", "none"), "shares": ("ask", "view", "public"),
           "notes": ("view", "none"), "address": ("view", "none")}
-# 设计稿 SocCard 的默认值。真正的档位表归 social.py（Leo 在「我的名片 agent」里改），这里只在它不在时兜底。
+# 设计稿 SocCard 的默认值。真正的档位表归 social.py（用户在「我的名片 agent」里改），这里只在它不在时兜底。
 DEFAULT_SCOPES = {
     "close": {"calendar": "detail", "status": "some", "shares": "ask", "notes": "view", "address": "view"},
     "friend": {"calendar": "busy", "status": "line", "shares": "ask", "notes": "view", "address": "none"},
@@ -70,7 +70,7 @@ DEFAULT_LIMITS = {"in_per_day": {"close": 80, "friend": 50, "mate": 30, "strange
 HEALTH = re.compile(r"医生|医院|诊所|看病|体检|牙医|牙科|心理|治疗|复诊|理疗|拿药|打针|疫苗|咨询师|"
                     r"\b(?:doctors?|dentist|clinic|hospital|therapy|therapist|physio\w*|gp|nhs|vaccin\w*|counsell?\w*)\b", re.I)
 CJK = re.compile(r"[一-鿿]")
-# 对方在提议 / 要一个决定：说了时间或日子，又在问、在约（「周四 19:00，South Kensington 附近？」「how about Thursday」）
+# 对方在提议 / 要一个决定：说了时间或日子，又在问、在约（「周四 19:00，车站附近？」「how about Thursday」）
 TIME_WORDS = re.compile(r"\d{1,2}\s*[:：点]\s*\d{0,2}|\d{1,2}\s*(?:am|pm)\b|中午|晚上|下午|上午|早上|今晚|明晚|明天|后天|周末|"
                         r"周[一二三四五六日天]|星期[一二三四五六日天]|礼拜[一二三四五六日天]|\b(?:tonight|tomorrow|weekend|mon|tue|wed|thu|fri|sat|sun)"
                         r"[a-z]*\b|\d{1,2}\s*[/月]\s*\d{1,2}", re.I)
@@ -190,7 +190,7 @@ LATIN_CJK = re.compile(r"([A-Za-z0-9])([\u4e00-\u9fff])")
 
 
 def spaced(s: str) -> str:
-    """中文和英文、数字挨着的地方空一格（「对 Sam 说」「19:00，Leo 不行」）。"""
+    """中文和英文、数字挨着的地方空一格（「对 Sam 说」「19:00，Alex 不行」）。"""
     return LATIN_CJK.sub(r"\1 \2", CJK_LATIN.sub(r"\1 \2", s))
 
 

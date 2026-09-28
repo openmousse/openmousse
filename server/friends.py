@@ -748,7 +748,7 @@ def history_of(fid: str, before_id: int, n: int = 10) -> list[dict]:
 
 
 async def answer_ask(fid: str, ask_id: int) -> None:
-    """朋友对着我发的分享追问：能追问就交给名片 agent；不能就回一句固定的「得问他本人」；没有名片 agent 就不答（Leo 自己看着回）。"""
+    """朋友对着我发的分享追问：能追问就交给名片 agent；不能就回一句固定的「得问他本人」；没有名片 agent 就不答（用户自己看着回）。"""
     try:
         ca = cardagent_mod()
         if ca is None or not agent_available():
@@ -789,12 +789,12 @@ async def answer_ask(fid: str, ask_id: int) -> None:
                 "limited": bool(res.get("limited")), **({"inbox_id": defer.get("inbox_id")} if defer and defer.get("inbox_id") else {})}
         insert_out(fid, "answer", text, data=data, reply_to=ask["mid"], by="agent", review="pending")
         await notify(f, "answered", LS(f"{f['name']} 问了你的名片 agent，它答了", f"{f['name']} asked your card agent; it answered"))
-    except Exception:  # noqa: BLE001 — 答不了就不答，Leo 在对话里看得到这条追问
+    except Exception:  # noqa: BLE001 — 答不了就不答，用户在对话里看得到这条追问
         log.exception("friends answer_ask")
 
 
 async def deliver_chat(ask: dict, text: str, data: dict) -> bool:
-    """名片 agent 出的收件箱卡（要 Leo 表态的）点完以后，第三层把结果交回来：作为一条 by=agent 的 answer 发给那个朋友。
+    """名片 agent 出的收件箱卡（要用户表态的）点完以后，第三层把结果交回来：作为一条 by=agent 的 answer 发给那个朋友。
     ask = cardagent 的 card_asks 一行（peer = 好友 id、ref = share:<sid>、inbox_id）；回的是哪条追问：先按那张卡找当初那条代答，
     找不到就用这个朋友关于这条分享最近的一条追问。朋友不在了、分享收回了 → False（卡上会写「没能告诉对方」）。"""
     fid = str(ask.get("peer") or "")
