@@ -33,11 +33,22 @@ jobs:
         with: { python-version: "${{ matrix.python }}" }
       - run: pip install -r server/requirements.txt pyflakes ./tree
       - run: python -m pyflakes server tree/openmousse_tree packs/core/scripts packs/core/setup.py
-      - run: bash -n install.sh
+      - run: bash -n install.sh && bash -n check.sh
+      - name: installer takes over a freshly onboarded OpenClaw workspace
+        run: |
+          export HOME=$(mktemp -d) && W=$HOME/ws && mkdir -p $W
+          printf '# BOOTSTRAP.md - Birth Sequence\n' > $W/BOOTSTRAP.md
+          printf -- '- **Name:**\n  _(pick something you like)_\n- **Emoji:**\n' > $W/IDENTITY.md
+          printf -- '## Directives\n\nReplace the example below with a real directive and a real observation date.\n\n- Prefer ...\n' > $W/USER.md
+          python -c "import importlib.util as u, pathlib as p; s = u.spec_from_file_location('s', 'packs/core/setup.py'); m = u.module_from_spec(s); s.loader.exec_module(m); m.adopt_fresh_workspace(p.Path('$W'), 'CI')"
+          test ! -e $W/BOOTSTRAP.md && ls $HOME/.openmousse/backups/BOOTSTRAP.md.*
+          grep -q '^- \*\*Name:\*\* CI$' $W/IDENTITY.md && ! grep -q 'pick something' $W/IDENTITY.md
+          ! grep -q 'Prefer \.\.\.' $W/USER.md
       - name: server starts on a blank instance and answers /api/health
         run: |
           mkdir -p /tmp/oc/workspace /tmp/om
-          echo '{"agents":{"defaults":{"workspace":"/tmp/oc/workspace"}},"gateway":{"auth":{"token":"x"}}}' > /tmp/oc/openclaw.json
+          echo '{"agents":{"defaults":{"workspace":"/tmp/oc/workspace"}},"gateway":{"port":18999,"auth":{"token":"x"}},"channels":{"a2a":{"enabled":true}}}' > /tmp/oc/openclaw.json
+          (cd server && python -c "from pathlib import Path; from config import gateway_default; assert gateway_default(Path('/tmp/oc/openclaw.json')) == 'http://127.0.0.1:18999'")
           echo '{"app_name":"CI","timezone":"UTC","bind":{"host":"127.0.0.1","port":8099},"openclaw_home":"/tmp/oc","workspace":"/tmp/oc/workspace","data_dir":"/tmp/om/data","dist":"/tmp/none","auth":{"tokens":{"ci":"secret"}}}' > /tmp/om/server.json
           (cd server && MOUSSE_SERVER_CONFIG=/tmp/om/server.json python run.py > /tmp/om/server.log 2>&1 &)
           for i in $(seq 1 40); do curl -sf -o /dev/null http://127.0.0.1:8099/ && break; sleep 0.5; done
@@ -45,6 +56,7 @@ jobs:
           grep -q '"app_name":"CI"' /tmp/om/health.json
           grep -q '"first_run":true' /tmp/om/health.json
           grep -q '"claw":{"kind":"openclaw"' /tmp/om/health.json
+          grep -q '"shared_channels":\[\]' /tmp/om/health.json  # a2a 是 agent 之间的协议，不算「和主对话共用」的聊天渠道
           (cd server && MOUSSE_SERVER_CONFIG=/tmp/om/server.json python settings_ctl.py user-name CI) && grep -q '"user_name": "CI"' /tmp/om/server.json && grep -q '"app_name": "CI"' /tmp/om/server.json
           test "$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:8099/api/health)" = "401"
           curl -sf -H 'Authorization: Bearer secret' http://127.0.0.1:8099/api/fitness/week | grep -q missing_source
