@@ -5,7 +5,8 @@
 //            费曼加讲对 / 讲错 / 漏了（对照学习台，一键加进复习）；坐一起录的先认谁是谁。
 //   PodFriends 约朋友：一台手机放中间（远程每人一条音轨还没做）。
 import React, { useCallback, useEffect, useRef, useState } from 'react';
-import { ActivityIndicator, Alert, AppState, Linking, Platform, Pressable, ScrollView, StyleSheet, Switch, Text, TextInput, View } from 'react-native';
+import { ActivityIndicator, Alert, AppState, Linking, Platform, Pressable, ScrollView, StatusBar, StyleSheet, Switch, Text, TextInput, View } from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import Reanimated from 'react-native-reanimated';
 import { useNavigation, useRoute } from '@react-navigation/native';
 import { ArrowUp, Check, ChevronDown, ChevronLeft, ChevronUp, CircleAlert, GraduationCap, MessageCircle, Mic, NotebookText, Pause, Pencil, Play, Plus, Square, TextAlignStart, TreeDeciduous, Users, X } from '../components/icons';
@@ -199,6 +200,7 @@ export function PodRecScreen() {
   const [meters, setMeters] = useState<number[]>([]);
   const [lastMeter, setLastMeter] = useState<number | undefined>(undefined);
   const rec = useTakeRecorder();
+  const insets = useSafeAreaInsets();  // 这一页不用 Screen（整页深色）：顶上让出状态栏 / 灵动岛，底下让出 Home 条
   const chain = useRef<Promise<unknown>>(Promise.resolve());
   const phaseRef = useRef(phase);
   useEffect(() => { phaseRef.current = phase; }, [phase]);
@@ -313,7 +315,8 @@ export function PodRecScreen() {
   const outline = e?.outline ?? [];
   const cur = e?.cur ?? 0;
   return (
-    <View style={{ flex: 1, backgroundColor: D.bg }}>
+    <View style={{ flex: 1, backgroundColor: D.bg, paddingTop: insets.top }}>
+      <StatusBar barStyle="light-content" />
       <View style={styles.recHead}>
         <Pressable onPress={minimize} hitSlop={10} accessibilityRole="button" accessibilityLabel={L('收起（这一段先停下存上）', 'Close (saves this take)')} style={styles.back}>
           <ChevronDown size={24} color={D.ink} />
@@ -322,10 +325,12 @@ export function PodRecScreen() {
           <Text numberOfLines={1} style={[type.headline, { color: D.ink, fontWeight: '700' }]}>{e?.title ?? ''}</Text>
           <Text style={[type.caption, { color: D.ink2, fontWeight: '400' }]}>{L(`${modeName(mode)} · 原声存在你的服务器`, `${modeName(mode)} · audio stays on your server`)}</Text>
         </View>
-        <View style={styles.recPill}>
-          <View style={{ width: 8, height: 8, borderRadius: 4, backgroundColor: phase === 'recording' ? D.rec : D.ink2 }} />
-          <Text style={{ color: D.ink, fontSize: 13, fontWeight: '700' }}>{recLabel}</Text>
-        </View>
+        {phase !== 'idle' || committed > 0 ? (
+          <View style={styles.recPill}>
+            <View style={{ width: 8, height: 8, borderRadius: 4, backgroundColor: phase === 'recording' ? D.rec : D.ink2 }} />
+            <Text style={{ color: D.ink, fontSize: 13, fontWeight: '700' }}>{recLabel}</Text>
+          </View>
+        ) : null}
       </View>
 
       <ScrollView contentContainerStyle={{ paddingBottom: space.lg }}>
@@ -376,6 +381,16 @@ export function PodRecScreen() {
             </View>
           )}
 
+          {!outline.length && phase === 'idle' && !committed && mode !== 'friends' ? (
+            <Pressable onPress={() => nav.replace('PodPrep', { id })} accessibilityRole="button" style={[styles.qBox, { backgroundColor: D.panel2, borderColor: D.panel2, flexDirection: 'row', alignItems: 'center', gap: 10 }]}>
+              <TextAlignStart size={18} color={D.gold} />
+              <View style={{ flex: 1, gap: 2 }}>
+                <Text style={{ color: D.ink, fontSize: 15, fontWeight: '600' }}>{L('先聊几句，出一张提纲', 'Talk it through first, get an outline')}</Text>
+                <Text style={{ color: D.ink2, fontSize: 13 }}>{L('不想也行：直接点下面开始，想到哪说到哪。', 'Or just start below and say whatever comes.')}</Text>
+              </View>
+              <ChevronLeft size={18} color={D.ink2} style={{ transform: [{ rotate: '180deg' }] }} />
+            </Pressable>
+          ) : null}
           {outline.length ? (
             <View style={[styles.qBox, { backgroundColor: D.panel2, borderColor: D.panel2, gap: 7 }]}>
               <Text style={{ color: D.ink2, fontSize: 12, fontWeight: '700', letterSpacing: 0.7 }}>{L('提纲', 'OUTLINE')}</Text>
@@ -390,7 +405,7 @@ export function PodRecScreen() {
         </View>
       </ScrollView>
 
-      <View style={styles.controls}>
+      <View style={[styles.controls, { paddingBottom: Math.max(insets.bottom, 12) + 16 }]}>
         {asks ? (
           <Pressable onPress={askNow} disabled={phase === 'asking' || phase === 'ending'} accessibilityRole="button" style={[styles.side, { opacity: phase === 'asking' ? 0.5 : 1 }]}>
             <View style={styles.sideCircle}><MessageCircle size={22} color={D.ink} /></View>
@@ -921,7 +936,7 @@ const styles = StyleSheet.create({
   qBox: { borderRadius: 16, borderWidth: 1, padding: 14 },
   dq: { height: 34, paddingHorizontal: 12, borderRadius: 17, borderWidth: 1, borderColor: D.line2, justifyContent: 'center' },
   dqText: { color: D.ink, fontSize: 13, fontWeight: '600' },
-  controls: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: 24, paddingTop: 10, paddingBottom: 36 },
+  controls: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: 24, paddingTop: 10 },
   side: { width: 72, alignItems: 'center', gap: 6 },
   sideCircle: { width: 56, height: 56, borderRadius: 28, backgroundColor: D.btn, alignItems: 'center', justifyContent: 'center' },
   sideText: { color: D.ink, fontSize: 12, fontWeight: '600' },
