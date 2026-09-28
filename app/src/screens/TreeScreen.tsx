@@ -88,8 +88,10 @@ function useLeafSheet() {
   const sheet = useSheet();
   const { tree } = useStore();
   const trunk = tree?.kind === 'ok' ? tree.data.trunk.name : '';
-  // 标题是「类型 · 挂在哪」，全文在弹层里：短的一句话不会上下重复两遍
-  return (leaf: TreeLeaf) => sheet.open({ title: `${kindLabel(leaf.kind)} · ${leaf.branch === trunk ? trunkLabel(trunk) : leaf.branch}`, content: (close) => <LeafSheet leaf={leaf} close={close} /> });
+  const branchable = tree?.kind === 'ok' ? tree.data.branchable : true;
+  // 标题是「类型 · 挂在哪」，全文在弹层里：短的一句话不会上下重复两遍。没有枝的树（开源版）只写类型：叶子不挂在主干上
+  const title = (leaf: TreeLeaf) => (branchable ? `${kindLabel(leaf.kind)} · ${leaf.branch === trunk ? trunkLabel(trunk) : leaf.branch}` : kindLabel(leaf.kind));
+  return (leaf: TreeLeaf) => sheet.open({ title: title(leaf), content: (close) => <LeafSheet leaf={leaf} close={close} /> });
 }
 
 function LeafSheet({ leaf, close }: { leaf: TreeLeaf; close: () => void }) {
@@ -329,7 +331,8 @@ function BySource({ data }: { data: TreeInfo }) {
           <View key={s.source}>
             <SectionLabel caps={false} right={<T v="caption" color={t.ink3}>{rows.length}</T>}>{s.name}</SectionLabel>
             <Card style={{ paddingVertical: space.xs }}>
-              {rows.map((leaf, i) => <LeafRow key={leaf.id} leaf={leaf} where={leaf.branch === data.trunk.name ? trunkLabel(data.trunk.name) : leaf.branch} first={i === 0} />)}
+              {rows.map((leaf, i) => <LeafRow key={leaf.id} leaf={leaf} first={i === 0}
+                where={!data.branchable ? kindLabel(leaf.kind) : leaf.branch === data.trunk.name ? trunkLabel(data.trunk.name) : leaf.branch} />)}
             </Card>
           </View>
         );
