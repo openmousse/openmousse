@@ -34,7 +34,7 @@ export interface GravaApi {
  *  onQueued / onDequeued：它正在回复时发的这条先排队（服务器的 queued 事件，带这条的 id），排着的那一轮开跑时再叫一次。老服务器直接 409。 */
 export interface SendExtra {
   inboxId?: string; ref?: string; save?: string; replyTo?: string; onCard?: (card: ChatCard) => void;
-  onQueued?: (userId: string) => void; onDequeued?: () => void;
+  onQueued?: (userId: string, steer: boolean) => void; onDequeued?: () => void;
 }
 
 const now = () => {
@@ -78,7 +78,7 @@ async function readSse(body: ReadableStream<Uint8Array>, onEvent: (event: string
 }
 
 async function consume(r: Response, onDelta?: (partial: string) => void, onStart?: (userId: string) => void, onCard?: (card: ChatCard) => void,
-  onQueued?: (userId: string) => void, onDequeued?: () => void): Promise<Message> {
+  onQueued?: (userId: string, steer: boolean) => void, onDequeued?: () => void): Promise<Message> {
   if (!r.ok) {
     const j = await r.json().catch(() => ({}));
     throw new Error(j.detail ?? j.error ?? `HTTP ${r.status}`);
@@ -88,9 +88,11 @@ async function consume(r: Response, onDelta?: (partial: string) => void, onStart
   let done: any = null;
   let queued = false;  // 排队的：start 带的是合成那一轮的 id，不是这条的
   await readSse(r.body as unknown as ReadableStream<Uint8Array>, (event, data) => {
-    if (event === 'queued') { queued = true; onQueued?.(data.userId); }
+    // queued：排队（steer = 插进了正在跑的那一轮）；text：整段换掉（对话通道的 replace / 最终文字和流出来的不一样）
+    if (event === 'queued') { queued = true; onQueued?.(data.userId, !!data.steer); }
     else if (event === 'start') { if (queued) onDequeued?.(); else onStart?.(data.userId); }
     else if (event === 'delta') { partial += data.text; onDelta?.(partial); }
+    else if (event === 'text') { partial = data.text ?? ''; onDelta?.(partial); }
     else if (event === 'done') done = data;
     else if (event === 'card' && data && (data.kind === 'handoff' || data.kind === 'task' || data.kind === 'schedule' || data.kind === 'project')) onCard?.(data as ChatCard);
   });
@@ -149,7 +151,7 @@ export class HttpApi implements GravaApi {
     }
     let userId: string | null = null;
     const started = (id: string) => { userId = id; onStart?.(id); };
-    const queuedAs = (id: string) => { userId = id; extra?.onQueued?.(id); };
+    const queuedAs = (id: string, steer: boolean) => { userId = id; extra?.onQueued?.(id, steer); };
     try {
       return await consume(r as unknown as Response, onDelta, started, extra?.onCard, queuedAs, extra?.onDequeued);
     } catch (e) {
@@ -177,7 +179,7 @@ export class HttpApi implements GravaApi {
     const messages: Message[] = (j.messages as any[]).map((m) => ({
       id: m.id, role: m.role, time: m.time, modelId: m.modelId ?? undefined, fallbackFrom: m.fallbackFrom ?? undefined, body: { type: 'text', text: m.text, attachments: withBase(m) },
       error: m.status === 'error' ? L('上次没拿到回复', 'No reply was received') : undefined,
-      ...(m.status === 'queued' ? { queued: true } : {}), ...(m.replyTo?.id ? { replyTo: m.replyTo } : {}),
+      ...(m.status === 'queued' ? { queued: true } : {}), ...(m.status === 'steered' ? { steered: true } : {}), ...(m.replyTo?.id ? { replyTo: m.replyTo } : {}),
     }));
     return { messages, modelId: j.modelId as string, inFlight: j.inFlight ?? null };
   }

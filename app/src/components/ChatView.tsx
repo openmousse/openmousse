@@ -270,7 +270,8 @@ export function Bubble({ m, showAvatar, onLongPress, before, from, highlight, on
           </Pressable>
         ) : null}
         {/* 它正在回复时发的：先排队，这条回完和排着的一起发给它 */}
-        {m.queued ? <T v="caption" color={t.ink3} style={{ marginRight: 4 }}>{L('排队中 · 这条回完一起发给它', 'Queued · goes to it when this reply ends')}</T> : null}
+        {m.queued ? <T v="caption" color={t.ink3} style={{ marginRight: 4 }}>{L('排队中 · 这条回完一起发给它', 'Queued · goes to it when this reply ends')}</T>
+          : m.steered ? <T v="caption" color={t.ink3} style={{ marginRight: 4 }}>{L('插话 · 它在这一轮的下一步看到', 'Cut in · it sees this at its next step')}</T> : null}
       </View>
     );
   }
@@ -708,7 +709,7 @@ export function ChatView({ threadId, placeholder, empty, quote: quoteProp, quote
               ref={input}
               value={draft} onChangeText={setDraft} placeholder={transcribing ? L('正在转文字…', 'Transcribing…') : quote?.follow ? L('问问进展，或者说还差什么', "Ask how it's going, or say what's missing")
                 : quote?.replyTo ? L('接着这句说…', 'Say something about it…') : quote ? L('说说要改什么', 'Say what should change')
-                  : busy ? L(`${agentName()} 还在回，现在发的先排队`, `${agentName()} is replying; new messages wait their turn`) : placeholder} placeholderTextColor={t.ink3}
+                  : busy ? L(`${agentName()} 还在回，现在发的会接着给它`, `${agentName()} is replying; what you send now still reaches it`) : placeholder} placeholderTextColor={t.ink3}
               multiline numberOfLines={1} onSubmitEditing={submit} submitBehavior="submit" returnKeyType="send" enablesReturnKeyAutomatically onKeyPress={webEnter}
               accessibilityLabel={L('消息输入框', 'Message')} editable={!transcribing}
               style={[type.body, styles.input, { backgroundColor: t.surface, color: t.ink }]}

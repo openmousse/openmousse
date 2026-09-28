@@ -375,6 +375,8 @@ export interface Message {
   error?: string;
   /** 回复进行中发的，还在排队（服务器 status queued）：这条回完和排着的一起发给它 */
   queued?: boolean;
+  /** 回复进行中发的、插进了正在跑的那一轮（服务器 status steered，走 Gateway 对话通道时）：它做到下一步就看到 */
+  steered?: boolean;
   /** 长按「引用」着发的：引的是这个对话里哪条（app 在气泡上面显示原话，点了跳回去） */
   replyTo?: { id: string; role: 'user' | 'grava'; text: string };
 }

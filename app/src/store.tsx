@@ -921,8 +921,8 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
     });
     const patchMine = (patch: Partial<Message>) => setS((st) => ({ ...st, threads: { ...st.threads, [threadId]: (st.threads[threadId] ?? []).map((m) => (m.id === myId ? { ...m, ...patch } : m)) } }));
     const swapId = (userId: string) => { const from = myId; myId = userId; setS((st) => ({ ...st, threads: { ...st.threads, [threadId]: (st.threads[threadId] ?? []).map((m) => (m.id === from ? { ...m, id: userId } : m)) } })); };
-    // 它正在回复时发的：先排队（气泡下面标「排队」），排着的那一轮开跑时去掉
-    const queuedAs = (userId: string) => { swapId(userId); patchMine({ queued: true }); };
+    // 它正在回复时发的：先排队（气泡下面标「排队」），排着的那一轮开跑时去掉；插进正在跑的那一轮的标「插话」
+    const queuedAs = (userId: string, steer: boolean) => { swapId(userId); patchMine(steer ? { steered: true } : { queued: true }); };
     const dequeued = () => patchMine({ queued: false });
     api.current.send(threadId, text, modelId, (partial) => setS((st) => ({ ...st, streaming: { ...st.streaming, [threadId]: partial } })), swapId, files,
       { ...(opts?.inboxId ? { inboxId: opts.inboxId } : {}), ...(opts?.ref ? { ref: opts.ref } : {}), ...(opts?.save ? { save: opts.save } : {}), ...(opts?.replyTo ? { replyTo: opts.replyTo } : {}),
