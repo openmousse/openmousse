@@ -49,7 +49,7 @@ sudo tailscale up
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/openmousse/openmousse/main/install.sh | \
-  MOUSSE_NONINTERACTIVE=1 MOUSSE_LANG=en MOUSSE_CLAW=openclaw MOUSSE_TZ=Europe/London MOUSSE_NAME="<your name>" bash
+  MOUSSE_NONINTERACTIVE=1 MOUSSE_LANG=en MOUSSE_CLAW=openclaw MOUSSE_TZ=UTC MOUSSE_NAME="<your name>" bash
 ```
 
 - `MOUSSE_LANG`: `en` or `zh`, the language the user talks to you in.
