@@ -1,7 +1,8 @@
 """对外的小服务：server.json 的 share.public_port 配了，run.py 就在 127.0.0.1:<端口> 上起它，给 Tailscale Funnel / 反向代理指过去。
 
-这里只有 /s/<令牌>（分享的链接页和预览图，见 share.py）和 robots.txt：没有 /api，也不认任何令牌或 Tailscale 设备，
-所以从外网进来的请求碰不到主服务。以后朋友之间的接口（社交第二层）也挂在这里。
+这里只有 /s/<令牌>（分享的链接页和预览图，见 share.py）、/f/…（朋友之间：名片、邀请、签名消息，见 social.py、friends.py，
+协议见 docs/social-protocol.zh-CN.md）和 robots.txt：没有 /api，也不认任何令牌或 Tailscale 设备，所以从外网进来的请求碰不到主服务。
+公网上 /s 和 /f 各是一条 Funnel 路径，开哪条由你定。
 """
 from __future__ import annotations
 
@@ -12,9 +13,11 @@ from fastapi import FastAPI, Request
 from fastapi.responses import PlainTextResponse
 
 import share
+import social
 
 app = FastAPI(docs_url=None, redoc_url=None, openapi_url=None)
 app.include_router(share.public_router)
+app.include_router(social.public_router)  # /f/card、/f/jwks.json（社交第二层）
 
 
 @app.middleware("http")
