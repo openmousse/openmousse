@@ -1,4 +1,4 @@
-// 「思考」tab：想法（AI 不看，等你叫）和收藏（别人的东西，先存着）。顶上一个搜索框（想法、收藏、聊过的、库里的笔记一起搜）和按天翻的日历。
+// 「思考」tab：想法（AI 不看，等你叫）、收藏（别人的东西，先存着）和播客（说出来，录完帮你理成笔记，见 ../think/Podcast.tsx）。顶上一个搜索框（想法、收藏、聊过的、库里的笔记一起搜）和按天翻的日历。
 import React, { useCallback, useRef, useState } from 'react';
 import { Platform, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
 import * as Clipboard from 'expo-clipboard';
@@ -21,8 +21,10 @@ import { FragmentSheet } from '../think/FragmentSheet';
 import { TopicActionsSheet } from '../think/TopicSheets';
 import { useThink } from '../think/ThinkStore';
 import { ZenStartSheet, openZenSummary } from '../think/Zen';
+import { Podcast } from '../think/Podcast';
 
-type Tab = 'ideas' | 'saves';
+type Tab = 'ideas' | 'saves' | 'podcast';
+const TABS: readonly Tab[] = ['ideas', 'saves', 'podcast'];
 
 export function ThinkScreen() {
   const t = useTheme();
@@ -31,9 +33,9 @@ export function ThinkScreen() {
   const sheet = useSheet();
   const { focus, savesNew, refresh, refreshSaves, refreshKeywords, loadFocus } = useThink();
   // 别处要求切到某一栏（比如收藏里点了「放进思考」）：带 tab + at
-  const [sel, setSel] = useState<{ tab: Tab; at: number }>({ tab: route.params?.tab === 'saves' ? 'saves' : 'ideas', at: 0 });
+  const [sel, setSel] = useState<{ tab: Tab; at: number }>({ tab: TABS.includes(route.params?.tab) ? route.params.tab : 'ideas', at: 0 });
   const wantedAt = (route.params?.at as number | undefined) ?? 0;
-  const tab: Tab = wantedAt > sel.at && (route.params?.tab === 'saves' || route.params?.tab === 'ideas') ? route.params.tab : sel.tab;
+  const tab: Tab = wantedAt > sel.at && TABS.includes(route.params?.tab) ? route.params.tab : sel.tab;
   const setTab = (v: Tab) => setSel({ tab: v, at: Math.max(sel.at, wantedAt) });
 
   useFocusEffect(useCallback(() => { refresh(); refreshSaves(); refreshKeywords(); loadFocus(); }, [refresh, refreshSaves, refreshKeywords, loadFocus]));
@@ -48,14 +50,14 @@ export function ThinkScreen() {
       {focus ? <Timer size={15} color={t.goldFill} /> : <Moon size={15} color={t.goldFill} />}
       <Text style={[type.callout, { color: '#E8EAED', fontWeight: '600' }]}>{focus ? L(`到 ${focus.until}`, `Until ${focus.until}`) : L('冥想', 'Focus')}</Text>
     </Pressable>
-  ) : <SaveButtons />;
+  ) : tab === 'saves' ? <SaveButtons /> : undefined;
 
   return (
     <Screen>
-      <LargeHeader title="Zen" sub={tab === 'ideas' ? L('想到什么先扔进来，它不看', "Drop thoughts here. It won't read them.") : L('别人的好东西，先存着', "Keep other people's good stuff")} right={right} />
+      <LargeHeader title="Zen" sub={tab === 'ideas' ? L('想到什么先扔进来，它不看', "Drop thoughts here. It won't read them.") : tab === 'saves' ? L('别人的好东西，先存着', "Keep other people's good stuff") : L('说出来，录完帮你理成笔记', 'Say it out loud; it turns it into a note')} right={right} />
       <View style={{ paddingHorizontal: space.lg, gap: 10, paddingBottom: space.sm }}>
         <View style={[styles.seg, { backgroundColor: t.surface2 }]} accessibilityRole="tablist">
-          {([['ideas', L('想法', 'Thoughts'), 0], ['saves', L('收藏', 'Saved'), savesNew]] as const).map(([k, label, n]) => {
+          {([['ideas', L('想法', 'Thoughts'), 0], ['saves', L('收藏', 'Saved'), savesNew], ['podcast', L('播客', 'Podcast'), 0]] as const).map(([k, label, n]) => {
             const on = tab === k;
             return (
               <Pressable key={k} onPress={() => setTab(k)} accessibilityRole="tab" accessibilityState={{ selected: on }}
@@ -66,7 +68,7 @@ export function ThinkScreen() {
             );
           })}
         </View>
-        <View style={{ flexDirection: 'row', gap: 8 }}>
+        {tab !== 'podcast' ? <View style={{ flexDirection: 'row', gap: 8 }}>
           <Pressable onPress={() => nav.navigate('ThinkSearch')} accessibilityRole="search" style={({ pressed }) => [styles.search, { backgroundColor: t.surface2, opacity: pressed ? 0.7 : 1 }]}>
             <Search size={17} color={t.ink2} />
             <T v="body" color={t.ink2} style={{ fontSize: 15 }}>{L('搜想法、收藏和聊过的', 'Search thoughts, saved and talks')}</T>
@@ -75,9 +77,9 @@ export function ThinkScreen() {
             style={({ pressed }) => [styles.cal, { backgroundColor: t.surface2, opacity: pressed ? 0.7 : 1 }]}>
             <CalendarDays size={19} color={t.ink2} />
           </Pressable>
-        </View>
+        </View> : null}
       </View>
-      {tab === 'ideas' ? <Ideas /> : <Saves />}
+      {tab === 'ideas' ? <Ideas /> : tab === 'saves' ? <Saves /> : <Podcast />}
     </Screen>
   );
 }

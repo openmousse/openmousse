@@ -20,7 +20,7 @@ python3 run.py                   # 或按 openmousse-server.service.example 装�
 
 ## 认证
 
-`/api/*` 要 `Authorization: Bearer <令牌>`（也认 `X-API-Key`；`?token=` 只用于 `GET /api/files/…`，给带不了请求头的图片用）。没凭证返回 401。两个免令牌的口子都默认关：`auth.tailscale_nodes`（Tailscale 设备名白名单，本机要装 tailscale）和 `auth.trust_loopback`（反向代理在本机时不能开）。网页版的静态文件公开。
+`/api/*` 要 `Authorization: Bearer <令牌>`（也认 `X-API-Key`；`?token=` 只用于 GET 文件：`/api/files/…`、思考里的附件和收藏的原件、播客的原声，给带不了请求头的图片和网页版的 `<audio>` 用）。没凭证返回 401。两个免令牌的口子都默认关：`auth.tailscale_nodes`（Tailscale 设备名白名单，本机要装 tailscale）和 `auth.trust_loopback`（反向代理在本机时不能开）。网页版的静态文件公开。
 
 ## 让手机连上
 
@@ -301,6 +301,8 @@ python3 proposals_ctl.py agent --slug reading --name 读书 --purpose "…" --ic
 
 每个学习页打开先看到**学习路线**：按这一节的全部材料排 5–8 步（做什么、看课件哪几页 / 学习页哪一节 / 哪篇阅读 / 录播哪个时间点、大概多久），每步可以打勾，进度存在服务器上，目录里也显示。
 
+**复习**：播客的费曼讲错和漏了的，点一下加进这门课（`POST /api/study/review {course, page?, items, …}`，存在 `pages/<课程>/.gen/review.json`，挂在那一节上）；学习台打开那一节时顶上一个「复习」框，点「复习过了」划掉（`POST /api/study/review/done`）。`GET /api/study/review?course=&page=&all=`。
+
 提问走和 app 同一条对话通道，每个学习页一个线程；每天第一个问题会带上学习页、课件全文、录播字幕和阅读材料（放得下的放全文，放不下的给路径），以及你正在做学习路线的第几步。闪卡、小测、学习路线也这样生成，存在学习页旁边。
 
 ## 世界树
@@ -351,6 +353,35 @@ app 的「思考」tab（2026-09-28 起界面上叫 **Zen**，代码和接口仍
 | `GET` / `PATCH` / `DELETE /api/think/saves/{id}` | `?full=1` 给全文 / `{title?, note?, keywords?, seen?}` / 软删（`…/restore` 恢复） |
 | `GET /api/think/saves/{id}/file?thumb=1` | 原件 |
 | `POST /api/think/saves/{id}/give` / `…/to-idea` | 交给 Agent `{agent}` / 放进思考 |
+
+## 播客
+
+「思考」（Zen）的第三块：说出来，录完帮你理成笔记。它是「聊聊」的语音版，录完走同一条路：理成笔记（尽量用你的原话）→ 存进笔记 / 写作 / 学习 → 长期有用的问你记不记世界树，不点不记。原声和逐字稿留在服务器上（`<data_dir>/podcast/<期>/`，`podcast.dir` 可改），不进库。见 [`podcast.py`](podcast.py)。
+
+- **今天聊点什么**：从 Zen 里还没想完的主题、库里笔记的「还没想清的」、学习台最近几节、6 天内的截止、世界树里挑，模型挑 4 个写成具体的问题，每条写明从哪来，按天缓存；「换一批」再挑。
+- **四种录法**：自己讲（它只听）/ 有主持人（你停下它才问，一次一个，能跳过、能换个问法）/ 费曼（它扮聪明的外行追问，讲完对照学习台这一节的课件、学习页和录播字幕，列出讲对、讲错、漏了，带出处；没有课件就按公认的讲法对照）/ 约朋友（坐一起用一台手机，录完按声音分人，第一次让你认一下谁是谁；只有你说的进笔记，每人一份纪要）。
+- **录前先聊聊**：它先问一句第一反应，你答（打字或说一段），它按你的话排一张 3–5 条的提纲卡，录的时候一直在屏幕上。只出提纲，不写稿子。
+- **一段一段录**：app 每停一次就传一段，服务器马上转写：`gpt-transcribe` 出文字（带词表、每个词的置信度，低的标「听不准」），`whisper-1` 出逐句时间，两边按字对齐，点一句播一句。词表 = 你改过的词 + `transcribe_prompt` 里的常见词 + 课名、Agent 名、项目名、世界树的枝（档案里的人名、住址不进词表）。逐字稿里改一句，改掉的词自动进词表。
+- **录完整理**（后台，app 轮询）：校对同音字和专有名词 → 标题、一句话、你的原话（带时间点）、还没想清的、关键词（建议的点了才加）、要不要记世界树 → 跟库里以前的笔记比想法变没变 → 费曼对照。
+- **模型**一律走 [`llmjson.py`](llmjson.py)：OpenClaw 的 `llm-task`（零工具、不进任何对话；主持人一个追问两三秒），没开就用一个用完即删的会话一问一答。转写要 `OPENAI_API_KEY`（和语音输入同一个）：`gpt-transcribe` 约 $0.0045 / 分钟、`whisper-1` 约 $0.006 / 分钟。
+- **远程一起录还没做，接口先留着**：以后（可能是 app 里直接打电话）每个人一条音轨，按 `track`（谁）和开录时的时间（对齐）传进同一期，整理时按音轨分人，不用再猜声音。现在的分段是一条时间线接着一条。
+
+`server.json` 的 `podcast`（全部可选）：`dir`、`text_model`（默认 `gpt-transcribe`）、`time_model`（默认 `whisper-1`，`""` = 不要逐句时间）、`thinking`（默认 `low`）。
+
+| 接口 | 做什么 |
+|---|---|
+| `GET /api/podcast` | 今天挑好的话题（还没挑是 `null`）、最近 40 期（`chip` = 列表上那个小标签）、`study`（配了学习台没有） |
+| `POST /api/podcast/suggest` | `{exclude?}` 挑 4 个（换一批时把现在的传进来） |
+| `POST /api/podcast/episodes` | `{title, mode: solo / host / feynman / friends, source?}` 建一期 |
+| `GET` / `PATCH` / `DELETE /api/podcast/episodes/{id}` | 一期的全部（提纲、每段的句子和时间、问过的、整理结果、费曼、存到哪）/ `{title?, mode?, outline?, done?, cur?, speakers?}`（坐一起录的认人：`{"A": "@me", "B": "小林"}`）/ 删原声和逐字稿（存进库的笔记还在） |
+| `POST /api/podcast/episodes/{id}/prep` | 录前聊：`{}` 它先问 / `{text}` 你答 / `{outline: true}` 现在排提纲；`…/prep/voice`（multipart `file`、`duration`）说一段 |
+| `POST /api/podcast/episodes/{id}/segments` | multipart `file`、`idx`（从 0 数；同一个 idx 再传 = 重传）、`duration`：传一段，马上开始转写 |
+| `POST /api/podcast/episodes/{id}/ask` | `{how: next / again / skip}`：等这段转完问一个 / 换个问法 / 跳过 |
+| `POST /api/podcast/episodes/{id}/finish` | 录完了，后台整理（`status` processing → ready / naming（坐一起录的要先认人）/ failed）；再点 = 重新整理 |
+| `PATCH /api/podcast/episodes/{id}/sentence` | `{idx, i, text}` 改一句（改掉的词进词表） |
+| `POST /api/podcast/episodes/{id}/save` | `{folder: notes / writing / study, title, oneLine, quotes, open, keywords, relates, explain?, tree?, branch?}`：写进库（再存一次覆盖同一篇），`tree` 给了才记世界树 |
+| `POST /api/podcast/episodes/{id}/review` | 费曼讲错和漏了的加进学习台复习 |
+| `GET /api/podcast/episodes/{id}/audio/{idx}` | 一段原声（支持 Range；网页版可以用 `?token=`） |
 
 ## 分享
 

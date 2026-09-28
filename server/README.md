@@ -20,7 +20,7 @@ Every field of `server.json` is documented at the top of [`config.py`](config.py
 
 ## Auth
 
-`/api/*` requires `Authorization: Bearer <token>` (`X-API-Key` also works; `?token=` only for `GET /api/files/…`, which image views can't send headers to). No credentials → 401. Two token-free doors are off by default: `auth.tailscale_nodes` (a whitelist of Tailscale device names; needs tailscale on this machine) and `auth.trust_loopback` (never enable it when a reverse proxy runs on the same host). The web build's static files are public.
+`/api/*` requires `Authorization: Bearer <token>` (`X-API-Key` also works; `?token=` only on GET for files: `/api/files/…`, Think attachments and saved originals, podcast audio — for image views and the web build's `<audio>`, which can't send headers). No credentials → 401. Two token-free doors are off by default: `auth.tailscale_nodes` (a whitelist of Tailscale device names; needs tailscale on this machine) and `auth.trust_loopback` (never enable it when a reverse proxy runs on the same host). The web build's static files are public.
 
 ## Letting the phone connect
 
@@ -302,6 +302,8 @@ Live Activities (`live.py`): `GET /api/live` lists what should be on the Lock Sc
 
 Every study page opens on its **study path**: 5–8 steps (what to do, which slide pages / note section / reading / recording time, roughly how long), generated from all of the session's materials, with a tick box per step; progress is saved on the server and shown in the course tree.
 
+**Review**: what a podcast's Feynman check found wrong or missed can be added to the course with one tap (`POST /api/study/review {course, page?, items, …}`, stored in `pages/<course>/.gen/review.json`, attached to that session); opening the session on the study desk shows a Review box at the top, and "Reviewed" ticks an item off (`POST /api/study/review/done`). `GET /api/study/review?course=&page=&all=`.
+
 Questions go through the same chat channel as the app, one thread per study page. The first question of each day carries the notes, the full text of the materials, the lecture captions and the readings (as much as fits; the rest by file path), plus the study-path step you're on; flashcards, quizzes and study paths are generated the same way and saved next to the notes.
 
 ## Memory tree
@@ -352,6 +354,35 @@ The Think tab in the app (labelled **Zen** since 2026-09-28; the code and API st
 | `GET` / `PATCH` / `DELETE /api/think/saves/{id}` | `?full=1` for the whole text / `{title?, note?, keywords?, seen?}` / soft delete (`…/restore` undoes) |
 | `GET /api/think/saves/{id}/file?thumb=1` | The original |
 | `POST /api/think/saves/{id}/give` / `…/to-idea` | Hand it to an Agent `{agent}` / turn it into a thought |
+
+## Podcast
+
+The third part of Think (Zen): say it out loud, and afterwards it turns it into a note. It is the voice version of Talk and ends the same way: a note in your own words → saved to Notes / Writing / Study → anything worth remembering long term is offered to the memory tree, and nothing is added unless you tap. Audio and transcripts stay on the server (`<data_dir>/podcast/<episode>/`, `podcast.dir`), never in the vault. See [`podcast.py`](podcast.py).
+
+- **Talk about today**: the model picks 4 from your unfinished Zen topics, the "still open" lines in your vault notes, recent study-desk sessions, deadlines in the next 6 days and the memory tree, writes each as a concrete question and says where it came from; cached per day, "Others" picks again.
+- **Four modes**: solo (it just listens) / with a host (it asks one follow-up when you pause; skip or rephrase) / Feynman (it plays a smart layperson, then checks your explanation against the session's slides, notes and lecture captions: right, wrong, missed, with sources; the standard view when there are no materials) / with friends (one phone in the room, voices told apart afterwards, you name who's who the first time; only your words go into the note, everyone gets minutes).
+- **Talk it through first**: it asks for your first reaction, you answer (type or speak), and it drafts a 3–5 point outline card from your words that stays on screen while you record. An outline, never a script.
+- **Take by take**: every pause uploads a take and the server transcribes it at once: `gpt-transcribe` for the words (vocabulary keywords, per-token confidence → unclear words are marked), `whisper-1` for sentence timing, aligned character by character, so every sentence plays on tap. Vocabulary = words you corrected + `transcribe_prompt` terms + course, Agent and project names + tree branches (profile names and addresses stay out). Fixing a sentence adds the changed words.
+- **Organizing** (in the background; the app polls): proofread names and misheard words → title, one line, your own words with timestamps, still open, keywords (suggestions only when tapped), an optional tree line → compare with earlier notes (did your view change) → the Feynman check.
+- **Models** go through [`llmjson.py`](llmjson.py): OpenClaw's `llm-task` (no tools, no chat; a host question takes 2–3 s), or a throwaway session when it's off. Transcription needs `OPENAI_API_KEY` (same as voice input): about $0.0045/min for `gpt-transcribe` and $0.006/min for `whisper-1`.
+- **Recording together remotely isn't built; the interface is reserved**: later (possibly a call inside the app) each person becomes one track, uploaded to the same episode with a `track` (who) and the time since recording started (to line tracks up), so organizing splits people by track instead of guessing voices. Today's takes are one timeline, one after another.
+
+`podcast` in `server.json` (all optional): `dir`, `text_model` (`gpt-transcribe`), `time_model` (`whisper-1`; `""` = no sentence timing), `thinking` (`low`).
+
+| Endpoint | What it does |
+|---|---|
+| `GET /api/podcast` | Today's topics (`null` until picked), the last 40 episodes (`chip` = the list label), `study` (is the study desk set up) |
+| `POST /api/podcast/suggest` | `{exclude?}` picks 4 (pass the current ones for "Others") |
+| `POST /api/podcast/episodes` | `{title, mode: solo / host / feynman / friends, source?}` |
+| `GET` / `PATCH` / `DELETE /api/podcast/episodes/{id}` | Everything about one episode (outline, sentences with times per take, questions asked, result, Feynman, where it was saved) / `{title?, mode?, outline?, done?, cur?, speakers?}` (naming voices: `{"A": "@me", "B": "Sam"}`) / delete audio and transcript (a saved note stays) |
+| `POST /api/podcast/episodes/{id}/prep` | Before recording: `{}` it asks first / `{text}` your answer / `{outline: true}` outline now; `…/prep/voice` (multipart `file`, `duration`) to speak instead |
+| `POST /api/podcast/episodes/{id}/segments` | multipart `file`, `idx` (from 0; the same idx again = re-upload), `duration`: one take, transcribed right away |
+| `POST /api/podcast/episodes/{id}/ask` | `{how: next / again / skip}`: wait for the take and ask one / rephrase / skip |
+| `POST /api/podcast/episodes/{id}/finish` | Done recording; organizes in the background (`status` processing → ready / naming (with friends: name the voices first) / failed); again = re-organize |
+| `PATCH /api/podcast/episodes/{id}/sentence` | `{idx, i, text}` fixes one sentence (changed words join the vocabulary) |
+| `POST /api/podcast/episodes/{id}/save` | `{folder: notes / writing / study, title, oneLine, quotes, open, keywords, relates, explain?, tree?, branch?}` writes the vault note (saving again rewrites the same note); the tree only with `tree` |
+| `POST /api/podcast/episodes/{id}/review` | Adds the Feynman check's wrong and missed points to study review |
+| `GET /api/podcast/episodes/{id}/audio/{idx}` | One take's audio (Range requests; the web build may use `?token=`) |
 
 ## Sharing
 

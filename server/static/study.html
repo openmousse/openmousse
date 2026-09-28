@@ -620,7 +620,7 @@ async function paintReview(u) {
   try { d = await api('/api/study/review?' + qs({ course: S.course, page: u.path })); } catch { return; }
   if (S.unit !== u || !d.items?.length || $('#review')) return;
   const n = d.items.length;
-  const wrap = h('details', { class: 'mats review', id: 'review', open: true }, h('summary', {}, L(`复习 · ${n} 条`, `To review · ${n}`)));
+  const wrap = h('details', { class: 'mats review', id: 'review', open: n <= 3 }, h('summary', {}, L(`复习 · ${n} 条`, `To review · ${n}`) + (n > 3 ? L('（点开看）', ' (tap to open)') : '')));
   for (const it of d.items) {
     const btn = h('button', { class: 'pill ghost' }, L('复习过了', 'Reviewed'));
     const row = h('div', { class: 'rv' },

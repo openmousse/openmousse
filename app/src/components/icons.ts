@@ -128,3 +128,7 @@ export { default as UserPlus } from 'lucide-react-native/icons/user-plus';
 export { default as UserX } from 'lucide-react-native/icons/user-x';
 export { default as Users } from 'lucide-react-native/icons/users';
 export { default as QrCode } from 'lucide-react-native/icons/qr-code';
+// 播客（2026-09-28）
+export { default as Pause } from 'lucide-react-native/icons/pause';
+export { default as TextAlignStart } from 'lucide-react-native/icons/text-align-start';
+export { default as AudioLinesBars } from 'lucide-react-native/icons/audio-lines';
