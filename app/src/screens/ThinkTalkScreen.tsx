@@ -221,7 +221,8 @@ export function ThinkDoneScreen() {
           <View style={[styles.ok, { backgroundColor: t.goodSoft }]}>
             <T v="headline" color={t.good}>{L('存好了', 'Saved')}</T>
             <T v="callout" color={t.good}>{L(`库 › ${saved.path}，Obsidian 里也能看。${saved.tree ? '世界树记了一条。' : ''}用到的碎片挪进了「已想完」。`, `Vault › ${saved.path}, also in Obsidian.${saved.tree ? ' One memory-tree leaf added.' : ''} The thoughts moved to Done.`)}</T>
-            <View style={{ flexDirection: 'row', gap: space.sm, marginTop: 4 }}>
+            <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: space.sm, marginTop: 4 }}>
+              <Btn label={L('分享', 'Share')} kind="quiet" onPress={() => nav.navigate('Share', { from: { kind: 'note', topic: id } })} />
               {obsidian ? <Btn label={L('在 Obsidian 里打开', 'Open in Obsidian')} kind="quiet" onPress={() => Linking.openURL(`obsidian://open?vault=${encodeURIComponent(obsidian)}&file=${encodeURIComponent(saved.path.replace(/\.md$/, ''))}`).catch(() => {})} /> : null}
               <Btn label={L('回到 Zen', 'Back to Zen')} onPress={() => nav.navigate('Tabs', { screen: '思考' })} />
             </View>

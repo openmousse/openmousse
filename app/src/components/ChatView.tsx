@@ -5,7 +5,7 @@ import { Alert, Image, Linking, Platform, Pressable, ScrollView, StyleSheet, Tex
 import * as Clipboard from 'expo-clipboard';
 import * as Haptics from 'expo-haptics';
 import { AudioModule, RecordingPresets, setAudioModeAsync, useAudioRecorder, useAudioRecorderState } from 'expo-audio';
-import { ArrowUp, Bookmark, Camera, ChevronRight, Copy, EyeOff, FileAudio, FileText, Film, ImageIcon, Inbox, ListChecks, LoaderCircle, Mic, Paperclip, Pencil, Quote, Square, Trash2, Undo2, X } from './icons';
+import { ArrowUp, Bookmark, Camera, ChevronRight, Copy, EyeOff, FileAudio, FileText, Film, ImageIcon, Inbox, ListChecks, LoaderCircle, Mic, Paperclip, Pencil, Quote, ShareIcon, Square, Trash2, Undo2, X } from './icons';
 import type { Attachment, ChatCard, HandoffCard, InboxItem, Message, PendingFile, TaskCardInfo } from '../data/types';
 import { L } from '../i18n';
 import type { ChatQuote } from '../navigation';
@@ -537,6 +537,10 @@ export function ChatView({ threadId, placeholder, empty, welcome, quote: quotePr
           {m.id.startsWith('db') && m.role !== 'auto' ? (
             <Action icon={Bookmark} label={L('收藏', 'Save')} note={L('存进「Zen → 收藏」，以后能搜、能交给 Agent', 'Keep it in Zen → Saved to search or hand to an Agent later')}
               onPress={() => { close(); saveMessage(threadId, m.id).then(() => Alert.alert(L('收藏好了', 'Saved'), L('在「Zen → 收藏」里', 'In Zen → Saved'))).catch(fail); }} />
+          ) : null}
+          {m.id.startsWith('db') && m.role !== 'auto' && text.trim() ? (
+            <Action icon={ShareIcon} label={L('分享', 'Share')} note={L('先挡住私事，再发链接或一张卡片', 'Hides private bits first, then send a link or a card')}
+              onPress={() => { close(); nav.navigate('Share', { from: { kind: 'message', thread: threadId, id: m.id } }); }} />
           ) : null}
           {m.role === 'user' && !busy ? <>
             <Action icon={Pencil} label={L('重新编辑', 'Edit')} note={L(`放回输入框改完再发。${tail}${agentName()} 也会忘掉这段。${shared}${m.body.attachments?.length ? '附件要重新加。' : ''}`, `Puts it back in the input box to edit and resend. ${tail}${agentName()} will forget it too.${shared}${m.body.attachments?.length ? ' Attachments need to be added again.' : ''}`)} onPress={() => rewind(true)} />

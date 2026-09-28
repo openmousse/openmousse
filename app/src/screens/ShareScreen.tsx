@@ -1,0 +1,293 @@
+// 分享（server/share.py，社交第一层）：发之前先挡住私事，再发链接（微信、WhatsApp）或一张干净版卡片（小红书）。
+// 进来的方式：对话里长按一条 →「分享」（from: message）、Zen「想完了」存好以后（from: note）、「我 → 分享出去的」点一条（id）。
+// 卡片预览就是服务器画好的那张图，和别人收到的一样；挡住的地方一处一行，能放出来、挡回去。
+import React, { useCallback, useEffect, useState } from 'react';
+import { ActivityIndicator, Alert, Image, Linking, Platform, Pressable, ScrollView, Share as NativeShare, StyleSheet, Switch, Text, TextInput, View } from 'react-native';
+import { useNavigation, useRoute } from '@react-navigation/native';
+import * as Clipboard from 'expo-clipboard';
+import { getBase } from '../api/base';
+import * as shareApi from '../api/share';
+import type { Share, ShareCard, ShareFrom, ShareMask, ShareStyle } from '../api/share';
+import { Check, Copy, Eye, EyeOff, Link2, ShareIcon, ShieldCheck, TriangleAlert } from '../components/icons';
+import { Markdown } from '../components/Markdown';
+import { Btn, Card, Disclosure, NavHeader, Screen, SectionLabel, Segmented, T, showError } from '../components/ui';
+import { L } from '../i18n';
+import { radius, space, type, useTheme } from '../theme';
+
+const BLOCK = '▇▇▇';
+
+/** 标题里挡住的地方（服务器给的是 ▇▇▇）画成一小段浅灰条，和链接页一样。 */
+function masked(text: string, fill: string): React.ReactNode[] {
+  return text.split(BLOCK).flatMap((part, i) => (i ? [<Text key={i} style={{ backgroundColor: fill, color: fill }}>{'\u2003\u2003'}</Text>, part] : [part]));
+}
+
+/** 链接页在自己设备上的地址（服务器地址 + 路径；网页版同源）。 */
+function localUrl(path: string): string {
+  const base = getBase() || (Platform.OS === 'web' && typeof window !== 'undefined' ? window.location.origin : '');
+  return `${base}${path}`;
+}
+
+/** 网页版：把图存下来（data URI → 下载）。 */
+function downloadWeb(dataUri: string, name: string) {
+  const doc = (globalThis as { document?: { createElement: (t: string) => { href: string; download: string; click: () => void; remove: () => void }; body: { appendChild: (n: unknown) => void } } }).document;
+  if (!doc) return;
+  const a = doc.createElement('a');
+  a.href = dataUri;
+  a.download = name;
+  doc.body.appendChild(a);
+  a.click();
+  a.remove();
+}
+
+function MaskRow({ m, last, onToggle }: { m: ShareMask; last: boolean; onToggle: () => void }) {
+  const t = useTheme();
+  return (
+    <View style={[styles.maskRow, !last && { borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: t.line }]}>
+      <View style={[styles.maskIcon, { backgroundColor: m.released ? t.goldSoft : t.surface2 }]}>
+        {m.released ? <Eye size={15} color={t.ink2} /> : <EyeOff size={15} color={t.ink2} />}
+      </View>
+      <View style={{ flex: 1, gap: 2 }}>
+        <T v="headline" style={{ fontSize: 15 }}>{m.label}</T>
+        <Text numberOfLines={2} style={[type.callout, { color: t.ink3 }]}>
+          {m.before ? `…${m.before}` : ''}
+          <Text style={{ color: t.ink, fontWeight: '700', backgroundColor: m.released ? t.goldSoft : t.surface2 }}>{` ${m.text} `}</Text>
+          {m.after ? `${m.after}…` : ''}
+        </Text>
+      </View>
+      <Pressable onPress={onToggle} accessibilityRole="button" accessibilityLabel={`${m.released ? L('挡回去', 'Hide') : L('放出来', 'Show')} ${m.label}`}
+        style={({ pressed }) => [styles.mini, { backgroundColor: t.surface2, opacity: pressed ? 0.7 : 1 }]}>
+        <T v="callout" style={{ fontWeight: '600' }}>{m.released ? L('挡回去', 'Hide') : L('放出来', 'Show')}</T>
+      </Pressable>
+    </View>
+  );
+}
+
+export function ShareScreen() {
+  const t = useTheme();
+  const nav = useNavigation<any>();
+  const route = useRoute<any>();
+  const from: ShareFrom | undefined = route.params?.from;
+  const openId: string | undefined = route.params?.id;
+  const [share, setShare] = useState<Share | null>(null);
+  const [err, setErr] = useState('');
+  const [style, setStyle] = useState<ShareStyle>('link');
+  const [card, setCard] = useState<{ key: string; data: ShareCard } | null>(null);
+  const [cardErr, setCardErr] = useState<{ key: string; text: string } | null>(null);
+  const [quote, setQuote] = useState<{ id: string; text: string } | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [note, setNote] = useState('');
+  const [showAll, setShowAll] = useState(false);
+
+  const load = useCallback(() => {
+    const go = openId ? shareApi.getShare(openId) : from ? shareApi.createShare(from) : Promise.reject(new Error(L('没说分享什么', 'Nothing to share')));
+    go.then((s) => { setShare(s); setErr(''); }).catch((e) => setErr(e instanceof Error ? e.message : String(e)));
+  }, [openId, from]);
+  useEffect(() => { load(); }, [load]);
+
+  // 卡片图跟着挡没挡、那一句、标题变：换了就重新要一张（旧的不显示）
+  const cardKey = share && share.status !== 'revoked' ? `${share.id}|${style}|${share.blocked}|${share.quote}|${share.title}|${(share.masks || []).map((m) => (m.released ? 1 : 0)).join('')}` : '';
+  useEffect(() => {
+    if (!share || !cardKey || card?.key === cardKey) return;
+    let live = true;
+    shareApi.shareCard(share.id, style)
+      .then((data) => { if (live) setCard({ key: cardKey, data }); })
+      .catch((e) => { if (live) setCardErr({ key: cardKey, text: e instanceof Error ? e.message : String(e) }); });
+    return () => { live = false; };
+  }, [share, style, cardKey, card?.key]);
+
+  const update = async (patch: Parameters<typeof shareApi.patchShare>[1]) => {
+    if (!share) return;
+    try { setShare(await shareApi.patchShare(share.id, patch)); } catch (e) { showError(L('没改成', "Couldn't change it"), e); }
+  };
+  const toggle = (m: ShareMask) => update(m.released ? { hide: [m.id] } : { release: [m.id] });
+  const quoteText = quote && share && quote.id === share.id ? quote.text : share?.quote ?? '';
+  const saveQuote = async () => {
+    if (!share || !quote || quote.id !== share.id) return;
+    const v = quote.text.trim();
+    if (v && v !== share.quote) await update({ quote: v });
+    setQuote(null);
+  };
+
+  const publish = async (): Promise<Share | null> => {
+    if (!share) return null;
+    if (share.status === 'live') return share;
+    const s = await shareApi.publishShare(share.id);
+    setShare(s);
+    return s;
+  };
+  const shareLink = async () => {
+    if (!share || busy) return;
+    setBusy(true);
+    setNote('');
+    try {
+      const s = await publish();
+      if (!s?.url) return;
+      try {
+        await NativeShare.share(Platform.OS === 'ios' ? { url: s.url, message: s.title } : { message: `${s.title}\n${s.url}`, title: s.title });
+      } catch {
+        await Clipboard.setStringAsync(s.url);  // 网页版的浏览器不支持系统分享：复制链接
+        setNote(L('链接复制好了，粘贴给对方就行', 'Link copied. Paste it to them.'));
+      }
+    } catch (e) { showError(L('没发出去', "Couldn't share"), e); } finally { setBusy(false); }
+  };
+  const copyLink = async () => {
+    if (!share || busy) return;
+    setBusy(true);
+    try {
+      const s = await publish();
+      if (s?.url) { await Clipboard.setStringAsync(s.url); setNote(L('链接复制好了', 'Link copied')); }
+    } catch (e) { showError(L('没复制上', "Couldn't copy"), e); } finally { setBusy(false); }
+  };
+  const shareImage = async () => {
+    if (!share || busy) return;
+    const data = card?.key === cardKey ? card.data : null;
+    if (!data) return;
+    setBusy(true);
+    setNote('');
+    try {
+      if (Platform.OS === 'web') { downloadWeb(data.dataUri, `${share.title || 'card'}.png`); setNote(L('图片存下来了', 'Image saved')); }
+      else await NativeShare.share({ url: data.dataUri });
+    } catch (e) { showError(L('没分享出去', "Couldn't share"), e); } finally { setBusy(false); }
+  };
+  const revoke = () => {
+    if (!share) return;
+    const go = async () => {
+      try { await shareApi.revokeShare(share.id); setShare(await shareApi.getShare(share.id)); } catch (e) { showError(L('没收回', "Couldn't withdraw"), e); }
+    };
+    if (Platform.OS === 'web') { go(); return; }
+    Alert.alert(L('收回这条分享？', 'Withdraw this share?'), L('链接马上打不开，对方看到「已经收回了」。已经存下的图片收不回来。', "The link stops working right away and shows “withdrawn”. Images people already saved can't be taken back."),
+      [{ text: L('取消', 'Cancel'), style: 'cancel' }, { text: L('收回', 'Withdraw'), style: 'destructive', onPress: go }]);
+  };
+
+  const masks = share?.masks || [];
+  const q = share?.source?.withQuestion;
+  const shown = card?.key === cardKey ? card.data : null;
+  const cardError = !shown && cardErr?.key === cardKey ? cardErr.text : '';
+  const fullText = (share?.segments || []).map((s) => (s.m && !s.released ? BLOCK : s.t)).join('');
+  const kindLine = share ? [share.kind === 'note' ? L('笔记', 'Note') : share.kind === 'message' ? L('对话里的一条', 'From a chat') : L('一段文字', 'Text'),
+    share.status === 'live' ? L(`已发出 · 看过 ${share.views} 次`, `Shared · ${share.views} view${share.views === 1 ? '' : 's'}`) : share.status === 'revoked' ? L('已收回', 'Withdrawn') : ''].filter(Boolean).join(' · ') : '';
+
+  return (
+    <Screen>
+      <NavHeader title={L('分享', 'Share')} sub={kindLine || undefined} onBack={() => nav.goBack()} />
+      <ScrollView contentContainerStyle={{ padding: space.lg, paddingBottom: space.xxl, gap: space.md }} automaticallyAdjustKeyboardInsets keyboardShouldPersistTaps="handled">
+        {err ? <Card><T v="callout" color={t.bad}>{L(`没打开：${err}`, `Couldn't open it: ${err}`)}</T></Card> : null}
+        {!share && !err ? <ActivityIndicator color={t.gold} style={{ marginTop: space.xl }} /> : null}
+
+        {share ? (
+          <Card style={{ gap: 4 }}>
+            <T v="headline" style={{ fontSize: 17 }} numberOfLines={3}>{share.title ? masked(share.title, `${t.ink3}59`) : L('（没有标题）', '(untitled)')}</T>
+            <T v="caption" color={t.ink3}>{`${share.day} ${share.time}`}</T>
+          </Card>
+        ) : null}
+
+        {share?.status === 'revoked' ? (
+          <Card style={{ gap: space.sm }}>
+            <T v="headline">{L('这条已经收回了', 'This share was withdrawn')}</T>
+            <T v="callout" color={t.ink2}>{L('链接打开是「已经收回了」，服务器上的这份快照也清掉了。想再发就回到原来那条再分享一次（会是新链接）。', 'The link now says it was withdrawn and the snapshot on the server is gone. Share the original again for a new link.')}</T>
+          </Card>
+        ) : null}
+
+        {share && share.status !== 'revoked' ? (
+          <>
+            <Card style={{ paddingVertical: space.sm, gap: 2 }}>
+              <View style={styles.shieldHead}>
+                <View style={[styles.shield, { backgroundColor: t.goodSoft }]}><ShieldCheck size={17} color={t.good} /></View>
+                <View style={{ flex: 1, gap: 2 }}>
+                  <T v="headline">{share.maskCount === 0 ? L('没看到要挡的私事', 'Nothing private spotted')
+                    : share.blocked > 0 ? L(`发之前，先挡住了 ${share.blocked} 处`, `Hidden before sharing: ${share.blocked}`) : L(`${share.maskCount} 处你都放出来了`, `You showed all ${share.maskCount}`)}</T>
+                  <T v="caption" color={t.ink3} style={{ fontSize: 13, lineHeight: 18 }}>{L('住址、家人的名字、邮箱电话、身体数字。挡住的原文不会离开你的服务器。', 'Addresses, family names, contact details, body numbers. Hidden text never leaves your server.')}</T>
+                </View>
+              </View>
+              {masks.map((m, i) => <MaskRow key={m.id} m={m} last={i === masks.length - 1} onToggle={() => toggle(m)} />)}
+            </Card>
+
+            {share.kind === 'message' && share.source.hasQuestion ? (
+              <Card style={styles.switchRow}>
+                <View style={{ flex: 1, gap: 2 }}>
+                  <T v="body">{L('带上我问的那句', 'Include my question')}</T>
+                  <T v="caption" color={t.ink3} style={{ fontSize: 13 }}>{L('放在回复前面，对方知道在说什么', 'Shown above the reply so they know the context')}</T>
+                </View>
+                <Switch value={!!q} onValueChange={(v) => update({ withQuestion: v })} accessibilityLabel={L('带上我问的那句', 'Include my question')}
+                  trackColor={{ true: t.cyan, false: t.track }} thumbColor="#FFFFFF" />
+              </Card>
+            ) : null}
+
+            <SectionLabel>{L('卡片样子', 'Card')}</SectionLabel>
+            <Segmented<ShareStyle> value={style} onChange={(v) => { setStyle(v); setNote(''); }}
+              options={[{ value: 'link', label: L('带链接', 'With link') }, { value: 'clean', label: L('干净版', 'Clean') }]} />
+            <View style={[styles.preview, { backgroundColor: t.surface2, aspectRatio: style === 'clean' ? 1080 / 1440 : 1200 / 630 }]}>
+              {shown ? <Image source={{ uri: shown.dataUri }} style={StyleSheet.absoluteFill} resizeMode="contain" accessibilityLabel={L('卡片预览', 'Card preview')} />
+                : cardError ? <T v="callout" color={t.bad} style={{ padding: space.md }}>{cardError}</T>
+                  : <ActivityIndicator color={t.gold} />}
+            </View>
+            <T v="caption" color={t.ink3} style={{ fontSize: 13 }}>
+              {style === 'link' ? L('发微信、WhatsApp：对方点开链接就能看全文，不用装 app。聊天里显示的就是这张预览图。', 'For WhatsApp or WeChat: they tap the link to read it all, no app needed. This is the preview they see.')
+                : L('发小红书：图里没有网址、二维码和 app 名字。', 'For Xiaohongshu and the like: no link, QR code or app name in the image.')}
+            </T>
+
+            <SectionLabel>{L('卡片上那一句', 'The line on the card')}</SectionLabel>
+            <Card style={{ gap: space.sm }}>
+              <TextInput value={quoteText} onChangeText={(v) => setQuote({ id: share.id, text: v })} onBlur={saveQuote} onSubmitEditing={saveQuote}
+                multiline blurOnSubmit returnKeyType="done" maxLength={140} placeholder={L('写一句要放在卡片上的话', 'A line for the card')} placeholderTextColor={t.ink3}
+                style={[type.body, styles.input, { color: t.ink, borderColor: t.line }]} accessibilityLabel={L('卡片上那一句', 'The line on the card')} />
+              {share.quoteCustom ? (
+                <Pressable onPress={() => update({ quote: '' })} accessibilityRole="button" style={{ alignSelf: 'flex-start' }}>
+                  <T v="callout" color={t.cyan} style={{ fontWeight: '600' }}>{L('用回默认那句', 'Use the default line')}</T>
+                </Pressable>
+              ) : null}
+            </Card>
+
+            <Pressable onPress={() => setShowAll(!showAll)} accessibilityRole="button" style={styles.fold}>
+              <T v="callout" color={t.ink2} style={{ fontWeight: '600', flex: 1 }}>{L('看要发出去的全文', 'See the full text they get')}</T>
+              <Disclosure open={showAll} />
+            </Pressable>
+            {showAll ? <Card><Markdown text={fullText} /></Card> : null}
+
+            {style === 'link' && !share.canLink ? (
+              <View style={[styles.warn, { backgroundColor: t.warnSoft }]}>
+                <TriangleAlert size={17} color={t.warn} />
+                <T v="callout" color={t.ink} style={{ flex: 1 }}>{L('服务器还没开对外的链接地址，链接发出去别人打不开。干净版卡片不受影响，现在就能发。', "The server doesn't have a public address for links yet, so others couldn't open one. The clean card works now.")}</T>
+              </View>
+            ) : null}
+
+            {style === 'link' ? (share.canLink ? (
+              <View style={{ gap: space.sm }}>
+                <Btn label={busy ? L('正在发…', 'Sharing…') : L('分享链接', 'Share link')} icon={<ShareIcon size={18} color={t.onGold} />} onPress={shareLink} />
+                <Btn label={L('复制链接', 'Copy link')} kind="quiet" icon={<Copy size={18} color={t.ink} />} onPress={copyLink} />
+              </View>
+            ) : <Btn label={L('改发干净版卡片', 'Send the clean card instead')} kind="quiet" onPress={() => setStyle('clean')} />) : (
+              <Btn label={L('分享图片', 'Share image')} icon={<ShareIcon size={18} color={t.onGold} />} onPress={shareImage} />
+            )}
+            {note ? <View style={styles.noteRow}><Check size={16} color={t.good} /><T v="callout" color={t.good}>{note}</T></View> : null}
+
+            {share.status === 'live' ? (
+              <Card style={{ gap: space.sm, marginTop: space.sm }}>
+                <View style={styles.noteRow}>
+                  <Link2 size={16} color={t.cyan} />
+                  <T v="callout" color={t.ink2} style={{ flex: 1 }} numberOfLines={1}>{share.url || L('链接只在你自己的设备上打得开', 'The link only opens on your own devices')}</T>
+                </View>
+                {share.path ? <Btn label={L('在浏览器里看看', 'Open in browser')} kind="quiet" onPress={() => Linking.openURL(share.url || localUrl(share.path!)).catch((e) => showError(L('打不开', "Couldn't open it"), e))} /> : null}
+                <Btn label={L('收回链接', 'Withdraw link')} kind="danger" onPress={revoke} />
+              </Card>
+            ) : null}
+          </>
+        ) : null}
+      </ScrollView>
+    </Screen>
+  );
+}
+
+const styles = StyleSheet.create({
+  shieldHead: { flexDirection: 'row', alignItems: 'center', gap: space.md, paddingVertical: space.sm },
+  shield: { width: 32, height: 32, borderRadius: 10, alignItems: 'center', justifyContent: 'center' },
+  maskRow: { flexDirection: 'row', alignItems: 'center', gap: space.md, paddingVertical: 10 },
+  maskIcon: { width: 28, height: 28, borderRadius: 14, alignItems: 'center', justifyContent: 'center' },
+  mini: { height: 32, paddingHorizontal: 12, borderRadius: 16, alignItems: 'center', justifyContent: 'center' },
+  switchRow: { flexDirection: 'row', alignItems: 'center', gap: space.md },
+  preview: { width: '100%', borderRadius: radius.md, overflow: 'hidden', alignItems: 'center', justifyContent: 'center' },
+  input: { minHeight: 64, borderWidth: StyleSheet.hairlineWidth, borderRadius: radius.sm, paddingHorizontal: space.md, paddingVertical: space.sm, textAlignVertical: 'top' },
+  fold: { flexDirection: 'row', alignItems: 'center', gap: space.sm, paddingVertical: space.xs, paddingHorizontal: space.xs },
+  warn: { flexDirection: 'row', gap: space.sm, alignItems: 'flex-start', padding: space.md, borderRadius: radius.md },
+  noteRow: { flexDirection: 'row', alignItems: 'center', gap: space.sm },
+});

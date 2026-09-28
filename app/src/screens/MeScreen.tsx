@@ -2,7 +2,7 @@ import React, { useEffect } from 'react';
 import { agentName } from '../brand';
 import { Pressable, ScrollView, View } from 'react-native';
 import { useNavigation } from '@react-navigation/native';
-import { Activity, BookOpen, Brain, CalendarDays, ClipboardList, Cpu, IdCard, Palette, Plug, Server, ShieldCheck, TreeDeciduous } from '../components/icons';
+import { Activity, BookOpen, Brain, CalendarDays, ClipboardList, Cpu, IdCard, Palette, Plug, Server, ShareIcon, ShieldCheck, TreeDeciduous } from '../components/icons';
 import { LensAvatar } from '../components/LensAvatar';
 import { Card, LargeHeader, ListRow, NavHeader, Pill, PullRefresh, Screen, SectionLabel, Segmented, T } from '../components/ui';
 import { L, useLang, type LangPref } from '../i18n';
@@ -55,6 +55,11 @@ export function MeScreen() {
             <ListRow icon={<Activity size={20} color={t.cyan} />} title={L('活动记录', 'Activity')} sub={activity[0] ? `${activity[0].time} · ${activity[0].text}` : L('每一次回复、定时任务和你的操作', 'Every reply, scheduled job and action you took')} onPress={() => nav.navigate('Activity')} />
             {claw.caps.tasks ? <ListRow icon={<ClipboardList size={20} color={t.cyan} />} title={L('任务', 'Tasks')} sub={tasks.length ? L(`${tasks.length} 个子会话${running ? `，${running} 个在跑` : ''}，能看过程`, `${tasks.length} sub-sessions${running ? `, ${running} running` : ''}, steps included`) : L('派出去的子会话', 'Sub-sessions sent out')} onPress={() => nav.navigate('Tasks')} /> : null}
             <ListRow icon={<ShieldCheck size={20} color={warn.length ? t.warn : t.cyan} />} title={L('安全', 'Security')} sub={security ? (warn.length ? L(`${warn.length} 项要注意：${warn.map((f) => f.title).join('、')}`, `${warn.length} to check: ${warn.map((f) => f.title).join(', ')}`) : L('都正常', 'All good')) : L('服务器上的实测状态', 'Live status from the server')} onPress={() => nav.navigate('Security')} last />
+          </Card>
+
+          <SectionLabel>{L('分享', 'Sharing')}</SectionLabel>
+          <Card style={{ paddingVertical: space.xs }}>
+            <ListRow icon={<ShareIcon size={20} color={t.cyan} />} title={L('分享出去的', 'Shared')} sub={L('发出去的链接、看过几次，能随时收回', 'Links you sent, how often they were opened; withdraw any time')} onPress={() => nav.navigate('Shares')} last />
           </Card>
 
           <SectionLabel>{L('设置', 'Settings')}</SectionLabel>

@@ -26,6 +26,8 @@ import { ThinkDoneScreen, ThinkTalkScreen } from './screens/ThinkTalkScreen';
 import { ThinkWriteScreen, ZenEndScreen } from './screens/ThinkWriteScreen';
 import { ThinkHistoryScreen, ThinkKeywordScreen, ThinkSearchScreen } from './screens/ThinkFindScreens';
 import { SaveScreen } from './screens/SaveScreen';
+import { ShareScreen } from './screens/ShareScreen';
+import { SharesScreen } from './screens/SharesScreen';
 import type { PushTarget } from './data/types';
 import { L } from './i18n';
 import { useStore } from './store';
@@ -171,6 +173,9 @@ export function RootNavigator() {
         <Stack.Screen name="ThinkKeyword" component={ThinkKeywordScreen} />
         <Stack.Screen name="ThinkHistory" component={ThinkHistoryScreen} />
         <Stack.Screen name="Save" component={SaveScreen} />
+        {/* 分享（社交第一层，2026-09-28）：先挡私事，再发链接或干净版卡片 */}
+        <Stack.Screen name="Share" component={ShareScreen} />
+        <Stack.Screen name="Shares" component={SharesScreen} />
       </Stack.Navigator>
     </NavigationContainer>
   );

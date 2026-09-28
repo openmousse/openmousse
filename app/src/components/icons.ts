@@ -122,3 +122,4 @@ export { default as TextIcon } from 'lucide-react-native/icons/text-align-start'
 export { default as CircleCheck } from 'lucide-react-native/icons/circle-check';
 export { default as TriangleAlert } from 'lucide-react-native/icons/triangle-alert';
 export { default as NotebookText } from 'lucide-react-native/icons/notebook-text';
+export { default as ShareIcon } from 'lucide-react-native/icons/share';
