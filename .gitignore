@@ -6,5 +6,5 @@ dist/
 .venv/
 config.json
 *.db
-node_modules/
+node_modules
 .expo/
