@@ -172,7 +172,10 @@ def build_workspace(name: str, purpose: str) -> Path:
 
 def entry(ws: Path) -> dict:
     env = {k: PROXY for k in ("HTTP_PROXY", "HTTPS_PROXY", "http_proxy", "https_proxy")}
-    env.update({"NO_PROXY": "", "no_proxy": "", "ALL_PROXY": "", "all_proxy": ""})
+    # 容器里的 127.0.0.1 是容器自己（浏览器镜像启动时要探一下自己的 CDP）：不经代理。出不了容器，不算绕开 Sentinel；
+    # 页面里的 Chromium 另有 --proxy-bypass-list=<-loopback>，照样走 Sentinel、被挡
+    local = "localhost,127.0.0.1,::1"
+    env.update({"NO_PROXY": local, "no_proxy": local, "ALL_PROXY": "", "all_proxy": ""})
     return {
         "workspace": str(ws),
         "skills": [],
@@ -182,11 +185,13 @@ def entry(ws: Path) -> dict:
                        "tmpfs": ["/tmp", "/var/tmp", "/run"], "capDrop": ["ALL"], "memory": "1g", "memorySwap": "1g", "cpus": 1,
                        "pidsLimit": 256, "env": env},
             "browser": {"enabled": True, "image": BROWSER_IMAGE, "network": NETWORK, "headless": True, "noVncEnabled": False,
-                        "cdpSourceRange": f"{GATEWAY}/32", "allowHostControl": False},
+                        "cdpSourceRange": f"{GATEWAY}/32", "allowHostControl": False, "autoStartTimeoutMs": 30000},
             "prune": {"idleHours": 2, "maxAgeDays": 3},
         },
+        # 工具：最小档位 + 一个个加回来（OpenClaw 不许同一层既写 allow 又写 alsoAllow；browser 不在任何档位里，只能 alsoAllow）
         "tools": {
-            "allow": ["exec", "process", "read", "ls", "write", "edit", "apply_patch", "browser", "session_status"],
+            "profile": "minimal",
+            "alsoAllow": ["exec", "process", "read", "ls", "write", "edit", "apply_patch", "browser", "session_status"],
             "deny": ["web_fetch", "web_search", "message", "sessions_send", "sessions_spawn", "sessions_list", "sessions_history",
                      "sessions_yield", "subagents", "memory_search", "memory_get", "llm-task", "image", "pdf", "tts", "nodes", "canvas",
                      "gateway", "cron"],
@@ -344,6 +349,28 @@ def ensure_proxy_service() -> list[str]:
     return [L(f"代理服务 {UNIT}：在跑", f"Proxy service {UNIT}: running")]
 
 
+UI_TOOLS = ("screen", "terminal", "canvas", "progress_card", "show_widget")  # group:ui 里除了 browser 的
+
+
+def ensure_browser_policy() -> list[str]:
+    """全局 tools.deny 里的 group:ui 会把 browser 也禁掉，后面哪一层都放不回来（OpenClaw 的规矩）。换成它除 browser 以外的成员：
+    别的 Agent 照样没有浏览器（browser 不在 coding / minimal 档位里），只有 errand 的 alsoAllow 加得回来。"""
+    import agents
+
+    def change(c: dict) -> bool:
+        t = c.setdefault("tools", {})
+        deny = list(t.get("deny") or [])
+        if "group:ui" not in deny:
+            return False
+        i = deny.index("group:ui")
+        deny[i:i + 1] = [m for m in UI_TOOLS if m not in deny]
+        t["deny"] = deny
+        return True
+    changed = agents.edit_openclaw_json(change, "errand-browser")
+    return [L("全局工具禁用单：group:ui 换成了除 browser 以外的几个" if changed else "全局工具禁用单：不用改",
+              "Global tool deny list: group:ui replaced by its members except browser" if changed else "Global tool deny list: nothing to change")]
+
+
 def ensure_agent() -> list[str]:
     import agents
     from chat import _lock, db, log_activity, now_iso
@@ -375,7 +402,7 @@ def check_images() -> list[str]:
 
 def setup() -> int:
     steps = [("CA", ensure_ca), ("proxy config", ensure_proxy_config), ("images", check_images), ("network", ensure_network),
-             ("firewall", ensure_firewall), ("proxy", ensure_proxy_service), ("agent", ensure_agent)]
+             ("firewall", ensure_firewall), ("proxy", ensure_proxy_service), ("browser policy", ensure_browser_policy), ("agent", ensure_agent)]
     for label, fn in steps:
         try:
             for line in fn():

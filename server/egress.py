@@ -63,7 +63,14 @@ DROP_HOSTS = ("google-analytics.com", "analytics.google.com", "googletagmanager.
               "sentry.io", "hotjar.com", "hotjar.io", "mixpanel.com", "amplitude.com", "datadoghq.com", "datadoghq.eu", "nr-data.net",
               "newrelic.com", "clarity.ms", "fullstory.com", "heapanalytics.com", "heap.io", "quantserve.com", "scorecardresearch.com",
               "adnxs.com", "criteo.com", "criteo.net", "taboola.com", "outbrain.com", "branch.io", "appsflyer.com", "adjust.com",
-              "bat.bing.com", "px.ads.linkedin.com", "analytics.tiktok.com", "ads-twitter.com", "static.ads-twitter.com", "t.co/i/adsct")
+              "bat.bing.com", "px.ads.linkedin.com", "analytics.tiktok.com", "ads-twitter.com", "static.ads-twitter.com", "t.co/i/adsct",
+              # 浏览器自己在后台连的（组件更新、推送注册、优化提示、自动填充、安全浏览……）：不是代办要办的事，不打扰你
+              "android.clients.google.com", "update.googleapis.com", "clients2.google.com", "clients2.googleusercontent.com",
+              "redirector.gvt1.com", "edgedl.me.gvt1.com", "dl.google.com/diffgen-puffin", "dl.google.com/release2",
+              "optimizationguide-pa.googleapis.com", "content-autofill.googleapis.com", "safebrowsing.googleapis.com",
+              "sb-ssl.google.com", "clientservices.googleapis.com", "passwordsleakcheck-pa.googleapis.com",
+              "chromekanonymityquery-pa.googleapis.com", "accounts.google.com/ListAccounts",
+              "safebrowsingohttpgateway.googleapis.com", "mtalk.google.com", "firebaseinstallations.googleapis.com")
 # 付款：写请求一律挡（第 10 步最后一项才开放，还要专用低限额的卡）
 PAY_HOSTS = ("stripe.com", "stripe.network", "paypal.com", "paypalobjects.com", "braintreegateway.com", "braintree-api.com", "adyen.com",
              "adyenpayments.com", "checkout.com", "klarna.com", "klarnaservices.com", "afterpay.com", "clearpay.co.uk", "pay.google.com",
