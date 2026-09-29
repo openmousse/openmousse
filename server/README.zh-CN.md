@@ -123,6 +123,18 @@ python3 inbox_ctl.py list [--status recent]
 - 走 Gateway 的 WebSocket 对话通道（server.json `chat.transport: "ws"`，见 `gateway_ws.py`）时：回复进行中你又发的不排队，改成**插话**——`chat.send` 带 `queueMode: steer`，Gateway 在这一轮的下一步把这句交给模型，还是同一条回复（这条记 status `steered`，app 上标「插话」）；Gateway 没能插进去、排成了单独一轮的，接管它记成这条的回复。停止用 `chat.abort`。一轮由 Gateway 跑到底：服务重启时还没回完的，启动后接管或从 `chat.history` 补回回复。带图片的消息仍走 HTTP（照样排队）。第一次连会在本机回环地址自动配对，设备身份存 `<data_dir>/gateway-device.json`。
 - `GET /api/chat/busy` → `{running, queued, idle}`。要重启服务就用 `python3 safe_restart.py --unit <服务名>`：等没有进行中的回复、没有排着的消息再重启（最多等 10 分钟），重启会掐断进行中的回复。
 
+## 附件
+
+对话里发的文件（`POST /api/chat/upload`，一条最多 10 个、每个 30 MB，见 [`files.py`](files.py)）在 app 里点开就能看，不跳浏览器（[`preview.py`](preview.py)）：
+
+| 接口 | 做什么 |
+|---|---|
+| `GET /api/files/{id}` | 原件。`thumb=1`：512 px 缩略图；`preview=1`（图片）：网页认得、不到 8 MB 的给原图，别的（HEIC、TIFF、BMP）转成最长边 3000 的 JPEG；`inline=1`：浏览器里直接显示而不是下载，只限图片、PDF、纯文字、音视频（HTML、SVG 永远下载） |
+| `GET /api/files/{id}/preview` | 怎么显示：`view` = `image` / `pages`（PDF、EPUB、XPS、CBZ、SVG：每页宽高）/ `doc`（Markdown 和表格的块：Word、带备注的 PowerPoint、Excel 和 CSV 每张表最多 200 行 × 26 列、Markdown、Jupyter）/ `text`（代码、排好缩进的 JSON、日志、压缩包的文件列表、网页的正文）/ `audio`（带转写）/ `video` / `none`，还有「PDF · 3 页」这样的 `label` |
+| `GET /api/files/{id}/page/{n}?w=1200` | 第 n 页的 JPEG，宽度往上取 800 / 1200 / 1600 / 2000，渲染一次存在原件旁边 |
+
+渲染页面要 PyMuPDF（在 `requirements.txt` 里）；没装的话 PDF 只显示上传时抽的文字。缩略图、大图、页图带 `Cache-Control: private, max-age=604800`（文件不会变；别的 `/api` 回应照旧 `no-store`）。带透明的图转 JPEG 时铺白底（缩略图、大图、发给模型的那份都是）。
+
 ## 转交卡和任务卡
 
 主对话把问题转给某个 Agent（`scripts/ask_agent.py` → `/api/chat/relay`），或者派一个后台任务（OpenClaw 的 `sessions_spawn`），对话里都会出一张卡。见 [`cards.py`](cards.py)。

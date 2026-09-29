@@ -4,7 +4,7 @@
 - 第一档只读：训练 / 饮食 / 身体数据、日历（可选数据源，见 sources.py）。第二档对话经 Gateway 的 OpenAI 兼容接口，只在 loopback。
 - app 其余页面（Groups、独立空间、目标、审批、定时任务、任务、活动、档案、记忆、模型、安全）：见 data.py，全部是真实来源。
 - Apple 健康：原生 app 读 HealthKit 后按天推上来，存 grava.db 的 health_daily（见 health.py）。
-- 附件：/api/chat/upload 存盘 + 抽文字 / 转写，/api/chat/send 带附件 id，/api/files/{id} 回放，/api/chat/transcribe 语音输入（见 files.py）。
+- 附件：/api/chat/upload 存盘 + 抽文字 / 转写，/api/chat/send 带附件 id，/api/files/{id} 回放，/api/chat/transcribe 语音输入（见 files.py）；/api/files/{id}/preview、/page/{n} 在 app 里预览（见 preview.py）。
 - 推送：/api/push/register 存 Expo push token；回复完成后 push.notify_run 按档位（ring / quiet / none）推回复或这次写的卡（见 push.py）。
 - 收件箱「等你点头」：/api/inbox，Agent 经 inbox_ctl.py 提交要你同意的事，OpenClaw 执行审批也合在里面（见 inbox.py）。
 - 未读：/api/unread，各线程的未读回复、新卡片、角标（见 unread.py）。
@@ -61,6 +61,7 @@ from cards import router as cards_router  # noqa: E402
 from health import router as health_router  # noqa: E402
 from data import first_run, router as data_router  # noqa: E402
 from files import router as files_router  # noqa: E402
+from preview import router as preview_router  # noqa: E402 — 附件在 app 里预览（2026-09-30）
 from push import router as push_router  # noqa: E402
 from study import router as study_router  # noqa: E402
 from inbox import router as inbox_router  # noqa: E402
@@ -129,6 +130,7 @@ app.include_router(cards_router)  # 在 data 之前：/api/tasks/quota 不能被
 app.include_router(health_router)
 app.include_router(data_router)
 app.include_router(files_router)
+app.include_router(preview_router)
 app.include_router(push_router)
 app.include_router(study_router)
 app.include_router(inbox_router)
@@ -223,8 +225,9 @@ async def guard(request: Request, call_next):
         resp = await call_next(request)
     finally:
         i18n.reset(lang_token)
-    # index.html 和接口都不缓存，避免主屏幕 app 看到旧版；带哈希的静态资源照常缓存
-    if request.url.path.startswith("/api/") or request.url.path in ("/", "/index.html"):
+    # index.html 和接口都不缓存，避免主屏幕 app 看到旧版；带哈希的静态资源照常缓存。
+    # 接口自己标了 private 缓存的照它的：附件的缩略图、大图、页图（内容不会变），只在这台设备上缓存
+    if (request.url.path.startswith("/api/") or request.url.path in ("/", "/index.html")) and not resp.headers.get("cache-control", "").startswith("private"):
         resp.headers["Cache-Control"] = "no-store"
     return resp
 

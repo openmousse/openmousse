@@ -5,6 +5,7 @@
 - 文档：PDF / Word / Excel / PowerPoint / 文本 / 代码在服务端抽成文字，每个最多 60k 字、一条消息合计 150k 字，塞进发给 Grava 的消息里。
 - 音频：OpenAI 转写（gpt-4o-transcribe，失败退 whisper-1），转写文字塞进消息；语音输入也走这条路（/api/chat/transcribe）。
 - 其它类型：只存盘，消息里给路径，Grava 需要时用工具读。
+- 在 app 里点开看（页图、Word / Excel 转好的内容）：preview.py。
 - 文件存 ~/.openclaw/grava/uploads/<thread>/，记录在 grava.db 的 attachments 表；消息行的 attachments 列存给 app 显示的摘要。
 """
 from __future__ import annotations
@@ -36,6 +37,12 @@ MAX_BYTES = 30 * 1024 * 1024
 MAX_IMAGES = 8
 IMAGE_MAX_SIDE = 1600
 THUMB_SIDE = 512
+PREVIEW_SIDE = 3000          # app 里看大图（?preview=1）：网页认不得的格式、超过 8 MB 的转成最长边 3000 的 JPEG
+PREVIEW_BYTES = 8 * 1024 * 1024
+WEB_IMAGES = {"image/jpeg", "image/png", "image/gif", "image/webp"}
+# ?inline=1（「用浏览器打开」）只对浏览器自己能安全显示的类型生效；别的照旧下载，上传时报的类型不可信（text/html 不能在这个源上跑）
+INLINE_TYPES = WEB_IMAGES | {"application/pdf", "text/plain"}
+IMMUTABLE = {"Cache-Control": "private, max-age=604800"}   # 缩略图、大图：附件不会变（换了文件就是新 id），让手机缓存一周
 TEXT_CHARS_PER_FILE = 60_000
 TEXT_CHARS_TOTAL = 150_000
 TRANSCRIBE_MODELS = ("gpt-4o-transcribe", "whisper-1")
@@ -183,14 +190,24 @@ def _open_image(path: Path):
     return img
 
 
+def _flatten(img):
+    """存 JPEG 前：带透明的铺白底（直接转 RGB 透明处会变黑，透明底上的黑字模型就看不见了），别的模式转 RGB。"""
+    from PIL import Image
+    if img.mode in ("RGBA", "LA", "PA") or (img.mode == "P" and "transparency" in img.info):
+        img = img.convert("RGBA")
+        bg = Image.new("RGB", img.size, (255, 255, 255))
+        bg.paste(img, mask=img.split()[-1])
+        return bg
+    return img if img.mode in ("RGB", "L") else img.convert("RGB")
+
+
 def image_for_model(path: Path) -> tuple[str, str] | None:
     """缩到 1600px 的 JPEG data URL；打不开就 None。"""
     try:
         from PIL import ImageOps
         img = ImageOps.exif_transpose(_open_image(path))
         img.thumbnail((IMAGE_MAX_SIDE, IMAGE_MAX_SIDE))
-        if img.mode not in ("RGB", "L"):
-            img = img.convert("RGB")
+        img = _flatten(img)
         buf = io.BytesIO()
         img.save(buf, "JPEG", quality=85, optimize=True)
         return "image/jpeg", base64.b64encode(buf.getvalue()).decode()
@@ -206,10 +223,30 @@ def thumbnail(path: Path) -> Path | None:
         from PIL import ImageOps
         img = ImageOps.exif_transpose(_open_image(path))
         img.thumbnail((THUMB_SIDE, THUMB_SIDE))
-        if img.mode not in ("RGB", "L"):
-            img = img.convert("RGB")
+        img = _flatten(img)
         img.save(out, "JPEG", quality=80)
         return out
+    except Exception:  # noqa: BLE001
+        return None
+
+
+def preview_image(path: Path, mime: str | None) -> tuple[Path, str] | None:
+    """看大图用：网页认得、不太大的给原图；HEIC / TIFF / BMP 或者特别大的转成 JPEG，存在原件旁边。转不了就 None。"""
+    mime = (mime or "").lower()
+    if mime in WEB_IMAGES and path.stat().st_size <= PREVIEW_BYTES:
+        return path, mime
+    out = path.with_name(path.name + ".preview.jpg")
+    if out.is_file():
+        return out, "image/jpeg"
+    try:
+        from PIL import ImageOps
+        img = ImageOps.exif_transpose(_open_image(path))
+        img.thumbnail((PREVIEW_SIDE, PREVIEW_SIDE))
+        img = _flatten(img)
+        tmp = out.with_name(f"{out.name}.{uuid.uuid4().hex[:6]}.tmp")
+        img.save(tmp, "JPEG", quality=88)
+        tmp.replace(out)
+        return out, "image/jpeg"
     except Exception:  # noqa: BLE001
         return None
 
@@ -289,7 +326,9 @@ async def transcribe_endpoint(file: UploadFile = File(...)):
 
 
 @router.get("/api/files/{fid}")
-def get_file(fid: str, thumb: int = 0):
+def get_file(fid: str, thumb: int = 0, preview: int = 0, inline: int = 0):
+    """原件。thumb=1：512px 缩略图；preview=1：app 里看大图用的版本（见 preview_image）；inline=1：浏览器里直接显示（只限 INLINE_TYPES 和音视频）。
+    怎么在 app 里预览（页图、Word / Excel 转好的内容）见 preview.py。"""
     with _lock, adb() as conn:
         r = conn.execute("SELECT * FROM attachments WHERE id=?", (fid,)).fetchone()
     if not r or not Path(r["path"]).is_file():
@@ -298,8 +337,15 @@ def get_file(fid: str, thumb: int = 0):
     if thumb and r["kind"] == "image":
         t = thumbnail(path)
         if t:
-            return FileResponse(str(t), media_type="image/jpeg")
-    return FileResponse(str(path), media_type=r["mime"] or "application/octet-stream", filename=r["name"])
+            return FileResponse(str(t), media_type="image/jpeg", headers=IMMUTABLE)
+    if preview and r["kind"] == "image":
+        p = preview_image(path, r["mime"])
+        if p:
+            return FileResponse(str(p[0]), media_type=p[1], headers=IMMUTABLE)
+    media = (r["mime"] or "application/octet-stream").lower()
+    show = bool(inline) and (media in INLINE_TYPES or media.startswith(("audio/", "video/")))
+    return FileResponse(str(path), media_type=media, filename=r["name"], content_disposition_type="inline" if show else "attachment",
+                        headers={"X-Content-Type-Options": "nosniff"})
 
 
 # —— 给模型拼消息 ——

@@ -124,6 +124,18 @@ Item: `{id, kind, source, sourceName, thread, title, why, changes: [], detail, a
 - **When a background task finishes** (see [`settle.py`](settle.py)): OpenClaw runs one more turn in the conversation that started the task so the model can report back (run id `announce:v1:<sub-session>:<run>`, or `announce:requester-settle:…` when the starting turn yielded or several tasks settle together). Its reply is delivered to the channel the task came from, which for the app used to mean only the Gateway's own web UI. Now, for tasks started from the app (`requesterOrigin.channel` = webchat) in a thread the app knows, the chat gets a grey line "Background task finished: <title>" (role `auto`) followed by that turn's reply. Over the WebSocket channel the server adopts the turn live (the reply streams like any other, cards from that turn hang under it); on both transports a catch-up pass every 30 s reads `chat.history` for tasks delivered in the last 30 minutes and fills in any it missed (HTTP transport, restarts, dropped connections). `settle_replies` in grava.db records which turns were handled, so nothing is written twice. A task that finishes while the turn that started it is still running is folded into that turn by OpenClaw, and there's nothing extra to add. Tasks started from Telegram are answered there. No extra push: the quiet "task done" push already covers it; the reply counts as unread.
 - `GET /api/chat/busy` → `{running, queued, idle}`. To restart the server use `python3 safe_restart.py --unit <service>`: it waits until no reply is running and nothing is queued (up to 10 minutes), since a restart cuts off replies in progress.
 
+## Attachments
+
+Files you attach in a chat (`POST /api/chat/upload`, up to 10 per message, 30 MB each; see [`files.py`](files.py)) open in the app instead of the browser ([`preview.py`](preview.py)):
+
+| Route | What |
+|---|---|
+| `GET /api/files/{id}` | The original. `thumb=1`: 512 px thumbnail; `preview=1` (images): the original if the web can show it and it's under 8 MB, else a JPEG up to 3000 px (HEIC, TIFF, BMP); `inline=1`: shown in the browser instead of downloaded, only for images, PDF, plain text, audio and video (never HTML or SVG) |
+| `GET /api/files/{id}/preview` | How to show it: `view` = `image` / `pages` (PDF, EPUB, XPS, CBZ, SVG: page sizes) / `doc` (blocks of Markdown and tables: Word, PowerPoint with notes, Excel and CSV sheets up to 200 rows × 26 columns, Markdown, notebooks) / `text` (code, JSON pretty-printed, logs, a zip's file list, a web page's text) / `audio` (with the transcript) / `video` / `none`, plus a `label` like "PDF · 3 pages" |
+| `GET /api/files/{id}/page/{n}?w=1200` | Page n as a JPEG, width rounded up to 800 / 1200 / 1600 / 2000, rendered once and kept next to the file |
+
+Rendering pages needs PyMuPDF (in `requirements.txt`); without it a PDF shows the text extracted at upload. Thumbnails, previews and pages are sent with `Cache-Control: private, max-age=604800` (a file never changes; every other `/api` answer stays `no-store`). Transparent images get a white background when they become JPEG (thumbnail, preview, and the copy the model sees).
+
 ## Handoff and task cards
 
 When the main chat hands a question to an Agent (`scripts/ask_agent.py` → `/api/chat/relay`) or starts a background task (OpenClaw `sessions_spawn`), the chat shows a card. See [`cards.py`](cards.py).
