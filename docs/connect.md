@@ -57,7 +57,7 @@ curl -fsSL https://raw.githubusercontent.com/openmousse/openmousse/main/install.
 - `MOUSSE_CLAW`: `openclaw`, `hermes`, `nanobot`, `letta`, or your OpenAI-compatible API's URL up to `/v1`.
   - For `letta`, also set `MOUSSE_CLAW_MODEL=<your agent's name>`.
   - For a URL, set `MOUSSE_CLAW_TOKEN` if the API needs one. It is read from the environment and never goes on a command line.
-- `MOUSSE_TZ`: the user's IANA timezone, such as `Europe/London` or `America/New_York`. Use where the user actually is: check what you know about them, or ask. Don't guess it from their language.
+- `MOUSSE_TZ`: the user's IANA timezone, such as `Europe/Berlin` or `America/New_York`. Use where the user actually is: check what you know about them, or ask. Don't guess it from their language.
 - `MOUSSE_NAME`: what the app should call you.
 - Other claws can add `MOUSSE_CLAW_SKILLS=<your skills folder>` so OpenMousse's skills get linked in. Hermes fills this in by itself.
 - Don't set `MOUSSE_TREE_PUBLIC=y` unless the user asked for public links. That opens a few paths to the internet, so ask the user first.

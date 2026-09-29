@@ -818,6 +818,31 @@ def probe_claw(c: dict) -> tuple[bool, str]:
         return False, type(e).__name__
 
 
+def wait_server(cfg: dict, wait: float = 20) -> None:
+    """刚重启的 OpenMousse 服务要一两秒才回话：等它回话再往下（小结、check.sh 紧接着跑不会看到「服务连不上」）。
+    任何 HTTP 回答都算起来了（没带令牌是 401）。"""
+    import time
+    import urllib.error
+    import urllib.request
+    b = cfg.get("bind") or {}
+    host = b.get("host") or "127.0.0.1"
+    host = "127.0.0.1" if host in ("0.0.0.0", "::", "") else host
+    url = f"http://{host}:{int(b.get('port') or 8080)}/api/health"
+    deadline = time.time() + wait
+    while True:
+        try:
+            urllib.request.urlopen(url, timeout=2).close()  # noqa: S310 — 本机的服务
+            return
+        except urllib.error.HTTPError:
+            return
+        except (urllib.error.URLError, OSError):
+            if time.time() >= deadline:
+                say(L(f"openmousse-server 过了 {int(wait)} 秒还没回话：`journalctl --user -u openmousse-server -n 50` 看为什么",
+                      f"openmousse-server isn't answering after {int(wait)} seconds: see why with `journalctl --user -u openmousse-server -n 50`"))
+                return
+            time.sleep(0.5)
+
+
 def gateway_applies_config(oc_path: Path) -> bool:
     """Gateway 自己套用 openclaw.json 的改动吗：gateway.reload.mode 默认 hybrid（2026.8 起只剩 hybrid / off）= 能热加载的马上生效，
     要重启的（比如 memory.search）等手头的对话做完它自己重启；off 和早先的 hot 要人重启。
@@ -1016,6 +1041,8 @@ def main() -> None:
     if not a.no_systemd:
         print("systemd")
         install_systemd(repo, venv, cfg["timezone"])  # 没有 systemctl 它自己说怎么手动跑
+        if has_systemd():
+            wait_server(cfg)
     if self_apply:
         say(L("openclaw.json 改了，Gateway 自己会套用：能热加载的马上生效，要重启的它等手头的对话做完自己重启",
               "openclaw.json changed; the Gateway applies it by itself: hot where it can, otherwise it restarts on its own once the turns in progress finish"))

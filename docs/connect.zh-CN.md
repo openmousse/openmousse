@@ -57,7 +57,7 @@ curl -fsSL https://raw.githubusercontent.com/openmousse/openmousse/main/install.
 - `MOUSSE_CLAW`：`openclaw`、`hermes`、`nanobot`、`letta`，或者你的 OpenAI 兼容接口地址（写到 `/v1`）。
   - `letta` 还要设 `MOUSSE_CLAW_MODEL=<你的 agent 名字>`。
   - 写地址的话，接口要令牌就设 `MOUSSE_CLAW_TOKEN`。它从环境变量读，不会出现在命令行上。
-- `MOUSSE_TZ`：用户的 IANA 时区，比如 `Asia/Shanghai`、`Europe/London`。按用户实际在哪填：看你记得的关于用户的信息，不知道就问。别按用户说的语言去猜。
+- `MOUSSE_TZ`：用户的 IANA 时区，比如 `Asia/Shanghai`、`Europe/Berlin`。按用户实际在哪填：看你记得的关于用户的信息，不知道就问。别按用户说的语言去猜。
 - `MOUSSE_NAME`：app 里怎么叫你。
 - 别的 claw 可以加 `MOUSSE_CLAW_SKILLS=<你的 skills 文件夹>`，OpenMousse 的 skill 会软链进去。Hermes 自己会填。
 - 用户没要公网链接，就别设 `MOUSSE_TREE_PUBLIC=y`。它会把几条路径开到公网，要先问用户。
