@@ -16,6 +16,8 @@
   Agent 用 inbox_ctl.py 列不出、读不到这类卡（请求带 X-Mousse-Client: ctl）。
 - kind egress：Sentinel 出口（egress.py）扣下的代办请求（在沙箱里提交表单、发信、用你的凭证……）。虚拟线程 sentinel，Agent 读不到；
   点了由钩子直接告诉正在等的代理（放行 / 不放行 / 改一下的话），不往任何线程里发话。
+- kind app：连接器（apps.py）里设成「先问我」的工具，Agent 调一次就是一张卡（响铃），挂在那个 Agent 的线程里。卡上的参数是定死的：
+  同意 = 钩子照原样调一次，结果当「做完了」发给 Agent；改一下 = 让它改好参数重新调（新卡），不能 update 这一张。
 - 这是征得同意的界面，不是沙箱：不检查是谁提交的；真正拦住危险动作的是 OpenClaw 的执行审批和各 skill 自己的规则。
 """
 from __future__ import annotations
@@ -42,8 +44,9 @@ from config import TZ, settings
 from i18n import L, LS
 
 router = APIRouter()
-KINDS = ("task", "write", "send", "spend", "schedule", "push", "skill", "agent", "block", "project", "code", "calendar", "social", "egress", "other")
-RING_KINDS = {"task", "write", "send", "spend", "calendar", "egress"}  # 你让它做、它要动外面的东西：响铃；它自己的提议：静默
+KINDS = ("task", "write", "send", "spend", "schedule", "push", "skill", "agent", "block", "project", "code", "calendar", "social", "egress", "app",
+         "other")
+RING_KINDS = {"task", "write", "send", "spend", "calendar", "egress", "app"}  # 你让它做、它要动外面的东西：响铃；它自己的提议：静默
 OPEN = ("pending", "revising")  # 还没定下来的
 CTL = Path(__file__).resolve().parent / "inbox_ctl.py"
 MARK = "【收件箱】"  # 发进 Agent 线程的系统消息的开头（协议标记，不翻译；inbox skill 按它认）
@@ -57,7 +60,7 @@ _tasks: set[asyncio.Task] = set()  # 后台等待中的任务（留个引用，�
 HOOKS: dict[str, Callable[[dict, str], Awaitable[dict | None]]] = {}
 # 这些 kind 的「改一下」也交给钩子（hook(it, "revise")，你写的话在 it["note"]），不往线程里发话。钩子回 {"silent": True}（可以带 result）
 # = 不往线程里发任何话：同意后不发「【收件箱】已同意…」，改一下直接算处理完。
-REVISE_BY_HOOK = {"social", "egress"}
+REVISE_BY_HOOK = {"social", "egress", "app"}
 # 「改一下」必须写话的卡（别的 social 卡可以空着，比如「换个时间」）：fn(iid) -> bool，在锁外调。cardagent 注册：Sentinel 扣下的那句（kind review）。
 NEEDS_NOTE: list[Callable[[str], bool]] = []
 PRIVATE_KINDS = {"social", "egress"}  # 线程是虚拟的、Agent 读不到的
@@ -100,7 +103,7 @@ def kind_label(kind: str) -> str:
             "schedule": L("定时任务", "Schedule"), "push": L("推送", "Notification"), "skill": L("新技能", "New skill"),
             "agent": L("新 Agent", "New agent"), "block": L("看板", "Board"), "project": L("项目", "Project"), "code": L("改代码", "Code change"),
             "calendar": L("日历", "Calendar"), "social": L("朋友", "Friends"), "exec": L("运行命令", "Run a command"),
-            "egress": L("代办", "Errand"),
+            "egress": L("代办", "Errand"), "app": L("连接器", "Connector"),
             "other": L("其他", "Other")}.get(kind, kind)
 
 
@@ -325,6 +328,12 @@ def reply_context(iid: str) -> tuple[dict, str] | None:
         return None
     it = item_json(r, names())
     t, i = it["title"], it["id"]
+    if it["kind"] == "app":  # 连接器的调用（apps.py）：参数定死在卡上，update 改不了要调的东西
+        return it, LS(f"（这条是在回复收件箱里的「{t}」（{i}）：用户要改这次调用。卡上的参数改不了：按他说的改好参数，再调用一次那个工具"
+                      f"（会出一张新卡等他点头），然后用 `python3 {CTL} withdraw {i}` 撤回这一张。）",
+                      f'(This message is a reply to the inbox item "{t}" ({i}): the user wants this call changed. Its arguments can\'t be edited: '
+                      f"call the tool again with the arguments changed as they say (that makes a new card for their OK), then withdraw this one "
+                      f"with `python3 {CTL} withdraw {i}`.)")
     return it, LS(f"（这条是在回复收件箱里的「{t}」（{i}）：用户要改。原来交的内容用 `python3 {CTL} get {i}` 看；"
                   f"按他的意见改好后用 `python3 {CTL} update {i} …` 重新提交，同一个 id，改完还是等他点头再做。）",
                   f'(This message is a reply to the inbox item "{t}" ({i}): the user wants changes. See what you submitted with `python3 {CTL} get {i}`; '

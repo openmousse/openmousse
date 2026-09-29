@@ -50,6 +50,8 @@
                     "time_model": "whisper-1"（"" = 不要逐句时间）, "thinking": "low", "model": llm-task 的模型覆盖}。每次读文件，不用重启
   mcp               MCP 入口（/mcp，见 mcp_bridge.py）：{"scripts": {"工具名": ["命令", "参数"…] 或 null}}：换掉 / 加 / 关掉一个工具背后的命令
                     （令牌是 auth.tokens 里的 mcp、mcp-<agent id>，这几把只能用在 /mcp 上，/api 不认；改了工具要重启）
+  apps              连接器（见 apps.py）：{"catalog": 加 / 改 / 藏目录里的应用, "client_id_url": CIMD 用的 client_id 网址,
+                    "redirect_uris": [网页版用的 http(s) 回调], "allow_local": 只给测试}。每次读文件，不用重启
   wake              起床信号：{"notify_cmd": [...], "notify_hours": ["05:30", "13:00"]}：早上收到信号（快捷指令、app 回到前台、「我起来了」）
                     时跑一下这个命令，比如立刻跑一次出起床报告的定时脚本（见 health.py；每次读文件，不用重启）
 
