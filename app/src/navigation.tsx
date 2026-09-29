@@ -1,4 +1,4 @@
-import React, { useEffect } from 'react';
+import React, { useEffect, useState } from 'react';
 import { Linking, Platform } from 'react-native';
 import { createNavigationContainerRef, DarkTheme, DefaultTheme, NavigationContainer } from '@react-navigation/native';
 import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
@@ -18,7 +18,13 @@ import { ScheduleFeedScreen } from './screens/ScheduleFeedScreen';
 import { TodayScreen } from './screens/TodayScreen';
 import { HistoryDayScreen, HistoryScreen } from './screens/HistoryScreen';
 import { ConnectScreen } from './screens/ConnectScreen';
-import { parsePairing } from './api/base';
+import { ClawScreen } from './screens/ClawScreen';
+import { AccountScreen, LoginScreen, loginSkipped } from './screens/AccountScreens';
+import { AppDetailScreen, AppGalleryScreen, CustomAppScreen } from './screens/AppsScreens';
+import { loadServerConfig, parsePairing } from './api/base';
+import { accountsEnabled, loadAccount } from './api/account';
+import { appsApi, parseOAuthCallback } from './api/apps';
+import { showError } from './components/ui';
 import { InboxScreen } from './screens/InboxScreen';
 import { TreeScreen } from './screens/TreeScreen';
 import { ConnectorsScreen } from './screens/ConnectorsScreen';
@@ -153,7 +159,23 @@ export function openPair(server: string, code: string) {
   navigationRef.navigate('Connect', { pairServer: server, pairCode: code, at: Date.now() });
 }
 
+// 连接器授权完跳回来（<scheme>://oauth/callback?code=…&state=…，见 api/apps.ts）：交给服务器换令牌，打开那个连接器的页面
+let queuedOAuth: ReturnType<typeof parseOAuthCallback> = null;
+
+async function finishOAuth(cb: NonNullable<ReturnType<typeof parseOAuthCallback>>) {
+  if (!navigationRef.isReady()) { queuedOAuth = cb; return; }
+  try {
+    await loadServerConfig();  // 冷启动时点进来：先把服务器地址和令牌读出来
+    const r = await appsApi.callback(cb);
+    navigationRef.navigate('AppDetail', { id: r.app.id, fresh: true, at: Date.now() });
+  } catch (e) {
+    showError(L('没连上', "Couldn't connect"), e);
+  }
+}
+
 function handleUrl(url: string | null) {
+  const oauth = url ? parseOAuthCallback(url) : null;
+  if (oauth) { finishOAuth(oauth).catch(() => {}); return; }
   if (url && /^[a-z]+:\/\/pair\?/i.test(url)) {
     const p = parsePairing(url.replace(/^[a-z]+:\/\//i, 'openmousse://'));
     if (p.server && p.code) openPair(p.server, p.code);
@@ -165,6 +187,7 @@ function handleUrl(url: string | null) {
 }
 
 function flushQueued() {
+  if (queuedOAuth && navigationRef.isReady()) { const o = queuedOAuth; queuedOAuth = null; finishOAuth(o).catch(() => {}); }
   if (queuedPair && navigationRef.isReady()) { const p = queuedPair; queuedPair = null; openPair(p.server, p.code); }
   if (queuedCode && navigationRef.isReady()) { const c = queuedCode; queuedCode = null; openAddFriend(c); }
   if (!queued || !navigationRef.isReady()) return;
@@ -177,19 +200,32 @@ export function RootNavigator() {
   const t = useTheme();
   const { configLoaded, needsServer } = useStore();
   const base = t.mode === 'dark' ? DarkTheme : DefaultTheme;
+  // 有账号的壳（OpenMousse）第一次打开先登录，登录完再连 claw；没配账号的（自己搭的、Grava）打开就用
+  const [acct, setAcct] = useState<'loading' | 'in' | 'out'>(() => (accountsEnabled() ? 'loading' : 'in'));
+  useEffect(() => {
+    if (!accountsEnabled()) return;
+    loadAccount().then((u) => setAcct(u || loginSkipped() ? 'in' : 'out')).catch(() => setAcct('in'));
+  }, []);
   useEffect(() => {
     if (Platform.OS === 'web') return undefined;
     Linking.getInitialURL().then(handleUrl).catch(() => {});
     const sub = Linking.addEventListener('url', (e) => handleUrl(e.url));
     return () => sub.remove();
   }, []);
-  if (!configLoaded) return null;  // 先读本机的服务器配置，决定首页是连接页还是 Tabs
+  if (!configLoaded || acct === 'loading') return null;  // 先读本机的服务器配置和账号，决定首页是登录页、连接页还是 Tabs
   // 不配置 linking：导航状态只存在内存里，不读写浏览器地址栏，网页预览放在任何路径下都能跑。
   return (
     <NavigationContainer ref={navigationRef} theme={{ ...base, colors: { ...base.colors, background: t.bg, card: t.surface, text: t.ink, border: t.line, primary: t.gold } }} documentTitle={{ enabled: false }} initialState={initialFromQuery()} onReady={flushQueued}>
-      <Stack.Navigator initialRouteName={needsServer ? 'Connect' : 'Tabs'} screenOptions={{ headerShown: false, contentStyle: { backgroundColor: t.bg } }}>
+      <Stack.Navigator initialRouteName={acct === 'out' ? 'Login' : needsServer ? 'Connect' : 'Tabs'} screenOptions={{ headerShown: false, contentStyle: { backgroundColor: t.bg } }}>
         <Stack.Screen name="Tabs" component={Tabs} />
         <Stack.Screen name="Connect" component={ConnectScreen} />
+        {/* 设置页改版（2026-09-29）：账号、claw 详情、连接器（经 MCP 接进来的应用） */}
+        <Stack.Screen name="Login" component={LoginScreen} />
+        <Stack.Screen name="Account" component={AccountScreen} />
+        <Stack.Screen name="Claw" component={ClawScreen} />
+        <Stack.Screen name="AppGallery" component={AppGalleryScreen} />
+        <Stack.Screen name="AppDetail" component={AppDetailScreen} />
+        <Stack.Screen name="CustomApp" component={CustomAppScreen} />
         <Stack.Screen name="Group" component={GroupScreen} />
         <Stack.Screen name="History" component={HistoryScreen} />
         <Stack.Screen name="BoardHistory" component={BoardHistoryScreen} />

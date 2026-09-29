@@ -4,6 +4,8 @@ import { useNavigation, useRoute } from '@react-navigation/native';
 import * as Device from 'expo-device';
 import { Btn, Card, NavHeader, Pill, Screen, SectionLabel, T, showError } from '../components/ui';
 import { defaultBase, getBase, getToken, pairWithCode, parsePairing, saveServerConfig, testServer } from '../api/base';
+import { syncClaw } from '../api/account';
+import { rememberClaw } from '../api/claws';
 import { L } from '../i18n';
 import { useStore } from '../store';
 import { radius, space, type, useTheme } from '../theme';
@@ -16,12 +18,14 @@ export function ConnectScreen() {
   const t = useTheme();
   const nav = useNavigation<any>();
   const { connected, needsServer, refreshLive } = useStore();
-  const [base, setBase] = useState(getBase() || defaultBase());
-  const [token, setToken] = useState(getToken());
+  const route = useRoute<any>();
+  // 设置 → 我的 claw → 添加 claw：空白的表，连上以后这台设备就改用新的这台（旧的还在「我的 claw」里，点一下换回去）
+  const adding = !!route.params?.add;
+  const [base, setBase] = useState(adding ? '' : getBase() || defaultBase());
+  const [token, setToken] = useState(adding ? '' : getToken());
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState<{ text: string; ok: boolean } | null>(null);
   // 配对码：服务器上 tokens.py pair 出的（claw 替你装好后会发来一条链接）。点链接进来时地址和码已经填好，看一眼地址再点「连接」
-  const route = useRoute<any>();
   const [pairText, setPairText] = useState('');
   const pairAt = (route.params?.at as number | undefined) ?? 0;
   const [seenAt, setSeenAt] = useState(0);
@@ -32,8 +36,11 @@ export function ConnectScreen() {
     setMsg(null);
   }
 
-  const finish = (appName: string) => {
+  const finish = async (appName: string) => {
     setMsg({ text: L(`连上了：${appName}`, `Connected to ${appName}`), ok: true });
+    // 记进「我的 claw」（令牌存本机钥匙串）和账号（只记名字和地址，不记令牌）
+    await rememberClaw({ base: getBase(), token: getToken(), name: appName }).catch(() => null);
+    syncClaw({ base: getBase(), name: appName }).catch(() => {});
     refreshLive();
     setBusy(false);
     nav.reset({ index: 0, routes: [{ name: 'Tabs' }] });
@@ -63,7 +70,8 @@ export function ConnectScreen() {
 
   return (
     <Screen>
-      <NavHeader title={L('服务器', 'Server')} onBack={() => (needsServer ? undefined : nav.goBack())} right={connected ? <Pill label={L('已连接', 'Connected')} tone="good" /> : undefined} />
+      <NavHeader title={adding ? L('添加 claw', 'Add a claw') : L('服务器', 'Server')} onBack={() => (needsServer ? undefined : nav.goBack())}
+        right={connected && !adding ? <Pill label={L('已连接', 'Connected')} tone="good" /> : undefined} />
       <ScrollView contentContainerStyle={{ padding: space.lg, paddingBottom: space.xxl }} keyboardShouldPersistTaps="handled" automaticallyAdjustKeyboardInsets keyboardDismissMode="interactive">
         <T v="callout" color={t.ink2} style={{ marginBottom: space.md }}>
           {L('这个 app 是一个壳，所有对话、记忆和数据都在你自己的服务器上。点你的 claw 发来的配对链接，或者填服务器地址和接入令牌，就能用。',

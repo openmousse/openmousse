@@ -132,3 +132,14 @@ export { default as QrCode } from 'lucide-react-native/icons/qr-code';
 export { default as Pause } from 'lucide-react-native/icons/pause';
 export { default as TextAlignStart } from 'lucide-react-native/icons/text-align-start';
 export { default as AudioLinesBars } from 'lucide-react-native/icons/audio-lines';
+// 设置页和连接器（2026-09-29）
+export { default as LogOut } from 'lucide-react-native/icons/log-out';
+export { default as Info } from 'lucide-react-native/icons/info';
+export { default as SunMoon } from 'lucide-react-native/icons/sun-moon';
+export { default as Link } from 'lucide-react-native/icons/link';
+export { default as Lock } from 'lucide-react-native/icons/lock';
+export { default as Smartphone } from 'lucide-react-native/icons/smartphone';
+export { default as Monitor } from 'lucide-react-native/icons/monitor';
+export { default as ArrowUpRight } from 'lucide-react-native/icons/arrow-up-right';
+export { default as KeyRound } from 'lucide-react-native/icons/key-round';
+export { default as UserRound } from 'lucide-react-native/icons/user-round';

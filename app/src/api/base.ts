@@ -23,7 +23,7 @@ function secureStore(): { getItemAsync(k: string): Promise<string | null>; setIt
   }
 }
 
-async function readItem(key: string): Promise<string> {
+export async function readItem(key: string): Promise<string> {
   try {
     if (Platform.OS === 'web') return (typeof localStorage !== 'undefined' && localStorage.getItem(key)) || '';
     return (await secureStore()?.getItemAsync(key)) ?? '';
@@ -32,7 +32,7 @@ async function readItem(key: string): Promise<string> {
   }
 }
 
-async function writeItem(key: string, value: string): Promise<void> {
+export async function writeItem(key: string, value: string): Promise<void> {
   try {
     if (Platform.OS === 'web') {
       if (typeof localStorage === 'undefined') return;

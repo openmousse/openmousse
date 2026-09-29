@@ -37,6 +37,8 @@ module.exports = ({ config }) => {
     out.extra = { ...(config.extra || {}), eas: { projectId: local.easProjectId } };
     out.updates = { url: `https://u.expo.dev/${local.easProjectId}` };
   }
+  // 账号（2026-09-29）：{ "url": "https://<项目>.supabase.co", "anonKey": "…" }，见 src/api/account.ts。不写 = 这个壳没有账号，打开就用。
+  if (local.account) out.extra = { ...(out.extra || config.extra || {}), account: local.account };
   if (local.owner) out.owner = local.owner;
   return out;
 };

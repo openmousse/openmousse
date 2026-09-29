@@ -151,3 +151,71 @@ async def pair(request: Request):
     if r.get("ok"):
         return r
     return JSONResponse({"ok": False, "error": r["error"]}, status_code=r["status"])
+
+
+# —— 设备（2026-09-29，app「设置 → claw → 能连它的设备」）——————————————————————————————
+# 设备 = auth.tokens 里给人用的令牌（手填的、配对换来的 device-…）；给程序用的（mcp、mcp-<id>、sentinel）不算，这里看不到也删不了。
+
+PROGRAM_TOKENS = ("mcp", "sentinel")
+
+
+def program_token(name: str) -> bool:
+    return name in PROGRAM_TOKENS or name.startswith("mcp-")
+
+
+def device_label(name: str) -> str:
+    """device-iphone-15-09291530 → iphone 15（配对时记下的设备名）；手填的令牌就是它的名字。"""
+    m = re.match(r"^device-(.+?)-\d{8}x*$", name)
+    return m.group(1).replace("-", " ") if m else name
+
+
+async def _body(request: Request) -> dict:
+    try:
+        body = await request.json()
+    except ValueError:
+        body = {}
+    return body if isinstance(body, dict) else {}
+
+
+@router.get("/api/devices")
+async def devices(request: Request):
+    """能连这台服务器的设备：只回名字，不回令牌。current = 发这个请求的就是它。"""
+    me = str(getattr(request.state, "principal", "") or "")
+    out = [{"name": n, "label": device_label(n), "paired": n.startswith("device-"), "current": me == f"token:{n}"}
+           for n in settings.tokens() if not program_token(n)]
+    return {"devices": out}
+
+
+@router.delete("/api/devices/{name}")
+async def remove_device(name: str, request: Request):
+    """收回一台设备的令牌（它下次连就要重新配对）。正在用的这台、给程序用的令牌不能在这里删。"""
+    if program_token(name):
+        return JSONResponse({"ok": False, "error": L("这是给程序用的令牌，不能在这里删", "That token belongs to a program and can't be removed here")}, status_code=400)
+    if str(getattr(request.state, "principal", "") or "") == f"token:{name}":
+        return JSONResponse({"ok": False, "error": L("不能收回正在用的这台", "You can't remove the device you're using")}, status_code=400)
+    data = dict(raw(fresh=True))
+    auth = dict(data.get("auth") or {})
+    tokens = dict(auth.get("tokens") or {})
+    if name not in tokens:
+        return JSONResponse({"ok": False, "error": L("没有这台设备", "No such device")}, status_code=404)
+    del tokens[name]
+    auth["tokens"] = tokens
+    data["auth"] = auth
+    save(data)
+    return {"ok": True}
+
+
+@router.post("/api/pair/new")
+async def pair_new(request: Request):
+    """连着的设备给另一台设备出配对码（「添加一台设备」）：普通 /api 鉴权，10 分钟、一次。
+    server：app 自己用的地址（手机上连的就是它），优先用；没给或者不像地址就按 server_url() 猜。"""
+    body = await _body(request)
+    server = str(body.get("server") or "").strip().rstrip("/")
+    if not re.match(r"^https?://[^\s/]+(/[^\s]*)?$", server) or len(server) > 200:
+        server = server_url()
+    code, expires = new_code(str(body.get("name") or "")[:40], minutes=10)
+    url = link(server, code)
+    import qr  # 同目录，只用标准库
+
+    rows = qr.matrix(url)
+    return {"ok": True, "code": code, "expires": expires, "link": url, "qr": {"size": len(rows) + 8, "path": qr.path(rows)}}

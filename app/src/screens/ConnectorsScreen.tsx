@@ -1,19 +1,23 @@
-// 我 → 连接（server/connectors.py）：助手接着的每一样东西现在怎么样。
-// 按组一张卡，每行 = 图标、名字、一句现状、右边一个小圆点（绿 = 在用，琥珀 = 要注意，灰 = 没接）。
-// 点一行：几条事实、它用来做什么、不对的时候怎么修；能在 app 里改的（日历订阅、世界树）带一个跳过去的按钮。
-import React, { useEffect } from 'react';
-import { Pressable, ScrollView, StyleSheet, View } from 'react-native';
-import { useNavigation } from '@react-navigation/native';
+// 设置 → 连接器（2026-09-29 改版，照 Claude 的 Connectors 页）：
+// 上面是经 MCP 接进来的应用（server/apps.py）：已连接的（右边是能用的工具数，要重新授权的标黄）、推荐的（点「连接」跳授权页）、
+// 查看全部 / 自定义；下面是这台 claw 本来就接着的东西现在怎么样（server/connectors.py：数据来源、聊天渠道、推送……），
+// 点一行看几条事实、它用来做什么、不对的时候怎么修。服务器老、没有 /api/apps 的，上面那块不出现。
+import React, { useCallback, useEffect, useState } from 'react';
+import { ActivityIndicator, ScrollView, StyleSheet, View } from 'react-native';
+import { useFocusEffect, useNavigation } from '@react-navigation/native';
 import { agentName } from '../brand';
 import {
-  Bell, CalendarDays, CalendarSync, ChevronRight, Dumbbell, FileText, GraduationCap, HardDrive, HeartPulse, Mail, MessagesSquare, Notebook, Plug, Send, Server, TreeDeciduous,
+  Bell, CalendarDays, CalendarSync, Dumbbell, FileText, GraduationCap, HardDrive, HeartPulse, Mail, MessagesSquare, Notebook, Plug, Plus, Send, Server, TreeDeciduous,
 } from '../components/icons';
+import { Dot, Group, GroupLabel, GroupNote, RoundButton, Row, SettingsHeader, Tile } from '../components/settings';
 import { useSheet } from '../components/Sheet';
-import { Btn, Card, NavHeader, PullRefresh, Screen, SectionLabel, T } from '../components/ui';
+import { Btn, Card, PullRefresh, Screen, T } from '../components/ui';
+import { appsApi, descOf, noApps, type AppsList, type CatalogEntry } from '../api/apps';
 import type { Connector } from '../data/types';
 import { L } from '../i18n';
 import { useStore } from '../store';
 import { radius, space, useTheme, type Theme } from '../theme';
+import { AppTile, ConnectHint, connectCatalog, statusChip } from './AppsScreens';
 
 const ICONS: Record<string, typeof Plug> = {
   dumbbell: Dumbbell, 'heart-pulse': HeartPulse, graduation: GraduationCap, calendar: CalendarDays, mail: Mail, 'calendar-sync': CalendarSync,
@@ -22,23 +26,8 @@ const ICONS: Record<string, typeof Plug> = {
 };
 
 const statusWord = (s: Connector['status']) => ({ ok: L('在用', 'Working'), warn: L('要注意', 'Needs a look'), off: L('没接', 'Not connected') })[s];
-const dotColor = (t: Theme, s: Connector['status']) => (s === 'ok' ? t.good : s === 'warn' ? t.warn : t.ink3);
-
-function Dot({ status, size = 9 }: { status: Connector['status']; size?: number }) {
-  const t = useTheme();
-  return <View style={{ width: size, height: size, borderRadius: size / 2, backgroundColor: dotColor(t, status), opacity: status === 'off' ? 0.6 : 1 }} />;
-}
-
-function ConnectorIcon({ c }: { c: Connector }) {
-  const t = useTheme();
-  const Icon = ICONS[c.icon] ?? Plug;
-  const off = c.status === 'off';
-  return (
-    <View style={[styles.icon, { backgroundColor: off ? t.surface2 : t.cyanSoft }]}>
-      <Icon size={18} color={off ? t.ink3 : t.cyan} />
-    </View>
-  );
-}
+const dotTone = (s: Connector['status']) => (s === 'ok' ? 'good' : s === 'warn' ? 'warn' : 'off') as 'good' | 'warn' | 'off';
+const zh = () => L('zh', 'en') === 'zh';
 
 /** 弹层画在导航外面（SheetProvider 包着整个导航），所以跳页的函数由行传进来，这里不能 useNavigation。 */
 function ConnectorSheet({ c, close, go }: { c: Connector; close: () => void; go: (screen: string) => void }) {
@@ -47,7 +36,7 @@ function ConnectorSheet({ c, close, go }: { c: Connector; close: () => void; go:
   return (
     <View style={{ gap: space.md }}>
       <View style={styles.statusLine}>
-        <Dot status={c.status} />
+        <Dot tone={dotTone(c.status)} />
         <T v="callout" color={t.ink2} style={{ flex: 1 }}>{`${statusWord(c.status)} · ${c.line}`}</T>
       </View>
       {c.facts.length ? (
@@ -77,69 +66,104 @@ function ConnectorSheet({ c, close, go }: { c: Connector; close: () => void; go:
   );
 }
 
-function ConnectorRow({ c, first }: { c: Connector; first: boolean }) {
-  const t = useTheme();
-  const sheet = useSheet();
-  const nav = useNavigation<any>();
-  return (
-    <Pressable onPress={() => sheet.open({ title: c.name, content: (close) => <ConnectorSheet c={c} close={close} go={(screen) => nav.navigate(screen)} /> })}
-      accessibilityRole="button" accessibilityLabel={`${c.name}，${statusWord(c.status)}，${c.line}`}
-      style={({ pressed }) => [styles.row, !first && { borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: t.line }, { opacity: pressed ? 0.6 : 1 }]}>
-      <ConnectorIcon c={c} />
-      <View style={{ flex: 1, gap: 2 }}>
-        <T v="body" numberOfLines={1} color={c.status === 'off' ? t.ink2 : t.ink}>{c.name}</T>
-        <T v="callout" color={c.status === 'warn' ? t.warn : t.ink2} numberOfLines={2}>{c.line}</T>
-      </View>
-      <Dot status={c.status} />
-      <ChevronRight size={16} color={t.ink3} />
-    </Pressable>
-  );
-}
-
-function Note({ text, tone }: { text: string; tone?: 'bad' }) {
-  const t = useTheme();
-  return <Card style={{ marginTop: space.md }}><T v="callout" color={tone === 'bad' ? t.bad : t.ink2}>{text}</T></Card>;
+function StatusIcon({ c, t }: { c: Connector; t: Theme }) {
+  const Icon = ICONS[c.icon] ?? Plug;
+  const off = c.status === 'off';
+  return <Tile size={34} bg={off ? t.surface2 : t.cyanSoft}><Icon size={18} color={off ? t.ink3 : t.cyan} /></Tile>;
 }
 
 export function ConnectorsScreen() {
   const t = useTheme();
   const nav = useNavigation<any>();
-  const { connectors, connected, booting, loading, dataErrors, reload, refreshConnectors } = useStore();
+  const sheet = useSheet();
+  const { connectors, connected, booting, loading, dataErrors, reload, refreshConnectors, appName } = useStore();
+  const [apps, setApps] = useState<AppsList | null>(null);
+  const [appsErr, setAppsErr] = useState<string | null>(null);
+  const [appsOld, setAppsOld] = useState(false);
+  const [busy, setBusy] = useState<string | null>(null);
+
+  const loadApps = useCallback(() => {
+    if (!connected) return Promise.resolve();
+    return appsApi.list().then((r) => { setApps(r); setAppsErr(null); setAppsOld(false); })
+      .catch((e) => { if (noApps(e)) setAppsOld(true); else setAppsErr(e instanceof Error ? e.message : String(e)); });
+  }, [connected]);
+  useFocusEffect(useCallback(() => { loadApps(); }, [loadApps]));
   useEffect(() => { if (connected) reload('connectors').catch(() => {}); }, [connected, reload]);  // 服务器缓存 60 秒，打开页面读一次
+
   const data = connectors?.kind === 'ok' ? connectors.data : null;
-  let state: React.ReactNode = null;
+  let state: string | null = null;
   if (!data) {
-    if (booting) state = <Note text={L('正在连服务器…', 'Connecting to the server…')} />;
-    else if (!connected) state = <Note text={L('没连上服务器。检查「我 → 服务器」后下拉刷新。', 'Not connected to the server. Check Me → Server, then pull down to refresh.')} />;
-    else if (dataErrors.connectors) state = <Note tone="bad" text={L(`读不到：${dataErrors.connectors}`, `Couldn't load: ${dataErrors.connectors}`)} />;
-    else if (connectors?.kind === 'unsupported') state = <Note text={L('服务器的版本还没有这一页，更新服务器以后再来看。', "The server's version doesn't have this page yet. Update the server and check back.")} />;
-    else if (loading.connectors || !connectors) state = <Note text={L('正在查…', 'Checking…')} />;
+    if (booting) state = L('正在连服务器…', 'Connecting to the server…');
+    else if (!connected) state = L('没连上服务器。检查「设置 → 我的 claw」后下拉刷新。', 'Not connected to the server. Check Settings → My claws, then pull down to refresh.');
+    else if (dataErrors.connectors) state = L(`读不到：${dataErrors.connectors}`, `Couldn't load: ${dataErrors.connectors}`);
+    else if (connectors?.kind === 'unsupported') state = null;
+    else if (loading.connectors || !connectors) state = L('正在查…', 'Checking…');
   }
-  const c = data?.counts;
-  const summary = c ? [
-    c.ok ? L(`${c.ok} 个在用`, `${c.ok} working`) : '', c.warn ? L(`${c.warn} 个要注意`, `${c.warn} need a look`) : '', c.off ? L(`${c.off} 个没接`, `${c.off} not connected`) : '',
-  ].filter(Boolean).join(L('，', ', ')) : '';
+
+  const installed = apps?.apps ?? [];
+  const recommended = (apps?.catalog ?? []).filter((c) => !c.installed).slice(0, 3);
+  const connect = async (c: CatalogEntry) => {
+    setBusy(c.id);
+    try { await connectCatalog(c, nav); } finally { setBusy(null); loadApps(); }
+  };
+
   return (
     <Screen>
-      <NavHeader title={L('连接', 'Connections')} onBack={() => nav.goBack()} />
-      <ScrollView contentContainerStyle={{ padding: space.lg, paddingBottom: space.xxl }} refreshControl={<PullRefresh onRefresh={refreshConnectors} />}>
-        <T v="callout" color={t.ink2}>{L(
-          `${agentName()} 接着的每一样东西现在怎么样。点一项看它用来做什么；要注意的，里面写着怎么修。`,
-          `Everything ${agentName()} is connected to, and how it's doing. Tap one to see what it's for; anything that needs a look says how to fix it.`,
-        )}</T>
-        {state}
-        {data?.groups.map((g) => (
-          <View key={g.id}>
-            <SectionLabel caps={g.id !== 'claw'}>{g.title}</SectionLabel>
-            <Card style={{ paddingVertical: space.xs }}>
-              {g.items.map((x, i) => <ConnectorRow key={x.id} c={x} first={i === 0} />)}
-            </Card>
-          </View>
-        ))}
+      <SettingsHeader title={L('连接器', 'Connectors')} onBack={() => nav.goBack()}
+        right={apps ? <RoundButton onPress={() => nav.navigate('AppGallery')} label={L('添加连接器', 'Add a connector')}><Plus size={20} color={t.ink} /></RoundButton> : undefined} />
+      <ScrollView contentContainerStyle={{ paddingBottom: space.xxl }} refreshControl={<PullRefresh onRefresh={async () => { await Promise.all([loadApps(), refreshConnectors()]); }} />}>
+        {apps ? (
+          <>
+            {installed.length ? (
+              <>
+                <GroupLabel>{L('已连接', 'Connected')}</GroupLabel>
+                <Group>
+                  {installed.map((a, i) => (
+                    <Row key={a.id} first={i === 0} icon={<AppTile a={a} />} title={a.name} right={statusChip(a)} chevron
+                      onPress={() => nav.navigate('AppDetail', { id: a.id })} />
+                  ))}
+                </Group>
+              </>
+            ) : null}
+            {recommended.length ? (
+              <>
+                <GroupLabel>{installed.length ? L('推荐', 'Suggested') : L('连一个试试', 'Try connecting one')}</GroupLabel>
+                <Group>
+                  {recommended.map((c, i) => (
+                    <Row key={c.id} first={i === 0} icon={<AppTile a={c} />} title={c.name} sub={descOf(c.desc, zh()) || undefined} chevron={false}
+                      right={busy === c.id ? <ActivityIndicator color={t.ink3} /> : <ConnectHint />} onPress={() => connect(c)} label={L(`连接 ${c.name}`, `Connect ${c.name}`)} />
+                  ))}
+                </Group>
+              </>
+            ) : null}
+            <Group style={{ marginTop: space.lg }}>
+              <Row first title={L('查看全部连接器', 'Browse all connectors')} onPress={() => nav.navigate('AppGallery')} />
+              <Row title={L('自定义连接器', 'Custom connector')} value={L('MCP 地址', 'MCP address')} onPress={() => nav.navigate('CustomApp')} />
+            </Group>
+            <GroupNote>{L(`数字是能用的工具数。令牌存在 ${appName} 上；每个工具可以设成自动、先问我或关。`,
+              `The number is how many tools it offers. Tokens are kept on ${appName}; each tool can be Auto, Ask me or Off.`)}</GroupNote>
+          </>
+        ) : appsErr ? <T v="callout" color={t.bad} style={{ margin: space.lg }}>{appsErr}</T> : !appsOld && connected ? <ActivityIndicator style={{ marginTop: space.lg }} color={t.ink3} /> : null}
+
+        {state ? <T v="callout" color={t.ink2} style={{ marginHorizontal: space.lg + 4, marginTop: space.lg }}>{state}</T> : null}
         {data ? (
-          <T v="caption" color={t.ink3} style={styles.foot}>
-            {[summary, data.checkedAt ? L(`查于 ${data.checkedAt}，下拉重新查`, `Checked ${data.checkedAt}; pull down to check again`) : ''].filter(Boolean).join(L('。', '. '))}
-          </T>
+          <>
+            {apps ? <GroupLabel>{L(`${agentName()} 本来就接着的`, `What ${agentName()} is already hooked up to`)}</GroupLabel> : null}
+            {data.groups.map((g) => (
+              <View key={g.id}>
+                <GroupLabel>{g.title}</GroupLabel>
+                <Group>
+                  {g.items.map((x, i) => (
+                    <Row key={x.id} first={i === 0} icon={<StatusIcon c={x} t={t} />} title={x.name} sub={x.line}
+                      right={<Dot tone={dotTone(x.status)} />}
+                      label={`${x.name}${L('，', ', ')}${statusWord(x.status)}${L('，', ', ')}${x.line}`}
+                      onPress={() => sheet.open({ title: x.name, content: (close) => <ConnectorSheet c={x} close={close} go={(screen) => nav.navigate(screen)} /> })} />
+                  ))}
+                </Group>
+              </View>
+            ))}
+            {data.checkedAt ? <GroupNote>{L(`查于 ${data.checkedAt}，下拉重新查`, `Checked ${data.checkedAt}; pull down to check again`)}</GroupNote> : null}
+          </>
         ) : null}
       </ScrollView>
     </Screen>
@@ -147,12 +171,9 @@ export function ConnectorsScreen() {
 }
 
 const styles = StyleSheet.create({
-  row: { flexDirection: 'row', alignItems: 'center', gap: space.md, paddingVertical: 12 },
-  icon: { width: 34, height: 34, borderRadius: radius.sm + 2, alignItems: 'center', justifyContent: 'center' },
   statusLine: { flexDirection: 'row', alignItems: 'center', gap: space.sm },
   fact: { flexDirection: 'row', alignItems: 'flex-start', gap: space.md, paddingVertical: 10 },
   factLabel: { flexShrink: 0, maxWidth: '50%' },
   factValue: { flex: 1, textAlign: 'right' },
   fix: { borderRadius: radius.md, padding: space.md, gap: 4 },
-  foot: { marginTop: space.lg, paddingHorizontal: space.xs, lineHeight: 18, fontWeight: '400' },
 });

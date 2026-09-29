@@ -1,89 +1,276 @@
-import React, { useEffect, useState } from 'react';
+// 设置（从侧栏底部进来；2026-09-29 照 Claude 的设置页改版）：
+// 账号卡（有账号的壳才有）→ 我的 claw（连过的几台，点「换到这台」切换）→ 这个助手的（连接器、档案、世界树、记忆……）→ 活动与安全 → 应用。
+// 原来「我」页的东西都还在，只是分了组；服务器地址和令牌在「我的 claw」点进去。
+import React, { useCallback, useEffect, useState } from 'react';
+import { Alert, Platform, Pressable, ScrollView, View } from 'react-native';
+import Constants from 'expo-constants';
+import { useFocusEffect, useNavigation } from '@react-navigation/native';
 import { agentName } from '../brand';
-import { Pressable, ScrollView, View } from 'react-native';
-import { useNavigation } from '@react-navigation/native';
-import { Activity, BookOpen, Brain, CalendarDays, ClipboardList, Cpu, IdCard, Palette, Plug, Server, ShareIcon, ShieldCheck, TreeDeciduous, User } from '../components/icons';
+import {
+  Activity, BookOpen, Brain, CalendarDays, Check, ClipboardList, Cpu, Globe, IdCard, Info, LogOut, Palette, Plug, Plus, Server, ShareIcon, ShieldCheck, SunMoon,
+  TreeDeciduous, User,
+} from '../components/icons';
 import { LensAvatar } from '../components/LensAvatar';
-import { Card, LargeHeader, ListRow, NavHeader, Pill, PullRefresh, Screen, SectionLabel, Segmented, T } from '../components/ui';
+import { Chevron, Dot, Group, GroupLabel, GroupNote, Row, SettingsHeader, Tile } from '../components/settings';
+import { useSheet } from '../components/Sheet';
+import { PullRefresh, Screen, T, showError } from '../components/ui';
+import { accountsEnabled, currentAccount, loadAccount, onAccountChange, signOut, syncClaw, type AccountUser } from '../api/account';
+import { appsApi, noApps, type AppSummary } from '../api/apps';
+import { activeClawId, listClaws, pingClaw, switchToClaw, touchClaw, type Claw } from '../api/claws';
+import { getBase } from '../api/base';
+import { podFeatures } from '../api/podcast';
 import { L, useLang, type LangPref } from '../i18n';
 import { useStore } from '../store';
-import { podFeatures } from '../api/podcast';
 import { space, useAppearance, useTheme } from '../theme';
+
+/** 账号：登录着的用户（没有账号服务的壳一直是 null）。 */
+export function useAccount(): { enabled: boolean; user: AccountUser | null } {
+  const [user, setUser] = useState<AccountUser | null>(currentAccount());
+  useEffect(() => {
+    let live = true;
+    loadAccount().then((u) => { if (live) setUser(u); }).catch(() => {});
+    const off = onAccountChange((u) => setUser(u));
+    return () => { live = false; off(); };
+  }, []);
+  return { enabled: accountsEnabled(), user };
+}
+
+const initials = (u: AccountUser) => {
+  const s = (u.name || u.email || '?').trim();
+  const parts = s.split(/[\s@._-]+/).filter(Boolean);
+  const two = parts.length > 1 ? parts[0][0] + parts[1][0] : s.slice(0, 2);
+  return two.toUpperCase();
+};
 
 export function MeScreen() {
   const t = useTheme();
   const nav = useNavigation<any>();
-  const { avatar, profile, memories, activity, connected, booting, authFailed, appName, tasks, security, models, journal, tree, connectors, reload, claw } = useStore();
+  const sheet = useSheet();
+  const {
+    avatar, profile, memories, connected, booting, authFailed, appName, tasks, security, models, journal, tree, connectors, reload, claw, refreshLive,
+  } = useStore();
   const { appearance, setAppearance } = useAppearance();
   const { pref, setPref } = useLang();
+  const acct = useAccount();
   const warn = security?.facts.filter((f) => f.tone === 'warn') ?? [];
   const expired = models?.providers.filter((p) => p.subscription && p.status !== 'ok') ?? [];
   const running = tasks.filter((x) => x.status === '进行中').length;
   const leaves = tree?.kind === 'ok' ? tree.data.counts : null;
   const conn = connectors?.kind === 'ok' ? connectors.data.counts : null;
-  // 世界树和连接不在启动时读（见 store 的 STARTUP_KEYS）：第一次来「我」这一页时读，下面两行的小字要用
+
+  // 世界树和连接状态不在启动时读（见 store 的 STARTUP_KEYS）：第一次来这一页时读
   useEffect(() => { if (connected) reload('tree', 'connectors').catch(() => {}); }, [connected, reload]);
   // 朋友画像（播客记的，只有你看得到）：服务器有才显示
   const [people, setPeople] = useState(false);
   useEffect(() => { if (connected) podFeatures().then((f) => setPeople(f.people)).catch(() => {}); }, [connected]);
+
+  // 连接器：连着的应用（服务器老没有这个接口就用原来「连接」的计数）
+  const [apps, setApps] = useState<AppSummary[] | null>(null);
+  const loadApps = useCallback(() => {
+    if (!connected) return;
+    appsApi.list().then((r) => setApps(r.apps)).catch((e) => { if (noApps(e)) setApps(null); });
+  }, [connected]);
+
+  // 我的 claw：这台设备连过的几台；正在用的那台顺手更新名字，别的几台看一眼在不在
+  const [claws, setClaws] = useState<Claw[]>([]);
+  const [alive, setAlive] = useState<Record<string, 'ok' | 'auth' | 'down'>>({});
+  const loadClaws = useCallback(() => {
+    listClaws(appName).then(async (list) => {
+      setClaws(list);
+      const active = activeClawId(list);
+      if (connected && active) {
+        const c = list.find((x) => x.id === active);
+        if (c) {
+          await touchClaw(c.base, { name: appName, clawKind: claw.kind, clawName: claw.name });
+          setClaws(await listClaws(appName));
+          syncClaw({ base: c.base, name: appName, clawKind: claw.kind, clawName: claw.name }).catch(() => {});
+        }
+      }
+      for (const c of list) {
+        if (c.id === active) continue;
+        pingClaw(c).then((s) => setAlive((a) => ({ ...a, [c.id]: s }))).catch(() => {});
+      }
+    }).catch(() => {});
+  }, [appName, connected, claw.kind, claw.name]);
+
+  useFocusEffect(useCallback(() => { loadClaws(); loadApps(); }, [loadClaws, loadApps]));
+
+  const activeId = activeClawId(claws);
+  const web = Platform.OS === 'web';
+
+  const switchTo = (c: Claw) => {
+    Alert.alert(L(`换到「${c.name}」？`, `Switch to ${c.name}?`), L('这台设备改连它，对话、记忆都换成它那边的。', "This device will use that claw: chats and memory switch to its own."), [
+      { text: L('取消', 'Cancel'), style: 'cancel' },
+      {
+        text: L('换过去', 'Switch'), onPress: async () => {
+          try {
+            await switchToClaw(c.id);
+            refreshLive();
+            nav.reset({ index: 0, routes: [{ name: 'Tabs' }] });
+          } catch (e) { showError(L('没换成', "Couldn't switch"), e); }
+        },
+      },
+    ]);
+  };
+
+  const pick = <V extends string>(title: string, options: { value: V; label: string }[], value: V, onChange: (v: V) => void) => {
+    sheet.open({
+      title,
+      content: (close) => (
+        <Group style={{ marginHorizontal: 0 }}>
+          {options.map((o, i) => (
+            <Row key={o.value} title={o.label} first={i === 0} chevron={false} onPress={() => { onChange(o.value); close(); }}
+              right={o.value === value ? <Check size={20} color={t.cyan} /> : undefined} />
+          ))}
+        </Group>
+      ),
+    });
+  };
+  const looks = [{ value: 'system' as const, label: L('跟随系统', 'System') }, { value: 'light' as const, label: L('浅色', 'Light') }, { value: 'dark' as const, label: L('深色', 'Dark') }];
+  const langs: { value: LangPref; label: string }[] = [{ value: 'system', label: L('跟随系统', 'System') }, { value: 'zh', label: '中文' }, { value: 'en', label: 'English' }];
+  const version = Constants.expoConfig?.version ?? '';
+
+  const about = () => sheet.open({
+    title: L('关于', 'About'),
+    content: () => (
+      <View style={{ gap: space.sm }}>
+        <T v="body">{`${Constants.expoConfig?.name ?? 'OpenMousse'} ${version}`}</T>
+        <T v="callout" color={t.ink2}>{L('开源（AGPL-3.0）：github.com/openmousse/openmousse。你的对话、记忆和数据都在你自己的 claw 上。',
+          'Open source (AGPL-3.0): github.com/openmousse/openmousse. Your chats, memory and data live on your own claw.')}</T>
+      </View>
+    ),
+  });
+
+  const logout = () => {
+    Alert.alert(L('退出登录？', 'Sign out?'), L('只退出账号，这台设备连着的 claw 照常能用。', 'Only the account signs out; the claws on this device keep working.'), [
+      { text: L('取消', 'Cancel'), style: 'cancel' },
+      { text: L('退出', 'Sign out'), style: 'destructive', onPress: () => { signOut().then(() => nav.reset({ index: 0, routes: [{ name: 'Login' }] })).catch((e) => showError(L('没退出成', "Couldn't sign out"), e)); } },
+    ]);
+  };
+
+  const connectedApps = (apps ?? []).filter((a) => a.status !== 'error');
+  const appsNeedAuth = (apps ?? []).filter((a) => a.status === 'needs_auth').length;
+  const clawStatus = connected ? L('在线', 'Online') : booting ? L('正在连…', 'Connecting…') : authFailed ? L('令牌不对', 'Wrong token') : L('连不上', 'Unreachable');
+
   return (
     <Screen>
-      {/* 从侧栏底部进来（2026-09-27 起「我」不是 tab 了）：顶上一个返回 */}
-      {nav.canGoBack() ? <NavHeader title={L('我', 'Me')} onBack={() => nav.goBack()} /> : null}
-      <ScrollView contentContainerStyle={{ paddingTop: nav.canGoBack() ? space.lg : 0, paddingBottom: space.xxl }} refreshControl={<PullRefresh onRefresh={() => reload('profile', 'tree', 'memories', 'journal', 'activity', 'tasks', 'security', 'models', 'connectors')} />}>
-        {nav.canGoBack() ? null : <LargeHeader title={L('我', 'Me')} />}
-        <View style={{ paddingHorizontal: space.lg }}>
-          <Pressable onPress={() => nav.navigate('Avatar')} accessibilityRole="button" accessibilityLabel={L(`定制 ${agentName()} 的形象`, `Customize ${agentName()}'s look`)}>
-            <Card style={{ flexDirection: 'row', alignItems: 'center', gap: space.lg }}>
-              <LensAvatar size={64} config={avatar} />
-              <View style={{ flex: 1, gap: 4 }}>
-                <T v="title">{agentName()}</T>
-                <T v="callout" color={t.ink2}>{L('不是工具，是搭档。点这里换它的样子。', 'Not a tool, a partner. Tap to change how it looks.')}</T>
-                <View style={{ flexDirection: 'row' }}>{connected ? <Pill label={L('已连接服务器', 'Connected')} tone="good" /> : <Pill label={booting ? L('正在连接…', 'Connecting…') : authFailed ? L('令牌不对', 'Wrong token') : L('未连接服务器', 'Not connected')} tone="warn" />}</View>
+      <SettingsHeader title={L('设置', 'Settings')} onBack={nav.canGoBack() ? () => nav.goBack() : undefined} close />
+      <ScrollView contentContainerStyle={{ paddingBottom: space.xxl, paddingTop: 4 }}
+        refreshControl={<PullRefresh onRefresh={() => { loadClaws(); loadApps(); return reload('profile', 'tree', 'memories', 'journal', 'activity', 'tasks', 'security', 'models', 'connectors'); }} />}>
+
+        {acct.enabled ? (
+          <Group>
+            {acct.user ? (
+              <Pressable onPress={() => nav.navigate('Account')} accessibilityRole="button" accessibilityLabel={L(`账号：${acct.user.email}`, `Account: ${acct.user.email}`)}
+                style={({ pressed }) => ({ opacity: pressed ? 0.6 : 1 })}>
+                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 14, padding: 16, paddingLeft: 18 }}>
+                  <View style={{ width: 52, height: 52, borderRadius: 26, backgroundColor: t.surface2, alignItems: 'center', justifyContent: 'center' }}>
+                    <T v="headline" style={{ fontSize: 17 }}>{initials(acct.user)}</T>
+                  </View>
+                  <View style={{ flex: 1, minWidth: 0, gap: 3 }}>
+                    <T v="headline" numberOfLines={1} style={{ fontSize: 17 }}>{acct.user.name || acct.user.email.split('@')[0]}</T>
+                    <T v="callout" color={t.ink2} numberOfLines={1}>{acct.user.email}</T>
+                  </View>
+                  <Chevron />
+                </View>
+              </Pressable>
+            ) : (
+              <Row first icon={<User size={22} color={t.cyan} />} title={L(`登录${Constants.expoConfig?.name ?? ''}账号`, `Sign in to ${Constants.expoConfig?.name ?? 'your account'}`)} sub={L('用邮箱收一个验证码就行', 'Just a code sent to your email')}
+                onPress={() => nav.navigate('Login', { from: 'settings' })} />
+            )}
+          </Group>
+        ) : null}
+
+        <GroupLabel>{L('我的 claw', 'My claws')}</GroupLabel>
+        <Group>
+          {(web || !claws.length) ? (
+            <Row first icon={<Tile size={36} bg={t.cyanSoft}><Server size={20} color={t.cyan} /></Tile>} title={appName}
+              sub={`${claw.name} · ${clawStatus}`} right={<Dot tone={connected ? 'good' : 'warn'} />} onPress={() => nav.navigate(connected ? 'Claw' : 'Connect')} />
+          ) : claws.map((c, i) => {
+            const active = c.id === activeId;
+            const st = active ? (connected ? 'good' : 'warn') : alive[c.id] === 'ok' ? 'good' : alive[c.id] ? 'warn' : 'off';
+            const line = active ? clawStatus : alive[c.id] === 'ok' ? L('在线', 'Online') : alive[c.id] === 'auth' ? L('令牌不对', 'Wrong token') : alive[c.id] === 'down' ? L('连不上', 'Unreachable') : '…';
+            return (
+              <Row key={c.id} first={i === 0}
+                icon={<Tile size={36} bg={active ? t.cyanSoft : t.surface2}><Server size={20} color={active ? t.cyan : t.ink3} /></Tile>}
+                title={c.name} sub={`${c.clawName || claw.name}${L(' · ', ' · ')}${line}`}
+                right={active ? <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}><Dot tone={st} /><Check size={20} color={t.cyan} /></View> : <Dot tone={st} />}
+                chevron={active}
+                onPress={() => (active ? nav.navigate(connected ? 'Claw' : 'Connect') : switchTo(c))}
+                label={active ? L(`${c.name}，正在用，${line}`, `${c.name}, in use, ${line}`) : L(`${c.name}，${line}，点了换到这台`, `${c.name}, ${line}, tap to switch`)} />
+            );
+          })}
+          {web ? null : (
+            <Row icon={<Plus size={22} color={t.cyan} />} title={L('添加 claw', 'Add a claw')} accent onPress={() => nav.navigate('Connect', { add: true, at: Date.now() })} />
+          )}
+        </Group>
+        <GroupNote>{acct.enabled
+          ? L('对话、记忆和连接器的令牌都存在 claw 上，账号里没有。', 'Chats, memory and connector tokens live on your claws, not in your account.')
+          : L('对话、记忆和连接器的令牌都存在 claw 上。', 'Chats, memory and connector tokens live on your claws.')}</GroupNote>
+
+        <GroupLabel>{agentName()}</GroupLabel>
+        <Group>
+          <Row first icon={<Plug size={22} color={appsNeedAuth || conn?.warn ? t.warn : t.cyan} />} title={L('连接器', 'Connectors')} onPress={() => nav.navigate('Connectors')}
+            right={apps ? (
+              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+                <View style={{ flexDirection: 'row' }}>
+                  {connectedApps.slice(0, 3).map((a, i) => (
+                    <View key={a.id} style={{ marginLeft: i ? -6 : 0, borderRadius: 8, borderWidth: 2, borderColor: t.surface }}>
+                      <Tile size={22} mono={a.mono || a.name.slice(0, 1)} bg={a.bg} fg={a.fg} border={a.border} />
+                    </View>
+                  ))}
+                </View>
+                {connectedApps.length ? <T v="body" color={appsNeedAuth ? t.warn : t.ink2} style={{ fontSize: 16 }}>{String(connectedApps.length)}</T> : null}
               </View>
-            </Card>
-          </Pressable>
+            ) : undefined}
+            value={apps ? (connectedApps.length ? undefined : L('去连一个', 'Connect one')) : conn ? L(`${conn.ok} 个在用`, `${conn.ok} working`) : undefined}
+            tone={apps && !connectedApps.length ? 'accent' : undefined} />
+          <Row icon={<IdCard size={22} color={t.cyan} />} title={L('基础档案', 'Profile')} value={profile.length ? L(`${profile.length} 条`, `${profile.length}`) : undefined} onPress={() => nav.navigate('Identity')} />
+          <Row icon={<TreeDeciduous size={22} color={t.cyan} />} title={L('世界树', 'Memory tree')}
+            value={leaves ? (leaves.pending ? L(`${leaves.pending} 条等你确认`, `${leaves.pending} waiting`) : L(`${leaves.total} 片叶子`, `${leaves.total} leaves`)) : undefined}
+            tone={leaves?.pending ? 'accent' : undefined} onPress={() => nav.navigate('Tree')} />
+          <Row icon={<Brain size={22} color={t.cyan} />} title={L('记忆', 'Memory')} value={memories.length ? L(`${memories.length} 条`, `${memories.length}`) : undefined} onPress={() => nav.navigate('Memory')} />
+          <Row icon={<BookOpen size={22} color={t.cyan} />} title={L('日志', 'Journal')} value={journal.length ? L(`${journal.length} 条`, `${journal.length}`) : undefined} onPress={() => nav.navigate('Journal')} />
+          {people ? <Row icon={<User size={22} color={t.cyan} />} title={L('朋友画像', 'Friend notes')} onPress={() => nav.navigate('People')} /> : null}
+          <Row icon={<Palette size={22} color={t.cyan} />} title={L('形象', 'Look')} right={<LensAvatar size={24} config={avatar} />} onPress={() => nav.navigate('Avatar')} />
+          <Row icon={<Cpu size={22} color={expired.length ? t.warn : t.cyan} />} title={L('模型与用量', 'Models & usage')}
+            value={expired.length ? L('订阅登录过期了', 'Sign-in expired') : claw.kind !== 'openclaw' ? claw.name : undefined} tone={expired.length ? 'warn' : undefined}
+            onPress={() => nav.navigate('Models')} />
+        </Group>
 
-          <SectionLabel>{L(`${agentName()} 知道的`, `What ${agentName()} knows`)}</SectionLabel>
-          <Card style={{ paddingVertical: space.xs }}>
-            <ListRow icon={<IdCard size={20} color={t.cyan} />} title={L('基础档案', 'Profile')} sub={profile.length ? L(`${profile.length} 条，所有 agent 共用，可以直接改`, `${profile.length} items, shared by all agents, editable`) : L('所有 agent 共用', 'Shared by all agents')} onPress={() => nav.navigate('Identity')} />
-            <ListRow icon={<TreeDeciduous size={20} color={t.cyan} />} title={L('世界树', 'Memory tree')}
-              sub={leaves ? (leaves.pending ? L(`${leaves.total} 片叶子，${leaves.pending} 条等你确认`, `${leaves.total} leaves, ${leaves.pending} waiting for you`) : L(`${leaves.total} 片叶子，所有 AI 平台共用`, `${leaves.total} leaves, shared by all your AI apps`)) : L('所有 AI 平台共用的记忆', 'Memory shared by all your AI apps')}
-              onPress={() => nav.navigate('Tree')} />
-            <ListRow icon={<Brain size={20} color={t.cyan} />} title={L('记忆', 'Memory')} sub={memories.length ? L(`长期记忆 ${memories.length} 条，可以逐条忘记`, `${memories.length} long-term memories, forget any of them`) : L('长期记忆，可以逐条忘记', 'Long-term memory, forget any item')} onPress={() => nav.navigate('Memory')} />
-            <ListRow icon={<BookOpen size={20} color={t.cyan} />} title={L('日志', 'Journal')} sub={journal.length ? L(`${journal.length} 条感受、想法和决定`, `${journal.length} feelings, thoughts and decisions`) : L('感受、想法、决定，在对话里说就会记', 'Feelings, thoughts, decisions: say them in chat and they get logged')} onPress={() => nav.navigate('Journal')} last />
-          </Card>
+        <GroupLabel>{L('活动与安全', 'Activity & safety')}</GroupLabel>
+        <Group>
+          <Row first icon={<Activity size={22} color={t.cyan} />} title={L('活动记录', 'Activity')} onPress={() => nav.navigate('Activity')} />
+          {claw.caps.tasks ? <Row icon={<ClipboardList size={22} color={t.cyan} />} title={L('任务', 'Tasks')} value={running ? L(`${running} 个在跑`, `${running} running`) : undefined} tone="accent" onPress={() => nav.navigate('Tasks')} /> : null}
+          <Row icon={<ShieldCheck size={22} color={warn.length ? t.warn : t.cyan} />} title={L('安全', 'Security')}
+            value={security ? (warn.length ? L(`${warn.length} 项要注意`, `${warn.length} to check`) : L('都正常', 'All good')) : undefined} tone={warn.length ? 'warn' : 'good'}
+            onPress={() => nav.navigate('Security')} />
+          <Row icon={<ShareIcon size={22} color={t.cyan} />} title={L('分享的链接', 'Shared links')} onPress={() => nav.navigate('Shares')} />
+        </Group>
 
-          <SectionLabel>{L(`${agentName()} 做过的`, `What ${agentName()} did`)}</SectionLabel>
-          <Card style={{ paddingVertical: space.xs }}>
-            <ListRow icon={<Activity size={20} color={t.cyan} />} title={L('活动记录', 'Activity')} sub={activity[0] ? `${activity[0].time} · ${activity[0].text}` : L('每一次回复、定时任务和你的操作', 'Every reply, scheduled job and action you took')} onPress={() => nav.navigate('Activity')} />
-            {claw.caps.tasks ? <ListRow icon={<ClipboardList size={20} color={t.cyan} />} title={L('任务', 'Tasks')} sub={tasks.length ? L(`${tasks.length} 个子会话${running ? `，${running} 个在跑` : ''}，能看过程`, `${tasks.length} sub-sessions${running ? `, ${running} running` : ''}, steps included`) : L('派出去的子会话', 'Sub-sessions sent out')} onPress={() => nav.navigate('Tasks')} /> : null}
-            <ListRow icon={<ShieldCheck size={20} color={warn.length ? t.warn : t.cyan} />} title={L('安全', 'Security')} sub={security ? (warn.length ? L(`${warn.length} 项要注意：${warn.map((f) => f.title).join('、')}`, `${warn.length} to check: ${warn.map((f) => f.title).join(', ')}`) : L('都正常', 'All good')) : L('服务器上的实测状态', 'Live status from the server')} onPress={() => nav.navigate('Security')} last />
-          </Card>
+        <GroupLabel>{L('应用', 'App')}</GroupLabel>
+        <Group>
+          <Row first icon={<SunMoon size={22} color={t.cyan} />} title={L('外观', 'Appearance')} value={looks.find((o) => o.value === appearance)?.label}
+            onPress={() => pick(L('外观', 'Appearance'), looks, appearance, setAppearance)} />
+          <Row icon={<Globe size={22} color={t.cyan} />} title={L('语言', 'Language')} value={langs.find((o) => o.value === pref)?.label}
+            onPress={() => pick(L('语言', 'Language'), langs, pref, setPref)} />
+          <Row icon={<CalendarDays size={22} color={t.cyan} />} title={L('日程订阅', 'Calendar feed')} value={L('iPhone 日历', 'iPhone Calendar')} onPress={() => nav.navigate('ScheduleFeed')} />
+          <Row icon={<Info size={22} color={t.cyan} />} title={L('关于', 'About')} value={version} onPress={about} />
+        </Group>
 
-          <SectionLabel>{people ? L('朋友和分享', 'Friends and sharing') : L('分享', 'Sharing')}</SectionLabel>
-          <Card style={{ paddingVertical: space.xs }}>
-            {people ? <ListRow icon={<User size={20} color={t.cyan} />} title={L('朋友画像', 'Friend notes')} sub={L('和朋友一起录播客时记的，只有你看得到', 'Kept from podcasts you record together; only you see them')} onPress={() => nav.navigate('People')} /> : null}
-            <ListRow icon={<ShareIcon size={20} color={t.cyan} />} title={L('分享出去的', 'Shared')} sub={L('发出去的链接、看过几次，能随时收回', 'Links you sent, how often they were opened; withdraw any time')} onPress={() => nav.navigate('Shares')} last />
-          </Card>
-
-          <SectionLabel>{L('设置', 'Settings')}</SectionLabel>
-          <Card style={{ paddingVertical: space.xs }}>
-            <ListRow icon={<Server size={20} color={connected ? t.cyan : t.warn} />} title={L('服务器', 'Server')} sub={connected ? L(`已连接 · ${appName}`, `Connected · ${appName}`) : authFailed ? L('令牌不对，点这里改', 'Wrong token, tap to fix') : L('地址和接入令牌', 'Address and access token')} onPress={() => nav.navigate('Connect')} />
-            <ListRow icon={<Plug size={20} color={conn?.warn ? t.warn : t.cyan} />} title={L('连接', 'Connections')}
-              sub={conn ? [L(`${conn.ok} 个在用`, `${conn.ok} working`), conn.warn ? L(`${conn.warn} 个要注意`, `${conn.warn} need a look`) : ''].filter(Boolean).join(L('，', ', ')) : L(`${agentName()} 接着的各项服务，现在怎么样`, `What ${agentName()} is connected to, and how it's doing`)}
-              onPress={() => nav.navigate('Connectors')} />
-            <ListRow icon={<CalendarDays size={20} color={t.cyan} />} title={L('日程', 'Schedule')} sub={L('在 iPhone 日历里看（订阅链接）', 'See it in your iPhone calendar (subscription)')} onPress={() => nav.navigate('ScheduleFeed')} />
-            <ListRow icon={<Cpu size={20} color={expired.length ? t.warn : t.cyan} />} title={L('模型与计费', 'Models & billing')} sub={expired.length ? L(`${expired.map((p) => p.name).join('、')} 订阅登录已过期`, `Subscription login expired: ${expired.map((p) => p.name).join(', ')}`) : claw.kind !== 'openclaw' ? L(`由 ${claw.name} 回答`, `Answered by ${claw.name}`) : L('订阅、API、回退顺序', 'Subscriptions, API, fallback order')} onPress={() => nav.navigate('Models')} />
-            <ListRow icon={<Palette size={20} color={t.cyan} />} title={L('形象', 'Look')} sub={L('光环样式和颜色', 'Halo style and color')} onPress={() => nav.navigate('Avatar')} last />
-          </Card>
-
-          <SectionLabel>{L('外观', 'Appearance')}</SectionLabel>
-          <Segmented value={appearance} onChange={setAppearance} options={[{ value: 'system', label: L('跟随系统', 'System') }, { value: 'light', label: L('浅色', 'Light') }, { value: 'dark', label: L('深色', 'Dark') }]} />
-
-          <SectionLabel>{L('语言', 'Language')}</SectionLabel>
-          <Segmented<LangPref> value={pref} onChange={setPref} options={[{ value: 'system', label: L('跟随系统', 'System') }, { value: 'zh', label: '中文' }, { value: 'en', label: 'English' }]} />
-        </View>
+        {acct.enabled && acct.user ? (
+          <Group style={{ marginTop: 26 }}>
+            <Row first icon={<LogOut size={22} color={t.bad} />} title={L('退出登录', 'Sign out')} danger onPress={logout} />
+          </Group>
+        ) : null}
+        <T v="caption" color={t.ink3} style={{ textAlign: 'center', marginTop: 20, fontWeight: '400' }}>
+          {L(`${Constants.expoConfig?.name ?? 'OpenMousse'} ${version} · 开源（AGPL-3.0）`, `${Constants.expoConfig?.name ?? 'OpenMousse'} ${version} · Open source (AGPL-3.0)`)}
+        </T>
+        {getBase() && !connected && !booting ? (
+          <View style={{ marginTop: space.md, alignItems: 'center' }}>
+            <Pressable onPress={() => nav.navigate('Connect')} accessibilityRole="button"><T v="callout" color={t.cyan}>{L('连不上？检查地址和令牌 →', "Can't connect? Check the address and token →")}</T></Pressable>
+          </View>
+        ) : null}
       </ScrollView>
     </Screen>
   );
