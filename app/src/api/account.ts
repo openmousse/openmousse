@@ -1,6 +1,6 @@
-// OpenMousse 账号（2026-09-29；Leo 定：只用邮箱验证码登录，不接 Apple / Google）。
+// OpenMousse 账号（2026-09-29；只用邮箱验证码登录，不接 Apple / Google）。
 // 服务在 Supabase：app.local.*.json 写 "account": {"url": "https://<项目>.supabase.co", "anonKey": "…"}（app.config.js 放进 extra.account）。
-// 没写 = 没有账号这回事（自己搭的、Grava 这种自用的壳），打开就用。
+// 没写 = 没有账号这回事（自己搭的、只给自己用的壳），打开就用。
 // 账号里只放：邮箱、名字、你连过的 claw（名字、地址、种类、最近一次连上的时间；**不放令牌**）。对话、记忆、连接器的令牌都不上账号。
 // 登录：POST /auth/v1/otp 往邮箱发 6 位验证码 → POST /auth/v1/verify 换会话。refresh token 和用户信息存本机（钥匙串），
 // access token 只在内存里（一小时过期，快到了拿 refresh token 换）。claw 列表是 public.claws 表（行级权限：只能看写自己的），
@@ -20,7 +20,7 @@ export function accountConfig(): Cfg | null {
   return url && anonKey ? { url, anonKey } : null;
 }
 
-/** 这个壳有没有账号（OpenMousse 有；自己搭的、Grava 没有）。 */
+/** 这个壳有没有账号（OpenMousse 有；自己搭的、自用的壳没有）。 */
 export const accountsEnabled = () => accountConfig() !== null;
 
 export interface AccountUser { id: string; email: string; name?: string }
@@ -38,7 +38,7 @@ export function onAccountChange(fn: (u: AccountUser | null) => void): () => void
 const emit = () => { const u = session?.user ?? null; listeners.forEach((f) => f(u)); };
 export const currentAccount = (): AccountUser | null => session?.user ?? null;
 
-/** 头像上的字：名字有两个词取两个词的头一个字母（Leo Zhou → LZ），否则取名字或邮箱的第一个字（leo@… → L，周炫宇 → 周）。 */
+/** 头像上的字：名字有两个词取两个词的头一个字母（Alex Chen → AC），否则取名字或邮箱的第一个字（alex@… → A，陈小雨 → 陈）。 */
 export function initialsOf(u: AccountUser): string {
   const words = (u.name || '').trim().split(/\s+/).filter(Boolean);
   if (words.length > 1) return (words[0][0] + words[1][0]).toUpperCase();

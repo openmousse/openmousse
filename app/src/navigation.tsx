@@ -200,7 +200,7 @@ export function RootNavigator() {
   const t = useTheme();
   const { configLoaded, needsServer } = useStore();
   const base = t.mode === 'dark' ? DarkTheme : DefaultTheme;
-  // 有账号的壳（OpenMousse）第一次打开先登录，登录完再连 claw；没配账号的（自己搭的、Grava）打开就用
+  // 有账号的壳（OpenMousse）第一次打开先登录，登录完再连 claw；没配账号的（自己搭的、自用的）打开就用
   const [acct, setAcct] = useState<'loading' | 'in' | 'out'>(() => (accountsEnabled() ? 'loading' : 'in'));
   useEffect(() => {
     if (!accountsEnabled()) return;

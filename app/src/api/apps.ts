@@ -52,7 +52,7 @@ export interface AppDetail extends AppSummary { tools: AppTool[] }
 export interface AppsList { apps: AppSummary[]; catalog: CatalogEntry[]; agents: { id: string; name: string }[] }
 type Added = { app: AppSummary; authorizeUrl?: string | null; state?: string | null };
 
-/** 授权完跳回 app 的地址：<这个壳的 scheme>://oauth/callback（OpenMousse 是 openmousse，Grava 是 grava）。 */
+/** 授权完跳回 app 的地址：<这个壳的 scheme>://oauth/callback（OpenMousse 是 openmousse，自己起名的壳是它自己的 scheme）。 */
 export function redirectUri(): string {
   const s = Constants.expoConfig?.scheme;
   const scheme = (Array.isArray(s) ? s[0] : s) || 'openmousse';
