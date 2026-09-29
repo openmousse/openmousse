@@ -20,7 +20,7 @@ python3 run.py                   # 或按 openmousse-server.service.example 装�
 
 ## 认证
 
-`/api/*` 要 `Authorization: Bearer <令牌>`（也认 `X-API-Key`；`?token=` 只用于 GET 文件：`/api/files/…`、思考里的附件和收藏的原件、播客的原声，给带不了请求头的图片和网页版的 `<audio>` 用）。没凭证返回 401。两个免令牌的口子都默认关：`auth.tailscale_nodes`（Tailscale 设备名白名单，本机要装 tailscale）和 `auth.trust_loopback`（反向代理在本机时不能开）。网页版的静态文件公开。
+`/api/*` 要 `Authorization: Bearer <令牌>`（也认 `X-API-Key`；`?token=` 只用于 GET 文件：`/api/files/…`、思考里的附件和收藏的原件、播客的原声，给带不了请求头的图片和网页版的 `<audio>` 用）。没凭证返回 401。两个免令牌的口子都默认关：`auth.tailscale_nodes`（Tailscale 设备名白名单，本机要装 tailscale）和 `auth.trust_loopback`（反向代理在本机时不能开）。网页版的静态文件公开。`mcp`、`mcp-<agent id>` 令牌只能用在 `/mcp` 上（`/api` 回 403：只拿着它的 claw 不能替你点收件箱的卡、配对新设备），`sentinel` 只能用在 `/api/egress`；本机脚本（`*_ctl.py`、`safe_restart.py`、`check.sh`）用第一把不是这几种的令牌，和 `server.json` 里的顺序无关。
 
 ## 让手机连上
 

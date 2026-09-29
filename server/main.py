@@ -211,6 +211,9 @@ async def guard(request: Request, call_next):
             # Sentinel 代理的令牌只管出网判断：别的接口（对话、收件箱……）一律不给，免得它能替你点头
             if who == "token:sentinel" and not request.url.path.startswith("/api/egress/"):
                 return JSONResponse({"ok": False, "error": "this token is only for /api/egress"}, status_code=403)
+            # MCP 令牌（mcp、mcp-<agent id>）只给 /mcp：只拿着它的 claw（沙箱里的、云上的）不能经 /api 替你点头、配对新设备
+            if who == "token:mcp" or who.startswith("token:mcp-"):
+                return JSONResponse({"ok": False, "error": L("MCP 令牌只能用在 /mcp 上", "The MCP token only works on /mcp")}, status_code=403)
         resp = await call_next(request)
     finally:
         i18n.reset(lang_token)

@@ -34,9 +34,9 @@ The limits live in server.json under tasks (daily_limit, default 10; max_minutes
 def call(path: str) -> dict:
     url = f"http://{settings.host}:{settings.port}{path}"
     headers = {"Accept": "application/json", "Accept-Language": "zh-CN" if lang() == "zh" else "en"}
-    tokens = settings.tokens()
-    if tokens:  # 本机跑，用第一个令牌；没令牌时靠 Tailscale 白名单 / trust_loopback
-        headers["Authorization"] = f"Bearer {next(iter(tokens.values()))}"
+    token = settings.api_token()
+    if token:  # 本机跑，用第一把能走 /api 的令牌（mcp、sentinel 那几把不行）；没令牌时靠 Tailscale 白名单 / trust_loopback
+        headers["Authorization"] = f"Bearer {token}"
     try:
         with urllib.request.urlopen(urllib.request.Request(url, headers=headers), timeout=60) as r:  # noqa: S310 — 本机服务
             return json.loads(r.read().decode("utf8"))

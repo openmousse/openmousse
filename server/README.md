@@ -20,7 +20,7 @@ Every field of `server.json` is documented at the top of [`config.py`](config.py
 
 ## Auth
 
-`/api/*` requires `Authorization: Bearer <token>` (`X-API-Key` also works; `?token=` only on GET for files: `/api/files/…`, Think attachments and saved originals, podcast audio — for image views and the web build's `<audio>`, which can't send headers). No credentials → 401. Two token-free doors are off by default: `auth.tailscale_nodes` (a whitelist of Tailscale device names; needs tailscale on this machine) and `auth.trust_loopback` (never enable it when a reverse proxy runs on the same host). The web build's static files are public.
+`/api/*` requires `Authorization: Bearer <token>` (`X-API-Key` also works; `?token=` only on GET for files: `/api/files/…`, Think attachments and saved originals, podcast audio — for image views and the web build's `<audio>`, which can't send headers). No credentials → 401. Two token-free doors are off by default: `auth.tailscale_nodes` (a whitelist of Tailscale device names; needs tailscale on this machine) and `auth.trust_loopback` (never enable it when a reverse proxy runs on the same host). The web build's static files are public. The `mcp` and `mcp-<agent id>` tokens only work on `/mcp` (403 on `/api`, so a claw holding only that token can't approve its own inbox cards or pair devices), and `sentinel` only on `/api/egress`; local scripts (`*_ctl.py`, `safe_restart.py`, `check.sh`) use the first token that isn't one of those, whatever the order in `server.json`.
 
 ## Letting the phone connect
 
