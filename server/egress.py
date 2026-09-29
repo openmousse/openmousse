@@ -175,7 +175,7 @@ class CheckIn(BaseModel):
     port: int = 443
     path: str = "/"               # 带查询串（代理已截短）
     headers: dict[str, str] = {}  # 只有 content-type / sec-fetch-* / origin / referer 这几个
-    bodyType: str = "none"        # none / form / json / multipart / text / binary / streamed
+    bodyType: str = "none"        # none / form / json / multipart / text / binary / streamed / email（Gmail 发信，代理解开了 MIME）
     bodyLength: int = 0
     fields: list[Field] = []      # 表单 / JSON 平铺出来的字段（代理已截短）
     text: str = ""                # 正文开头（文字类）
@@ -236,8 +236,15 @@ def errand_task() -> str:
     return re.sub(r"\s+", " ", text).strip()[:400]
 
 
+def field_of(req: CheckIn, name: str) -> str:
+    return next((f.value for f in req.fields if f.name.lower() == name.lower()), "")
+
+
 def verb_of(req: CheckIn) -> str:
     host = req.host
+    if req.bodyType == "email":
+        to = field_of(req, "To") or L("（没写收件人）", "(no recipient)")
+        return L(f"发一封邮件给 {to[:60]}", f"send an email to {to[:60]}")
     if req.secrets:
         return L(f"用你的凭证访问 {host}", f"use your credentials at {host}")
     if req.method in READ:
@@ -322,6 +329,20 @@ def card_of(req: CheckIn, reason: str, private: list[str], task: str) -> dict:
     host = req.host
     title = L(f"代办要{verb_of(req)}", f"Errand wants to {verb_of(req)}")
     why = (L(f"在办：{task[:60]}", f"Working on: {task[:60]}") if task else L("代办在办的事", "An errand")) + (f"\n{reason}" if reason else "")
+    if req.bodyType == "email":  # 一封信：会改什么 = 发给谁、主题、附件；细节 = 整封信
+        changes = [L("收件人：", "To: ") + (field_of(req, "To") or "-")[:80]]
+        for k, zh in (("Cc", "抄送："), ("Bcc", "密送：")):
+            if field_of(req, k):
+                changes.append(L(zh, f"{k}: ") + field_of(req, k)[:80])
+        changes.append(L("主题：", "Subject: ") + (field_of(req, "Subject") or L("（没有主题）", "(no subject)"))[:80])
+        if field_of(req, "Attachments"):
+            changes.append(L("附件：", "Attachments: ") + field_of(req, "Attachments")[:80])
+        lines = [f"| {f.name} | {f.value[:200].replace('|', '/')} |" for f in req.fields]
+        body = "\n".join("> " + ln for ln in (req.text or L("（没有正文）", "(no body)")).splitlines()[:60])
+        detail = "\n".join([L("| 信头 | 内容 |", "| Header | Value |"), "|---|---|", *lines, "", body, "",
+                             L("放行 = 这封信原样发出去（从 Grava 的邮箱）。改一下：写上怎么改，代办改好会再交一封给你看。",
+                               "Let it through = this exact email goes out (from the Grava mailbox). Revise: say what to change and the errand brings a new one.")])
+        return {"title": title, "why": why, "changes": changes[:4], "detail": detail}
     changes = [f"{req.method} {host}{req.path.split('?', 1)[0][:60]}"]
     names = [f.name for f in req.fields if f.name][:8]
     if names:
@@ -406,6 +427,8 @@ async def decide(req: CheckIn) -> dict:
         return {"decision": "allow", "reason": ""}
     # 写
     private = private_hits(req, include_body=True)
+    if req.bodyType == "email":
+        return await make_hold(req, L("每封信都要你看过才发", "Every email waits for you to read it"), private)
     if req.secrets:
         return await make_hold(req, L("要用你的凭证", "It uses your credentials"), private)
     if req.headers.get("sec-fetch-mode") == "navigate":

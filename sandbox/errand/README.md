@@ -52,6 +52,8 @@ python3 errand.py secret list
 python3 errand.py secret rm BOOKING_PASSWORD
 ```
 
+Short-lived tokens (Gmail sending, say) use OAuth: `errand.py oauth start GMAIL_SEND --host gmail.googleapis.com --client-file <desktop OAuth client JSON> --login-hint <address>` prints the consent address; after you allow, the browser stops on a `127.0.0.1` page that won't load: give its full address to `errand.py oauth finish '<address>'`. The proxy then refreshes the access token on its own. Send requests are decoded, so the card shows recipients, subject and body, and every email waits for you.
+
 The errand writes `MOUSSE_SECRET_BOOKING_PASSWORD` into its request; Sentinel swaps in the real value only for `www.example.com` (anywhere else it's blocked) and swaps it back if the site echoes it. Writes carrying credentials always wait for your OK. The "Credentials you can use" section of the errand's AGENTS.md lists names and hosts automatically.
 
 ## Check, watch, roll back

@@ -52,6 +52,8 @@ python3 errand.py secret list
 python3 errand.py secret rm BOOKING_PASSWORD
 ```
 
+会过期的令牌（比如 Gmail 发信）用 OAuth：`errand.py oauth start GMAIL_SEND --host gmail.googleapis.com --client-file <桌面应用的 OAuth 客户端 JSON> --login-hint <邮箱>` 打出授权地址，浏览器里同意以后最后停在一个打不开的 `127.0.0.1` 页面，把地址整条交给 `errand.py oauth finish '<地址>'`。之后代理出门时自己刷新访问令牌。发信请求会被解开，卡片上是收件人、主题、正文，每一封都要你放行。
+
 代办在请求里写 `MOUSSE_SECRET_BOOKING_PASSWORD`，Sentinel 只在发往 `www.example.com` 时换成真值（发往别处直接挡）；对方把真值原样回显的话，回来时换回占位符。带凭证的写请求一律扣下等你点头。代办的 AGENTS.md 里「能用的凭证」一节会自动列出名字和网站。
 
 ## 查、看、回滚

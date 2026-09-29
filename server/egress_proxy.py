@@ -3,7 +3,9 @@
 跑法（errand.py 写好的 user 服务 openmousse-sentinel）：sentinel_run.py 把这里的插件直接挂进 mitmproxy（别用 mitmdump -s：
   脚本一变它就重新加载，加载失败会不带规则接着当普通代理）。钩子里出任何错都按挡下处理（fail closed）。
   环境变量 MOUSSE_SENTINEL_DIR=<data_dir>/sentinel：里面的 proxy.json（{"server": 服务端地址, "token": sentinel 令牌, "hold_wait": 秒}，600）
-  和 secrets.json（{"名字": {"value": 真值, "hosts": ["api.example.com"]}}，600，只有这个进程读）。
+  和 secrets.json（600，只有这个进程读）：{"名字": {"value": 真值, "hosts": ["api.example.com"]}}，或者会过期的 OAuth 令牌
+  {"名字": {"oauth": {"token_uri", "client_id", "client_secret", "refresh_token"}, "hosts": [...]}}：出门前按需刷新访问令牌
+  （留 2 分钟余量），刷不到就挡。Gmail 发信（POST gmail.googleapis.com …/messages/send、drafts）解开 MIME，卡片上是收件人、主题、正文。
 
 这里自己挡的（不问服务端）：
 - 目标是私网 / 本机 / 链路本地 / 云元数据 / 保留地址：连接前自己解析域名、查每个地址，再把连接钉在查过的那个 IP 上（防 DNS 换绑）。
@@ -20,6 +22,9 @@
 from __future__ import annotations
 
 import asyncio
+import base64
+import email
+import email.policy
 import hashlib
 import ipaddress
 import json
@@ -31,7 +36,7 @@ import time
 import urllib.error
 import urllib.request
 from pathlib import Path
-from urllib.parse import parse_qsl
+from urllib.parse import parse_qsl, urlencode
 
 from mitmproxy import http
 
@@ -106,6 +111,7 @@ class Sentinel:
         self.secrets_mtime = 0.0
         self.own = own_ips()
         self.own_at = time.monotonic()
+        self.tokens: dict[str, tuple[str, float]] = {}  # OAuth 类凭证：名字 → (访问令牌, 过期时间)
 
     # —— 密钥 ——
     def load_secrets(self) -> dict:
@@ -117,7 +123,9 @@ class Sentinel:
             return self.secrets
         if m != self.secrets_mtime:
             raw = load_json("secrets.json")
-            self.secrets = {k: v for k, v in raw.items() if isinstance(v, dict) and isinstance(v.get("value"), str) and v["value"]}
+            self.secrets = {k: v for k, v in raw.items() if isinstance(v, dict) and (
+                (isinstance(v.get("value"), str) and v["value"])
+                or (isinstance(v.get("oauth"), dict) and v["oauth"].get("refresh_token") and v["oauth"].get("client_id")))}
             self.secrets_mtime = m
         return self.secrets
 
@@ -125,6 +133,36 @@ class Sentinel:
         s = self.load_secrets().get(name)
         hosts = [str(h).lower() for h in (s or {}).get("hosts") or []]
         return bool(s) and host in hosts  # 精确匹配，不认后缀
+
+    def secret_value(self, name: str) -> str | None:
+        """占位符的真值：固定值直接给；OAuth 的按需刷新访问令牌（在线程里调，会连 token_uri）。拿不到 → None（调用方挡下）。"""
+        s = self.load_secrets().get(name)
+        if not s:
+            return None
+        if s.get("value"):
+            return s["value"]
+        o = s["oauth"]
+        tok, exp = self.tokens.get(name, ("", 0.0))
+        if tok and exp - time.time() > 120:
+            return tok
+        data = urlencode({"client_id": o["client_id"], "client_secret": o.get("client_secret") or "",
+                          "refresh_token": o["refresh_token"], "grant_type": "refresh_token"}).encode()
+        try:
+            with urllib.request.urlopen(o.get("token_uri") or "https://oauth2.googleapis.com/token", data=data, timeout=20) as r:  # noqa: S310
+                j = json.loads(r.read().decode("utf8"))
+        except Exception as e:  # noqa: BLE001
+            log.warning("sentinel: refreshing %s failed: %s", name, type(e).__name__)
+            return None
+        tok = j.get("access_token") or ""
+        if not tok:
+            return None
+        self.tokens[name] = (tok, time.time() + float(j.get("expires_in") or 3600))
+        return tok
+
+    def known_values(self) -> list[tuple[str, str]]:
+        """回来的内容里要换回占位符的：固定值 + 发出去过的访问令牌。"""
+        out = [(n, s["value"]) for n, s in self.load_secrets().items() if s.get("value")]
+        return out + [(n, t) for n, (t, _) in self.tokens.items() if t]
 
     # —— 连接：只许公网地址 ——
     async def server_connect(self, data) -> None:
@@ -160,6 +198,9 @@ class Sentinel:
 
     # —— 请求 ——
     def summarize(self, req: http.Request) -> dict:
+        mail = gmail_preview(req)
+        if mail:
+            return mail
         ctype = req.headers.get("content-type", "").lower()
         raw = req.raw_content
         body_type, fields, text = "none", [], ""
@@ -245,7 +286,11 @@ class Sentinel:
             return reply(flow, 403, out.get("kind") or "denied", out.get("reason") or "Sentinel blocked this request.",
                          **{k: out[k] for k in ("inbox", "note") if out.get(k)})
         if names:
-            self.substitute(req, names)
+            values = {n: await asyncio.to_thread(self.secret_value, n) for n in names}
+            missing = [n for n, v in values.items() if not v]
+            if missing:
+                return reply(flow, 403, "denied", f"Sentinel couldn't get a working value for {', '.join(missing)} right now.", secrets=missing)
+            self.substitute(req, values)
 
     async def wait(self, flow: http.HTTPFlow, out: dict) -> tuple[str, dict]:
         hid, iid = out.get("hold"), out.get("inbox")
@@ -267,10 +312,9 @@ class Sentinel:
         return "held", {"kind": "held", "inbox": iid,
                         "reason": "Held for the user's OK in the app. Once they let it through, send the exact same request again within 30 minutes."}
 
-    def substitute(self, req: http.Request, names: list[str]) -> None:
-        sec = self.load_secrets()
+    def substitute(self, req: http.Request, values: dict[str, str]) -> None:
         def sub(b: bytes) -> bytes:
-            return PLACEHOLDER.sub(lambda m: sec[m.group(1).decode()]["value"].encode() if m.group(1).decode() in sec else m.group(0), b)
+            return PLACEHOLDER.sub(lambda m: values[m.group(1).decode()].encode() if m.group(1).decode() in values else m.group(0), b)
         req.path = sub(req.path.encode()).decode()  # 只动路径和查询串，不动主机
         for k in list(req.headers.keys()):
             vals = req.headers.get_all(k)
@@ -299,29 +343,72 @@ class Sentinel:
             flow.response = http.Response.make(502, b"Sentinel couldn't check this response.", {"X-Sentinel": "denied"})
 
     def _response(self, flow: http.HTTPFlow) -> None:
-        sec = self.load_secrets()
-        if not sec or not flow.response or flow.response.headers.get("X-Sentinel"):
+        known = self.known_values()
+        if not known or not flow.response or flow.response.headers.get("X-Sentinel"):
             return
         resp = flow.response
         for k in list(resp.headers.keys()):
             vals = resp.headers.get_all(k)
             new = []
             for v in vals:
-                for n, s in sec.items():
-                    if s["value"] and s["value"] in v:
-                        v = v.replace(s["value"], f"MOUSSE_SECRET_{n}")
+                for n, val in known:
+                    if val in v:
+                        v = v.replace(val, f"MOUSSE_SECRET_{n}")
                 new.append(v)
             if new != vals:
                 resp.headers.set_all(k, new)
         if resp.raw_content and len(resp.raw_content) <= 8 * 1024 * 1024 and texty(resp.headers.get("content-type", "")):
             body = resp.content or b""
             changed = body
-            for n, s in sec.items():
-                val = s["value"].encode()
-                if val and val in changed:
-                    changed = changed.replace(val, f"MOUSSE_SECRET_{n}".encode())
+            for n, val in known:
+                if val.encode() in changed:
+                    changed = changed.replace(val.encode(), f"MOUSSE_SECRET_{n}".encode())
             if changed is not body:
                 resp.content = changed
+
+
+GMAIL_WRITE = re.compile(r"^/(upload/)?gmail/v1/users/[^/]+/(messages|messages/send|drafts|drafts/send)(\?|$)")
+
+
+def gmail_preview(req: http.Request) -> dict | None:
+    """Gmail 的发信 / 草稿：信是 base64url 编码的 MIME，解开给你看（发件人、收件人、抄送、密送、主题、附件、正文）。不是就 None。"""
+    if (req.host or "").lower() != "gmail.googleapis.com" or req.method.upper() != "POST" or not GMAIL_WRITE.match(req.path or ""):
+        return None
+    ctype = req.headers.get("content-type", "").lower()
+    raw = req.raw_content or b""
+    mime = None
+    try:
+        if "json" in ctype:
+            j = json.loads(raw.decode("utf8") or "{}")
+            r = j.get("raw") or ((j.get("message") or {}).get("raw") if isinstance(j.get("message"), dict) else None)
+            if isinstance(r, str) and r:
+                mime = base64.urlsafe_b64decode(r + "=" * (-len(r) % 4))
+        elif "message/rfc822" in ctype:
+            mime = raw
+        elif "multipart/related" in ctype:  # 上传接口：JSON 元数据 + message/rfc822 一段
+            i = raw.lower().find(b"content-type: message/rfc822")
+            if i >= 0:
+                j = raw.find(b"\r\n\r\n", i)
+                mime = raw[j + 4:] if j >= 0 else None
+    except Exception:  # noqa: BLE001 — 解不开：按普通 JSON 走，卡片上照样有原文字段
+        mime = None
+    if not mime:
+        return None
+    msg = email.message_from_bytes(mime, policy=email.policy.default)
+    body = msg.get_body(preferencelist=("plain", "html"))
+    text = ""
+    if body is not None:
+        try:
+            text = body.get_content()
+        except Exception:  # noqa: BLE001
+            text = ""
+        if body.get_content_type() == "text/html":
+            text = re.sub(r"<[^>]+>", " ", text)
+    fields = [{"name": k, "value": str(msg.get(k) or "")[:MAX_VALUE]} for k in ("From", "To", "Cc", "Bcc", "Subject") if msg.get(k)]
+    atts = [a.get_filename() or a.get_content_type() for a in msg.iter_attachments()]
+    if atts:
+        fields.append({"name": "Attachments", "value": ", ".join(atts)[:MAX_VALUE]})
+    return {"bodyType": "email", "bodyLength": len(mime), "fields": fields, "text": re.sub(r"\n{3,}", "\n\n", text).strip()[:MAX_TEXT]}
 
 
 def flatten(v, prefix: str = "") -> list[dict]:

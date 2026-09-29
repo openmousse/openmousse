@@ -4,6 +4,8 @@
   python3 errand.py status           每一样查一遍（✓ / ✗ + 怎么修），--json 给程序用
   python3 errand.py secret set <名字> --host api.example.com [--host …]   真值从标准输入读（不回显、不进命令行）
   python3 errand.py secret list | rm <名字>
+  python3 errand.py oauth start <名字> --host gmail.googleapis.com --scope <scope> --client-file <OAuth 客户端 JSON> [--login-hint 邮箱]
+  python3 errand.py oauth finish '<浏览器最后停在的地址>'     会过期的令牌（比如 Gmail 发信）：出门时代理自己刷新
   python3 errand.py remove           去掉 OpenClaw 里的 errand 和路由（工作区移到 archive/，网络和代理留着，见 sandbox/errand/README.md）
 
 装好以后的样子：
@@ -19,7 +21,9 @@
 from __future__ import annotations
 
 import argparse
+import base64
 import getpass
+import hashlib
 import json
 import os
 import secrets as pysecrets
@@ -27,6 +31,8 @@ import shutil
 import socket
 import subprocess
 import sys
+import urllib.parse
+import urllib.request
 import uuid
 from datetime import datetime
 from pathlib import Path
@@ -101,6 +107,26 @@ def agents_md(name: str) -> str:
 
 （还没有。）
 
+## 发邮件
+
+有 `MOUSSE_SECRET_GMAIL_SEND` 时（见上一节），用它绑定的邮箱发信。**每一封都会被 Sentinel 扣下**，{who} 在卡片上看到收件人、主题、正文，点了才发：
+
+```python
+import base64, requests
+from email.message import EmailMessage
+m = EmailMessage()
+m["To"] = "someone@example.com"
+m["Subject"] = "主题"
+m.set_content("正文")
+raw = base64.urlsafe_b64encode(m.as_bytes()).decode()
+r = requests.post("https://gmail.googleapis.com/gmail/v1/users/me/messages/send",
+                  headers={{"Authorization": "Bearer MOUSSE_SECRET_GMAIL_SEND"}}, json={{"raw": raw}}, timeout=700)
+print(r.status_code, r.text[:300])
+```
+
+- 不写 From（就是那个邮箱）。发之前先在回复里把收件人、主题、正文给 {who} 看一眼。
+- 这个凭证只能发信，读不了收件箱。回 403 `rejected` 就照 note 改了重交（会是新的一张卡）。
+
 ## 怎么办事
 
 1. 先说清楚要办成什么样（一两句），拿不准的先问 {who}，别猜。
@@ -136,6 +162,27 @@ You run errands outside for {who}: research, compare prices, read pages, fill in
 ## Credentials you can use
 
 (None yet.)
+
+## Sending email
+
+With `MOUSSE_SECRET_GMAIL_SEND` (see above) you can send from the mailbox it's bound to. **Every email is held by Sentinel**; {who} sees the
+recipients, subject and body on a card and it goes out only when they tap it:
+
+```python
+import base64, requests
+from email.message import EmailMessage
+m = EmailMessage()
+m["To"] = "someone@example.com"
+m["Subject"] = "Subject"
+m.set_content("Body")
+raw = base64.urlsafe_b64encode(m.as_bytes()).decode()
+r = requests.post("https://gmail.googleapis.com/gmail/v1/users/me/messages/send",
+                  headers={{"Authorization": "Bearer MOUSSE_SECRET_GMAIL_SEND"}}, json={{"raw": raw}}, timeout=700)
+print(r.status_code, r.text[:300])
+```
+
+- Leave From out (it's that mailbox). Show {who} the recipients, subject and body in your reply before sending.
+- This credential can only send; it can't read the inbox. A 403 `rejected` means change it as the note says and send again (a new card).
 
 ## How to run an errand
 
@@ -478,6 +525,7 @@ def update_agents_md(v: dict) -> None:
         return
     text = p.read_text(encoding="utf8")
     lines = [f"- `MOUSSE_SECRET_{n}` → {', '.join(s.get('hosts') or [])}" + (f"（{s['note']}）" if s.get("note") else "")
+             + (L("（会过期的令牌，代理自己刷新）", " (short-lived token, refreshed by the proxy)") if s.get("oauth") else "")
              for n, s in sorted(v.items())] or [L("（还没有。）", "(None yet.)")]
     for head in ("## 能用的凭证", "## Credentials you can use"):
         if head in text:
@@ -486,6 +534,83 @@ def update_agents_md(v: dict) -> None:
             text = before + head + "\n\n" + "\n".join(lines) + "\n" + ("\n## " + after[1] if len(after) > 1 else "")
             p.write_text(text, encoding="utf8")
             return
+
+
+# —— 会过期的令牌（OAuth，带刷新令牌）：比如 Gmail 发信 ————————————————————————————————
+
+REDIRECT = "http://127.0.0.1:53682/"   # 桌面应用类 OAuth 客户端认任意本机回跳；浏览器最后会停在这个打不开的地址上，把它整条贴回来
+
+
+def pending_path() -> Path:
+    return sentinel_dir() / "oauth-pending.json"
+
+
+def load_client(path: str) -> dict:
+    c = json.loads(Path(path).expanduser().read_text())
+    c = c.get("installed") or c.get("web") or c
+    if not c.get("client_id"):
+        raise SystemExit(L("客户端文件里没有 client_id", "No client_id in the client file"))
+    return {"client_id": c["client_id"], "client_secret": c.get("client_secret") or "",
+            "auth_uri": c.get("auth_uri") or "https://accounts.google.com/o/oauth2/v2/auth",
+            "token_uri": c.get("token_uri") or "https://oauth2.googleapis.com/token"}
+
+
+def oauth_start(name: str, hosts: list[str], scope: str, client_file: str, hint: str, note: str) -> int:
+    c = load_client(client_file)
+    verifier = pysecrets.token_urlsafe(64)[:96]
+    challenge = base64.urlsafe_b64encode(hashlib.sha256(verifier.encode()).digest()).decode().rstrip("=")
+    state = pysecrets.token_urlsafe(16)
+    q = {"client_id": c["client_id"], "redirect_uri": REDIRECT, "response_type": "code", "scope": scope, "access_type": "offline",
+         "prompt": "consent", "state": state, "code_challenge": challenge, "code_challenge_method": "S256"}
+    if hint:
+        q["login_hint"] = hint
+    p = pending_path()
+    p.parent.mkdir(parents=True, exist_ok=True)
+    p.write_text(json.dumps({"name": name, "hosts": hosts, "scope": scope, "note": note, "client": c, "verifier": verifier, "state": state,
+                             "created": datetime.now().isoformat(timespec="seconds")}))
+    os.chmod(p, 0o600)
+    print(c["auth_uri"] + "?" + urllib.parse.urlencode(q))
+    print(L("在浏览器里打开上面的地址、登录、同意；最后停在一个打不开的 127.0.0.1 页面，把地址栏整条贴给 oauth finish。",
+            "Open the address above, sign in and allow; you end up on a 127.0.0.1 page that won't load: paste its full address to oauth finish."))
+    return 0
+
+
+def oauth_finish(url: str) -> int:
+    p = pending_path()
+    try:
+        pend = json.loads(p.read_text())
+    except (OSError, ValueError):
+        print(L("没有进行中的授权：先跑 oauth start", "No authorisation in progress: run oauth start first"))
+        return 2
+    q = dict(urllib.parse.parse_qsl(urllib.parse.urlsplit(url.strip()).query))
+    if q.get("error"):
+        print(L(f"授权没成：{q['error']}", f"Authorisation failed: {q['error']}"))
+        return 1
+    if q.get("state") != pend["state"] or not q.get("code"):
+        print(L("地址不对（state 对不上或没有 code）：要贴的是这一次 oauth start 之后浏览器停下的那个地址",
+                "Wrong address (state mismatch or no code): paste the one the browser stopped on after this oauth start"))
+        return 1
+    c = pend["client"]
+    data = urllib.parse.urlencode({"grant_type": "authorization_code", "code": q["code"], "redirect_uri": REDIRECT, "client_id": c["client_id"],
+                                   "client_secret": c["client_secret"], "code_verifier": pend["verifier"]}).encode()
+    try:
+        with urllib.request.urlopen(c["token_uri"], data=data, timeout=30) as r:  # noqa: S310
+            j = json.loads(r.read().decode())
+    except urllib.error.HTTPError as e:
+        print(L(f"换令牌失败：HTTP {e.code} {e.read()[:200]!r}", f"Token exchange failed: HTTP {e.code} {e.read()[:200]!r}"))
+        return 1
+    if not j.get("refresh_token"):
+        print(L("没拿到刷新令牌（要 access_type=offline + prompt=consent）", "No refresh token came back (needs access_type=offline + prompt=consent)"))
+        return 1
+    v = load_secrets()
+    v[pend["name"]] = {"oauth": {"token_uri": c["token_uri"], "client_id": c["client_id"], "client_secret": c["client_secret"],
+                                 "refresh_token": j["refresh_token"], "scope": j.get("scope") or pend["scope"]},
+                       "hosts": pend["hosts"], "note": pend.get("note") or "", "updated": datetime.now().isoformat(timespec="seconds")}
+    save_secrets(v)
+    p.unlink(missing_ok=True)
+    print(L(f"好了：MOUSSE_SECRET_{pend['name']} 只在发往 {', '.join(pend['hosts'])} 时换成现刷的访问令牌（权限：{j.get('scope') or pend['scope']}）",
+            f"Done: MOUSSE_SECRET_{pend['name']} becomes a fresh access token only for {', '.join(pend['hosts'])} (scope: {j.get('scope') or pend['scope']})"))
+    return 0
 
 
 def main() -> int:
@@ -500,7 +625,24 @@ def main() -> int:
     sc.add_argument("name", nargs="?")
     sc.add_argument("--host", action="append", default=[])
     sc.add_argument("--note", default="")
+    oa = sub.add_parser("oauth")
+    oa.add_argument("action", choices=("start", "finish"))
+    oa.add_argument("arg", help=L("start：名字；finish：浏览器最后停在的地址", "start: the name; finish: the address the browser stopped on"))
+    oa.add_argument("--host", action="append", default=[])
+    oa.add_argument("--scope", default="https://www.googleapis.com/auth/gmail.send")
+    oa.add_argument("--client-file", default="")
+    oa.add_argument("--login-hint", default="")
+    oa.add_argument("--note", default="")
     a = ap.parse_args()
+    if a.cmd == "oauth":
+        if a.action == "finish":
+            return oauth_finish(a.arg)
+        name = a.arg.strip().upper()
+        hosts = sorted({h.strip().lower() for h in a.host if h.strip()})
+        if not name.replace("_", "").isalnum() or not name[0].isalpha() or not hosts or not a.client_file:
+            print(L("要：名字（大写）、至少一个 --host、--client-file", "Need: a NAME (upper case), at least one --host, and --client-file"))
+            return 2
+        return oauth_start(name, hosts, a.scope, a.client_file, a.login_hint.strip(), a.note.strip())
     if a.cmd == "setup":
         return setup()
     if a.cmd == "status":
