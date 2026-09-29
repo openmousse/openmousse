@@ -20,7 +20,7 @@ import { HistoryDayScreen, HistoryScreen } from './screens/HistoryScreen';
 import { ConnectScreen } from './screens/ConnectScreen';
 import { ClawScreen } from './screens/ClawScreen';
 import { AccountScreen, LoginScreen, loginSkipped } from './screens/AccountScreens';
-import { AppDetailScreen, AppGalleryScreen, CustomAppScreen } from './screens/AppsScreens';
+import { AppDetailScreen, AppGalleryScreen, CustomAppScreen, StarterScreen } from './screens/AppsScreens';
 import { loadServerConfig, parsePairing } from './api/base';
 import { accountsEnabled, loadAccount } from './api/account';
 import { appsApi, parseOAuthCallback } from './api/apps';
@@ -226,6 +226,7 @@ export function RootNavigator() {
         <Stack.Screen name="AppGallery" component={AppGalleryScreen} />
         <Stack.Screen name="AppDetail" component={AppDetailScreen} />
         <Stack.Screen name="CustomApp" component={CustomAppScreen} />
+        <Stack.Screen name="Starter" component={StarterScreen} options={{ gestureEnabled: false }} />
         <Stack.Screen name="Group" component={GroupScreen} />
         <Stack.Screen name="History" component={HistoryScreen} />
         <Stack.Screen name="BoardHistory" component={BoardHistoryScreen} />

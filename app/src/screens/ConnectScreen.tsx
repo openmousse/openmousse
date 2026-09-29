@@ -21,6 +21,7 @@ export function ConnectScreen() {
   const route = useRoute<any>();
   // 设置 → 我的 claw → 添加 claw：空白的表，连上以后这台设备就改用新的这台（旧的还在「我的 claw」里，点一下换回去）
   const adding = !!route.params?.add;
+  const firstTime = needsServer;
   const [base, setBase] = useState(adding ? '' : getBase() || defaultBase());
   const [token, setToken] = useState(adding ? '' : getToken());
   const [busy, setBusy] = useState(false);
@@ -43,7 +44,8 @@ export function ConnectScreen() {
     syncClaw({ base: getBase(), name: appName }).catch(() => {});
     refreshLive();
     setBusy(false);
-    nav.reset({ index: 0, routes: [{ name: 'Tabs' }] });
+    // 第一次连上（之前一台都没有）：先到「接上常用的」，服务器没有连接器的话那一页自己直接进去
+    nav.reset({ index: 0, routes: [{ name: firstTime ? 'Starter' : 'Tabs' }] });
   };
 
   const pair = async () => {

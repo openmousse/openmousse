@@ -1,7 +1,7 @@
 // 连接器的几页（2026-09-29）：添加（目录，照 Manus 的「插件」页：能帮你做的 + 分类）、一个连接器的详情（工具权限、哪些 Agent 能用、
 // 重新授权、断开）、自定义（填一个 MCP 地址）。OAuth 的连接：点「连接」→ 服务器给授权页地址 → 跳浏览器 → 授权完跳回
 // <scheme>://oauth/callback（navigation.tsx 的 finishOAuth 接住，交给服务器换令牌，再打开这里的详情页）。
-import React, { useCallback, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { ActivityIndicator, Alert, Linking, Pressable, ScrollView, StyleSheet, Switch, TextInput, View } from 'react-native';
 import { useFocusEffect, useNavigation, useRoute } from '@react-navigation/native';
 import { ArrowUpRight, Check, Lock, Plus, RefreshCw, Search } from '../components/icons';
@@ -358,6 +358,56 @@ export function CustomAppScreen() {
         <Pressable onPress={busy ? undefined : add} accessibilityRole="button"
           style={({ pressed }) => [styles.primary, { backgroundColor: t.cyan, opacity: pressed || busy ? 0.7 : 1 }]}>
           {busy ? <ActivityIndicator color="#FFFFFF" /> : <T v="headline" color="#FFFFFF">{auth === 'oauth' ? L('添加并授权', 'Add and sign in') : L('添加', 'Add')}</T>}
+        </Pressable>
+      </ScrollView>
+    </Screen>
+  );
+}
+
+// —— 第一次连上 claw 以后：接上常用的（设计稿第 3 步） ——————————————————————————
+
+/** 连接页第一次连上以后来这里：目录里的头几个，点「连接」就去授权；也可以先跳过，以后在设置 → 连接器里连。服务器没有连接器就直接进去。 */
+export function StarterScreen() {
+  const t = useTheme();
+  const nav = useNavigation<any>();
+  const { appName } = useStore();
+  const [data, setData] = useState<AppsList | null>(null);
+  const [busy, setBusy] = useState<string | null>(null);
+  const done = useCallback(() => nav.reset({ index: 0, routes: [{ name: 'Tabs' }] }), [nav]);
+  const load = useCallback(() => appsApi.list().then(setData).catch(() => done()), [done]);
+  useFocusEffect(useCallback(() => { load(); }, [load]));
+  const list = (data?.catalog ?? []).filter((c) => c.auth !== 'token').slice(0, 4);
+  const connect = async (c: CatalogEntry) => {
+    setBusy(c.id);
+    try { await connectCatalog(c, nav); } finally { setBusy(null); load(); }
+  };
+  const empty = !!data && !list.length;
+  useEffect(() => { if (empty) done(); }, [empty, done]);  // 目录是空的：没什么可连，直接进去
+  if (empty) return null;
+  return (
+    <Screen>
+      <ScrollView contentContainerStyle={{ flexGrow: 1, paddingBottom: space.xl }}>
+        <View style={{ paddingHorizontal: space.xl, paddingTop: space.xl, gap: 8 }}>
+          <T v="callout" color={t.cyan} style={{ fontWeight: '600' }}>{L('最后一步', 'One last step')}</T>
+          <T v="largeTitle" style={{ fontSize: 28 }}>{L('接上常用的', 'Connect what you use')}</T>
+          <T v="body" color={t.ink2}>{L(`连上了，${appName} 才能帮你查笔记、看项目。现在连，或者以后在「设置 → 连接器」里连。`,
+            `Once connected, ${appName} can look things up for you. Connect now, or later in Settings → Connectors.`)}</T>
+        </View>
+        {!data ? <ActivityIndicator style={{ marginTop: space.xl }} color={t.ink3} /> : (
+          <Group style={{ marginTop: space.xl }}>
+            {list.map((c, i) => (
+              <Row key={c.id} first={i === 0} icon={<AppTile a={c} size={40} />} title={c.name} sub={descOf(c.desc, zh()) || undefined} chevron={false}
+                onPress={c.installed ? undefined : () => connect(c)} label={c.installed ? L(`${c.name}，已连接`, `${c.name}, connected`) : L(`连接 ${c.name}`, `Connect ${c.name}`)}
+                right={busy === c.id ? <ActivityIndicator color={t.ink3} /> : c.installed ? <Check size={20} color={t.good} /> : <Chip label={L('连接', 'Connect')} tone="accent" />} />
+            ))}
+          </Group>
+        )}
+        <View style={{ flex: 1 }} />
+        <Pressable onPress={done} accessibilityRole="button" style={({ pressed }) => [styles.primary, { backgroundColor: t.cyan, opacity: pressed ? 0.7 : 1 }]}>
+          <T v="headline" color="#FFFFFF">{L('开始', 'Start')}</T>
+        </Pressable>
+        <Pressable onPress={done} accessibilityRole="button" style={{ height: 44, alignItems: 'center', justifyContent: 'center', marginTop: 6 }}>
+          <T v="callout" color={t.ink2}>{L('先跳过', 'Skip for now')}</T>
         </Pressable>
       </ScrollView>
     </Screen>
