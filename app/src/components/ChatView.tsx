@@ -1,7 +1,7 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { agentName } from '../brand';
 import { useNavigation } from '@react-navigation/native';
-import { Alert, Image, Linking, Platform, Pressable, ScrollView, StyleSheet, TextInput, View, type LayoutChangeEvent, type NativeScrollEvent, type NativeSyntheticEvent, type TextInputKeyPressEventData } from 'react-native';
+import { Alert, Image, Platform, Pressable, ScrollView, StyleSheet, TextInput, View, type LayoutChangeEvent, type NativeScrollEvent, type NativeSyntheticEvent, type TextInputKeyPressEventData } from 'react-native';
 import * as Clipboard from 'expo-clipboard';
 import * as Haptics from 'expo-haptics';
 import { AudioModule, RecordingPresets, setAudioModeAsync, useAudioRecorder, useAudioRecorderState } from 'expo-audio';
@@ -22,6 +22,7 @@ import { HandoffChip, HandoffFrom, ProjectChip, ScheduleChip, TaskCardView, mode
 import { MAX_FILES, pickDocuments, pickMedia } from './chatInput';
 import { loadDraft, saveDraft } from '../drafts';
 import { saveMessage } from '../api/think';
+import { isRemote } from '../api/files';
 import { podFeatures } from '../api/podcast';
 import { PutInPodcast } from '../think/Materials';
 import { openEpisode } from '../think/Podcast';
@@ -150,12 +151,17 @@ function FileChip({ a, onPress, onRemove }: { a: Attachment; onPress?: () => voi
   );
 }
 
-/** 消息里的附件：图片给缩略图（点开原图），其它给文件条。 */
+/** 消息里的附件：图片给缩略图，其它给文件条；点开在 app 里预览（FilePreviewScreen），这条消息的几个附件能左右滑。 */
 function AttachmentList({ items, mine }: { items: Attachment[]; mine: boolean }) {
   const t = useTheme();
+  const nav = useNavigation<any>();
   const images = items.filter((a) => a.kind === 'image');
   const others = items.filter((a) => a.kind !== 'image');
-  const open = (a: Attachment) => { if (a.url.startsWith('http')) Linking.openURL(a.url).catch(() => {}); };
+  const open = (a: Attachment) => {
+    if (a.kind !== 'image' && !isRemote(a.url)) return;   // 还没传完的文件
+    const all = [...images, ...others];
+    nav.navigate('FilePreview', { items: all, index: Math.max(0, all.indexOf(a)) });
+  };
   const side = images.length === 1 ? 200 : 96;
   return (
     <View style={{ gap: 6, alignItems: mine ? 'flex-end' : 'flex-start', maxWidth: '82%' }}>

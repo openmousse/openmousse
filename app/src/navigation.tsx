@@ -35,6 +35,7 @@ import { ThinkHistoryScreen, ThinkKeywordScreen, ThinkSearchScreen } from './scr
 import { PodDoneScreen, PodFriendsScreen, PodPrepScreen, PodRecScreen } from './screens/PodcastScreens';
 import { PeopleScreen, PersonScreen } from './screens/PeopleScreens';
 import { SaveScreen } from './screens/SaveScreen';
+import { FilePreviewScreen } from './screens/FilePreviewScreen';
 import { ShareScreen } from './screens/ShareScreen';
 import { SharesScreen } from './screens/SharesScreen';
 import { AddFriendScreen, CardAgentScreen, FriendChatScreen } from './screens/FriendsScreens';
@@ -263,6 +264,7 @@ export function RootNavigator() {
         <Stack.Screen name="People" component={PeopleScreen} />
         <Stack.Screen name="Person" component={PersonScreen} />
         <Stack.Screen name="Save" component={SaveScreen} />
+        <Stack.Screen name="FilePreview" component={FilePreviewScreen} options={{ presentation: 'fullScreenModal', animation: 'fade', gestureEnabled: false }} />
         {/* 分享（社交第一层，2026-09-28）：先挡私事，再发链接或干净版卡片 */}
         <Stack.Screen name="Share" component={ShareScreen} />
         <Stack.Screen name="Shares" component={SharesScreen} />
