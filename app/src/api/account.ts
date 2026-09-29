@@ -58,7 +58,8 @@ function explain(status: number, j: Record<string, unknown>): string {
 async function call<T>(path: string, init: { method?: string; body?: unknown; user?: boolean; timeoutMs?: number; headers?: Record<string, string> } = {}): Promise<T> {
   const cfg = accountConfig();
   if (!cfg) throw new AccountError(L('这个 app 没有账号服务', "This app doesn't have an account service"));
-  let bearer = cfg.anonKey;
+  // 用户的请求带他的 access token；登录前的（发码、验码、换 token）只带 apikey：新式的 publishable key 不是 JWT，放进 Authorization 会被拒
+  let bearer: string | null = null;
   if (init.user) {
     const s = await fresh();
     if (!s?.access) throw new AccountError(L('先登录', 'Sign in first'));
@@ -71,7 +72,7 @@ async function call<T>(path: string, init: { method?: string; body?: unknown; us
       method: init.method ?? 'GET',
       signal: ctl.signal,
       headers: {
-        apikey: cfg.anonKey, Authorization: `Bearer ${bearer}`, Accept: 'application/json',
+        apikey: cfg.anonKey, Accept: 'application/json', ...(bearer ? { Authorization: `Bearer ${bearer}` } : {}),
         ...(init.body !== undefined ? { 'Content-Type': 'application/json' } : {}), ...(init.headers ?? {}),
       },
       body: init.body !== undefined ? JSON.stringify(init.body) : undefined,

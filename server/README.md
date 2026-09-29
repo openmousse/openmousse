@@ -26,6 +26,7 @@ Every field of `server.json` is documented at the top of [`config.py`](config.py
 
 - **Tailscale** (least effort): bind the service to the Tailscale address, install Tailscale on the phone, enter `http://100.x.x.x:8080` in the app.
 - **Pairing code** (no token to copy): `python3 tokens.py pair` makes a one-time code ([`pairing.py`](pairing.py): 10 minutes, one use, only its hash is stored, too many wrong tries lock it for 10 minutes), draws a QR code in the terminal and prints an `openmousse://pair?s=<address>&c=<code>` link. Scan it with the phone's camera or tap the link → the app's connect page has the address and code filled in → **Connect with the code** → `POST /api/pair` hands the app a new token of its own (`device-<device>-<time>`, removable with `tokens.py remove`). `--json` is for claws (see [`docs/connect.md`](../docs/connect.md)). `/api/pair` is under `/api`, so only on the Tailscale network. The installer makes one at the end (30 minutes).
+- **Devices** (app: Settings → your claw): `GET /api/devices` lists the tokens people use (names only; program tokens like `mcp`, `mcp-<id>` and `sentinel` are left out), `DELETE /api/devices/{name}` revokes one (not the one making the request), and `POST /api/pair/new` `{server, name}` makes a pairing code for another device from an app that's already connected (link + QR as an SVG path, same rules as `tokens.py pair`).
 - **Public HTTPS**: `tailscale serve` / `tailscale funnel`, or Caddy / nginx reverse-proxying to 127.0.0.1:8080; enter `https://your.domain` in the app.
 
 ## Other claws
