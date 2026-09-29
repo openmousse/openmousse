@@ -27,9 +27,13 @@ export interface AppSummary extends AppLook {
   toolCount: number;
   readCount: number;
   writeCount: number;
+  offCount?: number;
   agents: string[];
   policy: { read: AppLevel; write: AppLevel };
+  overrides?: Record<string, AppLevel>;
   desc?: string | null;
+  custom?: boolean;
+  category?: string | null;
 }
 
 export interface CatalogEntry extends AppLook {
@@ -67,22 +71,27 @@ export function descOf(d: CatalogEntry['desc'], zh: boolean): string {
 
 const enc = encodeURIComponent;
 
+type One = { app: AppDetail };
+
 export const appsApi = {
   list: () => request<AppsList>('/api/apps'),
-  get: (id: string) => request<AppDetail>(`/api/apps/${enc(id)}`),
+  get: (id: string) => request<One>(`/api/apps/${enc(id)}`).then((r) => r.app),
   /** 连目录里的一个：OAuth 的回 authorizeUrl（去浏览器授权），不用授权的当场连上。 */
   addCatalog: (catalog: string) => request<Added>('/api/apps', { method: 'POST', body: { catalog, redirect_uri: redirectUri() }, timeoutMs: 60000 }),
   addCustom: (b: { name: string; url: string; auth: AppAuth; token?: string }) =>
     request<Added>('/api/apps', { method: 'POST', body: { ...b, redirect_uri: redirectUri() }, timeoutMs: 60000 }),
-  /** 重新授权 / 换个账号。 */
-  connect: (id: string) => request<{ authorizeUrl: string; state: string }>(`/api/apps/${enc(id)}/connect`, { method: 'POST', body: { redirect_uri: redirectUri() }, timeoutMs: 60000 }),
+  /** 重新授权 / 换个账号（OAuth：回 authorizeUrl）；要令牌的换一把令牌（{token}，不对就还用旧的）；不用登录的重新读一遍工具。 */
+  connect: (id: string, token?: string) => request<Added>(`/api/apps/${enc(id)}/connect`, {
+    method: 'POST', body: token !== undefined ? { token } : { redirect_uri: redirectUri() }, timeoutMs: 60000,
+  }),
   /** 授权页跳回来的 code / state 交给服务器换令牌。 */
   callback: (b: { state: string; code?: string; error?: string; error_description?: string }) =>
     request<{ app: AppSummary }>('/api/apps/oauth/callback', { method: 'POST', body: b, timeoutMs: 90000 }),
   patch: (id: string, b: { policy?: Partial<Record<'read' | 'write', AppLevel>>; overrides?: Record<string, AppLevel | null>; agents?: string[] }) =>
-    request<AppDetail>(`/api/apps/${enc(id)}`, { method: 'PATCH', body: b }),
-  refresh: (id: string) => request<AppDetail>(`/api/apps/${enc(id)}/refresh`, { method: 'POST', timeoutMs: 90000 }),
-  remove: (id: string) => request<{ ok: boolean }>(`/api/apps/${enc(id)}`, { method: 'DELETE', timeoutMs: 30000 }),
+    request<One>(`/api/apps/${enc(id)}`, { method: 'PATCH', body: b }).then((r) => r.app),
+  refresh: (id: string) => request<One>(`/api/apps/${enc(id)}/refresh`, { method: 'POST', timeoutMs: 90000 }).then((r) => r.app),
+  /** 断开：服务器顺手去对方那里吊销令牌（revoked = 吊销成功），还没处理的这个应用的卡一起撤回。 */
+  remove: (id: string) => request<{ revoked: boolean }>(`/api/apps/${enc(id)}`, { method: 'DELETE', timeoutMs: 30000 }),
 };
 
 /** 服务器老，还没有连接器（404 / 405）。 */

@@ -428,7 +428,7 @@ function InboxDetail({ item, close }: { item: InboxItem; close: () => void }) {
       {item.result ? (
         <View style={[styles.box, { backgroundColor: item.status === 'failed' ? t.badSoft : t.surface, borderColor: t.line }]}>
           <T v="caption" color={t.ink3} style={{ fontWeight: '600' }}>{item.status === 'failed' ? L('没做成的原因', "Why it didn't work") : L('结果', 'Result')}</T>
-          <T v="callout" selectable style={{ lineHeight: 21 }}>{item.result}</T>
+          <T v="callout" selectable style={{ lineHeight: 21 }}>{item.result.length > 4000 ? `${item.result.slice(0, 4000)}\n…${L(`（后面还有 ${item.result.length - 4000} 字）`, ` (${item.result.length - 4000} more characters)`)}` : item.result}</T>
         </View>
       ) : null}
       {item.followedAt && item.followNote ? (

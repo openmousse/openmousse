@@ -6,6 +6,7 @@ import { ActivityIndicator, Alert, Linking, Pressable, ScrollView, StyleSheet, S
 import { useFocusEffect, useNavigation, useRoute } from '@react-navigation/native';
 import { ArrowUpRight, Check, Lock, Plus, RefreshCw, Search } from '../components/icons';
 import { Chip, Count, Group, GroupLabel, GroupNote, Row, SettingsHeader, Tile } from '../components/settings';
+import { useSheet } from '../components/Sheet';
 import { PullRefresh, Screen, Segmented, T, showError } from '../components/ui';
 import {
   appsApi, descOf, oauthHere, type AppDetail, type AppLevel, type AppsList, type AppSummary, type CatalogEntry,
@@ -154,6 +155,7 @@ export function AppDetailScreen() {
   const route = useRoute<any>();
   const id: string = route.params?.id;
   const { appName } = useStore();
+  const sheet = useSheet();
   const [app, setApp] = useState<AppDetail | null>(null);
   const [agents, setAgents] = useState<{ id: string; name: string }[]>([]);
   const [err, setErr] = useState<string | null>(null);
@@ -174,11 +176,31 @@ export function AppDetailScreen() {
 
   const reconnect = async () => {
     if (!app) return;
-    if (app.auth !== 'oauth') { nav.navigate('CustomApp', { name: app.name, url: app.url, auth: app.auth }); return; }
+    if (app.auth === 'token') {
+      // 换一把令牌：不对的话服务器还用旧的
+      let draft = '';
+      sheet.open({
+        title: L(`${app.name} 的令牌`, `${app.name} token`),
+        content: (close) => (
+          <View style={{ gap: space.md }}>
+            <TextInput onChangeText={(v) => { draft = v; }} autoFocus secureTextEntry autoCapitalize="none" autoCorrect={false}
+              placeholder={L('新的 API 令牌', 'The new API token')} placeholderTextColor={t.ink3} accessibilityLabel={L('令牌', 'Token')}
+              style={[type.body, styles.input, { backgroundColor: t.surface2, color: t.ink }]} />
+            <Pressable onPress={() => {
+              appsApi.connect(id, draft.trim()).then((r) => { close(); if (r.app) load(); }).catch((e) => showError(L('令牌没换成', "Couldn't change the token"), e));
+            }} accessibilityRole="button" style={({ pressed }) => [styles.primary, { marginHorizontal: 0, marginTop: 0, backgroundColor: t.cyan, opacity: pressed ? 0.7 : 1 }]}>
+              <T v="headline" color="#FFFFFF">{L('换上', 'Use it')}</T>
+            </Pressable>
+          </View>
+        ),
+      });
+      return;
+    }
+    if (app.auth === 'none') { refresh(); return; }
     if (!oauthHere()) { showError(L('请在手机 app 里连', 'Connect it in the phone app'), ''); return; }
     try {
       const r = await appsApi.connect(id);
-      await Linking.openURL(r.authorizeUrl);
+      if (r.authorizeUrl) await Linking.openURL(r.authorizeUrl);
     } catch (e) { showError(L('没打开授权页', "Couldn't open the sign-in page"), e); }
   };
 
@@ -226,7 +248,7 @@ export function AppDetailScreen() {
           {app.status !== 'connected' && app.error ? <T v="callout" color={t.warn}>{app.error}</T> : null}
           <View style={{ flexDirection: 'row', gap: 10 }}>
             <Pressable onPress={reconnect} accessibilityRole="button" style={({ pressed }) => [styles.btn, { borderColor: t.line, opacity: pressed ? 0.6 : 1 }, app.status === 'needs_auth' ? { backgroundColor: t.cyan, borderColor: t.cyan } : null]}>
-              <T v="callout" color={app.status === 'needs_auth' ? '#FFFFFF' : t.ink} style={{ fontWeight: '600' }}>{app.status === 'needs_auth' ? L('重新连接', 'Reconnect') : app.auth === 'oauth' ? L('换个账号', 'Switch account') : L('改令牌', 'Change token')}</T>
+              <T v="callout" color={app.status === 'needs_auth' ? '#FFFFFF' : t.ink} style={{ fontWeight: '600' }}>{app.status === 'needs_auth' ? L('重新连接', 'Reconnect') : app.auth === 'oauth' ? L('换个账号', 'Switch account') : app.auth === 'token' ? L('换令牌', 'Change token') : L('重新读一遍', 'Reload')}</T>
             </Pressable>
             <Pressable onPress={remove} accessibilityRole="button" style={({ pressed }) => [styles.btn, { borderColor: t.line, opacity: pressed ? 0.6 : 1 }]}>
               <T v="callout" color={t.bad} style={{ fontWeight: '600' }}>{L('断开', 'Disconnect')}</T>
@@ -427,6 +449,7 @@ export function ConnectHint() {
 
 
 const styles = StyleSheet.create({
+  input: { height: 52, borderRadius: radius.md, paddingHorizontal: space.lg },
   search: { flexDirection: 'row', alignItems: 'center', gap: 10, marginHorizontal: space.lg, marginTop: 8, paddingHorizontal: 14, borderRadius: radius.md },
   feature: { width: 200, padding: 14, gap: 10, borderRadius: 18 },
   plus: { width: 34, height: 34, borderRadius: 17, borderWidth: StyleSheet.hairlineWidth, alignItems: 'center', justifyContent: 'center' },
