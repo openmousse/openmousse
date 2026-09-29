@@ -18,6 +18,8 @@
 
 server.json 的 mcp 段（可选，每次读文件）：{"scripts": {"工具名": ["命令", "参数"…]}}：换掉或加一个工具背后的命令
 （比如日志换成你自己 workspace 里的脚本）；写成 null = 不提供这个工具。改了工具列表要重启服务。
+连接器（apps.py）：你连上的第三方应用的工具也从这里给出去（<应用 id>__<工具名>），接在这 12 个后面；每次列工具时现查，连上、断开、
+改权限都不用重启。它们经 EXTRA 挂进来，这 12 个工具本身不经过它。
 """
 import asyncio
 import os
@@ -28,7 +30,7 @@ import signal
 import sqlite3
 import sys
 from pathlib import Path
-from typing import Annotated
+from typing import Annotated, Awaitable, Callable
 
 from mcp import types
 from mcp.server.fastmcp import Context, FastMCP
@@ -82,6 +84,9 @@ BRIDGES: dict[str, tuple[str, str, str, int]] = {
 FILE_FLAGS = ("--file", "--detail-file", "--board-file", "--brief-file", "--fields-file", "--plan")
 NOT_FILE = {"--brief", "--detail", "--field"}
 TREE_OK = {"add", "recall", "recent", "forget", "stats"}  # 世界树只给记忆本身的操作；init、migrate、urls（会打印令牌）这些不给
+# 别的模块加到 /mcp 上的工具（连接器 apps.py）：一项 = (tools, call)。tools(who) → [types.Tool]，每次列工具时现问；
+# call(工具名, 参数, who) → types.CallToolResult，不是它的工具回 None。who = {"token": 令牌名, "agent": 令牌绑的 Agent 或 None}。
+EXTRA: list[tuple[Callable[[dict], Awaitable[list[types.Tool]]], Callable[[str, dict, dict], Awaitable[types.CallToolResult | None]]]] = []
 
 
 def guard(name: str, args: list[str]) -> None:
@@ -255,7 +260,43 @@ def build() -> FastMCP:
     for req in (types.ListPromptsRequest, types.GetPromptRequest, types.ListResourcesRequest, types.ReadResourceRequest,
                 types.ListResourceTemplatesRequest):
         mcp._mcp_server.request_handlers.pop(req, None)
+    extend(mcp._mcp_server)
     return mcp
+
+
+def extend(low) -> None:
+    """EXTRA 的工具接在后面：包一层低层的 tools/list、tools/call。这 12 个照旧走 FastMCP 自己的处理器（参数校验、ToolError 都一样）。"""
+    base_list, base_call = low.request_handlers[types.ListToolsRequest], low.request_handlers[types.CallToolRequest]
+
+    def who() -> dict:
+        try:
+            req = low.request_context.request
+        except LookupError:
+            return {}
+        return ((req.scope.get("state") or {}).get("mousse_mcp") if req is not None else None) or {}
+
+    async def list_tools(req):
+        res = await base_list(req)
+        for tools, _ in EXTRA:
+            try:
+                res.root.tools.extend(await tools(who()))
+            except Exception:  # noqa: BLE001 — 加上来的工具出了错，这 12 个照常
+                pass
+        return res
+
+    async def call_tool(req):
+        if req.params.name not in BRIDGES:
+            for _, call in EXTRA:
+                try:
+                    got = await call(req.params.name, dict(req.params.arguments or {}), who())
+                except Exception as e:  # noqa: BLE001
+                    got = types.CallToolResult(content=[types.TextContent(type="text", text=str(e) or type(e).__name__)], isError=True)
+                if got is not None:
+                    return types.ServerResult(got)
+        return await base_call(req)
+
+    low.request_handlers[types.ListToolsRequest] = list_tools
+    low.request_handlers[types.CallToolRequest] = call_tool
 
 
 server = build()
