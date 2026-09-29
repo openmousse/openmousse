@@ -551,8 +551,8 @@ def print_mcp_hint(url: str, preset: str) -> None:
             "Let your claw use boards, the inbox and the rest over MCP (no shell needed). The address carries a token; only look at it in your own terminal:"))
     print(f"  {url}")
     hints = {
-        "hermes": L("  Hermes：~/.hermes/config.yaml 的 mcp_servers 下加 `openmousse: {url: \"<上面的地址>\"}`，然后在 Hermes 里 /reload-mcp",
-                    "  Hermes: under mcp_servers in ~/.hermes/config.yaml add `openmousse: {url: \"<the address above>\"}`, then /reload-mcp in Hermes"),
+        "hermes": L("  Hermes：hermes mcp add openmousse --url \"<上面的地址>\"；网关重启以后生效（聊天里发 /restart，或者 hermes gateway restart）",
+                    "  Hermes: hermes mcp add openmousse --url \"<the address above>\"; it takes effect once the gateway restarts (/restart in a chat, or hermes gateway restart)"),
         "nanobot": L("  nanobot：~/.nanobot/config.json 的 tools.mcpServers 加 `\"openmousse\": {\"url\": \"<上面的地址>\"}`，重启 nanobot",
                      "  nanobot: in ~/.nanobot/config.json add `\"openmousse\": {\"url\": \"<the address above>\"}` under tools.mcpServers, then restart nanobot"),
         "letta": L("  Letta Code：在对话里 /mcp add --transport http openmousse <上面的地址>",
@@ -1082,14 +1082,17 @@ def main() -> None:
             print_mcp_hint(mcp_url(cfg), a.claw_preset or "")
     else:
         print(gw_line)
-    if "phone" in new_tokens:
+    if "phone" in new_tokens and os.environ.get("MOUSSE_NONINTERACTIVE"):  # claw 替人装：输出会进它的上下文，令牌不打出来；手机用配对码连
+        print(L("手机令牌已生成，存在 ~/.openmousse/server.json（用配对码连就用不到它，别发到聊天里）",
+                "Phone token created and kept in ~/.openmousse/server.json (pairing doesn't need it; don't send it to the chat)"))
+    elif "phone" in new_tokens:
         print(L(f"手机令牌，只显示这一次：{new_tokens['phone']}", f"Phone token, shown only this once: {new_tokens['phone']}"))
     else:
         print(L("手机令牌之前已生成；要新的：`~/.openmousse/venv/bin/python ~/.openmousse/repo/server/tokens.py add phone2`",
                 "The phone token was generated earlier; for a new one: `~/.openmousse/venv/bin/python ~/.openmousse/repo/server/tokens.py add phone2`"))
     print()
     print(L("手机怎么连：", "Connecting the phone:"))
-    tok_zh, tok_en = ("上面的令牌", "the token above") if "phone" in new_tokens else ("手机令牌", "your phone token")
+    tok_zh, tok_en = ("上面的令牌", "the token above") if "phone" in new_tokens and not os.environ.get("MOUSSE_NONINTERACTIVE") else ("手机令牌", "your phone token")
     if b["host"].startswith("100."):
         print(L("  这台机器在 Tailscale 里：手机也装 Tailscale、登同一个账号，装好 OpenMousse app，再用手机相机扫下面的码（或者点码下面的链接）：",
                 "  This machine is on Tailscale: install Tailscale on the phone (same account) and the OpenMousse app, then scan the code below with the phone's camera (or tap the link under it):"))

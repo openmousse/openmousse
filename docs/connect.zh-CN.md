@@ -27,7 +27,10 @@ Ubuntu / Debian 上缺的话：`sudo apt install python3 python3-venv git curl`�
 OpenMousse 经你在这台机器上的 OpenAI 兼容对话接口，把用户的话转给你。
 
 - **OpenClaw**（包括 KimiClaw）：不用管。安装器会在 `openclaw.json` 里打开要用的东西，改之前先备份。
-- **Hermes Agent：** `~/.hermes/.env` 里设 `API_SERVER_ENABLED=true` 和 `API_SERVER_KEY=<一串长的随机字符>`，然后重启 `hermes gateway`。
+- **Hermes Agent：** `~/.hermes/.env` 里设 `API_SERVER_ENABLED=true` 和 `API_SERVER_KEY=<一串长的随机字符>`。它在 `hermes gateway` 重启以后才生效，什么时候重启看你在哪跑：
+  - 你在聊天里（Telegram、WhatsApp 这些，跑在 `hermes gateway` 里）：先别重启，你自己也重启不了（Hermes 不让网关里的命令重启网关）。第 7 步发完配对链接以后，请用户在聊天里发 `/restart`；重启好了再跑一次 `check.sh`。在那之前 `check.sh` 里「你的 claw」那一行是 ✗，这是正常的。
+  - 你在终端里（`hermes` 命令行）：现在就跑 `hermes gateway restart`。
+  - 开始前先告诉用户：改 `.env`、跑安装命令这几步 Hermes 会请用户批准（5 分钟内有效），看到就点「允许」。
 - **nanobot：** `nanobot plugins enable api`，然后让 `nanobot serve` 一直跑着。
 - **Letta Code：** 让 `letta server --listen ws://127.0.0.1:4500 --openai-api` 一直跑着。你的 agent 名字等会儿写进 `MOUSSE_CLAW_MODEL`。
 
@@ -67,7 +70,7 @@ curl -fsSL https://raw.githubusercontent.com/openmousse/openmousse/main/install.
 ## 5. 给自己加上 OpenMousse 的工具
 
 - **OpenClaw：** 安装器已经在 `mcp.servers` 里加了 `openmousse`，Gateway 会自己热加载。核对：`openclaw mcp probe openmousse` 应该列出 12 个工具（没装世界树是 11 个）。
-- **Hermes：** `~/.hermes/config.yaml` 的 `mcp_servers:` 下面加 `openmousse: {url: "<MCP 地址>"}`，然后跑 `/reload-mcp`。
+- **Hermes：** `hermes mcp add openmousse --url "<MCP 地址>"`（写进 `~/.hermes/config.yaml`），`hermes mcp test openmousse` 应该列出 12 个工具。网关重启以后（第 2 步那次 `/restart`）工具就进来了；不重启的话请用户在聊天里发 `/reload-mcp`。
 - **nanobot：** `~/.nanobot/config.json` 的 `tools.mcpServers` 下面加 `"openmousse": {"url": "<MCP 地址>"}`，然后重启 nanobot。
 - **Letta Code：** `/mcp add --transport http openmousse <MCP 地址>`
 
