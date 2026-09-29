@@ -148,7 +148,12 @@ export function ConnectorsScreen() {
         {state ? <T v="callout" color={t.ink2} style={{ marginHorizontal: space.lg + 4, marginTop: space.lg }}>{state}</T> : null}
         {data ? (
           <>
-            {apps ? <GroupLabel>{L(`${agentName()} 本来就接着的`, `What ${agentName()} is already hooked up to`)}</GroupLabel> : null}
+            {apps ? (
+              <View style={{ marginTop: 34, marginHorizontal: space.lg + 4, paddingTop: 18, borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: t.line, gap: 4 }}>
+                <T v="headline">{L(`${agentName()} 本来就接着的`, `What ${agentName()} is already hooked up to`)}</T>
+                <T v="caption" color={t.ink3} style={{ fontWeight: '400' }}>{L('数据来源、渠道和通知现在怎么样；点一项看怎么修。', "Data sources, channels and notifications and how they're doing; tap one to see how to fix it.")}</T>
+              </View>
+            ) : null}
             {data.groups.map((g) => (
               <View key={g.id}>
                 <GroupLabel>{g.title}</GroupLabel>
