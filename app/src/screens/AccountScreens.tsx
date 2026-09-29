@@ -10,7 +10,7 @@ import { Group, GroupLabel, GroupNote, Row, RoundButton, SettingsHeader } from '
 import { useSheet } from '../components/Sheet';
 import { Btn, Screen, T, showError } from '../components/ui';
 import {
-  AccountError, deleteAccount, listAccountClaws, sendCode, setAccountName, signOut, syncClaw, verifyCode, type AccountClaw,
+  AccountError, deleteAccount, initialsOf, listAccountClaws, sendCode, setAccountName, signOut, syncClaw, verifyCode, type AccountClaw,
 } from '../api/account';
 import { getBase } from '../api/base';
 import { L } from '../i18n';
@@ -160,10 +160,6 @@ export function LoginScreen() {
   );
 }
 
-const initials = (s: string) => {
-  const parts = s.trim().split(/[\s@._-]+/).filter(Boolean);
-  return (parts.length > 1 ? parts[0][0] + parts[1][0] : s.slice(0, 2)).toUpperCase();
-};
 
 export function AccountScreen() {
   const t = useTheme();
@@ -223,7 +219,7 @@ export function AccountScreen() {
       <ScrollView contentContainerStyle={{ paddingBottom: space.xxl }}>
         <View style={{ alignItems: 'center', gap: 6, paddingVertical: space.lg }}>
           <View style={{ width: 76, height: 76, borderRadius: 38, backgroundColor: t.surface2, alignItems: 'center', justifyContent: 'center' }}>
-            <T v="title" style={{ fontSize: 24 }}>{initials(user.name || user.email)}</T>
+            <T v="title" style={{ fontSize: 24 }}>{initialsOf(user)}</T>
           </View>
           <T v="title" style={{ marginTop: 6 }}>{user.name || user.email.split('@')[0]}</T>
           <T v="callout" color={t.ink2}>{user.email}</T>

@@ -38,6 +38,13 @@ export function onAccountChange(fn: (u: AccountUser | null) => void): () => void
 const emit = () => { const u = session?.user ?? null; listeners.forEach((f) => f(u)); };
 export const currentAccount = (): AccountUser | null => session?.user ?? null;
 
+/** 头像上的字：名字有两个词取两个词的头一个字母（Leo Zhou → LZ），否则取名字或邮箱的第一个字（leo@… → L，周炫宇 → 周）。 */
+export function initialsOf(u: AccountUser): string {
+  const words = (u.name || '').trim().split(/\s+/).filter(Boolean);
+  if (words.length > 1) return (words[0][0] + words[1][0]).toUpperCase();
+  return ((u.name || u.email || '?').trim()[0] || '?').toUpperCase();
+}
+
 export class AccountError extends Error {
   status?: number;
   /** 连不上账号服务（没网、服务挂了），不是账号本身的问题 */

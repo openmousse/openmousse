@@ -18,6 +18,8 @@ import { L } from '../i18n';
 import { useStore, useThreadOnScreen } from '../store';
 import { radius, space, type, useTheme } from '../theme';
 import { hideWelcome, welcomeHidden } from '../welcome';
+import { useAccount } from './MeScreen';
+import { initialsOf } from '../api/account';
 
 /** 一个项目的"…"菜单：重命名 / 归档（先写结论）/ 恢复 / 删除。 */
 function SideChatMenu({ chat, close, onDeleted, onArchive }: { chat: SideChat; close: () => void; onDeleted: () => void; onArchive: () => void }) {
@@ -106,6 +108,8 @@ function DrawerSection({ title, right, count, limit = 3, defaultOpen = true, emp
 /** 左侧抽屉：主对话 / 项目 / Agents / 任务 / 已归档。手机上从这里进，Web 与 iPad 常驻。 */
 function Drawer({ active, onPick, onClose }: { active: string; onPick: (id: string) => void; onClose: () => void }) {
   const t = useTheme();
+  const acct = useAccount();
+  const who = acct.user ? (acct.user.name || acct.user.email.split('@')[0]) : '';
   const nav = useNavigation<any>();
   const sheet = useSheet();
   const insets = useSafeAreaInsets();
@@ -160,13 +164,15 @@ function Drawer({ active, onPick, onClose }: { active: string; onPick: (id: stri
             ))}
           </DrawerSection>
         </ScrollView>
-        {/* 「我」（档案、记忆、日志、设置）：2026-09-27 从 tab 挪到这里，tab 让给「思考」 */}
-        <Pressable onPress={() => { onClose(); nav.navigate('Me'); }} accessibilityRole="button" accessibilityLabel={L('打开「我」：档案、记忆、日志、设置', 'Open Me: profile, memory, journal, settings')}
+        {/* 设置（2026-09-29 照 Claude：侧栏底部是你自己——登录了是账号，没账号的壳写「设置」）。2026-09-27 从 tab 挪到这里 */}
+        <Pressable onPress={() => { onClose(); nav.navigate('Me'); }} accessibilityRole="button" accessibilityLabel={L('打开设置', 'Open settings')}
           style={({ pressed }) => [styles.me, { borderTopColor: t.line, opacity: pressed ? 0.7 : 1 }]}>
-          <View style={[styles.meIcon, { backgroundColor: t.surface2 }]}><User size={18} color={t.ink2} /></View>
+          <View style={[styles.meIcon, { backgroundColor: t.surface2 }]}>
+            {acct.user ? <T v="caption" style={{ fontWeight: '700' }}>{initialsOf(acct.user)}</T> : <User size={18} color={t.ink2} />}
+          </View>
           <View style={{ flex: 1, gap: 1 }}>
-            <T v="callout" style={{ fontWeight: '600' }}>{L('我', 'Me')}</T>
-            <T v="caption" color={t.ink3} numberOfLines={1}>{L('档案、记忆、日志、设置', 'Profile, memory, journal, settings')}</T>
+            <T v="callout" style={{ fontWeight: '600' }} numberOfLines={1}>{who || L('设置', 'Settings')}</T>
+            <T v="caption" color={t.ink3} numberOfLines={1}>{acct.user ? acct.user.email : L('我的 claw、连接器、记忆、外观', 'Claws, connectors, memory, appearance')}</T>
           </View>
           <View style={[styles.meIcon, { backgroundColor: t.surface }]}><Settings size={18} color={t.ink2} /></View>
         </Pressable>

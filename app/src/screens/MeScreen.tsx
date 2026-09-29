@@ -14,10 +14,10 @@ import { LensAvatar } from '../components/LensAvatar';
 import { Chevron, Dot, Group, GroupLabel, GroupNote, Row, SettingsHeader, Tile } from '../components/settings';
 import { useSheet } from '../components/Sheet';
 import { PullRefresh, Screen, T, showError } from '../components/ui';
-import { accountsEnabled, currentAccount, loadAccount, onAccountChange, signOut, syncClaw, type AccountUser } from '../api/account';
+import { accountsEnabled, currentAccount, initialsOf, loadAccount, onAccountChange, signOut, syncClaw, type AccountUser } from '../api/account';
 import { appsApi, noApps, type AppSummary } from '../api/apps';
 import { activeClawId, listClaws, pingClaw, switchToClaw, touchClaw, type Claw } from '../api/claws';
-import { getBase } from '../api/base';
+import { defaultBase, getBase } from '../api/base';
 import { podFeatures } from '../api/podcast';
 import { L, useLang, type LangPref } from '../i18n';
 import { useStore } from '../store';
@@ -35,12 +35,6 @@ export function useAccount(): { enabled: boolean; user: AccountUser | null } {
   return { enabled: accountsEnabled(), user };
 }
 
-const initials = (u: AccountUser) => {
-  const s = (u.name || u.email || '?').trim();
-  const parts = s.split(/[\s@._-]+/).filter(Boolean);
-  const two = parts.length > 1 ? parts[0][0] + parts[1][0] : s.slice(0, 2);
-  return two.toUpperCase();
-};
 
 export function MeScreen() {
   const t = useTheme();
@@ -75,6 +69,8 @@ export function MeScreen() {
   const [claws, setClaws] = useState<Claw[]>([]);
   const [alive, setAlive] = useState<Record<string, 'ok' | 'auth' | 'down'>>({});
   const loadClaws = useCallback(() => {
+    // 网页版和服务同源、没有列表：只把这一台记进账号
+    if (Platform.OS === 'web' && connected) syncClaw({ base: defaultBase(), name: appName, clawKind: claw.kind, clawName: claw.name }).catch(() => {});
     listClaws(appName).then(async (list) => {
       setClaws(list);
       const active = activeClawId(list);
@@ -165,7 +161,7 @@ export function MeScreen() {
                 style={({ pressed }) => ({ opacity: pressed ? 0.6 : 1 })}>
                 <View style={{ flexDirection: 'row', alignItems: 'center', gap: 14, padding: 16, paddingLeft: 18 }}>
                   <View style={{ width: 52, height: 52, borderRadius: 26, backgroundColor: t.surface2, alignItems: 'center', justifyContent: 'center' }}>
-                    <T v="headline" style={{ fontSize: 17 }}>{initials(acct.user)}</T>
+                    <T v="headline" style={{ fontSize: 17 }}>{initialsOf(acct.user)}</T>
                   </View>
                   <View style={{ flex: 1, minWidth: 0, gap: 3 }}>
                     <T v="headline" numberOfLines={1} style={{ fontSize: 17 }}>{acct.user.name || acct.user.email.split('@')[0]}</T>
