@@ -349,7 +349,23 @@ if is_openclaw:
 elif claw_cfg:
     section(L("你的 claw", "Your claw"))
     url = str(claw_cfg.get("url") or "").rstrip("/")
-    c, b = http(url + "/models", str(claw_cfg.get("token") or ""))
+    ctok = str(claw_cfg.get("token") or "").strip()
+    tenv = str(claw_cfg.get("token_env") or "").strip()
+    if not ctok and tenv:  # 和 server/claw.py 同一个顺序：进程环境 → claw 段的 env_file（Hermes 的 ~/.hermes/.env）→ server.json 的 env_file
+        ctok = os.environ.get(tenv, "")
+        home_oc = Path(str(cfg.get("openclaw_home") or "~/.openclaw")).expanduser()
+        for ef in ([claw_cfg["env_file"]] if claw_cfg.get("env_file") else []) + [cfg.get("env_file") or home_oc / ".env"]:
+            if ctok:
+                break
+            try:
+                for env_line in Path(str(ef)).expanduser().read_text(encoding="utf8").splitlines():
+                    ek, esep, ev = env_line.strip().removeprefix("export ").partition("=")
+                    if esep and ek.strip() == tenv:
+                        ctok = ev.strip().strip("'\"")
+                        break
+            except OSError:
+                continue
+    c, b = http(url + "/models", ctok)
     if c and c < 500 and c not in (401, 403):
         ok(str(claw_cfg.get("name") or "claw"), url)
     else:

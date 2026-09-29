@@ -27,7 +27,10 @@ Missing ones on Ubuntu or Debian: `sudo apt install python3 python3-venv git cur
 OpenMousse sends the user's messages to you through your OpenAI-compatible chat API on this machine.
 
 - **OpenClaw** (including Kimi Claw): nothing to do. The installer switches on what it needs in `openclaw.json` and backs the file up first.
-- **Hermes Agent:** in `~/.hermes/.env` set `API_SERVER_ENABLED=true` and `API_SERVER_KEY=<a long random string>`, then restart `hermes gateway`.
+- **Hermes Agent:** in `~/.hermes/.env` set `API_SERVER_ENABLED=true` and `API_SERVER_KEY=<a long random string>`. It takes effect once `hermes gateway` restarts, and when to restart depends on where you run:
+  - In a chat (Telegram, WhatsApp and the like, served by `hermes gateway`): don't restart now. You can't anyway: Hermes blocks commands inside the gateway from restarting it. After you send the pairing link in step 7, ask the user to send `/restart` in the chat, then run `check.sh` again. Until then, the "Your claw" line in `check.sh` shows ✗, which is expected.
+  - In a terminal (the `hermes` CLI): run `hermes gateway restart` now.
+  - Before you start, tell the user that Hermes will ask them to approve a few steps (editing `.env`, running the installer), each within 5 minutes, and to tap Allow.
 - **nanobot:** `nanobot plugins enable api`, then keep `nanobot serve` running.
 - **Letta Code:** keep `letta server --listen ws://127.0.0.1:4500 --openai-api` running. You'll pass your agent's name as `MOUSSE_CLAW_MODEL`.
 
@@ -67,7 +70,7 @@ The installer ends with a summary. For claws other than OpenClaw it also prints 
 ## 5. Give yourself OpenMousse's tools
 
 - **OpenClaw:** the installer already added `openmousse` under `mcp.servers`, and the Gateway hot-reloads it. To check: `openclaw mcp probe openmousse` should list 12 tools (11 if the memory tree was skipped).
-- **Hermes:** under `mcp_servers:` in `~/.hermes/config.yaml` add `openmousse: {url: "<the MCP address>"}`, then run `/reload-mcp`.
+- **Hermes:** `hermes mcp add openmousse --url "<the MCP address>"` (it writes `~/.hermes/config.yaml`); `hermes mcp test openmousse` should list 12 tools. They load when the gateway restarts (the `/restart` from step 2); without a restart, ask the user to send `/reload-mcp` in the chat.
 - **nanobot:** in `~/.nanobot/config.json`, under `tools.mcpServers`, add `"openmousse": {"url": "<the MCP address>"}`, then restart nanobot.
 - **Letta Code:** `/mcp add --transport http openmousse <the MCP address>`
 
