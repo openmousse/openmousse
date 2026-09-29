@@ -49,7 +49,9 @@
   podcast           播客（见 podcast.py，全部可选）：{"dir": 原声放哪（默认 <data_dir>/podcast）, "text_model": "gpt-transcribe",
                     "time_model": "whisper-1"（"" = 不要逐句时间）, "thinking": "low", "model": llm-task 的模型覆盖}。每次读文件，不用重启
   mcp               MCP 入口（/mcp，见 mcp_bridge.py）：{"scripts": {"工具名": ["命令", "参数"…] 或 null}}：换掉 / 加 / 关掉一个工具背后的命令
-                    （令牌是 auth.tokens 里的 mcp、mcp-<agent id>；改了工具要重启）
+                    （令牌是 auth.tokens 里的 mcp、mcp-<agent id>，这几把只能用在 /mcp 上，/api 不认；改了工具要重启）
+  apps              连接器（见 apps.py）：{"catalog": 加 / 改 / 藏目录里的应用, "client_id_url": CIMD 用的 client_id 网址,
+                    "redirect_uris": [网页版用的 http(s) 回调], "allow_local": 只给测试}。每次读文件，不用重启
   wake              起床信号：{"notify_cmd": [...], "notify_hours": ["05:30", "13:00"]}：早上收到信号（快捷指令、app 回到前台、「我起来了」）
                     时跑一下这个命令，比如立刻跑一次出起床报告的定时脚本（见 health.py；每次读文件，不用重启）
 
@@ -65,6 +67,7 @@ from zoneinfo import ZoneInfo
 CONFIG_PATH = Path(os.environ.get("MOUSSE_SERVER_CONFIG") or "~/.openmousse/server.json").expanduser()
 REPO = Path(__file__).resolve().parent.parent
 _cache: tuple[float, dict] | None = None
+NOT_API = ("mcp", "sentinel")  # 这些令牌（还有 mcp-<agent id>）在 /api 上不通：只给 /mcp、/api/egress（见 main.py 的 guard）
 
 
 def raw(fresh: bool = False) -> dict:
@@ -90,6 +93,15 @@ def save(data: dict) -> None:
     tmp.write_text(json.dumps(data, ensure_ascii=False, indent=2) + "\n", encoding="utf8")
     os.chmod(tmp, 0o600)
     tmp.replace(CONFIG_PATH)
+
+
+def pick_api_token(tokens: dict) -> str | None:
+    """本机脚本调 /api 用哪把令牌：第一把不是 mcp、mcp-<agent id>、sentinel 的（不管 server.json 里的顺序）。没有就 None。"""
+    for name, tok in tokens.items():
+        name = str(name)
+        if tok and name not in NOT_API and not name.startswith("mcp-"):
+            return str(tok)
+    return None
 
 
 def _p(value: str | None, default: Path) -> Path:
@@ -170,6 +182,10 @@ class Settings:
 
     def tokens(self) -> dict[str, str]:
         return {str(k): str(v) for k, v in (self.auth().get("tokens") or {}).items()}
+
+    def api_token(self) -> str | None:
+        """本机脚本（*_ctl.py）调 /api 带的令牌，见 pick_api_token。"""
+        return pick_api_token(self.tokens())
 
     def tailscale_nodes(self) -> set[str]:
         return {str(x) for x in self.auth().get("tailscale_nodes") or []}

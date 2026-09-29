@@ -20,7 +20,7 @@ python3 run.py                   # 或按 openmousse-server.service.example 装�
 
 ## 认证
 
-`/api/*` 要 `Authorization: Bearer <令牌>`（也认 `X-API-Key`；`?token=` 只用于 GET 文件：`/api/files/…`、思考里的附件和收藏的原件、播客的原声，给带不了请求头的图片和网页版的 `<audio>` 用）。没凭证返回 401。两个免令牌的口子都默认关：`auth.tailscale_nodes`（Tailscale 设备名白名单，本机要装 tailscale）和 `auth.trust_loopback`（反向代理在本机时不能开）。网页版的静态文件公开。
+`/api/*` 要 `Authorization: Bearer <令牌>`（也认 `X-API-Key`；`?token=` 只用于 GET 文件：`/api/files/…`、思考里的附件和收藏的原件、播客的原声，给带不了请求头的图片和网页版的 `<audio>` 用）。没凭证返回 401。两个免令牌的口子都默认关：`auth.tailscale_nodes`（Tailscale 设备名白名单，本机要装 tailscale）和 `auth.trust_loopback`（反向代理在本机时不能开）。网页版的静态文件公开。`mcp`、`mcp-<agent id>` 令牌只能用在 `/mcp` 上（`/api` 回 403：只拿着它的 claw 不能替你点收件箱的卡、配对新设备），`sentinel` 只能用在 `/api/egress`；本机脚本（`*_ctl.py`、`safe_restart.py`、`check.sh`）用第一把不是这几种的令牌，和 `server.json` 里的顺序无关。
 
 ## 让手机连上
 
@@ -55,6 +55,7 @@ python3 run.py                   # 或按 openmousse-server.service.example 装�
 - OpenClaw：安装器在 `openclaw.json` 的 `mcp.servers` 里加 `openmousse`（Gateway 热加载，不用重启），工具名是 `openmousse__board` 这种。skills 里的命令照旧能用，两条路并存，skill 开头写了有工具就用工具。
 - 别的 claw：安装完打印地址和它那家怎么加（Hermes 的 `mcp_servers`、nanobot 的 `tools.mcpServers`、Letta Code 的 `/mcp add`）。Agent 那段说明里带着它的 id，调工具时填进 `agent`。
 - `server.json` 的 `mcp.scripts` 可以换掉或加一个工具背后的命令（`{"journal": ["python3", "~/…/my_journal.py"]}`，写 `null` = 不提供），改了要重启服务。
+- 你连上的应用（见[连接器](#连接器经-mcp-接进来的应用)）的工具接在这些后面，名字是 `<应用 id>__<工具名>`；连上、删掉、改权限都不用重启。
 - 每轮的上下文：11 个工具的定义约 7,500 字，跟 11 个 skill 的描述差不多。
 
 ## Agent
@@ -112,7 +113,7 @@ python3 inbox_ctl.py list [--status recent]
 
 「跟进」：已经定下来的条目（「已处理」→ 点一条 → 跟进）带同样的 `inboxId`：记下 `followedAt` / `followNote`；做完 / 没做成的改回 approved（在做），模型另外看到这一条、现在的状态和结果、怎么再用 `done` / `fail` 报。没要 / 撤回 / 过期的状态不变，模型被告知要做就重新提一条。条目还带 `day`（提它的逻辑日），app 的「看原对话」按它打开那天的记录、滚到那条消息。
 
-条目：`{id, kind, source, sourceName, thread, title, why, changes: [], detail, approveLabel, fields?, status, note, result, level, createdAt, updatedAt, decidedAt, expiresAt, messageId}`。`messageId`：Agent 在一次回复里交的条目，回复结束时挂到那条回复（`messages.id`）下面；不是在回复里交的是 null。kind：task / write / send / spend / schedule / push / skill / agent / block / code / calendar / other（exec 只来自 OpenClaw，带 `fields`）；status：pending / approved / rejected / revising / done / failed / withdrawn / expired。旧的 `/api/approvals` 接口还在，给老版本 app。
+条目：`{id, kind, source, sourceName, thread, title, why, changes: [], detail, approveLabel, fields?, status, note, result, level, createdAt, updatedAt, decidedAt, expiresAt, messageId}`。`messageId`：Agent 在一次回复里交的条目，回复结束时挂到那条回复（`messages.id`）下面；不是在回复里交的是 null。kind：task / write / send / spend / schedule / push / skill / agent / block / code / calendar / app（连接器的一次调用等你点头，见连接器） / other（exec 只来自 OpenClaw，带 `fields`）；status：pending / approved / rejected / revising / done / failed / withdrawn / expired。旧的 `/api/approvals` 接口还在，给老版本 app。
 
 ## 对话：排队、停止、引用
 
@@ -330,6 +331,30 @@ app 里的「我 → 世界树」。你的各个 AI（Claude、ChatGPT、Gemini�
 ## 连接
 
 「我 → 连接」：助手接着的每一样东西，现在怎么样。`GET /api/connectors[?fresh=1]` → `{groups: [{id, title, items}], counts: {ok, warn, off}, checkedAt}`；每一项 `{id, name, icon, status: ok | warn | off, line, facts: [{label, value}], uses, fix, open}`（`open` = app 里能跳去的页）。整份结果按语言缓存 60 秒（`fresh=1` 跳过），聊天渠道的在线状态（`openclaw channels status`）缓存 2 分钟。每一项都是尽力而为，不返回任何密钥：只看密钥的名字在不在、文件的时间、条数和 systemd 单元的状态。你的机器上没有的（脚本、单元、目录）那一项就不出现；自带的功能还没用上的（Apple 健康、日历订阅、推送）显示「没接」。日历订阅（`/cal/<令牌>.ics`）现在会记下日历上次来取的时间和大致是哪种（iPhone / Mac / Google / Outlook）。见 [`connectors.py`](connectors.py)。
+
+## 连接器（经 MCP 接进来的应用）
+
+「设置 → 连接器」：经 MCP 连到这台服务器上的第三方应用（Notion、Linear……或者任何一个远端 MCP 地址）。你的 claw 经 `/mcp` 用它们的工具；令牌只在这台服务器上。见 [`apps.py`](apps.py)。
+
+- **连**按 MCP 授权规范：服务器找到应用的授权服务器（401 的 `WWW-Authenticate` → 资源元数据 → 授权服务器元数据；没有资源元数据的按旧规范，在 MCP 地址的同一个域上找），拿一个客户端（配了 `apps.client_id_url`、对方又支持 CIMD 就用它，否则动态注册，按授权服务器和回调地址记下来），给 app 一个授权网址（PKCE S256、`state`、`resource` = MCP 地址、对方宣称的 `scope`）。手机上登录，对方跳回 `<app 的 scheme>://oauth/callback?code&state`，app 交给 `/api/apps/oauth/callback`，服务器换令牌、列工具。一次授权 10 分钟内有效、只能用一次；上一次没做完又重新开始，就换一个新注册的客户端（对方可能已经不认旧的）。令牌快过期前刷新，收到 401 刷新一次；刷新不了，app 里显示要重新连。删掉时能撤销就到对方那里撤销令牌。
+- **用**：连上的应用的工具出现在 `/mcp` 上，叫 `<应用 id>__<工具名>`（多一个可选的 `agent` 参数；工具自己有 `agent` 参数时叫 `mousse_agent`）。每个工具一个档：`auto` 直接调；`ask` 每次调用是一张收件箱卡（kind `app`，响铃），点了同意就照原样调一次、结果发进那个 Agent 的对话，「改一下」让它换参数重新调；`off` 不给。默认读的 auto、写的 ask（看工具的 `readOnlyHint`，没写就看名字：get / list / search / read / fetch / find / query / view / describe / show / lookup 开头的算读）。哪些 Agent 能用按应用设（默认 main）；是谁：`mcp-<id>` 令牌绑的 Agent，否则 `agent` 参数，否则 main。按会话记工具列表的 claw 要重连才看到变化。
+- 调用：每次一个短的 MCP 会话（streamable HTTP，对方只有 SSE 就用 SSE），最长 60 秒，同时最多 4 个；文字最多 30,000 字，图片之类只说一句。
+- 安全：从对方学来的地址（元数据、各个端点）要 https、解析出来是公网地址，和 MCP 地址同源的除外；自定义的 MCP 地址要 https，http 只给本机和 Tailscale 地址。令牌不回给 app、不写日志。`app` 卡交上来以后被改过就不照做。
+
+| 接口 | 做什么 |
+|---|---|
+| `GET /api/apps` | `{apps: [app], catalog: [{id, name, url, category, desc, mono, bg, fg, border, auth, hint, installed}], agents: [{id, name}]}`（main 在前） |
+| `POST /api/apps` | `{catalog, redirect_uri}` 或 `{name, url, auth: oauth / token / none, token?, redirect_uri?}` → oauth：`{app, authorizeUrl, state}`；token / none：现在就连、列工具 → `{app}`。已经连上的 409 |
+| `POST /api/apps/{id}/connect` | 重新连、换账号：`{redirect_uri}` → `{app, authorizeUrl, state}`；令牌方式的给 `{token}` → `{app}` |
+| `POST /api/apps/oauth/callback` | `{state, code?, error?, error_description?, iss?}` → `{app}`；不认识、用过、过期的 `state` → 400 |
+| `GET /api/apps/{id}` | `{app}`，带 `tools: [{name, title, description, kind, level, overridden}]` |
+| `PATCH /api/apps/{id}` | `{policy?: {read?, write?}, overrides?: {工具名: auto / ask / off / null}, agents?: [id]}` → `{app}` |
+| `POST /api/apps/{id}/refresh` | 重新列工具 → `{app}` |
+| `DELETE /api/apps/{id}` | 撤销令牌（尽力而为），忘掉令牌和这一项，还在等你点头的卡撤回 → `{revoked}` |
+
+app：`{id, name, url, catalog, custom, category, desc, auth, mono, bg, fg, border, status: connected / needs_auth / error, error, account, connectedAt, createdAt, updatedAt, toolsAt, toolCount, readCount, writeCount, offCount, policy, overrides, agents}`。`app` 类的收件箱条目多带 `app: {app, appName, tool, args, agent, mono, bg, fg, border}`。
+
+目录里是 2026-09-29 核对过的服务：Notion、Todoist、Atlassian、Canva、Figma、Linear、Sentry、Stripe、Hugging Face（OAuth），GitHub（个人访问令牌：它的授权服务器不支持动态注册），Cloudflare 文档、DeepWiki、Context7（不用登录）。`server.json` → `apps`：`catalog`（加、改、藏目录里的应用）、`client_id_url`、`redirect_uris`（网页版用的 http(s) 回调）、`allow_local`（只给测试）。状态在 `<data_dir>/apps/`（目录 700、文件 600）。
 
 ## 思考空间和收藏
 

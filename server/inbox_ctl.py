@@ -59,9 +59,9 @@ def call(method: str, path: str, body: dict | None = None) -> dict:
     # 服务回的文字（错误说明）和这个命令用同一种语言
     headers = {"Content-Type": "application/json", "Accept": "application/json", "Accept-Language": "zh-CN" if lang() == "zh" else "en",
                "X-Mousse-Client": "ctl"}  # 服务据此不给 Agent 看名片 agent 的卡（对方说的话不进 Agent）
-    tokens = settings.tokens()
-    if tokens:  # 本机跑，用第一个令牌；没令牌时靠 Tailscale 白名单 / trust_loopback
-        headers["Authorization"] = f"Bearer {next(iter(tokens.values()))}"
+    token = settings.api_token()
+    if token:  # 本机跑，用第一把能走 /api 的令牌（mcp、sentinel 那几把不行）；没令牌时靠 Tailscale 白名单 / trust_loopback
+        headers["Authorization"] = f"Bearer {token}"
     req = urllib.request.Request(url, data=data, headers=headers, method=method)
     try:
         with urllib.request.urlopen(req, timeout=60) as r:  # noqa: S310

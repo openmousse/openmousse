@@ -170,7 +170,7 @@ if not repo:
 st = unit("openmousse-server")
 if HAS_SYSTEMD and st != "active":
     bad("openmousse-server", st, restart_hint("openmousse-server"))
-tok = str(tokens.get("local") or tokens.get("phone") or next(iter(tokens.values()), ""))
+tok = str(tokens.get("local") or tokens.get("phone") or next((v for k, v in tokens.items() if k not in ("mcp", "sentinel") and not str(k).startswith("mcp-")), ""))  # mcp、sentinel 在 /api 上不通
 code, body = http(f"http://{host}:{port}/api/health", tok)
 health = {}
 if code == 200:

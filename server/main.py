@@ -16,6 +16,7 @@
 - 目标：/api/goals（你和 Agent 都能改，每次改动能撤销）、/api/goals/trend（体重、体脂的读数：训记为主、Apple 健康对照）（见 goals.py）。
 - 世界树：/api/tree（各 AI 平台共用的记忆：枝和叶子，确认 / 忘记 / 挪枝；真源是 workspace 的 memory_tree.py，见 memtree.py）。
 - 连接：/api/connectors（助手接着的每样东西现在怎么样：数据来源、日程和邮件、文件和笔记、记忆、渠道和推送；见 connectors.py）。
+- 连接器：/api/apps（你接进来的第三方应用：Notion、Linear……经 OAuth 连上，工具经 /mcp 给 claw，按工具设权限；见 apps.py）。
 - 数据源可选（sources.py）：workspace 的 scripts/ 里没有对应脚本时，相关接口回 ok=false + missing_source，其它照常。
 """
 from __future__ import annotations
@@ -52,6 +53,9 @@ try:
     import mcp_bridge  # noqa: E402  /mcp：claw 经 MCP 用看板、收件箱这些（见 mcp_bridge.py）
 except ImportError:  # 没装 mcp 包的老安装：没有 /mcp，别的照常
     mcp_bridge = None
+apps = None
+if mcp_bridge is not None:  # 连接器也要 mcp 包（连远端 MCP）：顺带挂上收件箱 app 类的钩子，把连上的应用的工具加进 /mcp
+    import apps  # noqa: E402
 from chat import router as chat_router  # noqa: E402
 from cards import router as cards_router  # noqa: E402
 from health import router as health_router  # noqa: E402
@@ -148,6 +152,8 @@ app.include_router(share_public_router)  # /s/<令牌>：分享的链接页，�
 app.include_router(friends.router)  # 在 share 之后注册也行：/api/shares/{sid}/send 和 share 的路由不重叠
 app.include_router(a2a_router)
 app.include_router(egress_router)
+if apps is not None:
+    app.include_router(apps.router)
 app.add_exception_handler(sources.NoSource, sources.no_source_handler)
 _whois: dict[str, tuple[float, str | None]] = {}
 TOKEN_URL = re.compile(r"^/api/(?:files/|think/file/|think/saves/[^/]+/file$|podcast/episodes/pe-[0-9a-f]{8}/audio/\d+$)")
@@ -211,6 +217,9 @@ async def guard(request: Request, call_next):
             # Sentinel 代理的令牌只管出网判断：别的接口（对话、收件箱……）一律不给，免得它能替你点头
             if who == "token:sentinel" and not request.url.path.startswith("/api/egress/"):
                 return JSONResponse({"ok": False, "error": "this token is only for /api/egress"}, status_code=403)
+            # MCP 令牌（mcp、mcp-<agent id>）只给 /mcp：只拿着它的 claw（沙箱里的、云上的）不能经 /api 替你点头、配对新设备
+            if who == "token:mcp" or who.startswith("token:mcp-"):
+                return JSONResponse({"ok": False, "error": L("MCP 令牌只能用在 /mcp 上", "The MCP token only works on /mcp")}, status_code=403)
         resp = await call_next(request)
     finally:
         i18n.reset(lang_token)

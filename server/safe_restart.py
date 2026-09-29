@@ -21,6 +21,8 @@ import time
 import urllib.request
 from pathlib import Path
 
+from config import pick_api_token
+
 
 def status(base: str, token: str | None) -> dict:
     req = urllib.request.Request(f"{base}/api/chat/busy", headers={"Authorization": f"Bearer {token}"} if token else {})
@@ -39,7 +41,7 @@ def main() -> None:
     host = bind.get("host") or "127.0.0.1"
     base = f"http://{'127.0.0.1' if host in ('0.0.0.0', '::') else host}:{bind.get('port') or 8080}"
     tokens = (cfg.get("auth") or {}).get("tokens") or {}
-    token = next(iter(tokens.values()), None) if isinstance(tokens, dict) else None
+    token = pick_api_token(tokens) if isinstance(tokens, dict) else None  # mcp、sentinel 那几把在 /api 上不通
     deadline = time.time() + a.wait
     while True:
         try:

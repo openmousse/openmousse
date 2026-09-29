@@ -20,7 +20,7 @@ Every field of `server.json` is documented at the top of [`config.py`](config.py
 
 ## Auth
 
-`/api/*` requires `Authorization: Bearer <token>` (`X-API-Key` also works; `?token=` only on GET for files: `/api/files/…`, Think attachments and saved originals, podcast audio — for image views and the web build's `<audio>`, which can't send headers). No credentials → 401. Two token-free doors are off by default: `auth.tailscale_nodes` (a whitelist of Tailscale device names; needs tailscale on this machine) and `auth.trust_loopback` (never enable it when a reverse proxy runs on the same host). The web build's static files are public.
+`/api/*` requires `Authorization: Bearer <token>` (`X-API-Key` also works; `?token=` only on GET for files: `/api/files/…`, Think attachments and saved originals, podcast audio — for image views and the web build's `<audio>`, which can't send headers). No credentials → 401. Two token-free doors are off by default: `auth.tailscale_nodes` (a whitelist of Tailscale device names; needs tailscale on this machine) and `auth.trust_loopback` (never enable it when a reverse proxy runs on the same host). The web build's static files are public. The `mcp` and `mcp-<agent id>` tokens only work on `/mcp` (403 on `/api`, so a claw holding only that token can't approve its own inbox cards or pair devices), and `sentinel` only on `/api/egress`; local scripts (`*_ctl.py`, `safe_restart.py`, `check.sh`) use the first token that isn't one of those, whatever the order in `server.json`.
 
 ## Letting the phone connect
 
@@ -55,6 +55,7 @@ The server has an MCP endpoint at `/mcp` (Streamable HTTP, stateless, [`mcp_brid
 - OpenClaw: the installer adds `openmousse` under `mcp.servers` in `openclaw.json` (the Gateway hot-reloads it, no restart); the tools are named like `openmousse__board`. The skills' commands still work; both paths exist side by side and each skill says to prefer the tools when they're there.
 - Other claws: the installer prints the address and how to add it to that claw (Hermes's `mcp_servers`, nanobot's `tools.mcpServers`, Letta Code's `/mcp add`). An Agent's note carries its id, to put in `agent`.
 - `mcp.scripts` in `server.json` replaces or adds the command behind a tool (`{"journal": ["python3", "~/…/my_journal.py"]}`; `null` = don't offer it); restart the server after changing it.
+- The tools of the apps you connect (see [Connectors](#connectors-apps-over-mcp)) are listed after these, named `<app id>__<tool>`; connecting, removing or changing a permission needs no restart.
 - Context per turn: the 11 tool definitions come to about 7,500 characters, about the same as the 11 skill descriptions.
 
 ## Agents
@@ -112,7 +113,7 @@ Asking for changes: reply to the Agent in its chat with the card quoted; `/api/c
 
 Following up: the same `inboxId` on an item that is already settled (Handled → an item → Follow up) records `followedAt` / `followNote` instead; done and failed items go back to approved (in progress), and the model sees the item, its status and result, and how to report again with `done` / `fail`. Declined, withdrawn and expired items keep their status; the model is told to submit a new item if it should happen after all. Items also carry `day` (the logical day they were raised on), which the app uses to open that day's history at the message.
 
-Item: `{id, kind, source, sourceName, thread, title, why, changes: [], detail, approveLabel, fields?, status, note, result, level, createdAt, updatedAt, decidedAt, expiresAt, messageId}`. `messageId`: an item an Agent submits during a reply is attached to that reply (`messages.id`) when the reply finishes; items submitted outside a reply have null. kind: task / write / send / spend / schedule / push / skill / agent / block / code / calendar / other (exec only comes from OpenClaw and carries `fields`); status: pending / approved / rejected / revising / done / failed / withdrawn / expired. The old `/api/approvals` endpoints still work for older app builds.
+Item: `{id, kind, source, sourceName, thread, title, why, changes: [], detail, approveLabel, fields?, status, note, result, level, createdAt, updatedAt, decidedAt, expiresAt, messageId}`. `messageId`: an item an Agent submits during a reply is attached to that reply (`messages.id`) when the reply finishes; items submitted outside a reply have null. kind: task / write / send / spend / schedule / push / skill / agent / block / code / calendar / app (a connector call waiting for your OK, see Connectors) / other (exec only comes from OpenClaw and carries `fields`); status: pending / approved / rejected / revising / done / failed / withdrawn / expired. The old `/api/approvals` endpoints still work for older app builds.
 
 ## Chat: queueing, stopping, quoting
 
@@ -331,6 +332,30 @@ Me → Memory tree in the app. The memory your AI apps share (Claude, ChatGPT, G
 ## Connections
 
 Me → Connections: everything the assistant is connected to, and how it's doing. `GET /api/connectors[?fresh=1]` → `{groups: [{id, title, items}], counts: {ok, warn, off}, checkedAt}`; each item is `{id, name, icon, status: ok | warn | off, line, facts: [{label, value}], uses, fix, open}` (`open` = a screen in the app to jump to). The result is cached for 60 s per language (`fresh=1` skips it) and the chat channels' status (`openclaw channels status`) for 2 minutes. Every check is best effort and never returns a secret: only whether key names exist, file times, counts and systemd unit states. Checks for things your machine doesn't have (a script, a unit, a folder) are left out; built-ins you don't use yet (Apple Health, the calendar feed, push) show as not connected. The calendar feed (`/cal/<token>.ics`) now remembers when a calendar last picked it up, and roughly which kind (iPhone / Mac / Google / Outlook). See [`connectors.py`](connectors.py).
+
+## Connectors (apps over MCP)
+
+Settings → Connectors: third-party apps connected to this server over MCP (Notion, Linear… or any remote MCP address). Your claw uses their tools through `/mcp`; the tokens stay on this server. See [`apps.py`](apps.py).
+
+- **Connecting** follows the MCP authorization spec: the server finds the app's authorization server (the 401's `WWW-Authenticate` → protected-resource metadata → authorization-server metadata; a server without resource metadata is looked up the older way, on the MCP address's own host), gets a client (the `apps.client_id_url` document when the server supports client ID metadata documents, otherwise dynamic client registration, cached per authorization server and callback address) and gives the app an authorization URL (PKCE S256, `state`, `resource` = the MCP address, `scope` as advertised). The phone signs in, the provider sends it to `<app scheme>://oauth/callback?code&state`, the app hands that to `/api/apps/oauth/callback`, and the server exchanges the code and lists the tools. An authorization has 10 minutes and works once; starting again while one is unfinished registers a new client (the provider may have forgotten the old one). Tokens are refreshed shortly before they expire and once after a 401; if refreshing fails the app shows as needing to be reconnected. Removing an app revokes its tokens at the provider when it can.
+- **Using**: each connected app's tools appear on `/mcp` as `<app id>__<tool>` (with an optional `agent` argument, `mousse_agent` when the tool has its own `agent`). Each tool is `auto` (runs), `ask` (every call becomes an inbox card of kind `app` that rings; approving runs exactly that call and posts the result into the Agent's chat; asking for a change makes the Agent call again with new arguments) or `off`. Defaults: read tools auto, write tools ask (the tool's `readOnlyHint`, otherwise its name: get / list / search / read / fetch / find / query / view / describe / show / lookup are reads). Which Agents may use an app is set per app (main by default); the caller is the Agent an `mcp-<id>` token is bound to, else the `agent` argument, else main. Claws that keep a tool list per session see changes when they reconnect.
+- Calls: one short MCP session each (streamable HTTP, or SSE for servers that only have that), 60 s at most, 4 at a time; text is capped at 30,000 characters, images and other binary content become a one-line note.
+- Safety: addresses learned from a server (metadata, endpoints) must be https and resolve to public addresses, unless they're on the MCP address's own origin; a custom MCP address is https, or plain http only for this machine or a Tailscale address. Tokens are never returned or logged. An `app` card edited after it was sent is not run.
+
+| Endpoint | What it does |
+|---|---|
+| `GET /api/apps` | `{apps: [app], catalog: [{id, name, url, category, desc, mono, bg, fg, border, auth, hint, installed}], agents: [{id, name}]}` (main first) |
+| `POST /api/apps` | `{catalog, redirect_uri}` or `{name, url, auth: oauth / token / none, token?, redirect_uri?}` → oauth: `{app, authorizeUrl, state}`; token / none: connects and lists the tools → `{app}`. 409 if it's already connected |
+| `POST /api/apps/{id}/connect` | Reconnect or switch accounts: `{redirect_uri}` → `{app, authorizeUrl, state}`; a token app takes `{token}` → `{app}` |
+| `POST /api/apps/oauth/callback` | `{state, code?, error?, error_description?, iss?}` → `{app}`; an unknown, used or expired `state` → 400 |
+| `GET /api/apps/{id}` | `{app}` with `tools: [{name, title, description, kind, level, overridden}]` |
+| `PATCH /api/apps/{id}` | `{policy?: {read?, write?}, overrides?: {tool: auto / ask / off / null}, agents?: [ids]}` → `{app}` |
+| `POST /api/apps/{id}/refresh` | Lists the tools again → `{app}` |
+| `DELETE /api/apps/{id}` | Revokes the tokens (best effort), forgets them and the entry, withdraws its pending cards → `{revoked}` |
+
+App: `{id, name, url, catalog, custom, category, desc, auth, mono, bg, fg, border, status: connected / needs_auth / error, error, account, connectedAt, createdAt, updatedAt, toolsAt, toolCount, readCount, writeCount, offCount, policy, overrides, agents}`. An `app` inbox item also carries `app: {app, appName, tool, args, agent, mono, bg, fg, border}`.
+
+The catalog lists servers checked on 2026-09-29: Notion, Todoist, Atlassian, Canva, Figma, Linear, Sentry, Stripe and Hugging Face (OAuth), GitHub (a personal access token: its authorization server has no dynamic registration), Cloudflare Docs, DeepWiki and Context7 (no sign-in). `server.json` → `apps`: `catalog` (add, change or hide entries), `client_id_url`, `redirect_uris` (http(s) callbacks for the web build), `allow_local` (tests only). State lives in `<data_dir>/apps/` (directory 0700, files 0600).
 
 ## Thinking space and Saved
 
