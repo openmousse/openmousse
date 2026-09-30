@@ -174,7 +174,7 @@ export function FragmentCard({ f, selected, onToggle, onPress, onKeyword, full, 
       {f.title ? <T v="headline" numberOfLines={2}>{f.title}</T> : null}
       {f.kind !== 'keywords' && f.text ? (
         <T v={f.kind === 'voice' || f.kind === 'long' ? 'callout' : 'body'} color={f.kind === 'voice' || f.kind === 'long' ? t.ink2 : t.ink} numberOfLines={lines}>
-          {f.kind === 'voice' ? `「${f.text}」` : f.text}
+          {f.kind === 'voice' ? L(`「${f.text}」`, `“${f.text}”`) : f.text}
         </T>
       ) : null}
       {f.url ? <T v="caption" color={t.ink3} numberOfLines={1}>{f.linkTitle ? `${f.linkTitle} · ` : ''}{f.url.replace(/^https?:\/\//, '')}</T> : null}

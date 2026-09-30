@@ -256,7 +256,7 @@ function SharedCard({ m, friend, mine, onAsk }: { m: FriendMsg; friend: Friend; 
       ) : (
         <>
           <T v="headline" style={{ fontSize: 16 }}>{s.title || L('（没有标题）', '(untitled)')}</T>
-          {s.quote ? <T v="callout" color={t.ink2}>{`「${s.quote}」`}</T> : null}
+          {s.quote ? <T v="callout" color={t.ink2}>{L(`「${s.quote}」`, `“${s.quote}”`)}</T> : null}
           {m.text ? <T v="callout">{m.text}</T> : null}
           {!mine && s.text ? (
             <>
