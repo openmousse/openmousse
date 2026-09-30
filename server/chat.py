@@ -15,6 +15,7 @@ import asyncio
 import contextlib
 import json
 import os
+import re
 import shutil
 import signal
 import sqlite3
@@ -96,11 +97,39 @@ STEERS: dict[str, asyncio.Future] = {}  # 插话那一条的 runId → 结果：
 QUEUE_RESUME_MINUTES = 30  # 服务重启时库里还排着的：这么久以内的接着发，更早的标成没发出去
 
 
+ENV_REF = re.compile(r"\$(\$?)\{([A-Z_][A-Z0-9_]*)\}")  # OpenClaw 配置里的 ${VAR}；$${VAR} = 字面的 ${VAR}
+
+
 def gateway_token() -> str:
+    """Gateway 的共享令牌 = openclaw.json 的 gateway.auth.token。可以照 OpenClaw 的写法引用环境变量（2026-09-30）：
+    "${VAR}" 或 SecretRef {"source": "env", "id": "VAR"}；没写令牌就用 OPENCLAW_GATEWAY_TOKEN。
+    变量先看服务进程的环境，再看 .env（claw.env_value；OpenClaw 自己也读 ~/.openclaw/.env）。缺了 → 503，不拿 "${VAR}" 原样去连。"""
     try:
-        return json.loads(OPENCLAW.read_text(encoding="utf8"))["gateway"]["auth"]["token"]
-    except (OSError, ValueError, KeyError) as e:  # noqa: BLE001
+        auth = (json.loads(OPENCLAW.read_text(encoding="utf8")).get("gateway") or {}).get("auth") or {}
+        tok = auth.get("token")
+    except (OSError, ValueError, AttributeError) as e:
         raise HTTPException(503, L(f"读不到 Gateway token：{e}", f"Can't read the Gateway token: {e}")) from e
+    missing: list[str] = []
+
+    def var(name: str) -> str:
+        if not (v := claw.env_value(name)):
+            missing.append(name or "?")
+        return v
+
+    if isinstance(tok, dict):  # SecretRef 只认 env 这一种；file / exec 要 OpenClaw 自己解
+        if tok.get("source") != "env":
+            raise HTTPException(503, L(f"gateway.auth.token 是 {tok.get('source')} 类的 SecretRef，这里只认 env 类和 ${{VAR}}",
+                                       f"gateway.auth.token is a {tok.get('source')} SecretRef; only env ones and ${{VAR}} work here"))
+        tok = var(str(tok.get("id") or ""))
+    elif isinstance(tok, str):
+        tok = ENV_REF.sub(lambda m: "${" + m[2] + "}" if m[1] else var(m[2]), tok)
+    else:
+        tok = var("OPENCLAW_GATEWAY_TOKEN")
+    if missing or not tok:
+        what = "、".join(missing) or "gateway.auth.token"
+        raise HTTPException(503, L(f"读不到 Gateway token：{what} 没有值（服务的环境和 .env 里都没有）",
+                                   f"Can't read the Gateway token: {what} has no value (not in the server's environment or .env)"))
+    return tok
 
 
 PREFIX_RELAY = "【主对话转来】"  # 每个 Group 一个独立 OpenClaw agent（2026-09-24，第 7 步）

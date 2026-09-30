@@ -258,12 +258,37 @@ if is_openclaw:
     st = unit("openclaw-gateway")
     if HAS_SYSTEMD and st != "active":
         bad("openclaw-gateway", st, restart_hint("openclaw-gateway"))
+    # 令牌可以照 OpenClaw 的写法引用环境变量："${VAR}"、SecretRef {"source": "env", "id": …}；没写用 OPENCLAW_GATEWAY_TOKEN。
+    # 变量先看环境，再看 openclaw.json 旁边的 .env（OpenClaw 自己也读它）
+    def env_var(name):
+        if os.environ.get(name):
+            return os.environ[name]
+        try:
+            for line in (oc_home / ".env").read_text(encoding="utf8").splitlines():
+                k, sep, v = line.strip().removeprefix("export ").partition("=")
+                if sep and k.strip() == name:
+                    return v.strip().strip("'\"")
+        except (OSError, UnicodeDecodeError):
+            pass
+        return ""
     auth = gw.get("auth") or {}
-    gw_tok = auth.get("token") if isinstance(auth.get("token"), str) else ""
+    gw_tok, tok_missing = auth.get("token"), []
+    if isinstance(gw_tok, dict):
+        tok_missing = [str(gw_tok.get("id") or "?")] if gw_tok.get("source") == "env" and not env_var(str(gw_tok.get("id") or "")) else []
+        gw_tok = env_var(str(gw_tok.get("id") or "")) if gw_tok.get("source") == "env" else ""
+    elif isinstance(gw_tok, str):
+        ref = re.compile(r"\$(\$?)\{([A-Z_][A-Z0-9_]*)\}")
+        tok_missing = [m[2] for m in ref.finditer(gw_tok) if not m[1] and not env_var(m[2])]
+        gw_tok = "" if tok_missing else ref.sub(lambda m: "${" + m[2] + "}" if m[1] else env_var(m[2]), gw_tok)
+    else:
+        gw_tok = env_var("OPENCLAW_GATEWAY_TOKEN")
     gw_code, b = http(gw_url.rstrip("/") + "/v1/models", gw_tok)
     gw_up = bool(gw_code) and gw_code < 500 and gw_code not in (401, 403)
     if gw_up:
         ok(L("Gateway 连得上", "Gateway reachable"), gw_url)
+    elif tok_missing:
+        bad(L("Gateway 的令牌读不到", "Can't read the Gateway token"), L(f"gateway.auth.token 引用的 {'、'.join(tok_missing)} 没有值", f"gateway.auth.token refers to {', '.join(tok_missing)}, which has no value"),
+            L(f"把它加进 {oc_home / '.env'}", f"add it to {oc_home / '.env'}"))
     elif gw_code in (401, 403):
         bad(L("Gateway 在，但不认令牌", "Gateway is up but rejects the token"), f"HTTP {gw_code}",
             L("OpenMousse 用的是 openclaw.json 里 gateway.auth.token；Gateway 改成了密码登录的话，换回令牌", "OpenMousse uses gateway.auth.token from openclaw.json; if the Gateway uses a password, switch it back to a token"))

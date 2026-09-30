@@ -853,14 +853,39 @@ def gateway_applies_config(oc_path: Path) -> bool:
     return str(mode or "hybrid") not in ("off", "hot")
 
 
+def gateway_token(oc_path: Path) -> str:
+    """openclaw.json 的 gateway.auth.token，照 OpenClaw 的写法认环境变量引用："${VAR}"（$${VAR} = 字面的）、
+    SecretRef {"source": "env", "id": "VAR"}；没写就用 OPENCLAW_GATEWAY_TOKEN。变量先看环境，再看 openclaw.json 旁边的 .env
+    （OpenClaw 自己也读它）。缺了 = 空。"""
+    def var(name: str) -> str:
+        if os.environ.get(name):
+            return os.environ[name]
+        with contextlib.suppress(OSError, UnicodeDecodeError):
+            for line in (oc_path.parent / ".env").read_text(encoding="utf8").splitlines():
+                k, sep, v = line.strip().removeprefix("export ").partition("=")
+                if sep and k.strip() == name:
+                    return v.strip().strip("'\"")
+        return ""
+
+    auth = ((load_json(oc_path).get("gateway") or {}).get("auth") or {}) if oc_path.exists() else {}
+    tok = auth.get("token") if isinstance(auth, dict) else None
+    if isinstance(tok, dict):
+        return var(str(tok.get("id") or "")) if tok.get("source") == "env" else ""
+    if not isinstance(tok, str):
+        return var("OPENCLAW_GATEWAY_TOKEN")
+    ref = re.compile(r"\$(\$?)\{([A-Z_][A-Z0-9_]*)\}")
+    if any(not m[1] and not var(m[2]) for m in ref.finditer(tok)):
+        return ""
+    return ref.sub(lambda m: "${" + m[2] + "}" if m[1] else var(m[2]), tok)
+
+
 def probe_gateway(url: str, oc_path: Path, wait: float = 0) -> tuple[bool, str]:
     """OpenClaw Gateway 连不连得上（app 的对话走它）：GET <gateway>/v1/models，带 openclaw.json 里 Gateway 的令牌，不打印。
     刚重启过的 Gateway 要二三十秒才起来：wait 秒内连不上就接着等。"""
     import time
     import urllib.error
     import urllib.request
-    auth = ((load_json(oc_path).get("gateway") or {}).get("auth") or {}) if oc_path.exists() else {}
-    token = auth.get("token") if isinstance(auth.get("token"), str) else ""
+    token = gateway_token(oc_path)
     req = urllib.request.Request(url.rstrip("/") + "/v1/models", headers={"Authorization": f"Bearer {token}"} if token else {})
     deadline = time.time() + wait
     while True:
