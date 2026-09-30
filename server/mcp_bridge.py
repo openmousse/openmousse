@@ -18,8 +18,8 @@
 
 server.json 的 mcp 段（可选，每次读文件）：{"scripts": {"工具名": ["命令", "参数"…]}}：换掉或加一个工具背后的命令
 （比如日志换成你自己 workspace 里的脚本）；写成 null = 不提供这个工具。改了工具列表要重启服务。
-连接器（apps.py）：你连上的第三方应用的工具也从这里给出去（<应用 id>__<工具名>），接在这 12 个后面；每次列工具时现查，连上、断开、
-改权限都不用重启。它们经 EXTRA 挂进来，这 12 个工具本身不经过它。
+连接器（apps.py）：你连上的第三方应用的工具也从这里给出去（<应用 id>__<工具名>），接在这 13 个后面；每次列工具时现查，连上、断开、
+改权限都不用重启。它们经 EXTRA 挂进来，这 13 个工具本身不经过它。
 """
 import asyncio
 import os
@@ -61,6 +61,8 @@ BRIDGES: dict[str, tuple[str, str, str, int]] = {
                 "Projects (project_ctl.py): list, show, create, propose, goal, progress, add, done, ask, conclude, archive… See the project skill.", TIMEOUT),
     "schedule": ("server/schedule_ctl.py", "日程和「要记得的」（schedule_ctl.py）：day、remember、add、update、delete、skip、attend、place、done、undo…。",
                  "The schedule and things to remember (schedule_ctl.py): day, remember, add, update, delete, skip, attend, place, done, undo…", TIMEOUT),
+    "study": ("server/study_ctl.py", "学习台的课（study_ctl.py）：courses、show、check、session、reading、ddl、file、assign、syllabus、answer、style、generate、undo、log、create、delete。见 study skill。",
+              "Study desk courses (study_ctl.py): courses, show, check, session, reading, ddl, file, assign, syllabus, answer, style, generate, undo, log, create, delete. See the study skill.", TIMEOUT),
     "agents": ("server/agent_ctl.py", "新建 / 改 / 删 Agent（agent_ctl.py）：list、create、update、delete。见 agent-builder skill。",
                "Create, edit or delete Agents (agent_ctl.py): list, create, update, delete. See the agent-builder skill.", TIMEOUT),
     "handoff": ("packs/core/scripts/ask_agent.py", "把属于某个 Agent 的事转给它、等它回话（ask_agent.py）：--list 看有哪些 Agent。见 handoff skill。",
@@ -265,7 +267,7 @@ def build() -> FastMCP:
 
 
 def extend(low) -> None:
-    """EXTRA 的工具接在后面：包一层低层的 tools/list、tools/call。这 12 个照旧走 FastMCP 自己的处理器（参数校验、ToolError 都一样）。"""
+    """EXTRA 的工具接在后面：包一层低层的 tools/list、tools/call。这 13 个照旧走 FastMCP 自己的处理器（参数校验、ToolError 都一样）。"""
     base_list, base_call = low.request_handlers[types.ListToolsRequest], low.request_handlers[types.CallToolRequest]
 
     def who() -> dict:
@@ -280,7 +282,7 @@ def extend(low) -> None:
         for tools, _ in EXTRA:
             try:
                 res.root.tools.extend(await tools(who()))
-            except Exception:  # noqa: BLE001 — 加上来的工具出了错，这 12 个照常
+            except Exception:  # noqa: BLE001 — 加上来的工具出了错，这 13 个照常
                 pass
         return res
 

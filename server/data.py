@@ -275,6 +275,7 @@ class GroupIn(BaseModel):
     color: str | None = None  # agents.COLORS 里的一个；不给 = 默认色
     model: str
     skills: list[str] | None = None  # 不给就用 server.json 的 agent_default_skills
+    template: str | None = None      # 从例子开始：study = 学习（带学习台：学习看板、学习功能包、study skill）
 
 
 class GroupPatch(BaseModel):
@@ -301,15 +302,24 @@ def create_group(body: GroupIn):
     name, icon, color = agent_name(body.name), icon_key(body.icon), color_key(body.color)
     gid = f"g-{uuid.uuid4().hex[:8]}"
     ts = now_iso()
+    template = (body.template or "").strip() or None
+    if template not in (None, "study"):
+        raise HTTPException(400, L("template 只能是 study", "template must be study"))
+    skills = body.skills
+    if template == "study":  # 学习 Agent 要会改课（study skill）
+        skills = list(dict.fromkeys([*(skills if skills is not None else cfg.agent_default_skills), "study"]))
     try:
         if claw.is_openclaw():
-            agents.provision(gid, name, body.purpose.strip(), icon, skills=body.skills)
+            agents.provision(gid, name, body.purpose.strip(), icon, skills=skills)
     except agents.ProvisionError as e:
         raise HTTPException(502, str(e)) from e
     with _lock, ddb() as conn:
         conn.execute("INSERT INTO groups(id, name, icon, color, purpose, created_at) VALUES(?,?,?,?,?,?)", (gid, name, icon, color, body.purpose.strip(), ts))
         conn.execute("INSERT INTO threads(id, model, updated_at) VALUES(?,?,?) ON CONFLICT(id) DO UPDATE SET model=excluded.model", (gid, body.model, ts))
     log_activity(L(f"新建 Agent「{name}」", f'Created agent "{name}"'), "edit")
+    if template == "study":
+        import studyapp  # 延迟导入：studyapp 依赖本模块
+        studyapp.adopt_template(gid)
     return {"ok": True, "id": gid}
 
 

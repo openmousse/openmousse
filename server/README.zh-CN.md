@@ -329,7 +329,44 @@ python3 proposals_ctl.py agent --slug reading --name 读书 --purpose "…" --ic
 
 **复习**：播客的费曼讲错和漏了的，点一下加进这门课（`POST /api/study/review {course, page?, items, …}`，存在 `pages/<课程>/.gen/review.json`，挂在那一节上）；学习台打开那一节时顶上一个「复习」框，点「复习过了」划掉（`POST /api/study/review/done`）。`GET /api/study/review?course=&page=&all=`。
 
-提问走和 app 同一条对话通道，每个学习页一个线程；每天第一个问题会带上学习页、课件全文、录播字幕和阅读材料（放得下的放全文，放不下的给路径），以及你正在做学习路线的第几步。闪卡、小测、学习路线也这样生成，存在学习页旁边。
+提问走和 app 同一条对话通道，每个学习页一个线程；每天第一个问题会带上学习页、课件全文、录播字幕和阅读材料（放得下的放全文，放不下的给路径），以及你正在做学习路线的第几步。闪卡、小测、学习路线存在学习页旁边；OpenClaw 开了 llm-task 时它们走零工具的一问一答（课件原文不进带工具的回合），没开就在这一节的生成线程里问。
+
+`materials` 和 `pages` 没配时默认放在数据目录下（`<data_dir>/study/materials`、`pages`），安装器也按这个建好目录。
+
+### 加一门课（课程档案）
+
+学习台左栏「+ 加一门课」是五步向导，右边一直开着**学习 Agent** 的对话（`study.agent`，和 app 里这个 Agent 的「对话」是同一个线程）：说哪里不对它就用 `study_ctl.py` 改，改过的标黄、能撤销。每门课一份 `pages/<课程>/course.json`（见 [`coursefile.py`](coursefile.py)）：
+
+1. **说说这门课**：课名、学期、考试怎么考、喜欢怎么学、还想说的（每次写学习页都带上）。
+2. **你手上有什么**：大纲（文件、网页链接或对话里发的附件）、课件文件（文件或 zip）、Canvas 个人令牌、还没有；按选的课程网站写去哪拿、拿什么。大纲交给模型（零工具的 llm-task）读出每一节的日期、主题、要读的，作业和考试，看不清的列成要问的。
+3. **核对每一节**：点格子改或者跟右边说；核对完才建每一节的文件夹，作业和考试进「今天」、要记得的、顶栏和学习 Agent 的截止表。
+4. **放材料、查齐**：按文件名归节（Session / Lecture / 第 N 讲 → 那一节；Week N → 那一周，一周几节或者和主题对不上就问；阅读清单对得上的记成那篇阅读），zip 拆开；每节看课件、阅读几篇到手、有没有录播字幕（`.vtt` / `.srt` 放进那一节就行）；缺的可以补、可以明着跳过。
+5. **生成**：只生成材料齐了的节，一次一节：学习页（固定的几节：这一节在回答什么 / 课上重点（有字幕才写）/ 核心概念 / 框架 / 阅读要点 / 题型 / 易混点 / 自测题（`**Q1.**` + `<details>`，「自测」标签靠它拆题）/ 可做视频的概念）→ 学习路线 → 闪卡、小测（→ 视频）。写好一节在学习 Agent 的对话里记一行灰字。
+
+已有的课件文件夹（比如课程网站镜像下来的）可以直接拿来建课：按模块名认出每一节，已有的学习页按 `session` 挂上。没有档案的课照旧能用。
+
+| 接口 | 做什么 |
+|---|---|
+| `GET /api/study/courses` | 所有的课 + 课件目录里还没当成课的文件夹 + 学习 Agent |
+| `POST /api/study/courses` | 建课 `{name, title?, term, exam, learn, notes, platform, adopt?}` |
+| `GET / PATCH / DELETE /api/study/courses/{课}` | 一门课的全貌（每一节查齐的结果、标黄、生成进度、待归节的文件）/ 改档案 / 删课（撤不回：出收件箱卡，点了同意整门课挪进 `<data_dir>/study-trash/`） |
+| `POST …/syllabus`、`…/syllabus/from`、`GET …/syllabus` | 传大纲文件 / 链接、附件、文字 / 读到哪了 |
+| `POST / PATCH / DELETE …/sessions[/{id}]`、`…/readings`、`…/deadlines`、`POST …/questions/{id}` | 加一节（后面顺延）、改、去掉；阅读（`skip` = 先跳过）；作业和考试；回答要问的 |
+| `POST …/confirm` | 核对完 |
+| `POST …/files`、`…/files/from-uploads`、`…/files/assign`、`DELETE …/files` | 传文件 / 把对话附件放进来 / 归到某一节 / 删待归节里的 |
+| `GET …/check`、`POST / GET …/generate` | 每节缺什么；生成（`force` = 材料没齐也写） |
+| `POST …/undo/{改动号}?redo=`、`GET …/changes` | 撤销 / 重做（只撤后来没再改过的地方），最近的改动 |
+| `POST /api/study/canvas/connect`、`POST …/{课}/canvas` | Canvas 个人令牌（存 `~/.openmousse/canvas-tokens.json`，0600，只发给那个 Canvas）；把这门课的课件和作业同步进来（点一次同步一次） |
+
+学习 Agent 在对话里改课用 [`study_ctl.py`](study_ctl.py)（skill `study`，MCP 工具 `study`）；它在回复里改的，回复下面出一张「改了课程结构」的卡（`/api/chat/cards` 的 kind `course`），能撤销。
+
+### 接到 app 上
+
+- 学习 Agent 的看板是学习看板（`groups.dashboard = study`，`POST /api/study/agent {agent}` 设）：顶上「学习台」卡（`GET /api/study/home`：复习几条、接着学哪一节第几步、下一个截止、每门课学完几节），下面是这个 Agent 自己的积木。新建 Agent 选「从例子开始 → 学习」（`POST /api/groups {…, template: "study"}`）：带学习看板、学习功能包（`packs/study`：截止表和学习记录）和 study skill。
+- 手机原生学习屏：`GET /api/study/outline?course=`（每一节的状态）、`GET /api/study/unit?course=&page=`（一节的课件、阅读、录播、学习路线和打勾、复习），课件用和对话附件同一套预览（`/api/study/file/preview`、`/api/study/file/page`，页图缓存在课程的 `.gen/preview`）。
+- 电脑上打开：`POST /api/study/login-link {server}` 出 `<服务器>/study#pair=<配对码>`（10 分钟、一次），浏览器打开就换一个自己的令牌。
+- 自测写的答案、判的对错存服务器（`GET / PUT /api/study/self`，`pages/<课程>/.gen/self.json`），手机电脑共用；「没答上」一键进复习（`POST /api/study/review/add`）。
+- 推送（都默认关）：`study.notify_generated` = 写好一节静音推一条；`study.notify_ready` = 课程开了「新的一节材料齐了提醒我」时，材料齐了静音推一条。
 
 ## 世界树
 

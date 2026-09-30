@@ -1,0 +1,46 @@
+{
+ "name": "study",
+ "version": 1,
+ "title": {"zh": "学习台", "en": "Study desk"},
+ "summary": {"zh": "截止表（课程档案里的作业和考试、课程网站同步来的都进来，交了打勾）和学习记录（学习路线打一个勾记一行），看板上一眼看到这周学了多久。",
+             "en": "A deadline table (assignments and exams from your course profiles and any synced course site; tick them off) and a study log (one line per ticked study-path step), with this week's study time on the board."},
+ "for": ["study"],
+ "guide": "GUIDE.md",
+ "tables": [
+  {"name": "deadlines", "title": {"zh": "截止", "en": "Deadlines"},
+   "fields": [
+    {"key": "title", "label": {"zh": "什么", "en": "What"}, "type": "text", "required": true},
+    {"key": "course", "label": {"zh": "课", "en": "Course"}, "type": "text"},
+    {"key": "kind", "label": {"zh": "类型", "en": "Kind"}, "type": "choice",
+     "options": {"zh": ["作业", "小组作业", "展示", "考试", "课堂练习", "小测"], "en": ["Assignment", "Group work", "Presentation", "Exam", "Class exercise", "Quiz"]}},
+    {"key": "due", "label": {"zh": "截止", "en": "Due"}, "type": "datetime", "required": true},
+    {"key": "hours_needed", "label": {"zh": "估计要几小时", "en": "Hours needed"}, "type": "number", "unit": "h"},
+    {"key": "done", "label": {"zh": "交了", "en": "Done"}, "type": "bool"},
+    {"key": "link", "label": {"zh": "链接", "en": "Link"}, "type": "link"}
+   ]},
+  {"name": "study_log", "title": {"zh": "学习记录", "en": "Study log"},
+   "fields": [
+    {"key": "date", "label": {"zh": "哪天", "en": "Date"}, "type": "date", "required": true},
+    {"key": "course", "label": {"zh": "课", "en": "Course"}, "type": "text"},
+    {"key": "what", "label": {"zh": "学了什么", "en": "What"}, "type": "text"},
+    {"key": "minutes", "label": {"zh": "多久", "en": "Minutes"}, "type": "number", "unit": {"zh": "分钟", "en": "min"}}
+   ]}
+ ],
+ "blocks": [
+  {"id": "ddl", "type": "list", "title": {"zh": "截止", "en": "Deadlines"}, "after": "study.courses",
+   "source": {"from": "deadlines", "where": [["done", "!=", true]], "sort": ["due"]},
+   "row": {"title": "{course} · {title}", "sub": ["kind"], "right": "due",
+           "badge": [{"field": "due", "op": "<=", "value": "+1d", "text": {"zh": "明天前", "en": "Tomorrow"}, "tone": "bad"},
+                     {"field": "due", "op": "<=", "value": "+7d", "text": {"zh": "这周", "en": "This week"}, "tone": "warn"}]},
+   "limit": 8, "edit": true, "style": "rows",
+   "rowActions": [{"label": {"zh": "交了", "en": "Done"}, "set": {"done": true}}],
+   "empty": {"zh": "没有没交的作业和考试", "en": "Nothing due"}},
+  {"id": "study_week", "type": "stat", "title": {"zh": "学了多久", "en": "Study time"}, "after": "ddl",
+   "items": [{"label": {"zh": "这周", "en": "This week"}, "value": {"ratio": [{"from": "study_log", "agg": "sum", "field": "minutes", "where": [["date", ">=", "week"]]}, 60]}, "unit": "h",
+              "compare": {"ratio": [{"from": "study_log", "agg": "sum", "field": "minutes", "where": [["date", ">=", "lastweek"], ["date", "<", "week"]]}, 60]},
+              "compareLabel": {"zh": "比上周", "en": "vs last week"}, "good": "up"},
+             {"label": {"zh": "打了几个勾", "en": "Steps done"}, "value": {"from": "study_log", "agg": "count", "where": [["date", ">=", "week"]]}}]},
+  {"id": "study_trend", "type": "chart", "title": {"zh": "每周学习时间（分钟）", "en": "Study minutes by week"}, "after": "study_week",
+   "series": {"from": "study_log", "agg": "sum", "field": "minutes", "by": "week", "date": "date", "range": "8w"}}
+ ]
+}

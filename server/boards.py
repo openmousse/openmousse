@@ -53,6 +53,7 @@ ANCHORS = {
     "health": ("health.sleep", "health.recovery"),
     "apply": ("apply.list",),
     "masters": ("masters.list",),
+    "study": ("study.desk", "study.courses"),
 }
 # 内置小节本身也是看板上的一块（type builtin，id 就是上面的名字）：用户能挪、能藏，不能删、不能改内容（内容是 app 画的）。
 # 配置里写成 {"id": "diet.week", "type": "builtin", "hidden": true}，它们之间的先后就是小节的顺序；没写到的按默认位置补上。
@@ -63,6 +64,7 @@ SECTION_TITLES = {
     "diet.week": ("这周", "This week"), "diet.shopping": ("要买", "To buy"),
     "health.sleep": ("昨晚睡得怎么样", "How you slept"), "health.recovery": ("恢复与睡眠", "Recovery and sleep"),
     "apply.list": ("求职申请", "Job applications"), "masters.list": ("申请学校", "School applications"),
+    "study.desk": ("学习台", "Study desk"), "study.courses": ("课程", "Courses"),
 }
 CURRENCY = {"GBP": "£", "USD": "$", "EUR": "€", "CNY": "¥", "JPY": "¥", "HKD": "HK$"}
 

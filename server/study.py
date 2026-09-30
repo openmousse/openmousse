@@ -18,6 +18,11 @@
   deadlines_cmd   可选：打印 ddl JSON 数组的命令（[{due: "YYYY-MM-DD HH:MM", course, title, url?}]），缓存 30 分钟
   video_cmd       可选：渲染视频的命令（argv 列表，{script} = 助手写的 Manim 脚本，{media_dir} = 工作目录），配了才出现「生成视频」。
                   这会在本机运行助手写的代码：只在已经信任助手能在这台机器上执行代码时打开。
+  agent           可选：学习 Agent 的 id（学习台旁边的对话、改课、截止表、学习记录归它）
+  notify_generated / notify_ready   可选，默认关：写好一节静音推一条 / 开了「材料齐了提醒我」的课材料齐了推一条
+  canvas_allow_local                只给测试：允许连 http://127.0.0.1 的假 Canvas
+materials / pages 没配就放在 <data_dir>/study/ 下。加一门课（课程档案 course.json）见 coursefile.py / courses.py / coursegen.py，
+Canvas 个人令牌见 canvasapi.py，接到 app 上的接口见 studyapp.py。
 
 问答走 chat.py 的同一条通道：每个学习页（或单个课件）一个线程 study-<hash>。每个逻辑日的第一条消息把学习页和课件全文
 作为前情一起发给模型（会话每天 04:00 重置），对话记录里只显示提问本身。生成闪卡 / 小测 / 学习路线每次用一个新的 session key，互不累积。
@@ -72,19 +77,25 @@ def cfg() -> dict:
 
 
 def root(name: str) -> Path | None:
+    """配置里的目录；课件和学习页没配就放在数据目录下（<data_dir>/study/materials、pages）：新装的不用改 server.json 就能加课。"""
     value = cfg().get(name)
-    return Path(value).expanduser() if value else None
+    if value:
+        return Path(value).expanduser()
+    if name in ("materials", "pages"):
+        return settings.data_dir / "study" / name
+    return None
 
 
 def courses() -> list[str]:
-    """materials 下的课（带模块子文件夹的才算）；配置了 courses 就按它筛选和排序。"""
+    """materials 下的课（带模块子文件夹的才算）；配置了 courses 就按它筛选和排序。
+    有课程档案（course.json，加一门课建的）的课不管配没配都算，排在后面（按建课的先后）。"""
     mat = root("materials")
-    if not mat or not mat.is_dir():
-        return []
     found = [p.name for p in sorted(mat.iterdir())
-             if p.is_dir() and not p.name.startswith((".", "_")) and any(c.is_dir() for c in p.iterdir())]
+             if p.is_dir() and not p.name.startswith((".", "_")) and any(c.is_dir() for c in p.iterdir())] if mat and mat.is_dir() else []
     want = [str(x) for x in cfg().get("courses") or []]
-    return [c for c in want if c in found] if want else found
+    base = [c for c in want if c in found] if want else found
+    import coursefile  # 延迟导入：coursefile 也 import 本模块
+    return base + [c for c in coursefile.profiled() if c not in base and mat and (mat / c).is_dir()]
 
 
 def course_dir(course: str) -> Path:
@@ -197,14 +208,30 @@ def sessions_in(value) -> set[int]:
     return {n for n in (session_of(x) for x in (value if isinstance(value, list) else [value])) if n is not None}
 
 
-def readings_of(course: str, session: int | None) -> list[dict]:
-    """阅读清单里属于这一节的条目：必读在前，教材、case、文章、新闻依次排。file 在 materials 里真有才算到手。"""
-    base, mat = root("readings"), root("materials")
-    if not base or not mat or session is None:
-        return []
-    data = load_json(base / f"{course}.json")
-    items = data.get("items") if isinstance(data, dict) else data
+def profile_readings(course: str, session: int | None) -> list[dict]:
+    """课程档案（course.json）里这一节要读的：和阅读清单一个样子；明着跳过的 status = skipped（不算缺）。"""
+    import coursefile as cf
+    c = cf.load(course) if session is not None else None
+    s = next((x for x in cf.live_sessions(c) if x["n"] == session), None) if c else None
     out = []
+    for r in (s or {}).get("readings") or []:
+        state = cf.reading_state(course, r)
+        out.append({"id": r["id"], "title": r["title"], "authors": None, "kind": "textbook" if r["kind"] in ("textbook", "chapter") else
+                    ("case" if r["kind"] == "case" else "article" if r["kind"] == "article" else "web" if r["kind"] == "web" else "note"),
+                    "instructions": r.get("note") or None, "url": r.get("url"), "access": None, "error": None, "required": r["required"],
+                    "file": r["file"] if state == "have" else None, "status": state})
+    return out
+
+
+def readings_of(course: str, session: int | None) -> list[dict]:
+    """阅读清单里属于这一节的条目：必读在前，教材、case、文章、新闻依次排。file 在 materials 里真有才算到手。
+    课程档案里这一节写了要读的，也并进来。"""
+    base, mat = root("readings"), root("materials")
+    if not mat or session is None:
+        return []
+    data = load_json(base / f"{course}.json") if base else None
+    items = data.get("items") if isinstance(data, dict) else data
+    out = profile_readings(course, session)
     for it in items if isinstance(items, list) else []:
         if not isinstance(it, dict) or session not in sessions_in(it.get("sessions")):
             continue
@@ -222,12 +249,14 @@ def recordings_of(course: str, session: int | None, every: bool = False) -> list
     同一堂课常有几份（两个班各录一次、同一个 tutorial 连上几场）：按「覆盖哪几节 × 时长」分组，每组只留一份——
     有字幕的优先，其次字幕完整的、自己课表上那一场（in_timetable）、字幕条数多的。every=True 时全部返回。"""
     base = root("recordings")
-    if not base or session is None:
+    if session is None:
         return []
+    found = caption_recs(course, session)
+    if not base:
+        return found
     cdir = base / course
     data = load_json(cdir / "index.json")
     items = (data.get("recordings") or data.get("items")) if isinstance(data, dict) else data
-    found = []
     for r in items if isinstance(items, list) else []:
         if not isinstance(r, dict) or session not in sessions_in(r.get("sessions")):
             continue
@@ -259,9 +288,28 @@ def recordings_of(course: str, session: int | None, every: bool = False) -> list
     return found
 
 
+def caption_recs(course: str, session: int) -> list[dict]:
+    """课程档案里这一节的文件夹里放的字幕文件（.vtt / .srt，从录播平台下的）：一份字幕算一个录播。"""
+    import coursefile as cf
+    c = cf.load(course)
+    s = next((x for x in cf.live_sessions(c) if x["n"] == session), None) if c else None
+    folder = cf.session_dir(course, s) if s else None
+    out = []
+    for f in cf.list_files(folder):
+        if f.suffix.lower() not in cf.CAPTION_EXT:
+            continue
+        segs = cf.parse_captions(f)
+        out.append({"id": f"cap:{f.name}", "name": f.stem, "start": s["date"], "duration": segs[-1]["t"] if segs else None, "viewer_url": None,
+                    "has_captions": bool(segs), "path": None, "vtt": str(f), "mine": True, "coverage": 1.0 if segs else 0.0, "segments": len(segs),
+                    "note": None, "kind": "lecture", "group": ((session,), f.name)})
+    return out
+
+
 def rec_title(r: dict) -> str:
     """「讲课 · 9/7 周一 11:00（你那一班）」：比 Panopto 的房间号名字好认。"""
     kind = {"lecture": L("讲课", "Lecture"), "class": L("助教做题课", "Class (TA)"), "tutorial": "Tutorial"}.get(r.get("kind") or "", L("录播", "Recording"))
+    if r.get("vtt"):
+        return L("录播字幕 · ", "Captions · ") + str(r.get("name") or "")
     try:
         d = datetime.fromisoformat(str(r.get("start")))
         when = L(f"{d.month}/{d.day} 周{'一二三四五六日'[d.weekday()]} {d:%H:%M}", f"{d:%a} {d.day}/{d.month} {d:%H:%M}")
@@ -275,6 +323,9 @@ def slim_rec(r: dict) -> dict:
 
 
 def segments_of(rec: dict) -> list[dict]:
+    if rec.get("vtt"):
+        import coursefile as cf
+        return cf.parse_captions(Path(rec["vtt"]))
     data = load_json(rec.get("path"))
     segs = data.get("segments") if isinstance(data, dict) else None
     out = []
@@ -332,7 +383,7 @@ def materials_of(unit: dict) -> dict:
     if unit["kind"] != "page":
         return {"readings": [], "recordings": [], "missing": [], "complete": True}
     readings = readings_of(unit["course"], unit.get("session"))
-    missing = [r for r in readings if r["required"] and r["status"] != "have"]
+    missing = [r for r in readings if r["required"] and r["status"] not in ("have", "skipped")]
     return {"readings": readings, "recordings": recordings_of(unit["course"], unit.get("session")), "missing": missing, "complete": not missing}
 
 
@@ -372,7 +423,72 @@ def done_steps(course: str, page: str, route: dict | None, progress: dict | None
     return sorted({i for i in entry.get("done") or [] if isinstance(i, int) and 0 <= i < n})
 
 
+def page_entry(course: str, cdir: Path, f: Path, videos: list[dict], progress: dict) -> dict:
+    """左栏的一个学习页：节号、来源、视频、生成过什么、阅读几篇到手、学习路线进度。"""
+    meta, _ = read_page(f)
+    session = session_of(meta.get("session"))
+    readings = readings_of(course, session)
+    in_readings = {r["file"] for r in readings if r["file"]}
+    # 阅读材料在「阅读」标签里，不再各占一个标签，也不决定学习页挂在哪个模块下
+    sources = [str(s) for s in meta.get("sources") or [] if isinstance(s, str) and (cdir / s).is_file() and s not in in_readings]
+    unit = {"course": course, "thread": thread_of(course, "page", f.name)}
+    route = load_json(gen_path(unit, "path"))
+    route = route if isinstance(route, dict) else None
+    return {"path": f.name, "title": str(meta.get("title") or f.stem), "session": session, "sources": sources,
+            "videos": [v for v in videos if session is not None and v["session"] == session],
+            "video_candidates": [str(x) for x in meta.get("video_candidates") or [] if isinstance(x, str)],
+            "generated": {k: gen_path(unit, k).is_file() for k in KINDS},
+            "readings": {"have": len(in_readings), "total": len(readings),
+                         "missing": sum(r["required"] and r["status"] not in ("have", "skipped") for r in readings)},
+            "recordings": len(recordings_of(course, session)),
+            "progress": {"done": len(done_steps(course, f.name, route, progress)), "total": len(route.get("items") or [])} if route else None}
+
+
+def profiled_tree(course: str, c: dict) -> dict:
+    """有课程档案的课：按档案里的每一节排（「Session N: 主题」、日期、材料齐没齐），没挂到哪一节的文件夹收到「课程资料」。"""
+    import coursefile as cf
+    cdir = course_dir(course)
+    pdir = pages_dir(course)
+    videos = videos_of(course)
+    progress = read_progress(course)
+    t = cf.today()
+    modules, used_folders, bound_pages = [], set(), set()
+    for s in cf.live_sessions(c):
+        folder = s.get("folder") if s.get("folder") and (cdir / s["folder"]).is_dir() else None
+        files = [file_entry(cdir, f) for f in cf.list_files(cdir / folder)] if folder else []
+        pages = []
+        if s.get("page") and pdir and (pdir / s["page"]).is_file():
+            pages.append(page_entry(course, cdir, pdir / s["page"], videos, progress))
+            bound_pages.add(s["page"])
+        if folder:
+            used_folders.add(folder)
+        ch = cf.session_check(course, c, s, t)
+        modules.append({"id": folder or f"session-{s['id']}", "title": f"Session {s['n']}: {s['topic']}", "files": files, "pages": pages,
+                        "kind": "session", "session": {"id": s["id"], "n": s["n"], "date": s["date"], "status": ch["status"],
+                                                       "missing": len(ch["missing"]), "have_page": bool(pages)}})
+    for m in sorted(p for p in cdir.iterdir() if p.is_dir() and not p.name.startswith(".") and p.name not in used_folders):
+        title = L("课程资料", "Course info") if m.name == cf.INFO_FOLDER else module_title(m.name)
+        modules.append({"id": m.name, "title": title, "files": [file_entry(cdir, f) for f in cf.list_files(m)], "pages": [], "kind": "resource"})
+    loose = []
+    removed_pages = {s.get("page") for s in c["sessions"] if s["removed"] and s.get("page")}
+    if pdir and pdir.is_dir():
+        for f in sorted(pdir.glob("*.md")):
+            if f.name not in bound_pages and f.name not in removed_pages:
+                loose.append(page_entry(course, cdir, f, videos, progress))
+    used = {s for mod in modules for p in mod["pages"] for s in p["sources"]} | {s for p in loose for s in p["sources"]}
+    used |= {r["file"] for s in c["sessions"] for r in s["readings"] if r.get("file")}
+    for mod in modules:
+        for f in mod["files"]:
+            f["used"] = f["path"] in used
+    loose.sort(key=lambda p: (p["session"] is not None, p["session"] or 0, p["path"]))
+    return {"name": course, "title": c["title"], "code": c["code"], "profile": True, "setup": c["setup"], "modules": modules, "pages": loose,
+            "videos": [v for v in videos if not any(p["session"] == v["session"] for mod in modules for p in mod["pages"])]}
+
+
 def course_tree(course: str) -> dict:
+    import coursefile as cf
+    if c := cf.load(course):
+        return profiled_tree(course, c)
     cdir = course_dir(course)
     modules, index = [], {}
     for m in sorted(p for p in cdir.iterdir() if p.is_dir() and not p.name.startswith(".")):
@@ -386,23 +502,8 @@ def course_tree(course: str) -> dict:
     progress = read_progress(course)
     if pdir and pdir.is_dir():
         for f in sorted(pdir.glob("*.md")):
-            meta, _ = read_page(f)
-            session = session_of(meta.get("session"))
-            readings = readings_of(course, session)
-            in_readings = {r["file"] for r in readings if r["file"]}
-            # 阅读材料在「阅读」标签里，不再各占一个标签，也不决定学习页挂在哪个模块下
-            sources = [str(s) for s in meta.get("sources") or [] if isinstance(s, str) and (cdir / s).is_file() and s not in in_readings]
-            unit = {"course": course, "thread": thread_of(course, "page", f.name)}
-            route = load_json(gen_path(unit, "path"))
-            route = route if isinstance(route, dict) else None
-            entry = {"path": f.name, "title": str(meta.get("title") or f.stem), "session": session, "sources": sources,
-                     "videos": [v for v in videos if session is not None and v["session"] == session],
-                     "video_candidates": [str(x) for x in meta.get("video_candidates") or [] if isinstance(x, str)],
-                     "generated": {k: gen_path(unit, k).is_file() for k in KINDS},
-                     "readings": {"have": len(in_readings), "total": len(readings), "missing": sum(r["required"] and r["status"] != "have" for r in readings)},
-                     "recordings": len(recordings_of(course, session)),
-                     "progress": {"done": len(done_steps(course, f.name, route, progress)), "total": len(route.get("items") or [])} if route else None}
-            target = next((index[s.split("/")[0]] for s in sources if s.split("/")[0] in index), None)
+            entry = page_entry(course, cdir, f, videos, progress)
+            target = next((index[s.split("/")[0]] for s in entry["sources"] if s.split("/")[0] in index), None)
             (target["pages"] if target else loose).append(entry)
     # 左栏按「周 / 节」排：有学习页或名字像一节课的模块在上面，课程信息、作业说明、阅读清单这类资料模块收到下面；
     # 已经挂进某个学习页（标签或阅读）的文件标 used，左栏不再重复列
@@ -418,7 +519,7 @@ def course_tree(course: str) -> dict:
         for f in mod["files"]:
             f["used"] = f["path"] in used
     loose.sort(key=lambda p: (p["session"] is not None, p["session"] or 0, p["path"]))  # 总览（没有 session）排前面
-    return {"name": course, "modules": modules, "pages": loose,
+    return {"name": course, "title": course, "code": None, "profile": False, "modules": modules, "pages": loose,
             "videos": [v for v in videos if not any(p["session"] == v["session"] for mod in modules for p in mod["pages"])]}
 
 
@@ -515,6 +616,12 @@ def study_page():
     return FileResponse(PAGE_HTML, media_type="text/html", headers={"Cache-Control": "no-store"})
 
 
+@router.get("/study/wizard.js", include_in_schema=False)
+def study_wizard():
+    """加一门课的向导（static/study-wizard.js）。"""
+    return FileResponse(PAGE_HTML.with_name("study-wizard.js"), media_type="text/javascript", headers={"Cache-Control": "no-store"})
+
+
 @router.get("/api/study/tree")
 def tree():
     if not root("materials"):
@@ -522,7 +629,7 @@ def tree():
                 "hint": L("在 server.json 里加 study.materials（课件目录：一门课一个文件夹，下面一层是模块）和 study.pages（学习页目录）。",
                           "Add study.materials (one folder per course, one subfolder per module) and study.pages (study notes) to server.json.")}
     return {"ok": True, "configured": True, "app_name": settings.app_name, "language": settings.language, "video": bool(cfg().get("video_cmd")),
-            "courses": [course_tree(c) for c in courses()]}
+            "notify_ready": bool(cfg().get("notify_ready")), "agent": chat.study_agent(), "courses": [course_tree(c) for c in courses()]}
 
 
 @router.get("/api/study/page")
@@ -548,9 +655,8 @@ def file(course: str, path: str, where: str = "materials"):
     return FileResponse(p, media_type=mime, filename=p.name, content_disposition_type="inline")
 
 
-@router.get("/api/study/deadlines")
-def deadlines(refresh: int = 0):
-    """ddl 来自 deadlines_cmd 打印的 JSON（比如课程平台的待交作业），缓存 30 分钟。"""
+def cmd_deadlines(refresh: int = 0) -> dict:
+    """deadlines_cmd 打印的 ddl（比如课程平台的待交作业），缓存 30 分钟。没配 = configured False。"""
     global _deadlines
     cmd = cfg().get("deadlines_cmd")
     if not cmd:
@@ -578,19 +684,110 @@ def deadlines(refresh: int = 0):
     return res
 
 
+def course_items(cmd_items: list[dict]) -> list[dict]:
+    """课程档案里的作业和考试（核对完的课），和课程网站同步来的重复的去掉（同一门课、同一个截止时间）。"""
+    import coursefile as cf
+    try:
+        mine = cf.course_deadlines()
+    except Exception:  # noqa: BLE001 — 档案坏了只是少几条截止
+        return []
+    return [x for x in mine if not any(cf.same_deadline(x, y) for y in cmd_items)]
+
+
+@router.get("/api/study/deadlines")
+def deadlines(refresh: int = 0):
+    """学习台顶栏的 ddl：deadlines_cmd 的（缓存 30 分钟）+ 课程档案里的作业和考试。"""
+    res = cmd_deadlines(refresh)
+    mine = course_items(res.get("items") or [])
+    if not mine:
+        return res
+    items = sorted([*(res.get("items") or []), *mine], key=lambda x: x["due"])
+    return {**res, "ok": res.get("ok", True), "configured": True, "items": items, **({"error": res["error"]} if res.get("error") else {})}
+
+
+def forget_deadlines() -> None:
+    """课程档案的截止改了：下次读的时候重新合并（deadlines_cmd 的缓存留着）。"""
+    _course_cache.clear()
+
+
+_course_cache: dict = {}
+
+
+def sync_course_deadlines() -> None:
+    """课程档案里的作业和考试 → 学习 Agent 的截止表（按「study:<课>/<截止 id>」认；删了、改了的跟着改）。在后台做。"""
+    threading.Thread(target=_sync_course_deadlines, daemon=True).start()
+
+
+_sync_lock = threading.Lock()
+
+
+def _sync_course_deadlines() -> None:
+    agent = chat.study_agent()
+    if not agent:
+        return
+    import coursefile as cf
+    with _sync_lock:
+        try:
+            import boards
+            mine = {f"study:{x['course_id']}/{x['id']}": x for x in cf.course_deadlines(include_done=True)}
+            coll = next((c for c in boards.list_colls(agent)["collections"] if c.get("name") == "deadlines"), None)
+            if not coll:
+                return
+            fields = {f["key"]: f for f in coll.get("fields") or []}
+            idf = "key" if "key" in fields else "link" if "link" in fields else None
+            if not idf or "title" not in fields or "due" not in fields:
+                return  # 认不出哪行是哪个截止的表不碰（每次都会重复加）
+            have = {}
+            for r in boards.list_rows(agent, "deadlines", limit=500)["rows"]:
+                key = str(r["data"].get(idf) or "")
+                if key.startswith("study:"):
+                    have[key] = r
+            new = []
+            for key, x in mine.items():
+                row = {"title": x["title"], "course": course_code(agent, "deadlines", x["course"], x.get("code")), "kind": kind_label(fields, x["kind"]),
+                       "due": x["due"].replace(" ", "T")[:16], "done": bool(x["done"]), idf: key}
+                row = {k: v for k, v in row.items() if k in fields}
+                if key in have:
+                    d = have[key]["data"]
+                    patch = {k: v for k, v in row.items() if d.get(k) != v and not (k == "due" and str(d.get(k) or "")[:16] == str(v)[:16])}
+                    if patch:
+                        boards.patch_row(have[key]["id"], boards.RowPatch(data=patch, by="agent"))
+                else:
+                    new.append(row)
+            if new:
+                boards.add_rows(agent, "deadlines", boards.RowsIn(rows=new, by="agent"))
+            for key, r in have.items():
+                if key not in mine and not r["data"].get("done"):
+                    boards.delete_row(r["id"], by="agent")
+        except Exception:  # noqa: BLE001 — 同步不上只是截止表少几行
+            pass
+
+
+def kind_label(fields: dict, kind: str) -> str | None:
+    """截止的类型写进学习 Agent 的表：那一列是选项就挑对应的一项（中文表写中文、英文表写英文），没有对应的就留空。"""
+    import coursefile as cf
+    f = fields.get("kind")
+    if not f:
+        return None
+    zh, label = cf.ddl_label_zh(kind), cf.ddl_label(kind)
+    if f.get("type") != "choice":
+        return label
+    opts = f.get("options") or []
+    return zh if zh in opts else label if label in opts else None
+
 
 # —— 学习秘书 Agent（server.json 的 study.agent，2026-09-27）：Canvas ddl 同步进它的「ddl」表，路线打勾记进「学习记录」 ——
 
-def course_code(agent: str, table: str, name: object) -> str | None:
-    """课程全名 → 学习秘书表里「课」那一列的写法：server.json 的 study.short（{"课程全名": "缩写"}）优先，没写就取首字母
-    （Machine Learning Systems → MLS）。那一列是选项的，只写选项里有的，别的留空（和以前一样，不认识的课不写）。"""
+def course_code(agent: str, table: str, name: object, code: str | None = None) -> str | None:
+    """课程全名 → 学习秘书表里「课」那一列的写法：课程档案的缩写 / server.json 的 study.short（{"课程全名": "缩写"}）优先，没写就取首字母
+    （Machine Learning Systems → MLS）。那一列是选项的：课程档案里的课把缩写加进选项；别的只写选项里有的，不认识的课不写。"""
     full = str(name or "").strip()
     if not full:
         return None
     short = cfg().get("short")
-    if isinstance(short, dict) and short.get(full):
+    if not code and isinstance(short, dict) and short.get(full):
         code = str(short[full])
-    else:
+    if not code:
         from schedule import course_short  # 延迟导入：schedule 也 import study
         code = course_short(full)
     try:
@@ -600,8 +797,20 @@ def course_code(agent: str, table: str, name: object) -> str | None:
     except Exception:  # noqa: BLE001 — 读不到表结构就照写，写不进去由 add_rows 报
         field = None
     if field and field.get("type") == "choice" and code not in (field.get("options") or []):
-        return None
+        if not explicit_code(code):
+            return None
+        try:  # 新加的课（有课程档案）：缩写加进那一列的选项
+            import boards
+            fields = [({**f, "options": [*(f.get("options") or []), code]} if f.get("key") == "course" else f) for f in coll["fields"]]  # type: ignore[index]
+            boards.patch_coll(agent, table, boards.CollPatch(fields=fields))
+        except Exception:  # noqa: BLE001
+            return None
     return code
+
+
+def explicit_code(code: str | None) -> bool:
+    import coursefile as cf
+    return bool(code) and any((cf.load(c) or {}).get("code") == code for c in cf.profiled())
 
 
 def ddl_kind(title: str) -> str:
@@ -667,21 +876,32 @@ _refreshing = threading.Lock()
 def _refresh_deadlines() -> None:
     if _refreshing.acquire(blocking=False):
         try:
-            deadlines(refresh=0)
+            cmd_deadlines(refresh=0)
         finally:
             _refreshing.release()
 
 
+def deadline_rows() -> tuple[list[dict], str | None]:
+    """日程、「要记得的」、「今天」页用的 ddl：deadlines_cmd 的（缓存过期就在后台刷新，这次先用旧的）+ 课程档案的。→ (条目, 错误)"""
+    cmd_items: list[dict] = []
+    err = None
+    if cfg().get("deadlines_cmd"):
+        if _deadlines is None:
+            _refresh_deadlines()   # 第一次同步读（命令一般自带缓存，很快）
+        elif time.time() - _deadlines[0] > 1800:
+            threading.Thread(target=_refresh_deadlines, daemon=True).start()
+        res = _deadlines[1] if _deadlines else {}
+        if res.get("ok") is False:
+            err = str(res.get("error") or L("读不到课程 ddl", "Couldn't read course deadlines"))
+        cmd_items = [x for x in res.get("items") or [] if isinstance(x, dict) and x.get("due")]
+    return cmd_items + course_items(cmd_items), err
+
+
 def deadlines_between(lo: datetime, hi: datetime) -> list[tuple[datetime, str]]:
     """落在 [lo, hi) 的 ddl：(截止时间, 日程里显示的标题)。给「今天」页的日程用：缓存过期就在后台刷新，这次先用旧的。"""
-    if not cfg().get("deadlines_cmd"):
-        return []
-    if _deadlines is None:
-        _refresh_deadlines()   # 第一次同步读（命令一般自带缓存，很快）
-    elif time.time() - _deadlines[0] > 1800:
-        threading.Thread(target=_refresh_deadlines, daemon=True).start()
+    items = deadline_rows()[0]
     out = []
-    for x in (_deadlines[1] if _deadlines else {}).get("items") or []:
+    for x in items:
         try:
             due = datetime.strptime(x["due"][:16], "%Y-%m-%d %H:%M").replace(tzinfo=settings.tz)
         except (KeyError, ValueError):
@@ -902,6 +1122,25 @@ async def ask_agent(thread: str, shown: str, key: str, context: str) -> chat.Run
     return run
 
 
+async def gen_json(unit: dict, kind: str, shown: str, ask_text: str, context: str) -> tuple[dict, str | None]:
+    """生成用的一问一答 → (JSON, 模型)。OpenClaw 开了 llm-task 就走它：零工具、每次新会话，课件原文不进带工具的回合（2026-09-30）；
+    没开（或别的 claw）照旧在这一节的生成线程里问一次。"""
+    import llmjson
+    try:
+        data, route = await llmjson.ask(ask_text, {"materials": context}, None, timeout=600, thinking="medium" if kind == "path" else "low",
+                                        tool_free_only=True, max_tokens=16_000)
+        if isinstance(data, dict):
+            return data, route
+        raise ValueError(L("生成的内容格式不对", "The generated content has the wrong format"))
+    except llmjson.LLMError as e:
+        if "needs llm-task" not in str(e) and "not enabled" not in str(e):
+            raise RuntimeError(str(e)) from e
+    thread = unit["thread"] + "-gen"
+    # 每次一个新会话：前情很长，不能在同一个会话里越攒越多
+    run = await ask_agent(thread, shown, f"{chat.session_key(thread)}-{int(time.time())}", f"{context}\n\n{ask_text}")
+    return parse_json(run.text), run.model
+
+
 async def gen_job(key: str, unit: dict, kind: str) -> None:
     try:
         extra: dict = {}
@@ -912,10 +1151,7 @@ async def gen_job(key: str, unit: dict, kind: str) -> None:
         else:
             (shown, ask_text), allowed, budget = gen_prompt(kind), None, None
         context = await asyncio.to_thread(context_for, unit, budget)
-        thread = unit["thread"] + "-gen"
-        # 每次一个新会话：前情很长，不能在同一个会话里越攒越多
-        run = await ask_agent(thread, shown, f"{chat.session_key(thread)}-{int(time.time())}", f"{context}\n\n{ask_text}")
-        data = parse_json(run.text)
+        data, model = await gen_json(unit, kind, shown, ask_text, context)
         if kind == "path":
             items = check_route(data, allowed)  # type: ignore[arg-type]
             extra |= {"summary": str(data.get("summary") or "").strip()[:400], "total_minutes": sum(s["minutes"] for s in items)}
@@ -923,7 +1159,7 @@ async def gen_job(key: str, unit: dict, kind: str) -> None:
             items = check(kind, data)
         path = gen_path(unit, kind)
         path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(json.dumps({"kind": kind, "title": unit["title"], "generated": chat.now_iso(), "model": run.model, **extra, "items": items},
+        path.write_text(json.dumps({"kind": kind, "title": unit["title"], "generated": chat.now_iso(), "model": model, **extra, "items": items},
                                    ensure_ascii=False, indent=1), encoding="utf8")
         JOBS[key] = {"status": "done"}
     except (HTTPException, RuntimeError, ValueError, OSError) as e:

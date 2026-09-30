@@ -217,17 +217,11 @@ def classes(lo: date, days: int) -> tuple[list[dict], str | None]:
 
 
 def canvas_rows() -> tuple[list[dict], str | None]:
-    """课程 ddl（study.deadlines_cmd 打印的，缓存 30 分钟：第一次同步读，过期了后台刷）。只有还没交、今天起的。"""
-    if not study.cfg().get("deadlines_cmd"):
-        return [], None
+    """课程 ddl：study.deadlines_cmd 打印的（缓存 30 分钟：第一次同步读，过期了后台刷）+ 学习台课程档案里的作业和考试（source = course）。"""
     try:
-        study.deadlines_between(now(), now())  # 只为走它的缓存逻辑
-    except Exception:  # noqa: BLE001
-        pass
-    res = study._deadlines[1] if study._deadlines else {}
-    if res.get("ok") is False:
-        return [], str(res.get("error") or L("读不到课程 ddl", "Couldn't read course deadlines"))
-    return [x for x in res.get("items") or [] if isinstance(x, dict) and x.get("due")], None
+        return study.deadline_rows()
+    except Exception:  # noqa: BLE001 — 读不到只是日程里少几条截止
+        return [], L("读不到课程 ddl", "Couldn't read course deadlines")
 
 
 def course_short(name: str) -> str:
@@ -334,14 +328,47 @@ def canvas_ref(x: dict) -> str:
     return f"canvas:{x['url']}" if x.get("url") else f"canvas:{x.get('course')}|{x.get('title')}|{x.get('due')}"
 
 
+def course_entry(x: dict, mk: dict, now_dt: datetime) -> dict:
+    """学习台课程档案里的作业和考试（大纲里读出来、或者你和学习 Agent 加的）：点开直接去学习台那一节（study）。"""
+    ref, due = f"course:{x.get('course_id')}/{x.get('id')}", str(x.get("due") or "")
+    d, t = due[:10], due[11:16]
+    t = "" if t == "23:59" else t
+    course = str(x.get("course") or "")
+    import coursefile as cf
+    return entry(id=ref, kind="deadline", origin="course", title=str(x.get("title") or "").strip(),
+                 detail=L(f"{course} 的{cf.ddl_label(x.get('kind'))}，在学习台的课程档案里。", f"{cf.ddl_label(x.get('kind'))} for {course}, from the study desk's course profile."),
+                 date=d, start=t, allDay=not t, badge=x.get("code") or course_short(course), link=None,
+                 done=bool(x.get("done") or (mk.get(ref) or {}).get("done_at")), past=at(d, t or None, end_of_day=not t) < now_dt, course=course,
+                 study={"course": x.get("course_id"), "session": x.get("session_id")})
+
+
 def canvas_entry(x: dict, mk: dict, now_dt: datetime) -> dict:
+    if x.get("source") == "course":
+        return course_entry(x, mk, now_dt)
     ref, due = canvas_ref(x), str(x.get("due") or "")
     d, t = due[:10], due[11:16]
     course = str(x.get("course") or "")
     return entry(id=ref, kind="deadline", origin="canvas", title=str(x.get("title") or "").strip(),
                  detail=L(f"{course} 的作业，交了会自动消失。", f"Assignment for {course}; it disappears once submitted."),
                  date=d, start=t, allDay=not t, badge=course_short(course), link=x.get("url"), done=bool((mk.get(ref) or {}).get("done_at")),
-                 past=at(d, t or None, end_of_day=not t) < now_dt, course=course)
+                 past=at(d, t or None, end_of_day=not t) < now_dt, course=course, study={"course": study_course_of(course), "session": None})
+
+
+def study_course_of(name: str) -> str | None:
+    """课程网站的课名 → 学习台里的课（文件夹名或课程档案的名字对得上）：「今天」页点截止直接去学习台那门课。"""
+    try:
+        names = study.courses()
+    except Exception:  # noqa: BLE001
+        return None
+    if name in names:
+        return name
+    import coursefile as cf
+    low = name.strip().lower()
+    for c in names:
+        p = cf.load(c)
+        if p and low in (p["title"].lower(), p["code"].lower()):
+            return c
+    return None
 
 
 def short_title(t: str) -> str:
@@ -366,7 +393,7 @@ def app_entry(r: sqlite3.Row, mk: dict, names: dict[str, str], now_dt: datetime)
                  done=bool((mk.get(ref) or {}).get("done_at")), past=at(r["deadline"], None, end_of_day=True) < now_dt)
 
 
-SNAP_ORIGIN = {"canvas": "canvas", "mail": "mail", "app": "apply", "item": "own"}
+SNAP_ORIGIN = {"canvas": "canvas", "mail": "mail", "app": "apply", "item": "own", "course": "course"}
 
 
 def snapshot_entry(m: dict) -> dict:

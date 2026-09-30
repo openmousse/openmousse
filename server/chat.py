@@ -359,6 +359,7 @@ class SendBody(BaseModel):
     ref: str | None = None       # （/api/chat/send）说的是日程或「要记得的」里的哪一条（schedule.py 的 id）：模型另外看到是哪一条、怎么改
     save: str | None = None      # （/api/chat/send）问的是哪条收藏（saves.py 的 id）：模型另外看到它的来源、备注和正文
     replyTo: str | None = None   # （/api/chat/send）长按「引用」着发的：引的是这个对话里哪条消息（"db<id>"），模型另外看到原话
+    study: str | None = None     # （/api/chat/send）在学习台里说的（「课|向导第几步」）：模型另外看到是哪门课、在加课的哪一步（courses.chat_context）
     digest: bool = False         # （/api/chat/trigger）别的 claw 的日结：这一轮的回复就是今天的日结，服务器存下来（见 save_digest）
 
 
@@ -998,6 +999,9 @@ async def send(body: SendBody):
     if body.ref and not quoted:  # 「要记得的」里点「不对？跟它说」带过来的
         import schedule as schedule_mod  # 延迟导入：schedule.py 依赖本模块
         context = await asyncio.to_thread(schedule_mod.ref_context, body.ref)
+    if body.study and not quoted:  # 学习台的加课向导、学习屏旁边的对话：哪门课、第几步
+        import courses as courses_mod  # 延迟导入：courses.py 依赖本模块
+        context = await asyncio.to_thread(courses_mod.chat_context, body.study)
     if body.save and not quoted:  # 收藏里点「问问」「翻译」带过来的
         import saves as saves_mod  # 延迟导入：saves.py 依赖本模块
         context = await asyncio.to_thread(saves_mod.save_context, body.save)

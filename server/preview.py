@@ -528,10 +528,18 @@ def page_image(fid: str, n: int, w: int = 1200):
     """PDF 这类的第 n 页（从 1 数）渲染成 JPEG。"""
     r = _row(fid)
     path = Path(r["path"])
-    w = next((x for x in PAGE_WIDTHS if x >= w), PAGE_WIDTHS[-1])
-    out = path.with_name(f"{path.name}.p{n}-{w}.jpg")
+    w = page_width(w)
+    return FileResponse(str(render_page(path, n, w, path.with_name(f"{path.name}.p{n}-{w}.jpg"))), media_type="image/jpeg", headers=CACHE)
+
+
+def page_width(w: int) -> int:
+    return next((x for x in PAGE_WIDTHS if x >= w), PAGE_WIDTHS[-1])
+
+
+def render_page(path: Path, n: int, w: int, out: Path) -> Path:
+    """第 n 页渲染成 JPEG 存到 out（已经有就直接用）。学习台的课件用它：页图存在课程的 .gen 里，不放进课件文件夹。"""
     if out.is_file():
-        return FileResponse(str(out), media_type="image/jpeg", headers=CACHE)
+        return out
     m = _mupdf()
     if not m:
         raise HTTPException(404, L("服务器上没装 PyMuPDF", "PyMuPDF isn't installed on the server"))
@@ -551,7 +559,8 @@ def page_image(fid: str, n: int, w: int = 1200):
             data = page.get_pixmap(matrix=m.Matrix(zoom, zoom), alpha=False).tobytes("jpg", jpg_quality=82)
         finally:
             doc.close()
+    out.parent.mkdir(parents=True, exist_ok=True)
     tmp = out.with_name(f"{out.name}.{uuid.uuid4().hex[:6]}.tmp")
     tmp.write_bytes(data)
     tmp.replace(out)
-    return FileResponse(str(out), media_type="image/jpeg", headers=CACHE)
+    return out

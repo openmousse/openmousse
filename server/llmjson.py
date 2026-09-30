@@ -47,13 +47,16 @@ def parse_json(text: str):
         raise LLMError("the reply is not JSON") from e
 
 
-async def via_llm_task(prompt: str, input_: dict, schema: dict | None, timeout: float, thinking: str, model: str | None):
+async def via_llm_task(prompt: str, input_: dict, schema: dict | None, timeout: float, thinking: str, model: str | None,
+                       max_tokens: int | None = None):
     global _no_task_until
     args: dict = {"prompt": prompt, "input": input_, "timeoutMs": int(timeout * 1000), "thinking": thinking}
     if schema:
         args["schema"] = schema
     if model:
         args["model"] = model
+    if max_tokens:  # 长输出（学习台写学习页）：不给的话按模型默认，长的会被截断成坏 JSON
+        args["maxTokens"] = int(max_tokens)
     try:
         token = chat.gateway_token()
     except HTTPException as e:
@@ -102,19 +105,21 @@ async def via_complete(prompt: str, input_: dict, schema: dict | None, timeout: 
 
 
 async def ask(prompt: str, input_: dict, schema: dict | None = None, *, timeout: float = 90, thinking: str = "low",
-              model: str | None = None, fallback_input: dict | None = None, tool_free_only: bool = False) -> tuple[object, str]:
+              model: str | None = None, fallback_input: dict | None = None, tool_free_only: bool = False,
+              max_tokens: int | None = None) -> tuple[object, str]:
     """→ (JSON, 走的哪条路)。thinking：llm-task 的思考档位（Opus 5.5 不能关，最低 low）。
     fallback_input：退回 think.complete（带工具的对话回合）时换用的资料：input 里有别人的话（朋友的聊天、约朋友录的逐字稿、朋友画像）
     就给一份不带它的，那种回合里模型能用工具，别人的一句话不能跟着进去。
-    tool_free_only：只许走 llm-task（整个 input 都是别人的话，比如给朋友记画像）；用不了就抛 LLMError，不退回。"""
+    tool_free_only：只许走 llm-task（整个 input 都是别人的话，比如给朋友记画像）；用不了就抛 LLMError，不退回。
+    max_tokens：这一次最多输出多少 token（只给 llm-task；长的输出要给够）。"""
     if claw.is_openclaw() and time.time() >= _no_task_until:
         try:
-            return await via_llm_task(prompt, input_, schema, timeout, thinking, None)
+            return await via_llm_task(prompt, input_, schema, timeout, thinking, None, max_tokens)
         except LLMError as e:
             if "not enabled" not in str(e):
                 # 校验没过（「did not match schema」，Gateway 只回一句 tool execution failed）或者这一次模型出错：不带 schema 再来一次
                 try:
-                    return await via_llm_task(prompt, input_, None, timeout, thinking, None)
+                    return await via_llm_task(prompt, input_, None, timeout, thinking, None, max_tokens)
                 except LLMError as e2:
                     if "not enabled" not in str(e2):
                         raise

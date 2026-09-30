@@ -55,9 +55,9 @@ TREE_HOME = Path(os.environ.get("MOUSSE_TREE_HOME", Path.home() / ".mousse-tree"
 FUNNEL_TIMEOUT = 30  # 秒：tailnet 还没开 Funnel 时 tailscale funnel 会一直等你去后台点开，安装不能卡在那
 PUBLIC_PATHS = ("/t", "/m", "/s", "/f")  # Funnel 只开这几条：世界树的 MCP（/t /m）、分享页（/s）、朋友（/f）；app 的 /api 永远不上公网
 SHARE_PORT = 8089  # 对外小服务（server/public.py：只有 /s 和 /f）默认的本机端口，被占了就往后找
-SKILLS = ("handoff", "agent-builder", "journal", "memory-tree", "inbox", "dispatch", "project", "board", "proposals", "goals", "onboarding")
+SKILLS = ("handoff", "agent-builder", "journal", "memory-tree", "inbox", "dispatch", "project", "board", "proposals", "goals", "onboarding", "study")
 GENERIC_SKILLS = tuple(s for s in SKILLS if s not in ("dispatch", "proposals"))  # 别的 claw：派活（sessions_spawn）和日结提案是 OpenClaw 那边的
-MAIN_SKILLS = tuple(s for s in SKILLS if s != "board")  # 主对话用的；board（Agent 自己的表和看板）只给 Agent；proposals（日结提案）只有主对话用
+MAIN_SKILLS = tuple(s for s in SKILLS if s not in ("board", "study"))  # 主对话用的；board（Agent 自己的表和看板）、study（改课）只给 Agent；proposals（日结提案）只有主对话用
 AGENTS_MARK = "## OpenMousse"
 AGENTS_RULES_ZH = """
 
@@ -333,6 +333,18 @@ def write_server_json(a: argparse.Namespace, oc: dict, home: Path, workspace: Pa
     if dm:
         setdefault("default_model", dm)
     setdefault("agent_default_skills", ["journal", "memory-tree", "inbox", "board", "goals"])
+    # 学习台：课件和学习页默认放数据目录下（新装的；已经配过 study 的不动）。建好目录，学习台打开就能「加一门课」
+    if not isinstance(cfg.get("study"), dict) or not cfg["study"].get("materials"):
+        st = dict(cfg.get("study") or {})
+        data_dir = Path(cfg["data_dir"]).expanduser()
+        st.setdefault("materials", str(data_dir / "study" / "materials"))
+        st.setdefault("pages", str(data_dir / "study" / "pages"))
+        cfg["study"] = st
+    for k in ("materials", "pages"):
+        try:
+            Path(cfg["study"][k]).expanduser().mkdir(parents=True, exist_ok=True)
+        except OSError:
+            pass
     shared_profile = home / "shared/profile/USER.md"
     if not cfg.get("profile") and not shared_profile.exists() and (workspace / "USER.md").exists():
         cfg["profile"] = str(workspace / "USER.md")

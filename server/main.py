@@ -64,6 +64,10 @@ from files import router as files_router  # noqa: E402
 from preview import router as preview_router  # noqa: E402 — 附件在 app 里预览（2026-09-30）
 from push import router as push_router  # noqa: E402
 from study import router as study_router  # noqa: E402
+from courses import router as courses_router  # noqa: E402
+from studyapp import router as studyapp_router  # noqa: E402
+from canvasapi import router as canvas_router  # noqa: E402
+import coursegen  # noqa: E402
 from inbox import router as inbox_router  # noqa: E402
 from unread import router as unread_router  # noqa: E402
 from schedule import router as schedule_router  # noqa: E402
@@ -113,6 +117,7 @@ async def lifespan(_app: FastAPI):
     chat.resume_queued()  # 上次重启前还排着没发的消息：接着发
     asyncio.create_task(chat.resume_ws())  # 走对话通道的：重启前发出去、还没拿到回复的，接回来或补回回复
     alerts.start()  # Agent 的提醒：到点查表，有东西就推
+    coursegen.start()  # 学习台：生成学习页的队列用服务的事件循环
     friends.start()  # 朋友聊天的投递循环：发出去的消息排队发、失败重试；名片变了告诉朋友
     if mcp_bridge is None:
         yield
@@ -133,6 +138,9 @@ app.include_router(files_router)
 app.include_router(preview_router)
 app.include_router(push_router)
 app.include_router(study_router)
+app.include_router(courses_router)  # 学习台：从零加一门课、改课（courses.py）
+app.include_router(studyapp_router)  # 学习台接到 app 上：看板卡、手机学习屏、一次性登录链接（studyapp.py）
+app.include_router(canvas_router)  # 学习台连 Canvas（个人令牌，canvasapi.py）
 app.include_router(inbox_router)
 app.include_router(unread_router)
 app.include_router(schedule_router)  # 含 /cal/<令牌>.ics（在网页版的静态文件之前注册）
@@ -158,7 +166,7 @@ if apps is not None:
     app.include_router(apps.router)
 app.add_exception_handler(sources.NoSource, sources.no_source_handler)
 _whois: dict[str, tuple[float, str | None]] = {}
-TOKEN_URL = re.compile(r"^/api/(?:files/|think/file/|think/saves/[^/]+/file$|podcast/episodes/pe-[0-9a-f]{8}/audio/\d+$)")
+TOKEN_URL = re.compile(r"^/api/(?:files/|think/file/|think/saves/[^/]+/file$|podcast/episodes/pe-[0-9a-f]{8}/audio/\d+$|study/file(?:/page)?$)")
 _lock = threading.Lock()
 
 

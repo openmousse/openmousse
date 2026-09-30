@@ -330,7 +330,44 @@ Every study page opens on its **study path**: 5–8 steps (what to do, which sli
 
 **Review**: what a podcast's Feynman check found wrong or missed can be added to the course with one tap (`POST /api/study/review {course, page?, items, …}`, stored in `pages/<course>/.gen/review.json`, attached to that session); opening the session on the study desk shows a Review box at the top, and "Reviewed" ticks an item off (`POST /api/study/review/done`). `GET /api/study/review?course=&page=&all=`.
 
-Questions go through the same chat channel as the app, one thread per study page. The first question of each day carries the notes, the full text of the materials, the lecture captions and the readings (as much as fits; the rest by file path), plus the study-path step you're on; flashcards, quizzes and study paths are generated the same way and saved next to the notes.
+Questions go through the same chat channel as the app, one thread per study page. The first question of each day carries the notes, the full text of the materials, the lecture captions and the readings (as much as fits; the rest by file path), plus the study-path step you're on. Flashcards, quizzes and study paths are saved next to the notes; when OpenClaw has llm-task on they are generated in a tool-free call (the course text never enters a turn with tools), otherwise in the session's generation thread.
+
+Without `materials` and `pages` in the config they default to the data directory (`<data_dir>/study/materials`, `pages`); the installer creates those folders.
+
+### Adding a course (course profiles)
+
+"+ Add a course" on the left of the desk is a five-step wizard with the **study Agent**'s chat open on the right (`study.agent`; the same thread as that Agent's Chat in the app): tell it what's wrong and it fixes it with `study_ctl.py`, highlighted and undoable. Each course gets `pages/<course>/course.json` (see [`coursefile.py`](coursefile.py)):
+
+1. **About the course**: name, term, how it's assessed, how you like to learn, anything else (every study page uses it).
+2. **What you have**: a syllabus (file, web link or chat attachment), course files (files or a zip), a Canvas personal token, or nothing yet; where to find each follows the course site you pick. The model reads the syllabus (tool-free llm-task) into sessions with dates, topics and readings, plus assignments and exams, and lists what's unclear as questions.
+3. **Check the sessions**: click a cell or tell the Agent; confirming creates each session's folder and sends assignments and exams to Today, To remember, the top bar and the study Agent's deadline table.
+4. **Add materials**: files are filed by name (Session / Lecture N → that session; Week N → that week, asking when a week has several sessions or the topic disagrees; a match on the reading list becomes that reading), zips are unpacked; each session shows its files, readings in hand and caption files (drop a `.vtt` / `.srt` into the session); missing items can be added or skipped openly.
+5. **Generate**: only complete sessions, one at a time: the study page (fixed sections, including the self-test in `**Q1.**` + `<details>` form that the Self-test tab parses), then the study path, flashcards and quiz (and a video). The study Agent's chat gets a line when each is done.
+
+An existing materials folder (a synced course site, say) can become a course: sessions come from the module names and existing notes attach by `session`. Courses without a profile work as before.
+
+| Endpoint | What it does |
+|---|---|
+| `GET /api/study/courses` | All courses, folders not yet used as courses, the study Agent |
+| `POST /api/study/courses` | Create `{name, title?, term, exam, learn, notes, platform, adopt?}` |
+| `GET / PATCH / DELETE /api/study/courses/{course}` | The whole course (per-session checks, highlights, generation progress, unfiled uploads) / edit the profile / delete (irreversible: an inbox card; approving moves the course to `<data_dir>/study-trash/`) |
+| `POST …/syllabus`, `…/syllabus/from`, `GET …/syllabus` | Upload a syllabus / from a link, attachment or text / progress |
+| `POST / PATCH / DELETE …/sessions[/{id}]`, `…/readings`, `…/deadlines`, `POST …/questions/{id}` | Add a session (later ones renumber), edit, remove; readings (`skip`); assignments and exams; answer a question |
+| `POST …/confirm` | Confirm the sessions |
+| `POST …/files`, `…/files/from-uploads`, `…/files/assign`, `DELETE …/files` | Upload / file chat attachments / move to a session / delete an unfiled upload |
+| `GET …/check`, `POST / GET …/generate` | What each session misses; generate (`force` = even if incomplete) |
+| `POST …/undo/{change}?redo=`, `GET …/changes` | Undo / redo (only places not changed again since), recent changes |
+| `POST /api/study/canvas/connect`, `POST …/{course}/canvas` | A Canvas personal token (stored in `~/.openmousse/canvas-tokens.json`, 0600, sent only to that Canvas); sync the course's files and assignments (once per click) |
+
+The study Agent changes courses from the chat with [`study_ctl.py`](study_ctl.py) (skill `study`, MCP tool `study`); changes made in a reply show a "course changed" card under it (`/api/chat/cards`, kind `course`) with Undo.
+
+### In the app
+
+- The study Agent's board is the study board (`groups.dashboard = study`, set with `POST /api/study/agent {agent}`): a Study desk card on top (`GET /api/study/home`: review count, where to pick up, the next deadline, progress per course), then the Agent's own blocks. New Agent → "Start from an example → Study" (`POST /api/groups {…, template: "study"}`) comes with the study board, the study pack (`packs/study`: deadlines and a study log) and the study skill.
+- The native study screen: `GET /api/study/outline?course=` (each session's state) and `GET /api/study/unit?course=&page=` (a session's files, readings, recordings, path and ticks, review); files open in the same preview as chat attachments (`/api/study/file/preview`, `/api/study/file/page`, page images cached in the course's `.gen/preview`).
+- Open on a computer: `POST /api/study/login-link {server}` returns `<server>/study#pair=<code>` (10 minutes, once); opening it gives that browser its own token.
+- Self-test answers and marks are stored on the server (`GET / PUT /api/study/self`, `pages/<course>/.gen/self.json`), shared by phone and computer; "Missed" adds the question to review in one tap (`POST /api/study/review/add`).
+- Pushes (both off by default): `study.notify_generated` = a quiet push when a session is written; `study.notify_ready` = a quiet push when a course with "remind me" on gets a session's materials complete.
 
 ## Memory tree
 
