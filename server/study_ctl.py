@@ -20,7 +20,7 @@
   python3 study_ctl.py file <课> --upload <附件 id> [--upload …] [--session <节> | --session course]   # 对话里发来的课件放进这门课
   python3 study_ctl.py file <课> --file /服务器上的/文件.pdf [--session <节>]                       # 自己下载到的文件（经 MCP 不行，用 --upload）
   python3 study_ctl.py assign <课> <文件的相对路径> <节 | course | incoming>                        # 归到某一节 / 整门课的资料 / 挪回待归节
-  python3 study_ctl.py syllabus <课> (--upload <附件 id> | --url https://… | --text "…" | --stdin)  # 读大纲，重新建每一节和截止
+  python3 study_ctl.py syllabus <课> (--upload <附件 id> | --file /服务器上的/大纲.pdf | --url https://… | --text "…" | --stdin)  # 读大纲，重新建每一节和截止
   python3 study_ctl.py answer <课> <问题 id> "第 6 章"             # 回答读大纲时拿不准的一处（空字符串 = 先不管）
   python3 study_ctl.py style <课> "更短、多举例、先讲直觉"          # 以后写学习页都照这个写法
   python3 study_ctl.py generate <课> <节> [<节>…] [--no-cards] [--no-quiz] [--video] [--rewrite] [--force]
@@ -74,7 +74,7 @@ Change (undoable changes are made directly; a change you make shows a "course ch
   python3 study_ctl.py file <course> --upload <attachment id> [--upload …] [--session <session> | --session course]
   python3 study_ctl.py file <course> --file /path/on/server.pdf [--session <session>]   # not over MCP; use --upload
   python3 study_ctl.py assign <course> <relative file path> <session | course | incoming>
-  python3 study_ctl.py syllabus <course> (--upload <attachment id> | --url https://… | --text "…" | --stdin)
+  python3 study_ctl.py syllabus <course> (--upload <attachment id> | --file /path/on/server.pdf | --url https://… | --text "…" | --stdin)
   python3 study_ctl.py answer <course> <question id> "chapter 6"
   python3 study_ctl.py style <course> "shorter, more examples, intuition first"
   python3 study_ctl.py generate <course> <session> [<session>…] [--no-cards] [--no-quiz] [--video] [--rewrite] [--force]
@@ -165,8 +165,8 @@ def show(c: dict) -> None:
             print(f"  {f}")
 
 
-def multipart(path: str, fields: dict, files: list[Path]) -> dict:
-    """传文件（multipart/form-data）：服务器上的文件放进课件。"""
+def multipart(path: str, fields: dict, files: list[Path], field: str = "files") -> dict:
+    """传文件（multipart/form-data）：服务器上的文件放进课件（field=files），或者当大纲（field=file）。"""
     boundary = uuid.uuid4().hex
     body = bytearray()
     for k, v in fields.items():
@@ -175,7 +175,7 @@ def multipart(path: str, fields: dict, files: list[Path]) -> dict:
         body += f"--{boundary}\r\nContent-Disposition: form-data; name=\"{k}\"\r\n\r\n{v}\r\n".encode()
     for f in files:
         mime = mimetypes.guess_type(f.name)[0] or "application/octet-stream"
-        body += (f"--{boundary}\r\nContent-Disposition: form-data; name=\"files\"; filename=\"{f.name}\"\r\n"
+        body += (f"--{boundary}\r\nContent-Disposition: form-data; name=\"{field}\"; filename=\"{f.name}\"\r\n"
                  f"Content-Type: {mime}\r\n\r\n").encode()
         body += f.read_bytes() + b"\r\n"
     body += f"--{boundary}--\r\n".encode()
@@ -291,6 +291,7 @@ def main() -> None:  # noqa: C901 — 一条条子命令，拆开反而难找
     s = parser("syllabus")
     s.add_argument("course")
     s.add_argument("--upload")
+    s.add_argument("--file")
     s.add_argument("--url")
     s.add_argument("--text")
     s.add_argument("--stdin", action="store_true")
@@ -404,8 +405,16 @@ def main() -> None:  # noqa: C901 — 一条条子命令，拆开反而难找
         r = call("POST", f"{cq}/files/assign", {"file": a.file, "session": target, "source": src})
         print(L(f"挪好了：{r['file']}", f"Moved: {r['file']}") + (L(f"（改动号 {r['change']}）", f" (change {r['change']})") if r.get("change") else ""))
     elif a.cmd == "syllabus":
-        text = sys.stdin.read() if a.stdin else a.text
-        r = call("POST", f"{cq}/syllabus/from", {"upload": a.upload, "url": a.url, "text": text, "source": src})
+        if a.file:
+            if a.file == "-":
+                sys.exit(L("经 MCP 传大纲用 --upload（对话附件的 id）", "Over MCP, send the syllabus with --upload (the chat attachment id)"))
+            path = Path(a.file).expanduser()
+            if not path.is_file():
+                sys.exit(L(f"找不到：{path}", f"Not found: {path}"))
+            r = multipart(f"{cq}/syllabus", {"source": src}, [path], field="file")
+        else:
+            text = sys.stdin.read() if a.stdin else a.text
+            r = call("POST", f"{cq}/syllabus/from", {"upload": a.upload, "url": a.url, "text": text, "source": src})
         job = r.get("job") or {}
         if job.get("status") == "error":
             sys.exit(job.get("error"))
