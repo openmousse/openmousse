@@ -14,6 +14,7 @@
   --gold: #9A6B16; --goldFill: #D9AE62; --goldSoft: #F5EAD3; --onGold: #2A1E06; --cyan: #0F7A93; --cyanSoft: #DAF0F5;
   --good: #22794F; --goodSoft: #DDF1E7; --warn: #9A6408; --warnSoft: #FAEBCF; --bad: #B83A30; --badSoft: #FBE3E0;
   --shadow: 0 1px 2px rgba(18, 21, 26, .06), 0 4px 16px rgba(18, 21, 26, .05);
+  --hl: #FFEFC2; --hlInk: #3D2A05; --newRow: #FFF6DD;
   color-scheme: light;
 }
 @media (prefers-color-scheme: dark) {
@@ -21,12 +22,14 @@
     --bg: #0B0D10; --surface: #14171C; --surface2: #1E2329; --ink: #ECEEF0; --ink2: #A6AEB7; --ink3: #737C86; --line: #252A31;
     --gold: #DDB56A; --goldSoft: #30271A; --cyan: #5CCFE6; --cyanSoft: #10303A; --good: #55C795; --goodSoft: #12301F;
     --warn: #E5AD4E; --warnSoft: #33270F; --bad: #EC7A70; --badSoft: #3A1815; --shadow: none; color-scheme: dark;
+    --hl: #4A3A12; --hlInk: #F5E3B5; --newRow: #2A2412;
   }
 }
 :root[data-theme="dark"] {
   --bg: #0B0D10; --surface: #14171C; --surface2: #1E2329; --ink: #ECEEF0; --ink2: #A6AEB7; --ink3: #737C86; --line: #252A31;
   --gold: #DDB56A; --goldSoft: #30271A; --cyan: #5CCFE6; --cyanSoft: #10303A; --good: #55C795; --goodSoft: #12301F;
   --warn: #E5AD4E; --warnSoft: #33270F; --bad: #EC7A70; --badSoft: #3A1815; --shadow: none; color-scheme: dark;
+  --hl: #4A3A12; --hlInk: #F5E3B5; --newRow: #2A2412;
 }
 * { box-sizing: border-box; }
 html, body { height: 100%; margin: 0; }
@@ -348,15 +351,222 @@ button.ritem:hover { border-color: var(--goldFill); }
 .overlay .box { background: var(--surface); border-radius: 14px; padding: 22px; width: min(460px, 92vw); box-shadow: var(--shadow); }
 .overlay input { width: 100%; padding: 10px 12px; border-radius: 10px; border: 1px solid var(--line); background: var(--bg); color: var(--ink); font: inherit; margin: 12px 0; }
 
+/* 左栏：加一门课、每一节的状态 */
+.addcourse { display: flex; align-items: center; justify-content: center; gap: 6px; width: 100%; height: 36px; margin: 6px 0 4px; border-radius: 8px; border: 1.5px dashed var(--cyan);
+  color: var(--cyan); font-weight: 600; font-size: 13px; }
+.addcourse:hover { background: var(--cyanSoft); }
+.cacts { display: flex; flex-wrap: wrap; gap: 4px 10px; padding: 2px 10px 8px; font-size: 12px; }
+.cacts button { color: var(--ink3); }
+.cacts button:hover { color: var(--cyan); }
+.cacts .cont { color: var(--warn); font-weight: 600; }
+.modh .sst { margin-left: auto; flex: none; font-size: 11px; font-weight: 600; padding: 1px 7px; border-radius: 999px; background: var(--surface2); color: var(--ink3); white-space: nowrap; }
+.modh .sst.done { background: var(--goodSoft); color: var(--good); }
+.modh .sst.warn { background: var(--warnSoft); color: var(--warn); }
+.modh .sst.doing { background: var(--cyanSoft); color: var(--cyan); }
+.modh .sst + .cnt { display: none; }
+.shome { max-width: 760px; margin: 0 auto; }
+.shome h2 { margin: 0 0 6px; font-size: 18px; }
+.shome .srows { border: 1px solid var(--line); border-radius: 12px; background: var(--surface); padding: 6px 14px; margin: 12px 0; }
+.shome .sr { display: flex; gap: 10px; padding: 7px 0; border-top: 1px solid var(--line); align-items: baseline; }
+.shome .sr:first-child { border-top: 0; }
+.shome .sr .k { width: 56px; flex: none; color: var(--ink3); font-size: 12.5px; }
+.empty .pill { margin-top: 10px; }
+
+/* 加一门课（向导）：三栏换成 步骤 | 这一步 | 学习 Agent 的对话 */
+#wzNav, #wzMain, #wzChat, #wzCancel { display: none; }
+body.wz #nav, body.wz .grid > .center:not(#wzMain), body.wz #ask, body.wz #askBtn, body.wz #navBtn, body.wz #ddl { display: none; }
+body.wz .grid { grid-template-columns: 250px minmax(0, 1fr) 380px; }
+body.wz #wzNav { display: flex; flex-direction: column; gap: 4px; padding: 26px 14px 22px; }
+body.wz #wzMain { display: flex; }
+body.wz #wzChat { display: flex; }
+body.wz #wzCancel { display: inline-flex; }
+.top .grow { display: none; }
+body.wz .top .grow { display: block; flex: 1; }
+.svgi { display: inline-flex; align-items: center; vertical-align: -3px; }
+.wzt { font-size: 20px; font-weight: 700; padding: 0 10px 2px; }
+.wzs { font-size: 13px; color: var(--ink3); padding: 0 10px 16px; overflow-wrap: anywhere; }
+.wzstep { display: flex; gap: 12px; align-items: center; padding: 10px; border-radius: 10px; text-align: left; color: var(--ink2); }
+.wzstep:disabled { opacity: .5; cursor: default; }
+.wzstep.on { background: var(--goldSoft); color: var(--ink); }
+.wzstep .n { width: 28px; height: 28px; flex: none; border-radius: 50%; background: var(--surface2); display: grid; place-items: center; font-size: 13px; font-weight: 700; }
+.wzstep.on .n { background: var(--goldFill); color: var(--onGold); }
+.wzstep.done .n { background: var(--good); color: #fff; }
+.wzstep b { display: block; font-size: 14px; }
+.wzstep small { display: block; font-size: 12px; color: var(--ink3); }
+#wzNav .grow { flex: 1; }
+.wznote { padding: 0 10px; font-size: 12px; line-height: 18px; color: var(--ink3); }
+#wzMain { flex-direction: column; min-width: 0; min-height: 0; }
+.wzbody { flex: 1; min-height: 0; overflow-y: auto; padding: 30px 40px 20px; }
+.wzbody.busy { opacity: .6; pointer-events: none; }
+.wzbody > div { max-width: 960px; display: flex; flex-direction: column; gap: 16px; }
+.wzbody h1 { margin: 0; font-size: 26px; }
+.wzbody .lead { margin: -8px 0 0; font-size: 15px; line-height: 22px; color: var(--ink2); }
+.wzfoot { flex: none; display: flex; align-items: center; gap: 12px; padding: 14px 40px; background: var(--surface); border-top: 1px solid var(--line); }
+.wzfoot .grow { flex: 1; }
+.wzfoot .note { color: var(--ink3); font-size: 13px; }
+.two { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; }
+.field { display: flex; flex-direction: column; gap: 6px; }
+.field label, .lab { font-size: 13px; font-weight: 600; color: var(--ink2); }
+.field input, .field textarea, .field select, .linkrow input, .wzstep2 .extras input { height: 40px; padding: 0 12px; border-radius: 10px; border: 1px solid var(--line); background: var(--surface);
+  color: var(--ink); font: inherit; font-size: 15px; outline: none; }
+.field textarea { height: auto; padding: 10px 12px; line-height: 22px; resize: vertical; }
+.field input:focus, .field textarea:focus, .linkrow input:focus { border-color: var(--goldFill); }
+.chips { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+.wzchip { height: 34px; padding: 0 14px; border-radius: 17px; border: 1.5px solid var(--line); background: var(--surface); color: var(--ink2); font-size: 14px; font-weight: 500; }
+.wzchip.on { border-color: var(--cyan); background: var(--cyanSoft); color: var(--cyan); }
+.wzchip.add { height: 30px; font-size: 13px; font-weight: 600; border: 0; background: var(--cyanSoft); color: var(--cyan); }
+.wzchip.q { height: 28px; font-size: 12.5px; border-color: var(--cyan); color: var(--cyan); }
+.wzchip.q.ghost { border-color: var(--line); color: var(--ink3); }
+.wzchip .x { margin-left: 6px; color: var(--ink3); }
+.platrow { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+.banner { display: grid; grid-template-columns: auto 1fr; gap: 4px 10px; padding: 10px 14px; border-radius: 12px; border: 1px solid var(--line); background: var(--surface); font-size: 13px; }
+.banner b { color: var(--cyan); }
+.hgrid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; align-items: start; }
+.hcard { border-radius: 16px; border: 1.5px solid var(--line); background: var(--surface); }
+.hcard.on { border-color: var(--cyan); box-shadow: 0 0 0 3px var(--cyanSoft); }
+.hhead { display: flex; gap: 12px; align-items: center; width: 100%; padding: 14px; text-align: left; }
+.hhead .hi { width: 36px; height: 36px; flex: none; border-radius: 10px; background: var(--surface2); display: grid; place-items: center; font-size: 17px; color: var(--ink2); }
+.hhead .hi.syllabus { background: var(--cyanSoft); color: var(--cyan); }
+.hhead .hi.files { background: var(--goldSoft); color: var(--gold); }
+.hhead .ht { flex: 1; }
+.hhead .ht b { display: block; font-size: 15px; }
+.hhead .ht small { color: var(--ink3); font-size: 12.5px; }
+.hhead .check { width: 22px; height: 22px; flex: none; border-radius: 50%; border: 2px solid var(--line); display: grid; place-items: center; font-size: 12px; color: #fff; }
+.hcard.on .check { background: var(--cyan); border-color: var(--cyan); }
+.hbody { padding: 0 14px 14px; display: flex; flex-direction: column; gap: 10px; }
+.ww { background: var(--bg); border-radius: 10px; padding: 10px 12px; display: flex; flex-direction: column; gap: 6px; font-size: 13px; line-height: 19px; }
+.ww > div { display: flex; gap: 10px; }
+.ww b { width: 44px; flex: none; color: var(--cyan); }
+.drop { border: 1.5px dashed var(--line); border-radius: 10px; padding: 12px; display: flex; flex-wrap: wrap; align-items: center; justify-content: center; gap: 8px; color: var(--ink2); font-size: 13px; }
+.drop.over { border-color: var(--cyan); background: var(--cyanSoft); }
+.filebox { border: 1.5px dashed var(--cyan); border-radius: 10px; padding: 10px; display: flex; align-items: center; gap: 10px; background: var(--cyanSoft); }
+.filebox .ext { width: 34px; height: 30px; flex: none; border-radius: 8px; background: var(--badSoft); color: var(--bad); font-size: 9px; font-weight: 800; display: grid; place-items: center; }
+.filebox .fb { flex: 1; min-width: 0; }
+.filebox b { display: block; font-size: 13px; overflow-wrap: anywhere; }
+.filebox small { font-size: 12px; }
+.good { color: var(--good); } .warn { color: var(--warn); } .bad { color: var(--bad); } .dim { color: var(--ink3); }
+.linkrow { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+.linkrow input { flex: 1; min-width: 160px; height: 34px; font-size: 13px; }
+.extras { display: flex; flex-direction: column; gap: 10px; }
+.extras input { height: 32px !important; width: 240px; font-size: 13px !important; border-radius: 16px !important; }
+.xlist { border: 1px solid var(--line); border-radius: 14px; background: var(--surface); }
+.xrow { display: flex; gap: 14px; align-items: flex-start; padding: 10px 14px; border-top: 1px solid var(--line); }
+.xrow:first-child { border-top: 0; }
+.xrow > b { width: 90px; flex: none; font-size: 13.5px; }
+.xrow .xb { flex: 1; }
+.xrow .ww { background: none; padding: 0; }
+.stable { border: 1px solid var(--line); border-radius: 14px; background: var(--surface); overflow: hidden; }
+.srow { display: grid; grid-template-columns: 76px 110px minmax(0, 1fr) minmax(0, 1.35fr) minmax(0, 1fr); gap: 10px; padding: 9px 16px; border-top: 1px solid var(--line); align-items: start; font-size: 13.5px; }
+.srow.head { background: var(--bg); border-top: 0; font-size: 12px; font-weight: 600; color: var(--ink2); }
+.srow.ask { background: var(--warnSoft); }
+.srow.new { background: var(--newRow); }
+.srow.qrow { background: var(--warnSoft); border-top: 0; padding-top: 0; }
+.srow.qrow .qbox { grid-column: 2 / -1; }
+.srow .sn { font-weight: 700; color: var(--gold); display: flex; gap: 6px; align-items: center; }
+.tag { font-style: normal; font-size: 11px; font-weight: 700; padding: 1px 6px; border-radius: 8px; background: var(--hl); color: var(--hlInk); }
+.tag.new { background: var(--cyanSoft); color: var(--cyan); }
+.cell { text-align: left; padding: 2px 4px; margin: -2px -4px; border-radius: 4px; color: var(--ink2); overflow-wrap: anywhere; }
+.cell.strong { color: var(--ink); font-weight: 500; }
+.cell:hover { background: var(--surface2); }
+.hl, .cell.hl { background: var(--hl) !important; color: var(--hlInk) !important; border-radius: 4px; }
+.reads { display: flex; flex-direction: column; gap: 4px; align-items: flex-start; }
+.reads .rd { overflow-wrap: anywhere; }
+.reads .rd.optional { color: var(--ink3); }
+.reads.hl { padding: 2px 4px; }
+.dues { display: flex; flex-direction: column; gap: 4px; align-items: flex-start; font-weight: 600; }
+.mini { font-size: 12px; color: var(--cyan); padding: 0 2px; }
+.qbox { display: flex; flex-direction: column; gap: 6px; }
+.qbox .qt { font-size: 12.5px; font-weight: 600; color: var(--warn); }
+.dlist { border: 1px solid var(--line); border-radius: 12px; background: var(--surface); padding: 4px 14px; }
+.drow { display: flex; gap: 12px; align-items: baseline; padding: 8px 0; border-top: 1px solid var(--line); }
+.drow:first-child { border-top: 0; }
+.drow b { flex: 1; }
+.addrow { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
+.addrow .note { color: var(--ink3); font-size: 12.5px; }
+.stat { height: 28px; padding: 0 12px; border-radius: 14px; background: var(--surface2); color: var(--ink2); font-size: 13px; font-weight: 600; display: inline-flex; align-items: center; }
+.stat.good { background: var(--goodSoft); color: var(--good); }
+.stat.warn { background: var(--warnSoft); color: var(--warn); }
+.dropbox { border: 1.5px dashed var(--line); border-radius: 14px; background: var(--surface); padding: 10px 14px; display: flex; flex-direction: column; gap: 8px; }
+.dropbox .drop { border: 0; justify-content: flex-start; padding: 4px 0; }
+.ulist, .ilist { display: flex; flex-direction: column; gap: 5px; font-size: 13px; }
+.urow, .irow { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
+.urow .un, .irow .un { flex: 1; min-width: 160px; overflow-wrap: anywhere; }
+.irow select { height: 28px; border-radius: 14px; border: 1px solid var(--line); background: var(--surface); color: var(--ink); font: inherit; font-size: 12.5px; padding: 0 8px; }
+.clist { border: 1px solid var(--line); border-radius: 14px; background: var(--surface); overflow: hidden; }
+.crow { display: flex; gap: 14px; align-items: center; padding: 11px 16px; border-top: 1px solid var(--line); }
+.crow:first-child { border-top: 0; }
+.crow > b { width: 190px; flex: none; }
+.crow > span:nth-child(2) { flex: 1; color: var(--ink2); }
+.schip { height: 24px; padding: 0 9px; border-radius: 12px; background: var(--surface2); color: var(--ink2); font-size: 12px; font-weight: 700; display: inline-flex; align-items: center; flex: none; }
+.schip.good { background: var(--goodSoft); color: var(--good); }
+.schip.warn { background: var(--warnSoft); color: var(--warn); }
+.cmiss { padding: 0 16px 12px 180px; display: flex; flex-direction: column; gap: 8px; }
+.cmiss .mr { display: flex; flex-direction: column; gap: 6px; font-size: 12.5px; color: var(--ink2); }
+.cmiss .how { background: var(--bg); border-radius: 10px; padding: 9px 12px; line-height: 19px; }
+.cmiss .wzchip { height: 28px; font-size: 12.5px; }
+.gbox { border: 1px solid var(--line); border-radius: 14px; background: var(--surface); overflow: hidden; }
+.gh { padding: 9px 16px; background: var(--bg); font-size: 12px; font-weight: 600; color: var(--ink2); }
+.grow2 { display: flex; gap: 12px; align-items: center; width: 100%; padding: 11px 16px; border-top: 1px solid var(--line); text-align: left; }
+.grow2.off { cursor: default; }
+.grow2 b { flex: 1; font-size: 14px; }
+.grow2 small { display: block; font-size: 12px; color: var(--ink3); }
+.grow2 > span:last-child:not(.cb) { font-size: 13px; font-weight: 600; }
+.cb { width: 22px; height: 22px; flex: none; border-radius: 6px; border: 2px solid var(--line); display: grid; place-items: center; color: #fff; font-size: 12px; }
+.cb.on { background: var(--cyan); border-color: var(--cyan); }
+.cb.fixed { background: var(--ink3); border-color: var(--ink3); }
+.glater { padding: 11px 16px 11px 50px; border-top: 1px solid var(--line); color: var(--ink3); font-size: 13px; }
+.remind { display: flex; gap: 12px; align-items: center; padding: 13px 16px; border-radius: 14px; background: var(--surface); border: 1px solid var(--line); text-align: left; }
+.remind > span:first-child { flex: 1; }
+.remind b { display: block; font-size: 14px; }
+.remind small { display: block; font-size: 12px; color: var(--ink3); }
+.sw { width: 46px; height: 28px; flex: none; border-radius: 14px; background: var(--line); padding: 2px; display: flex; }
+.sw i { width: 24px; height: 24px; border-radius: 12px; background: #fff; box-shadow: 0 1px 3px rgba(0, 0, 0, .25); }
+.sw.on { background: var(--cyan); justify-content: flex-end; }
+.glist { border: 1px solid var(--line); border-radius: 14px; background: var(--surface); }
+.grow3 { display: flex; flex-direction: column; gap: 8px; padding: 14px 16px; border-top: 1px solid var(--line); }
+.grow3:first-child { border-top: 0; }
+.grow3 .steps { display: flex; flex-wrap: wrap; gap: 6px 18px; font-size: 13px; font-weight: 600; }
+.grow3 .run { color: var(--cyan); }
+#wzChat .askh { display: flex; gap: 10px; align-items: center; }
+#wzChat .ai { width: 32px; height: 32px; border-radius: 10px; background: var(--cyanSoft); color: var(--cyan); display: grid; place-items: center; }
+#wzTip { padding: 12px 16px 0; display: flex; flex-direction: column; gap: 8px; }
+#wzTip .tip { align-self: flex-start; max-width: 94%; background: var(--bg); border-radius: 14px 14px 14px 4px; padding: 10px 12px; font-size: 14px; line-height: 21px; }
+#wzTip .note { color: var(--ink3); font-size: 12.5px; }
+#wzMsgs .msg.auto { color: var(--ink3); font-size: 12.5px; text-align: center; margin: 8px 0; }
+.ccard { margin: -6px 0 14px; border: 1px solid var(--line); border-radius: 12px; background: var(--surface); padding: 10px 12px; display: flex; flex-direction: column; gap: 6px; font-size: 13px; }
+.ccard .cct { font-weight: 700; }
+.ccard .ccl { color: var(--ink2); display: flex; flex-direction: column; gap: 2px; }
+.ccard.undone { opacity: .65; }
+.ccard .wzchip { height: 26px; font-size: 12.5px; }
+#wzPending { display: flex; flex-wrap: wrap; gap: 6px; }
+#wzPending:empty { display: none; }
+.wzcompose { display: flex; gap: 8px; align-items: center; }
+.wzcompose input[type=text] { flex: 1; min-width: 0; height: 38px; padding: 0 12px; border-radius: 10px; border: 1px solid var(--line); background: var(--bg); color: var(--ink); font: inherit; outline: none; }
+.wzcompose .ib { width: 38px; height: 38px; flex: none; border-radius: 10px; border: 1px solid var(--line); display: grid; place-items: center; color: var(--ink2); }
+
 /* 窄屏：问答收起成抽屉，再窄目录也收起 */
 @media (max-width: 1180px) { .grid { grid-template-columns: 260px minmax(0, 1fr) 340px; } }
 @media (max-width: 980px) {
+  body.wz .grid { grid-template-columns: 200px minmax(0, 1fr); }
+  body.wz #wzChat { position: fixed; right: 0; top: 52px; bottom: 0; width: min(380px, 100vw); z-index: 20; box-shadow: -8px 0 30px rgba(0, 0, 0, .15); transform: translateX(105%); transition: transform .2s; }
+  body.wz.ask-open #wzChat { transform: none; }
+  body.wz #askBtn { display: inline-flex; }
   .grid { grid-template-columns: 250px minmax(0, 1fr); }
   .ask { position: fixed; right: 0; top: 52px; bottom: 0; width: min(420px, 100vw); z-index: 20; box-shadow: -8px 0 30px rgba(0, 0, 0, .15); transform: translateX(105%); transition: transform .2s; }
   body.ask-open .ask { transform: none; }
   .iconbtn.askbtn { display: inline-flex; }
 }
 @media (max-width: 720px) {
+  body.wz .grid { grid-template-columns: minmax(0, 1fr); }
+  body.wz #wzNav { display: none; }
+  .wzbody { padding: 18px 16px; }
+  .wzfoot { padding: 12px 16px; }
+  .two, .hgrid { grid-template-columns: minmax(0, 1fr); }
+  .srow { grid-template-columns: 50px minmax(0, 1fr); }
+  .srow > :nth-child(n+3) { grid-column: 2; }
+  .srow.head { display: none; }
+  .cmiss { padding-left: 16px; }
+  .crow { flex-wrap: wrap; }
   .grid { grid-template-columns: minmax(0, 1fr); }
   .nav { position: fixed; left: 0; top: 52px; bottom: 0; width: min(320px, 88vw); z-index: 20; transform: translateX(-105%); transition: transform .2s; box-shadow: 8px 0 30px rgba(0, 0, 0, .15); }
   body.nav-open .nav { transform: none; }
@@ -373,6 +583,8 @@ button.ritem:hover { border-color: var(--goldFill); }
     <button class="topbtn iconbtn navbtn" id="navBtn">☰</button>
     <div class="brand"><span class="dot"></span><span id="appName">…</span><span class="sub" id="deskName"></span></div>
     <div class="ddl" id="ddl"></div>
+    <span class="grow"></span>
+    <button class="topbtn" id="wzCancel"></button>
     <button class="topbtn" id="langBtn"></button>
     <a class="topbtn" id="homeLink" href="/"></a>
     <button class="topbtn iconbtn askbtn" id="askBtn"></button>
@@ -383,6 +595,16 @@ button.ritem:hover { border-color: var(--goldFill); }
       <div class="uhead" id="uhead"></div>
       <div class="view" id="view"></div>
     </section>
+    <nav class="nav" id="wzNav"></nav>
+    <section class="center" id="wzMain"><div class="wzbody" id="wzBody"></div><div class="wzfoot" id="wzFoot"></div></section>
+    <aside class="ask" id="wzChat">
+      <div class="askh"><span class="ai"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 7v14"/><path d="M3 18a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1h5a4 4 0 0 1 4 4 4 4 0 0 1 4-4h5a1 1 0 0 1 1 1v13a1 1 0 0 1-1 1h-6a3 3 0 0 0-3 3 3 3 0 0 0-3-3z"/></svg></span><div><div class="t1" id="wzAgentName"></div><div class="t2" id="wzAgentSub"></div></div></div>
+      <div id="wzTip"></div>
+      <div class="msgs" id="wzMsgs"></div>
+      <div class="compose"><div id="wzPending"></div>
+        <div class="wzcompose"><input type="file" id="wzPick" accept="image/*,.pdf,.doc,.docx,.ppt,.pptx" multiple style="display:none">
+          <button class="ib" id="wzImg" title=""><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect width="18" height="18" x="3" y="3" rx="2"/><circle cx="9" cy="9" r="2"/><path d="m21 15-3.086-3.086a2 2 0 0 0-2.828 0L6 21"/></svg></button><input type="text" id="wzInput"><button class="send" id="wzSend"></button></div></div>
+    </aside>
     <aside class="ask" id="ask">
       <div class="askh"><div class="t1"><span class="dot"></span><span id="askTitle"></span></div><div class="t2" id="askSub"></div></div>
       <div class="msgs" id="msgs"></div>
@@ -502,6 +724,10 @@ function paintStatic() {
   $('#sendBtn').textContent = L('发送', 'Send');
   $('#composeHint').textContent = L('Enter 发送 · Shift+Enter 换行', 'Enter to send · Shift+Enter for a new line');
   $('#input').placeholder = L('问这一节的任何问题…', 'Ask anything about this session…');
+  $('#wzAgentSub').textContent = L('和 app 里的「对话」是同一个线程', 'Same thread as the Chat tab in the app');
+  $('#wzInput').placeholder = L('跟学习 Agent 说…（能贴截图）', 'Tell the study Agent… (you can paste a screenshot)');
+  $('#wzSend').textContent = L('发送', 'Send');
+  $('#wzImg').title = L('发截图或文件', 'Send a screenshot or file');
 }
 
 // —— 顶栏 ddl ——
@@ -527,7 +753,7 @@ async function loadDDL(refresh) {
       const day = d ? (LANG === 'zh' ? `${d.getMonth() + 1}/${d.getDate()} 周${wk[d.getDay()]}` : `${wk.slice(d.getDay() * 3, d.getDay() * 3 + 3)} ${d.getDate()}/${d.getMonth() + 1}`) : '';
       const cls = 'chip' + (ms < 48 * 3.6e6 ? ' hot' : ms < 7 * 24 * 3.6e6 ? ' warm' : '');
       box.append(h(it.url ? 'a' : 'span', { class: cls, href: it.url || null, target: it.url ? '_blank' : null, rel: 'noopener', title: `${it.course || ''} · ${it.title || ''}` },
-        h('b', {}, `${day} ${it.due.slice(11, 16)}`), `${it.course ? it.course + ' · ' : ''}${it.title || ''}`, d ? ' · ' + left(ms) : ''));
+        h('b', {}, `${day} ${it.due.slice(11, 16) === '23:59' ? '' : it.due.slice(11, 16)}`), `${it.code || it.course ? (it.code || it.course) + ' · ' : ''}${it.title || ''}`, d ? ' · ' + left(ms) : ''));
     }
   } catch (e) { if (e.message !== 'auth') box.innerHTML = ''; }
 }
@@ -556,10 +782,18 @@ function renderNav() {
   const courses = S.tree?.courses || [];
   nav.append(h('div', { class: 'courses' }, courses.map(c => {
     const n = c.modules.reduce((a, m) => a + m.pages.length, c.pages.length);
-    return h('button', { class: 'course' + (c.name === S.course ? ' on' : ''), onclick: () => selectCourse(c.name) }, c.name, n ? h('span', { class: 'n' }, L(`${n} 页`, `${n} note${n === 1 ? '' : 's'}`)) : null);
-  })));
+    const sess = c.profile ? c.modules.filter(m => m.session).length : 0;
+    const count = c.profile ? L(`${sess} 节`, `${sess} session${sess === 1 ? '' : 's'}`) : n ? L(`${n} 页`, `${n} note${n === 1 ? '' : 's'}`) : '';
+    return h('button', { class: 'course' + (c.name === S.course ? ' on' : ''), onclick: () => selectCourse(c.name) }, c.title || c.name, count ? h('span', { class: 'n' }, count) : null);
+  })), h('button', { class: 'addcourse', onclick: () => openWizard(null) }, '+ ' + L('加一门课', 'Add a course')));
   const c = curCourse();
   if (!c) return;
+  if (c.profile) {
+    const st = c.setup || {};
+    nav.append(h('div', { class: 'cacts' }, !st.confirmed ? h('button', { class: 'cont', onclick: () => openWizard(c.name, st.step) }, L(`接着加这门课（第 ${st.step} 步）`, `Continue setup (step ${st.step})`)) : null,
+      h('button', { onclick: () => openWizard(c.name, 1) }, L('课程设置', 'Course settings')), st.confirmed ? h('button', { onclick: () => openWizard(c.name, 4) }, L('放材料', 'Add materials')) : null,
+      st.confirmed ? h('button', { onclick: () => openWizard(c.name, 5) }, L('生成', 'Generate')) : null));
+  }
   if (c.pages.length) nav.append(h('div', { class: 'sect' }, L('课程总览', 'Course overview')), h('div', { class: 'items', style: 'display:block' }, c.pages.map(pageItem)));
   // 上面按周 / 节排（每节点进去是学习路线），课程信息、作业说明、阅读清单这类资料模块收到下面
   const sess = c.modules.filter(m => m.kind !== 'resource'), res = c.modules.filter(m => m.kind === 'resource');
@@ -593,8 +827,55 @@ function modEl(c, m, resource) {
   } else items.append(...rest.map(fileItem));
   const cnt = m.pages.length ? L(`${m.pages.length} 节`, `${m.pages.length} session${m.pages.length === 1 ? '' : 's'}`) : (m.files.length ? L(`${m.files.length} 个文件`, `${m.files.length} file${m.files.length === 1 ? '' : 's'}`) : '');
   const el = h('div', { class: 'mod' + (open ? ' open' : '') + (resource ? ' res' : '') });
-  el.append(h('button', { class: 'modh', onclick: () => toggleOpen(key, el) }, h('span', { class: 'chev' }, '›'), h('span', { class: 'mt' }, m.title), h('span', { class: 'cnt' }, cnt)), items);
+  const sst = m.session ? sessionChip(m) : null;
+  const onhead = m.session && !m.pages.length ? () => { openSession(c, m); closeDrawers(); } : () => toggleOpen(key, el);
+  el.append(h('button', { class: 'modh', onclick: onhead }, h('span', { class: 'chev' }, '›'), h('span', { class: 'mt' }, m.title), sst, h('span', { class: 'cnt' }, cnt)), items);
   return el;
+}
+// 课程档案里的一节：学完 / 路线几步 / 缺什么 / 还没上
+function sessionChip(m) {
+  const s = m.session, p = m.pages[0];
+  const pr = p && p.progress;
+  if (pr && pr.total && pr.done >= pr.total) return h('span', { class: 'sst done' }, L('学完', 'Done'));
+  if (pr && pr.total) return h('span', { class: 'sst' + (pr.done ? ' doing' : '') }, `${pr.done} / ${pr.total}`);
+  if (p) return null;
+  const t = { ready: [L('材料齐了', 'Ready'), ' doing'], missing: [L('缺阅读', 'Readings'), ' warn'], noslides: [L('缺课件', 'No slides'), ' warn'],
+    later: [s.date ? dayShort(s.date) : L('还没上', 'Later'), ''], empty: [L('还没有材料', 'Empty'), ''] }[s.status] || [s.status, ''];
+  return h('span', { class: 'sst' + t[1] }, t[0]);
+}
+const dayShort = d => { const x = new Date(d + 'T12:00:00'); return LANG === 'zh' ? `${x.getMonth() + 1}/${x.getDate()}` : `${x.getDate()}/${x.getMonth() + 1}`; };
+// 还没有学习页的一节：材料齐没齐、缺什么、放材料 / 生成
+async function openSession(c, m) {
+  S.unit = null;
+  renderNav();
+  const v = $('#view');
+  $('#uhead').innerHTML = '';
+  $('#uhead').append(h('div', { class: 'crumb' }, c.title || c.name), h('h1', {}, m.title));
+  v.className = 'view';
+  v.innerHTML = '';
+  let d;
+  try { d = await api('/api/study/courses/' + encodeURIComponent(c.name)); } catch (e) { if (e.message !== 'auth') v.append(h('div', { class: 'err' }, e.message)); return; }
+  const s = (d.course.sessions || []).find(x => x.id === m.session.id);
+  if (!s) return;
+  const ch = s.check;
+  const word = { ready: L('材料齐了，可以生成学习页和学习路线。', 'Materials are in: ready to generate the notes and study path.'),
+    missing: L('还缺阅读材料：补上或者明着跳过，再生成。', 'Some readings are missing: add them or skip them, then generate.'),
+    noslides: L('过了上课时间还没有课件。', "The class has happened but there are no slides yet."), later: L('还没上课，老师一般课前传课件。', 'Not taught yet; slides usually come before class.'),
+    empty: L('这一节还没有材料。', 'No materials for this session yet.') }[ch.status] || '';
+  const job = s.job;
+  v.append(h('div', { class: 'shome' }, h('p', {}, word),
+    h('div', { class: 'srows' },
+      h('div', { class: 'sr' }, h('span', { class: 'k' }, L('日期', 'Date')), h('span', {}, s.date ? s.date + (s.time ? ' ' + s.time : '') : '—')),
+      h('div', { class: 'sr' }, h('span', { class: 'k' }, L('课件', 'Files')), h('span', {}, ch.slides.length ? ch.slides.map(x => x.split('/').pop()).join('、') : '—')),
+      h('div', { class: 'sr' }, h('span', { class: 'k' }, L('要读的', 'Readings')), h('span', {}, ch.readings.length ? ch.readings.map(r => (r.state === 'have' ? '✓ ' : r.state === 'skipped' ? '⤼ ' : '✗ ') + r.title).join('；') : '—')),
+      h('div', { class: 'sr' }, h('span', { class: 'k' }, L('录播', 'Captions')), h('span', {}, ch.captions.length ? '✓' : '—'))),
+    job && (job.status === 'queued' || job.status === 'running') ? h('p', {}, h('span', { class: 'spin' }), L('在生成…', 'Generating…')) : null,
+    h('div', { style: 'display:flex;gap:8px;flex-wrap:wrap' },
+      h('button', { class: 'pill ghost', onclick: () => openWizard(c.name, 4) }, L('放材料', 'Add materials')),
+      ch.status === 'ready' ? h('button', { class: 'pill', onclick: async () => {
+        try { await api('/api/study/courses/' + encodeURIComponent(c.name) + '/generate', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ sessions: [s.id] }) }); } catch (e) { if (e.message !== 'auth') alert(e.message); return; }
+        openWizard(c.name, 5);
+      } }, L('生成这一节', 'Generate this session')) : null)));
 }
 function selectCourse(name, keepUnit) {
   S.course = name;
@@ -603,7 +884,8 @@ function selectCourse(name, keepUnit) {
     const c = curCourse();
     const first = c && (c.modules.flatMap(m => m.pages)[0] || c.pages[0]);
     if (first) openUnit({ kind: 'page', ...first });
-    else { S.unit = null; renderNav(); renderEmpty(); }
+    else if (c && c.profile && !(c.setup || {}).confirmed) { S.unit = null; renderNav(); renderEmpty(L('这门课还没加完。', "This course isn't set up yet."), () => openWizard(c.name, (c.setup || {}).step), L('接着加', 'Continue')); }
+    else { S.unit = null; renderNav(); renderEmpty(c && c.profile ? L('还没有学习页：左边点一节，看材料齐没齐、生成。', 'No notes yet: pick a session on the left to check its materials and generate.') : ''); }
     return;
   }
   renderNav();
@@ -688,11 +970,12 @@ async function paintReview(u) {
   if (from) wrap.append(h('div', { class: 'rvf' }, L(`来自播客「${from.from.title}」`, `From the episode “${from.from.title}”`)));
   $('#uhead').insertBefore(wrap, $('#tabs'));
 }
-function renderEmpty(msg) {
+function renderEmpty(msg, action, label, title) {
   $('#uhead').innerHTML = '';
   $('#view').className = 'view';
   $('#view').innerHTML = '';
-  $('#view').append(h('div', { class: 'empty' }, h('h2', {}, L('从左边选一节开始', 'Pick a session on the left')), h('p', {}, msg || '')));
+  $('#view').append(h('div', { class: 'empty' }, h('h2', {}, title || L('从左边选一节开始', 'Pick a session on the left')), h('p', {}, msg || ''),
+    action ? h('button', { class: 'pill', onclick: action }, label) : null));
 }
 async function selectTab(id) {
   S.tab = id;
@@ -841,6 +1124,7 @@ const panoptoAt = (url, t) => (url && t != null ? url + (url.includes('?') ? '&'
 const KIND_LABEL = () => ({ textbook: L('教材', 'Textbook'), case: 'Case', article: L('文章', 'Article'), note: L('讲义', 'Note'), news: L('新闻', 'News'), web: L('网页', 'Web'), book: L('书', 'Book') });
 function statusOf(r) {
   if (r.status === 'have') return ['✓', ''];
+  if (r.status === 'skipped') return ['⤼', L('跳过了（学习页会写明没读到）', "skipped (the notes say it wasn't read)")];
   if (r.status === 'needs_leo') return ['✋', L('等你提供', 'needs you')];
   if (r.status === 'blocked') return ['⛔', L('网站打不开：可以在自己电脑上打开链接存成 PDF 发我', "site blocked: open the link yourself and send a PDF")];
   if (r.status === 'optional') return ['○', L('选读，没下载', 'optional, not downloaded')];
@@ -1102,11 +1386,23 @@ async function renderSelf(my) {
     return;
   }
   const course = S.course, unit = S.unit;
-  const st = selfLoad(course, unit.path);
+  // 答案存在服务器上（手机和电脑共用）；这台浏览器里留一份，给标签上的数字用。以前只存在浏览器里的，第一次打开时传上去
+  let st = selfLoad(course, unit.path);
+  try {
+    const srv = await api('/api/study/self?' + qs({ course, page: unit.path }));
+    if (my !== S.seq) return;
+    if (srv.state && srv.state.v && Object.keys(srv.state.v).length) st = srv.state;
+    else if (st.v && Object.keys(st.v).length) api('/api/study/self', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ course, page: unit.path, state: st }) }).catch(() => {});
+  } catch { /* 连不上服务器：先用这台浏览器里的 */ }
   st.n = items.length;
   if (!st.v || typeof st.v !== 'object') st.v = {};
-  const save = () => store.set(selfKey(course, unit.path), JSON.stringify(st));
-  save();
+  let pushT = 0;
+  const save = () => {
+    store.set(selfKey(course, unit.path), JSON.stringify(st));
+    clearTimeout(pushT);
+    pushT = setTimeout(() => api('/api/study/self', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ course, page: unit.path, state: st }) }).catch(() => {}), 600);
+  };
+  store.set(selfKey(course, unit.path), JSON.stringify(st));
   const refreshTab = () => { const b = document.querySelector('#tabs .tab[data-id="self"]'); if (b && S.unit === unit) b.textContent = selfTabLabel(unit); };
   refreshTab();
   const head = h('div', { class: 'shead' });
@@ -1121,7 +1417,7 @@ async function renderSelf(my) {
   };
   paintHead();
   const wrap = h('div', { class: 'self' }, head,
-    h('p', { class: 'rsum' }, L('先在框里写你的答案，再点「看答案」对照；不想写也可以直接看。写的答案只存在这台设备的浏览器里。', 'Write your answer in the box, then reveal the reference to compare, or just reveal it. Your answers stay in this browser only.')));
+    h('p', { class: 'rsum' }, L('先在框里写你的答案，再点「看答案」对照；不想写也可以直接看。写的答案存在你的服务器上，手机上的学习屏也看得到。', 'Write your answer in the box, then reveal the reference to compare, or just reveal it. Answers are saved on your server, so the phone sees them too.')));
   items.forEach((it, i) => {
     const rec = st.v[i] && typeof st.v[i] === 'object' ? st.v[i] : (st.v[i] = {});
     const box = h('div', { class: 'sq' });
@@ -1150,6 +1446,19 @@ async function renderSelf(my) {
       grade.append(h('span', {}, L('自己判一下：', 'Mark it:')),
         ...[['ok', L('对了', 'Right')], ['close', L('差一点', 'Close')], ['miss', L('没答上', 'Missed')]].map(([g, label]) =>
           h('button', { class: g + (rec.g === g ? ' on' : ''), 'aria-pressed': rec.g === g ? 'true' : 'false', onclick: () => { rec.g = rec.g === g ? undefined : g; save(); paint(); paintHead(); } }, label)));
+      if (rec.g === 'miss' || rec.g === 'close') {  // 没答上 / 差一点：一键加进这一节的复习
+        const n = /^\d+$/.test(it.label) ? it.label : it.label.replace(/^Q/i, '');
+        const addB = h('button', { class: 'pill ghost', style: 'padding:4px 11px;font-size:12.5px', disabled: !!rec.rv }, rec.rv ? L('已加进复习 ✓', 'Added to review ✓') : L('加进复习', 'Add to review'));
+        addB.addEventListener('click', async () => {
+          addB.disabled = true;
+          try {
+            await api('/api/study/review/add', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ course, page: unit.path, items: [{ text: String(it.q).replace(/\s+/g, ' ').slice(0, 400), kind: 'missed', source: L(`自测第 ${n} 题`, `Self-test Q${n}`) }] }) });
+            rec.rv = 1; save(); addB.textContent = L('已加进复习 ✓', 'Added to review ✓'); paintReview(unit);
+          } catch (e) { addB.disabled = false; if (e.message !== 'auth') alert(e.message); }
+        });
+        grade.append(addB);
+      }
     };
     let tm = 0;
     ta.addEventListener('input', () => {
@@ -1404,8 +1713,28 @@ async function loadTree() {
   return S.tree;
 }
 
+// 手机上「电脑上打开」拿到的一次性链接：/study#pair=<配对码>。换一个这台浏览器自己的令牌，存好，把码从地址栏去掉。
+async function pairFromHash() {
+  const m = /[#&]pair=([A-Za-z0-9-]{6,20})/.exec(location.hash || '');
+  if (!m) return false;
+  history.replaceState(null, '', location.pathname + location.search);
+  try {
+    const r = await fetch('/api/pair', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ code: m[1], device: L('浏览器（学习台）', 'Browser (study desk)') }) });
+    const j = await r.json();
+    if (!r.ok || !j.token) throw new Error(j.error || 'HTTP ' + r.status);
+    store.set('mousse.token', j.token);
+    location.reload();
+    return true;
+  } catch (e) {
+    alert(L('这个链接用不了（10 分钟内、只能用一次）：', "This link doesn't work (it lasts 10 minutes and works once): ") + e.message);
+    return false;
+  }
+}
+
 async function boot() {
+  if (await pairFromHash()) return;
   paintStatic();
+  wireWizard();
   $('#langBtn').onclick = () => { LANG = LANG === 'zh' ? 'en' : 'zh'; store.set('study.lang', LANG); location.reload(); };
   $('#navBtn').onclick = () => document.body.classList.toggle('nav-open');
   $('#askBtn').onclick = () => document.body.classList.toggle('ask-open');
@@ -1422,12 +1751,20 @@ async function boot() {
   const names = S.tree.courses.map(c => c.name);
   const want = url.get('course') || last?.course || store.get('study.course');
   S.course = names.includes(want) ? want : names[0];
-  if (!S.course) { renderNav(); renderEmpty(); return; }
+  const wz = (() => { try { return JSON.parse(store.get('study.wizard') || 'null'); } catch { return null; } })();
+  if (url.get('add') != null || (wz && (!wz.name || names.includes(wz.name)))) { renderNav(); openWizard(url.get('add') ? null : wz?.name || null, url.get('add') ? null : wz?.step || null); return; }
+  if (!S.course) {
+    renderNav();
+    renderEmpty(L('加第一门课。说说你手上有什么：大纲、课件，或者课程网站，它告诉你去哪拿、拿什么。', 'Add your first course. Say what you have (a syllabus, files or a course site) and it shows where to find them.'),
+      () => openWizard(null), L('加一门课', 'Add a course'), L('学习台还是空的', 'The study desk is empty'));
+    return;
+  }
   if (url.get('page') || url.get('file')) openUnit(url.get('page') ? { kind: 'page', path: url.get('page') } : { kind: 'file', path: url.get('file'), title: base(url.get('file')) }, url.get('tab'));
   else if (last && last.course === S.course && last.path) openUnit({ kind: last.kind, path: last.path, title: last.title }, last.tab);
   else selectCourse(S.course);
 }
 window.addEventListener('DOMContentLoaded', boot);
 </script>
+<script src="/study/wizard.js"></script>
 </body>
 </html>
