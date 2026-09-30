@@ -99,6 +99,11 @@ function normalizeCard(raw: any): ChatCard | null {
       project: str(raw.project), projectTitle: str(raw.projectTitle), undoable: raw.undoable !== false, status: raw.status === 'undone' ? 'undone' : 'done',
       createdAt: str(raw.createdAt) } as ChatCard;
   }
+  if (raw.kind === 'course' && typeof raw.changeId === 'number') {  // 学习 Agent 在回复里改了课（server/courses.py）
+    return { ...raw, messageId: msgNum(raw.messageId), title: str(raw.title), summary: str(raw.summary), course: str(raw.course), courseTitle: str(raw.courseTitle) || str(raw.course),
+      lines: Array.isArray(raw.lines) ? raw.lines.map(String) : [], status: raw.status === 'undone' ? 'undone' : 'done', createdAt: str(raw.createdAt),
+      session: raw.session && typeof raw.session.course === 'string' ? raw.session : null } as ChatCard;
+  }
   if (raw.kind === 'schedule' && typeof raw.logId === 'number') {  // Agent 在回复里改了日程（server/schedule.py）
     return { ...raw, messageId: msgNum(raw.messageId), title: str(raw.title), summary: str(raw.summary), action: str(raw.action), actor: str(raw.actor),
       area: raw.area === 'remember' ? 'remember' : 'schedule', status: raw.status === 'undone' ? 'undone' : 'done', createdAt: str(raw.createdAt) } as ChatCard;
@@ -132,7 +137,8 @@ function normalizeUnread(j: Partial<UnreadSummary> | null | undefined): UnreadSu
 
 export const dataApi = {
   groups: () => request<{ groups: Group[] }>('/api/groups').then((j) => j.groups),
-  createGroup: (g: { name: string; purpose: string; icon: GroupIcon; color: AgentColor; model: string }) => request<{ id: string }>('/api/groups', { method: 'POST', body: g }).then((j) => j.id),
+  /** template：从例子开始建的（study = 学习：服务器配好学习看板、学习功能包和 study skill）。 */
+  createGroup: (g: { name: string; purpose: string; icon: GroupIcon; color: AgentColor; model: string; template?: string }) => request<{ id: string }>('/api/groups', { method: 'POST', body: g }).then((j) => j.id),
   /** 改 Agent：只发改了的字段（model 是模型 id）。回来的是改完的那一条；老服务器没回就返回 null。 */
   patchGroup: (id: string, p: { name?: string; icon?: GroupIcon; color?: AgentColor; purpose?: string; model?: string }) =>
     request<{ ok: boolean; group?: Group }>(`/api/groups/${encodeURIComponent(id)}`, { method: 'PATCH', body: p }).then((j) => (j.group && j.group.id ? j.group : null)),

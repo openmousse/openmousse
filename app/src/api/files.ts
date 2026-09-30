@@ -25,6 +25,11 @@ export interface FilePreview {
 }
 
 export const filePreview = (id: string) => request<FilePreview>(`/api/files/${encodeURIComponent(id)}/preview`, { timeoutMs: 60000 });
+/** 学习台的课件（不是对话附件）：同一套预览，地址在 /api/study/file/…（server/studyapp.py） */
+const studyQ = (s: NonNullable<Attachment['study']>) => `course=${encodeURIComponent(s.course)}&path=${encodeURIComponent(s.path)}&where=${s.where ?? 'materials'}`;
+export const previewOf = (a: Attachment) => (a.study
+  ? request<FilePreview>(`/api/study/file/preview?${studyQ(a.study)}`, { timeoutMs: 60000 })
+  : filePreview(a.id));
 
 /** 服务器渲染页图只出这几种宽度（缓存好复用）：按屏幕上的宽度 × 像素密度就近往上取。 */
 const PAGE_WIDTHS = [800, 1200, 1600, 2000];
@@ -33,6 +38,7 @@ export const pageWidth = (points: number) => {
   return PAGE_WIDTHS.find((w) => w >= px) ?? PAGE_WIDTHS[PAGE_WIDTHS.length - 1];
 };
 export const pageUrl = (id: string, n: number, w: number) => fileUrl(`/api/files/${encodeURIComponent(id)}/page/${n}?w=${w}`);
+export const pageOf = (a: Attachment, n: number, w: number) => (a.study ? fileUrl(`/api/study/file/page?${studyQ(a.study)}&n=${n}&w=${w}`) : pageUrl(a.id, n, w));
 
 /** 附件的地址已经带好服务器和令牌（client.ts 用 fileUrl 换过）；再加一个参数。 */
 export const withParam = (url: string, kv: string) => `${url}${url.includes('?') ? '&' : '?'}${kv}`;

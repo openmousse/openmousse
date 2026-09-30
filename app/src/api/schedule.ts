@@ -21,6 +21,7 @@ function norm(raw: Partial<ScheduleEntry> & { id: string }): ScheduleEntry {
     group: raw.group ?? null, urgent: !!raw.urgent, key: raw.key ?? null, locationChanged: !!raw.locationChanged,
     sourceLocation: raw.sourceLocation,
     project: raw.project && typeof raw.project.id === 'string' ? { id: raw.project.id, title: str(raw.project.title) } : undefined,
+    study: raw.study && typeof raw.study.course === 'string' ? { course: raw.study.course, session: typeof raw.study.session === 'string' ? raw.study.session : null } : undefined,
   };
 }
 

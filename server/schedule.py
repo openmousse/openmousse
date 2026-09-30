@@ -336,7 +336,7 @@ def course_entry(x: dict, mk: dict, now_dt: datetime) -> dict:
     course = str(x.get("course") or "")
     import coursefile as cf
     return entry(id=ref, kind="deadline", origin="course", title=str(x.get("title") or "").strip(),
-                 detail=L(f"{course} 的{cf.ddl_label(x.get('kind'))}，在学习台的课程档案里。", f"{cf.ddl_label(x.get('kind'))} for {course}, from the study desk's course profile."),
+                 detail=L(f"{course}{' ' if course[-1:].isascii() else ''}的{cf.ddl_label(x.get('kind'))}，在学习台的课程档案里。", f"{cf.ddl_label(x.get('kind'))} for {course}, from the study desk's course profile."),
                  date=d, start=t, allDay=not t, badge=x.get("code") or course_short(course), link=None,
                  done=bool(x.get("done") or (mk.get(ref) or {}).get("done_at")), past=at(d, t or None, end_of_day=not t) < now_dt, course=course,
                  study={"course": x.get("course_id"), "session": x.get("session_id")})

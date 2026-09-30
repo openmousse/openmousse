@@ -36,6 +36,8 @@ import { PodDoneScreen, PodFriendsScreen, PodPrepScreen, PodRecScreen } from './
 import { PeopleScreen, PersonScreen } from './screens/PeopleScreens';
 import { SaveScreen } from './screens/SaveScreen';
 import { FilePreviewScreen } from './screens/FilePreviewScreen';
+import { AddCourseScreen } from './screens/AddCourseScreen';
+import { StudyHomeScreen, StudyPageScreen, StudySessionScreen } from './screens/StudyScreens';
 import { ShareScreen } from './screens/ShareScreen';
 import { SharesScreen } from './screens/SharesScreen';
 import { AddFriendScreen, CardAgentScreen, FriendChatScreen } from './screens/FriendsScreens';
@@ -134,6 +136,10 @@ export function openTarget(target: PushTarget, isGroup = false, quote?: ChatQuot
       return;
     case 'friend':
       navigationRef.navigate('FriendChat', { id: target.id, at });
+      return;
+    case 'study':  // 学习台的一节（写好了、材料齐了、今天页的截止、改课的卡）：有学习页进这一节，没有就进那门课
+      if (target.page) navigationRef.navigate('StudySession', { course: target.course, page: target.page, at });
+      else navigationRef.navigate('StudyHome', { course: target.course, session: target.session ?? undefined, at });
       return;
     default:
       tab('今天', { at });
@@ -264,6 +270,10 @@ export function RootNavigator() {
         <Stack.Screen name="People" component={PeopleScreen} />
         <Stack.Screen name="Person" component={PersonScreen} />
         <Stack.Screen name="Save" component={SaveScreen} />
+        <Stack.Screen name="StudyHome" component={StudyHomeScreen} />
+        <Stack.Screen name="StudySession" component={StudySessionScreen} />
+        <Stack.Screen name="StudyPage" component={StudyPageScreen} />
+        <Stack.Screen name="AddCourse" component={AddCourseScreen} />
         <Stack.Screen name="FilePreview" component={FilePreviewScreen} options={{ presentation: 'fullScreenModal', animation: 'fade', gestureEnabled: false }} />
         {/* 分享（社交第一层，2026-09-28）：先挡私事，再发链接或干净版卡片 */}
         <Stack.Screen name="Share" component={ShareScreen} />

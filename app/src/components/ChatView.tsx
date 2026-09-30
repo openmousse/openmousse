@@ -18,7 +18,7 @@ import { useSheet } from './Sheet';
 import { PullRefresh, T } from './ui';
 import { Markdown } from './Markdown';
 import { InboxCard } from './InboxCard';
-import { HandoffChip, HandoffFrom, ProjectChip, ScheduleChip, TaskCardView, modelLabel } from './ChatCards';
+import { CourseChip, HandoffChip, HandoffFrom, ProjectChip, ScheduleChip, TaskCardView, modelLabel } from './ChatCards';
 import { MAX_FILES, pickDocuments, pickMedia } from './chatInput';
 import { loadDraft, saveDraft } from '../drafts';
 import { saveMessage } from '../api/think';
@@ -97,7 +97,8 @@ function ChatTasks({ cards, onRevise, thread }: { cards?: ChatCard[]; onRevise: 
   if (!cards?.length) return null;
   return <>{cards.map((c) => (
     <View key={c.id} style={{ paddingLeft: 36 }}>
-      {c.kind === 'task' ? <TaskCardView card={c} onRevise={onRevise} /> : c.kind === 'schedule' ? <ScheduleChip card={c} /> : c.kind === 'project' ? <ProjectChip card={c} here={thread} /> : <HandoffChip card={c} />}
+      {c.kind === 'task' ? <TaskCardView card={c} onRevise={onRevise} /> : c.kind === 'schedule' ? <ScheduleChip card={c} /> : c.kind === 'project' ? <ProjectChip card={c} here={thread} />
+        : c.kind === 'course' ? <CourseChip card={c} /> : <HandoffChip card={c} />}
     </View>
   ))}</>;
 }
@@ -319,7 +320,7 @@ export function Action({ icon: Icon, label, note, danger, onPress }: { icon: typ
   );
 }
 
-export function ChatView({ threadId, placeholder, empty, welcome, quote: quoteProp, quoteAt = 0, focus, focusAt = 0, hideHistoryLink, composerTop, intercept }: {
+export function ChatView({ threadId, placeholder, empty, welcome, quote: quoteProp, quoteAt = 0, focus, focusAt = 0, hideHistoryLink, composerTop, intercept, study }: {
   threadId: string; placeholder: string; empty?: string;
   /** 对话空着时放在最上面、代替空白提示的一张卡（主对话在新实例上：「从这里开始」）。它在的时候不显示「这里只有今天的」：还没有历史 */
   welcome?: React.ReactNode;
@@ -333,6 +334,8 @@ export function ChatView({ threadId, placeholder, empty, welcome, quote: quotePr
   quote?: ChatQuote; quoteAt?: number;
   /** 从转交卡点过来：滚到这条消息（"db<id>"）闪一下；focusAt 是那次跳转的时间 */
   focus?: string; focusAt?: number;
+  /** 学习台旁边的对话（手机上加一门课）：「课|第几步」，发出去时带上，模型知道在哪门课、哪一步 */
+  study?: string;
 }) {
   const t = useTheme();
   const { threads, typing, send, stop, avatar, streaming, connected, booting, deleteMessage, rewindMessage, transcribe, refreshThread, sharedChannels, inboxByThread, cardsByThread, liveCards, reviseTask } = useStore();
@@ -498,8 +501,8 @@ export function ChatView({ threadId, placeholder, empty, welcome, quote: quotePr
     }
     if ((!text && !pending.length) || transcribing) return;  // 它正在回复也能发：服务器先排队，这条回完一起发给它
     // 带着引用：收件箱里还没定下来的那件事 = 修改意见（服务器收到 inboxId 会把它退回去改），处理过的 = 跟进；收藏：模型另外看到那条收藏；长按「引用」的：模型看到原话
-    send(threadId, text, pending.length ? pending : undefined,
-      quote?.inboxId ? { inboxId: quote.inboxId } : quote?.ref ? { ref: quote.ref } : quote?.saveId ? { save: quote.saveId } : quote?.replyTo ? { replyTo: quote.replyTo } : undefined);
+    const via = quote?.inboxId ? { inboxId: quote.inboxId } : quote?.ref ? { ref: quote.ref } : quote?.saveId ? { save: quote.saveId } : quote?.replyTo ? { replyTo: quote.replyTo } : undefined;
+    send(threadId, text, pending.length ? pending : undefined, study ? { ...via, study } : via);
     setDraft('');
     setPending([]);
     setQuote(null);

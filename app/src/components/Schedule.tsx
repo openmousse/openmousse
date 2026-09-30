@@ -9,7 +9,7 @@ import { agentName } from '../brand';
 import type { RememberGroup, ScheduleEntry } from '../data/types';
 import * as sched from '../api/schedule';
 import { L } from '../i18n';
-import { openThread } from '../navigation';
+import { openTarget, openThread } from '../navigation';
 import { useStore } from '../store';
 import { agentTint, radius, space, type, useTheme } from '../theme';
 import { Check, ChevronLeft, ChevronRight, CircleAlert, FolderKanban, MapPin, Plus } from './icons';
@@ -231,6 +231,11 @@ function Detail({ e }: { e: ScheduleEntry }) {
         {e.link ? (
           <Pressable onPress={() => { Linking.openURL(e.link as string).catch((err) => showError(L('打不开', "Couldn't open it"), err)); }} accessibilityRole="link" hitSlop={6}>
             <T v="callout" color={t.gold} style={{ fontWeight: '600' }}>{e.origin === 'mail' ? L('看原文', 'Open the email') : L('看原文', 'Open the original')}</T>
+          </Pressable>
+        ) : null}
+        {e.study?.course ? (
+          <Pressable onPress={() => openTarget({ type: 'study', course: e.study?.course as string, session: e.study?.session ?? null })} accessibilityRole="button" hitSlop={6}>
+            <T v="callout" color={t.gold} style={{ fontWeight: '600' }}>{L('去学习台', 'Open the study desk')}</T>
           </Pressable>
         ) : null}
         {e.origin === 'mail' || e.origin === 'own' ? (

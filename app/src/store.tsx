@@ -132,7 +132,7 @@ interface Actions {
   imUp(): Promise<void>;
   /** inboxId：这条引用了收件箱里的一件事。还没定下来的 = 修改意见（「今天」的「去对话里说」），本地先标成「改一下」；
    *  定下来的 = 跟进（「已处理」详情里的「跟进」），做完 / 没做成的本地先标回「在做」，记下跟进的话。 */
-  send(threadId: string, text: string, files?: PendingFile[], opts?: { inboxId?: string; ref?: string; save?: string; replyTo?: string }): void;
+  send(threadId: string, text: string, files?: PendingFile[], opts?: { inboxId?: string; ref?: string; save?: string; replyTo?: string; study?: string }): void;
   /** 停掉这个对话正在进行的回复（已经说了的留着，末尾标「停了」）。排着的消息接着发。 */
   stop(threadId: string): Promise<void>;
   deleteJournal(id: string): Promise<void>;
@@ -164,7 +164,7 @@ interface Actions {
   treeAction(id: string, action: TreeAction, branch?: string): Promise<void>;
   /** 连接页下拉刷新：让服务器跳过缓存重新查一遍。 */
   refreshConnectors(): Promise<void>;
-  addGroup(g: { name: string; purpose: string; icon: GroupIcon; color: AgentColor; modelId: string }): Promise<string>;
+  addGroup(g: { name: string; purpose: string; icon: GroupIcon; color: AgentColor; modelId: string; template?: string }): Promise<string>;
   /** 改 Agent 的名字 / 图标 / 颜色 / 职责 / 默认模型（只传改了的）。改名字或职责，服务器顺带改它自己的说明。 */
   updateGroup(id: string, patch: GroupPatch): Promise<void>;
   setAvatar(a: Partial<AvatarConfig>): void;
@@ -898,7 +898,7 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
     await Promise.all([loadProject(pid), reload('sideChats'), deadlines ? reload('schedule', 'remember') : null]);
   }, [loadProject, reload]);
 
-  const send = useCallback((threadId: string, text: string, files?: PendingFile[], opts?: { inboxId?: string; ref?: string; save?: string; replyTo?: string }) => {
+  const send = useCallback((threadId: string, text: string, files?: PendingFile[], opts?: { inboxId?: string; ref?: string; save?: string; replyTo?: string; study?: string }) => {
     const pending = files?.map((f, i) => ({ id: `local${i}`, name: f.name, mime: f.mime, size: f.size, kind: kindOf(f.name, f.mime), url: f.uri }));
     // 长按「引用」着发的：气泡上面马上带上原话
     const quoted = opts?.replyTo ? (latest.current.threads[threadId] ?? []).find((m) => m.id === opts.replyTo) : undefined;
@@ -933,6 +933,7 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
     const dequeued = () => patchMine({ queued: false });
     api.current.send(threadId, text, modelId, (partial) => setS((st) => ({ ...st, streaming: { ...st.streaming, [threadId]: partial } })), swapId, files,
       { ...(opts?.inboxId ? { inboxId: opts.inboxId } : {}), ...(opts?.ref ? { ref: opts.ref } : {}), ...(opts?.save ? { save: opts.save } : {}), ...(opts?.replyTo ? { replyTo: opts.replyTo } : {}),
+        ...(opts?.study ? { study: opts.study } : {}),
         onCard: onLiveCard(threadId), onQueued: queuedAs, onDequeued: dequeued })
       .catch((e: unknown): Message => ({ id: id('r'), role: 'grava', time: timeNow(), modelId, body: { type: 'text', text: L('（这条没发出去。）', "(This message wasn't sent.)") }, error: errText(e) }))
       // 可能刚写了一张建议卡、提了一件要你点头的事、转给了某个 Agent、派了任务
@@ -1047,7 +1048,7 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
       }
     },
     addGroup: async (g) => {
-      const gid = await dataApi.createGroup({ name: g.name, purpose: g.purpose, icon: g.icon, color: g.color, model: g.modelId });
+      const gid = await dataApi.createGroup({ name: g.name, purpose: g.purpose, icon: g.icon, color: g.color, model: g.modelId, ...(g.template ? { template: g.template } : {}) });
       setS((st) => ({ ...st, threads: { ...st.threads, [gid]: [] }, threadModel: { ...st.threadModel, [gid]: g.modelId }, firstRun: false }));  // 有 Agent 了：不再是新实例
       await reload('groups', 'activity');
       return gid;

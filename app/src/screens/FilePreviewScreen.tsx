@@ -13,7 +13,7 @@ import { ArrowUpRight, Check, ChevronLeft, ChevronRight, Copy, FileAudio, FileTe
 import { Markdown } from '../components/Markdown';
 import { Btn, T } from '../components/ui';
 import { fileUrl } from '../api/base';
-import { filePreview, isRemote, pageUrl, pageWidth, withParam, type FilePreview, type PreviewTable } from '../api/files';
+import { filePreview, isRemote, pageOf, pageWidth, previewOf, withParam, type FilePreview, type PreviewTable } from '../api/files';
 import type { Attachment } from '../data/types';
 import { L } from '../i18n';
 import { radius, space, type, useTheme } from '../theme';
@@ -76,7 +76,7 @@ export function FilePreviewScreen() {
     for (const x of [items[index - 1], items[index], items[index + 1]]) {
       if (!x || plainImage(x) || !isRemote(x.url) || asked.current.has(x.id)) continue;
       asked.current.add(x.id);
-      filePreview(x.id).then((p) => setInfo((m) => ({ ...m, [x.id]: p })), (e: unknown) => setInfo((m) => ({ ...m, [x.id]: { error: errText(e) } })));
+      previewOf(x).then((p) => setInfo((m) => ({ ...m, [x.id]: p })), (e: unknown) => setInfo((m) => ({ ...m, [x.id]: { error: errText(e) } })));
     }
   }, [index, items]);
 
@@ -249,11 +249,11 @@ function PagesPage({ a, p, w, h, bottom }: { a: Attachment; p: FilePreview; w: n
           <View key={i} style={[styles.sheet, { width: col, height: heights[i], marginBottom: gap }]}>
             {i >= win[0] && i <= win[1] ? <View style={[StyleSheet.absoluteFill, styles.center]}><ActivityIndicator color="#9AA1A9" /></View> : null}
             {i >= win[0] && i <= win[1] ? (
-              <Image source={{ uri: pageUrl(a.id, i + 1, px) }} style={{ width: col, height: heights[i] }} resizeMode="contain"
+              <Image source={{ uri: pageOf(a, i + 1, px) }} style={{ width: col, height: heights[i] }} resizeMode="contain"
                 accessibilityLabel={L(`第 ${i + 1} 页`, `Page ${i + 1}`)} />
             ) : null}
             {zoomed && ZOOM_SHARP > 1 && i >= vis[0] && i <= vis[1] ? (
-              <Image source={{ uri: pageUrl(a.id, i + 1, 2000) }} style={sharpBox(col, heights[i], 2)} resizeMode="contain" />
+              <Image source={{ uri: pageOf(a, i + 1, 2000) }} style={sharpBox(col, heights[i], 2)} resizeMode="contain" />
             ) : null}
           </View>
         ))}

@@ -8,12 +8,13 @@
 import React, { useEffect, useState } from 'react';
 import { ActivityIndicator, Alert, Animated, Easing, Platform, Pressable, StyleSheet, Text, View } from 'react-native';
 import { useNavigation } from '@react-navigation/native';
-import type { HandoffCard, ProjectChangeCard, ScheduleChangeCard, TaskCardInfo } from '../data/types';
+import * as studyApi from '../api/study';
+import type { CourseChangeCard, HandoffCard, ProjectChangeCard, ScheduleChangeCard, TaskCardInfo } from '../data/types';
 import { L } from '../i18n';
-import { openThread } from '../navigation';
+import { openTarget, openThread } from '../navigation';
 import { useStore } from '../store';
 import { radius, space, type, useTheme } from '../theme';
-import { CalendarDays, Check, ChevronRight, CircleAlert, Clock, CornerDownLeft, FileText, FolderKanban, ListChecks, LoaderCircle, Pencil, Send, Square, X } from './icons';
+import { BookOpen, CalendarDays, Check, ChevronRight, CircleAlert, Clock, CornerDownLeft, FileText, FolderKanban, ListChecks, LoaderCircle, Pencil, Send, Square, X } from './icons';
 import { Markdown } from './Markdown';
 import { SourceBadge } from './SourceBadge';
 import { modelOf } from './ModelPicker';
@@ -348,6 +349,47 @@ export function ScheduleChip({ card }: { card: ScheduleChangeCard }) {
         accessibilityLabel={undone ? L(`恢复：${card.title}`, `Redo: ${card.title}`) : L(`撤销：${card.title}`, `Undo: ${card.title}`)}
         style={({ pressed }) => [styles.undo, { backgroundColor: t.surface2, opacity: pressed || busy ? 0.6 : 1 }]}>
         <T v="callout" style={{ fontSize: 13, fontWeight: '600' }}>{undone ? L('恢复', 'Redo') : L('撤销', 'Undo')}</T>
+      </Pressable>
+    </View>
+  );
+}
+
+// —— 课程改动卡（学习 Agent 改了课，server/courses.py）————————————————————————————————
+
+/** 学习 Agent 在回复里改了课：几行改了什么（S5 读第 6 章；加了第 8 节……），右边「撤销」；有动到的那一节就能「打开这一节」。 */
+export function CourseChip({ card }: { card: CourseChangeCard }) {
+  const t = useTheme();
+  const [status, setStatus] = useState(card.status);
+  const [seen, setSeen] = useState(card.status);
+  if (card.status !== seen) { setSeen(card.status); setStatus(card.status); }
+  const [busy, setBusy] = useState(false);
+  const undone = status === 'undone';
+  const press = () => {
+    setBusy(true);
+    studyApi.undoChange(card.course, card.changeId, undone).then((r) => setStatus(r.card.status), (e) => showError(undone ? L('没恢复成', "Couldn't redo") : L('没撤销成', "Couldn't undo"), e)).finally(() => setBusy(false));
+  };
+  const open = card.session ? () => openTarget({ type: 'study', course: card.course, page: card.session?.page ?? null, session: card.session?.session ?? null }) : undefined;
+  return (
+    <View accessible={false} style={[styles.chip, { backgroundColor: t.surface, borderColor: t.line, opacity: undone ? 0.65 : 1, alignItems: 'flex-start' }]}>
+      <View style={[styles.circle, { width: 30, height: 30, borderRadius: 9, backgroundColor: t.cyanSoft }]}>
+        <BookOpen size={16} color={t.cyan} />
+      </View>
+      <View style={{ flex: 1, minWidth: 0, gap: 3 }}>
+        <T v="headline" numberOfLines={1} style={{ fontSize: 14, fontWeight: '700' }}>{undone ? L(`撤销了 · ${card.courseTitle}`, `Undone · ${card.courseTitle}`) : L(`改了「${card.courseTitle}」的课程结构`, `Changed ${card.courseTitle}`)}</T>
+        {(card.lines.length ? card.lines : [card.summary]).slice(0, 5).map((l, i) => (
+          <T key={i} v="callout" color={t.ink2} numberOfLines={2} style={{ fontSize: 13, lineHeight: 18, textDecorationLine: undone ? 'line-through' : 'none' }}>{`· ${l}`}</T>
+        ))}
+        <T v="caption" color={t.ink3}>{undone ? L('今天页的日程和学习台也改回去了。', 'Today and the study desk are back as they were.') : L('今天页的日程、学习台和截止表跟着改了。', 'Today, the study desk and the deadline table follow.')}</T>
+        {open ? (
+          <Pressable onPress={open} accessibilityRole="button" hitSlop={6}>
+            <T v="callout" color={t.gold} style={{ fontSize: 13, fontWeight: '600' }}>{L('打开这一节', 'Open this session')}</T>
+          </Pressable>
+        ) : null}
+      </View>
+      <Pressable onPress={press} disabled={busy} accessibilityRole="button" hitSlop={6}
+        accessibilityLabel={undone ? L(`重做：${card.title}`, `Redo: ${card.title}`) : L(`撤销：${card.title}`, `Undo: ${card.title}`)}
+        style={({ pressed }) => [styles.undo, { backgroundColor: t.surface2, opacity: pressed || busy ? 0.6 : 1 }]}>
+        <T v="callout" style={{ fontSize: 13, fontWeight: '600' }}>{undone ? L('重做', 'Redo') : L('撤销', 'Undo')}</T>
       </Pressable>
     </View>
   );

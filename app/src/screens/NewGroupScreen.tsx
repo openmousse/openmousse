@@ -4,7 +4,7 @@ import { useNavigation } from '@react-navigation/native';
 import { agentName } from '../brand';
 import { GroupBadge } from '../components/GroupIcon';
 import { AGENT_COLORS, IconColorPicker } from '../components/IconColorPicker';
-import { ChevronRight, MessageCircle } from '../components/icons';
+import { BookOpen, ChevronRight, MessageCircle } from '../components/icons';
 import { ModelField } from '../components/ModelPicker';
 import { SheetProvider } from '../components/Sheet';
 import { Btn, NavHeader, Screen, SectionLabel, T } from '../components/ui';
@@ -27,6 +27,17 @@ function openingMessage(name: string, purpose: string): string {
   );
 }
 
+/** 从例子开始：点一个，名字、职责、图标填好（都能改）。学习的那个建好就带学习台（学习看板 + 功能包 + 改课的 skill）。 */
+const EXAMPLES = () => [
+  { key: 'study', label: L('学习', 'Study'), icon: 'book' as GroupIcon, purpose: L('管我的课：课件、学习页、复习和截止。每一节出学习路线、闪卡和小测，考前帮我查漏。', 'Looks after my courses: slides, study notes, review and deadlines. A study path, flashcards and a quiz for every session, and gap-checking before exams.') },
+  { key: 'fit', label: L('训练', 'Training'), icon: 'dumbbell' as GroupIcon, purpose: L('记训练、看恢复，按我的目标排下周计划。', 'Logs workouts, watches recovery and plans next week around my goals.') },
+  { key: 'diet', label: L('饮食', 'Meals'), icon: 'utensils' as GroupIcon, purpose: L('记每顿吃了什么，算热量和蛋白质，给下一顿出主意。', 'Logs every meal, counts calories and protein, and suggests the next one.') },
+  { key: 'sleep', label: L('睡眠', 'Sleep'), icon: 'moon' as GroupIcon, purpose: L('记录每晚几点睡、几点起，找规律，提醒我别熬夜。', 'Tracks when I sleep and wake, spots patterns and nudges me off late nights.') },
+  { key: 'money', label: L('记账', 'Money'), icon: 'wallet' as GroupIcon, purpose: L('记开销、看预算，月底给我一份小结。', 'Logs spending, watches the budget and sums up the month.') },
+  { key: 'job', label: L('求职', 'Job hunt'), icon: 'briefcase' as GroupIcon, purpose: L('管投递、面试和截止，帮我准备每一轮。', 'Tracks applications, interviews and deadlines, and preps me for each round.') },
+  { key: 'trip', label: L('出行', 'Travel'), icon: 'plane' as GroupIcon, purpose: L('管行程、车票和酒店，出发前提醒我。', 'Keeps trips, tickets and hotels, and reminds me before I leave.') },
+];
+
 function NewGroupForm() {
   const t = useTheme();
   const nav = useNavigation<any>();
@@ -39,6 +50,17 @@ function NewGroupForm() {
   const [picked, setColor] = useState<AgentColor | null>(null);
   const color: AgentColor = picked ?? [...AGENT_COLORS.filter((c) => c !== 'gold'), 'gold' as const].find((c) => !groups.some((g) => (g.color ?? 'cyan') === c)) ?? 'cyan';
   const [modelId, setModelId] = useState(threadModel.main);
+  const [example, setExample] = useState<string | null>(null);
+  const pickExample = (k: string) => {
+    if (example === k) { setExample(null); return; }
+    const ex = EXAMPLES().find((x) => x.key === k);
+    if (!ex) return;
+    setExample(k);
+    setName(ex.label);
+    setPurpose(ex.purpose);
+    setIcon(ex.icon);
+    setErr('');
+  };
   // 出错提示放在相关的地方：没起名在名字下面，创建没成功在「创建」下面，「先聊聊」的错在它下面
   type ErrAt = 'name' | 'create' | 'talk';
   const [err, setErrState] = useState<{ text: string; at: ErrAt }>({ text: '', at: 'name' });
@@ -50,8 +72,9 @@ function NewGroupForm() {
     if (!name.trim()) { setErr(L('先给这个 Agent 起个名字', 'Give this agent a name first'), 'name'); return; }
     if (!connected) { setErr(L('没连上服务器，建不了', "Not connected to the server, can't create it")); return; }
     setBusy('create');
-    addGroup({ name: name.trim(), purpose: purpose.trim(), icon, color, modelId })
-      .then((id) => nav.replace('Group', { id }))  // 服务器已建好 OpenClaw agent（独立工作区、记忆、skills）
+    const study = example === 'study';
+    addGroup({ name: name.trim(), purpose: purpose.trim(), icon, color, modelId, ...(study ? { template: 'study' } : {}) })
+      .then((id) => nav.replace('Group', study ? { id, tab: 'board' } : { id }))  // 服务器已建好 OpenClaw agent（独立工作区、记忆、skills）；学习的直接看学习台
       .catch((e) => { setErr(errText(e)); setBusy(null); });
   };
 
@@ -83,6 +106,29 @@ function NewGroupForm() {
             <T v="callout" color={t.ink3} numberOfLines={2} style={{ fontSize: 13, lineHeight: 18 }}>{purpose.trim() || L('还没写它负责什么', "What it does isn't written yet")}</T>
           </View>
         </View>
+
+        <SectionLabel>{L('从例子开始', 'Start from an example')}</SectionLabel>
+        <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: space.sm }}>
+          {EXAMPLES().map((ex) => {
+            const on = example === ex.key;
+            return (
+              <Pressable key={ex.key} onPress={() => pickExample(ex.key)} accessibilityRole="button" accessibilityState={{ selected: on }}
+                style={[styles.example, { borderColor: on ? t.cyan : t.line, backgroundColor: on ? t.cyanSoft : t.surface }]}>
+                <T v="callout" color={on ? t.cyan : t.ink2} style={{ fontWeight: '600' }}>{ex.label}</T>
+              </Pressable>
+            );
+          })}
+        </View>
+        {example === 'study' ? (
+          <View style={[styles.studyNote, { backgroundColor: t.cyanSoft }]}>
+            <BookOpen size={18} color={t.cyan} />
+            <View style={{ flex: 1, gap: 2 }}>
+              <T v="headline" style={{ fontSize: 14 }}>{L('带学习台', 'Comes with the study desk')}</T>
+              <T v="callout" color={t.ink2} style={{ fontSize: 13, lineHeight: 18 }}>{L('建好就有学习台：加课，每一节有学习页、学习路线、闪卡和小测。手机上复习做题，电脑上课件和学习页并排看。',
+                'Add courses; every session gets study notes, a study path, flashcards and a quiz. Review on the phone; slides and notes side by side on a computer.')}</T>
+            </View>
+          </View>
+        ) : null}
 
         <SectionLabel>{L('名字', 'Name')}</SectionLabel>
         <TextInput value={name} onChangeText={(v) => { setName(v); setErr(''); }} placeholder={L('比如：睡眠', 'e.g. Sleep')} placeholderTextColor={t.ink3}
@@ -129,4 +175,6 @@ const styles = StyleSheet.create({
   preview: { flexDirection: 'row', alignItems: 'center', gap: 14, paddingHorizontal: space.xs },
   talk: { flexDirection: 'row', alignItems: 'center', gap: space.md, borderRadius: 14, paddingVertical: space.md, paddingHorizontal: 14, marginTop: space.sm },
   talkIcon: { width: 36, height: 36, borderRadius: 18, alignItems: 'center', justifyContent: 'center' },
+  example: { height: 34, paddingHorizontal: 14, borderRadius: 17, borderWidth: 1.5, alignItems: 'center', justifyContent: 'center' },
+  studyNote: { flexDirection: 'row', alignItems: 'flex-start', gap: space.md, borderRadius: 14, padding: space.md, marginTop: space.md },
 });

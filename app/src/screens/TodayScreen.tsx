@@ -11,6 +11,7 @@ import type { FeedItem, InboxItem, JournalEntry, ScheduleEntry, UpcomingTask } f
 import { dataApi } from '../api/data';
 import * as sched from '../api/schedule';
 import { AddScheduleButton, RememberCard, ScheduleCard } from '../components/Schedule';
+import { StudyTodayRow } from '../components/StudyBoard';
 import { L } from '../i18n';
 import { receiptItems, useStore, type DataKey } from '../store';
 import { radius, space, useTheme } from '../theme';
@@ -369,6 +370,7 @@ export function TodayScreen() {
                   <RememberCard items={remember} errors={rememberErrors} today={iso} />
                 </>
               ) : null}
+              <StudyTodayRow />
             </>
           ) : null}
 

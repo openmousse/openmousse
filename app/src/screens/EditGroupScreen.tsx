@@ -35,6 +35,7 @@ function useDataChips(g: Group): { label: string; on: boolean }[] {
     case 'health': return [{ label: health, on: has('health') }];
     case 'apply':
     case 'masters': return [{ label: L('申请记录', 'Application tracker'), on: true }];
+    case 'study': return [{ label: L('学习台', 'Study desk'), on: true }];
     default: return [];
   }
 }

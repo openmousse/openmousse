@@ -34,6 +34,8 @@ export interface GravaApi {
  *  onQueued / onDequeued：它正在回复时发的这条先排队（服务器的 queued 事件，带这条的 id），排着的那一轮开跑时再叫一次。老服务器直接 409。 */
 export interface SendExtra {
   inboxId?: string; ref?: string; save?: string; replyTo?: string; onCard?: (card: ChatCard) => void;
+  /** 学习台旁边的对话（加一门课那几步）：「课|第几步」，服务器给模型带上一句在哪门课、哪一步 */
+  study?: string;
   onQueued?: (userId: string, steer: boolean) => void; onDequeued?: () => void;
 }
 
@@ -55,8 +57,8 @@ export class OfflineApi implements GravaApi {
   async stop() {}
 }
 
-/** 解析 SSE：每个事件是 `event: x\ndata: {...}\n\n`。 */
-async function readSse(body: ReadableStream<Uint8Array>, onEvent: (event: string, data: any) => void) {
+/** 解析 SSE：每个事件是 `event: x\ndata: {...}\n\n`。学习台的「问这一节」也用它（api/study.ts）。 */
+export async function readSse(body: ReadableStream<Uint8Array>, onEvent: (event: string, data: any) => void) {
   const reader = body.getReader();
   const dec = new TextDecoder();
   let buf = '';
@@ -94,7 +96,7 @@ async function consume(r: Response, onDelta?: (partial: string) => void, onStart
     else if (event === 'delta') { partial += data.text; onDelta?.(partial); }
     else if (event === 'text') { partial = data.text ?? ''; onDelta?.(partial); }
     else if (event === 'done') done = data;
-    else if (event === 'card' && data && (data.kind === 'handoff' || data.kind === 'task' || data.kind === 'schedule' || data.kind === 'project')) onCard?.(data as ChatCard);
+    else if (event === 'card' && data && (data.kind === 'handoff' || data.kind === 'task' || data.kind === 'schedule' || data.kind === 'project' || data.kind === 'course')) onCard?.(data as ChatCard);
   });
   if (!done) throw new Error(L('流中断', 'Reply stream cut off'));
   return { id: done.id, role: 'grava', time: done.time, modelId: done.modelId, fallbackFrom: done.fallbackFrom ?? undefined, body: { type: 'text', text: done.text }, error: done.status === 'error' ? done.error : undefined };
@@ -143,7 +145,7 @@ export class HttpApi implements GravaApi {
     const attachments = files?.length ? (await uploadFiles(threadId, files)).map((a) => a.id) : [];
     const r = await expoFetch(`${getBase()}/api/chat/send`, {
       method: 'POST', headers: { 'Content-Type': 'application/json', Accept: 'text/event-stream', ...authHeaders() },
-      body: JSON.stringify({ thread: threadId, text, model: modelId, attachments, ...(extra?.inboxId ? { inboxId: extra.inboxId } : {}), ...(extra?.ref ? { ref: extra.ref } : {}), ...(extra?.save ? { save: extra.save } : {}), ...(extra?.replyTo ? { replyTo: extra.replyTo } : {}) }),
+      body: JSON.stringify({ thread: threadId, text, model: modelId, attachments, ...(extra?.inboxId ? { inboxId: extra.inboxId } : {}), ...(extra?.ref ? { ref: extra.ref } : {}), ...(extra?.save ? { save: extra.save } : {}), ...(extra?.replyTo ? { replyTo: extra.replyTo } : {}), ...(extra?.study ? { study: extra.study } : {}) }),
     });
     if (!r.ok) {
       const j = await r.json().catch(() => ({}));

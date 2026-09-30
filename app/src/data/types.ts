@@ -30,7 +30,7 @@ export interface Group {
   color?: AgentColor | null;
   purpose: string;
   modelId: string;
-  dashboard: 'fitness' | 'diet' | 'apply' | 'masters' | 'health' | 'none';
+  dashboard: 'fitness' | 'diet' | 'apply' | 'masters' | 'health' | 'study' | 'none';
   lastLine: string;
 }
 
@@ -116,10 +116,13 @@ export type PushTarget =
   | { type: 'inbox'; id: string; thread?: string }
   | { type: 'board'; agent: string; thread?: string }   // 某个 Agent 的看板（Agent 的提醒点开到这里）
   | { type: 'friend'; id: string; thread?: string }    // 和一个朋友的聊天（社交第二层）
+  | { type: 'study'; course: string; page?: string | null; session?: string | null; thread?: string }   // 学习台的一门课 / 一节（写好了、材料齐了）
   | { type: 'today' };
 
 /** 对话附件。url 是服务器地址（/api/files/id），还没上传完的用本地 uri。 */
-export interface Attachment { id: string; name: string; mime: string | null; size: number; kind: 'image' | 'doc' | 'audio' | 'video' | 'file'; url: string; chars?: number | null; note?: string | null; status?: string }
+export interface Attachment { id: string; name: string; mime: string | null; size: number; kind: 'image' | 'doc' | 'audio' | 'video' | 'file'; url: string; chars?: number | null; note?: string | null; status?: string;
+  /** 学习台的课件（不是对话附件）：预览和页图走 /api/study/file/… */
+  study?: { course: string; path: string; where?: 'materials' | 'pages' } }
 /** 选好还没发的文件。web 上有 File 对象；原生上是本地 uri。 */
 export interface PendingFile { uri: string; name: string; mime: string; size: number; file?: File }
 export type MessageBody = { type: 'text'; text: string; attachments?: Attachment[] };
@@ -252,7 +255,23 @@ export interface ScheduleChangeCard {
   summary: string;
 }
 
-export type ChatCard = HandoffCard | TaskCardInfo | ScheduleChangeCard | ProjectChangeCard;
+/** 学习 Agent 在回复里改了课（server/courses.py）：几行改了什么，能撤销；session = 「打开这一节」 */
+export interface CourseChangeCard {
+  kind: 'course';
+  id: string;
+  changeId: number;
+  thread: string | null;
+  messageId: number | null;
+  createdAt: string;
+  status: 'done' | 'undone';
+  course: string;
+  courseTitle: string;
+  title: string;
+  summary: string;
+  lines: string[];
+  session: { course: string; session: string; n: number; page: string | null } | null;
+}
+export type ChatCard = HandoffCard | TaskCardInfo | ScheduleChangeCard | ProjectChangeCard | CourseChangeCard;
 /** 一个对话里的卡片（GET /api/chat/cards）：它自己转出去、派出去的，加上别的对话转给它的（incoming）。 */
 export interface ThreadCards { cards: ChatCard[]; incoming: HandoffCard[] }
 
@@ -580,7 +599,7 @@ export type RememberGroup = 'security' | 'overdue' | 'tomorrow' | 'week' | 'late
 export interface ScheduleEntry {
   id: string;
   kind: 'class' | 'event' | 'deadline' | 'todo' | 'money' | 'status' | 'security';
-  origin: 'calendar' | 'own' | 'canvas' | 'mail' | 'apply';
+  origin: 'calendar' | 'own' | 'canvas' | 'mail' | 'apply' | 'course';
   title: string;
   detail: string;
   location: string;
@@ -620,6 +639,8 @@ export interface ScheduleEntry {
   sourceLocation?: string;
   /** 属于哪个项目（server/projects.py）：点一下进那个项目 */
   project?: { id: string; title: string };
+  /** 课程的截止（课程网站的作业、学习台课程档案里的）：学习台里是哪门课、哪一节，点「去学习台」直接到那儿 */
+  study?: { course: string | null; session: string | null };
 }
 
 /** iPhone 日历订阅：链接路径（接在服务器地址后面）和四类开关。 */

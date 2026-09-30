@@ -35,7 +35,7 @@ interface Entry extends BannerSpec { key: string; at: number }
 interface BannerState { items: Entry[]; expanded: boolean; leaving: boolean }
 
 const targetKey = (tg?: PushTarget | null) => (!tg ? '' : tg.type === 'thread' ? `thread:${tg.thread}` : tg.type === 'today' ? 'today'
-  : tg.type === 'board' ? `board:${tg.agent}` : `${tg.type}:${tg.id}`);
+  : tg.type === 'board' ? `board:${tg.agent}` : tg.type === 'study' ? `study:${tg.course}:${tg.page ?? tg.session ?? ''}` : `${tg.type}:${tg.id}`);
 const kindOf = (e: BannerSpec) => e.kind || (e.target?.type === 'inbox' ? 'inbox' : e.target?.type === 'thread' ? 'reply' : e.target?.type === 'card' ? 'card' : 'other');
 const RANK: Record<string, number> = { inbox: 0, reply: 1, card: 2 };
 const byRank = (a: Entry, b: Entry) => (RANK[kindOf(a)] ?? 3) - (RANK[kindOf(b)] ?? 3) || b.at - a.at;

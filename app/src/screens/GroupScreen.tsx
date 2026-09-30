@@ -10,6 +10,7 @@ import { DietBoard } from '../components/DietBoard';
 import { FitnessBoard } from '../components/FitnessBoard';
 import { LiveRecoveryCard, NoSourceCard } from '../components/LiveBoards';
 import { ApplicationsBoard, SleepReportSection } from '../components/Records';
+import { StudyBoard } from '../components/StudyBoard';
 import { ModelSwitch } from '../components/ModelPicker';
 import { Btn, Card, NavHeader, PullRefresh, Screen, Segmented, T } from '../components/ui';
 import { L } from '../i18n';
@@ -66,6 +67,8 @@ export function GroupScreen() {
                       onPress={() => { if (typing[g.id]) return; send(g.id, L('帮我设计一下你的看板：要记哪些数据、放哪几块。先交提案，我看了预览再定。', 'Design your dashboard: what data to keep and which blocks to show. Send it as a proposal so I can see the preview first.')); toChat(); }} />
                   </Card>
                 )
+              ) : g.dashboard === 'study' ? (
+                <StudyBoard onChat={toChat} />
               ) : !live ? (
                 <>
                   <Card style={{ marginTop: space.md }}><T v="callout" color={t.ink2}>{booting || liveLoading ? L('正在读…', 'Loading…') : !connected ? L('没连上服务器。检查「我 → 服务器」后回到这一页。', 'Not connected to the server. Check Me → Server, then come back here.') : L('看板数据没读到。', "Couldn't load the dashboard data.")}</T></Card>
