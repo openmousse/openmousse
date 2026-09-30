@@ -78,6 +78,8 @@ python3 agent_ctl.py delete g-xxxxxxxx      # workspace 归档到 ~/.openclaw/ar
 | `PATCH /api/groups/{id}` | `{name?, icon?, color?, purpose?, model?}` → `{ok, group}`（`group` 和 GET 里的一项同样形状）。只改给了、而且真变了的字段；`color: null` = 换回默认色 |
 | `DELETE /api/groups/{id}` | 去掉 OpenClaw 条目和路由，workspace 移到 `archive/` |
 
+第一个额外的 Agent 会把只有一个 agent 的 OpenClaw 变成多 agent。这时 OpenClaw 要求 `openclaw.json` 写明 `agents.ownership: "explicit"`，也不再由「唯一的 agent」兜底，所以服务端在同一次写入里做 OpenClaw 自己的 `openclaw agents add` 会做的事：把原来那个 agent（一般是 `main`）默认管着的写明归它：`openclaw.json` 里配了的每个渠道各一条整条渠道的绑定、heartbeat、系统任务（`agents.defaults.systemAgent`）和 Talk。只靠环境变量或登录状态开着的渠道不在文件里，要自己绑（`openclaw agents bind --agent main --bind <渠道>:*`），`openclaw doctor` 会列出来。
+
 POST 和 PATCH 校验一样：名字不能空（400），不能和别的 Agent 重名、不分大小写（409）；`icon` 是图标名，小写字母和连字符，最多 24 个字符（app 自带 moon、dumbbell、utensils、book、wallet、briefcase、heart、plane、coffee、music、camera、code、cart、home、car、paw、leaf、gamepad、palette、globe、graduation、lightbulb、trophy、pill）；`color` 只能是 cyan、gold、green、purple、pink、orange（否则 400）。
 
 PATCH 除了数据库还动什么：

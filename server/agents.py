@@ -4,6 +4,7 @@
   1. 建 workspace：<openclaw_home>/workspace-<id>/，AGENTS.md（职责 + 通用规则）、IDENTITY.md（带 app 管的职责段，见 role_block）、MEMORY.md、memory/；
      SOUL.md / USER.md 从主 workspace 复制（同一个人格、同一个用户）；skills 软链到主 workspace 的 skills。
   2. 备份 openclaw.json，直接写 agents.entries.<id>，再 `openclaw config validate`（不过就恢复备份）。Gateway 监视这个文件，agents.* 热加载，不用重启。
+     名单从一个 agent 变成多个时，同一次写入里把原来那个 agent 默认管着的写明归它（claim_ambient），不然 validate 不过。
   3. server.json 的 agent_workspaces 加一项（对话路由、记忆页靠它）。
 修改（app 里编辑 Agent，PATCH /api/groups/{id}）：
   - 名字 / 职责 → IDENTITY.md 里 <!-- mousse:role --> … <!-- /mousse:role --> 这一段整段换掉（write_role），段外的字一个字节都不动：
@@ -34,6 +35,8 @@ ICON_EMOJI = {"moon": "🌙", "dumbbell": "🏋️", "utensils": "🥗", "book":
 COLORS = ("cyan", "gold", "green", "purple", "pink", "orange")
 # IDENTITY.md 里归 app 管的那一段的首尾标记
 ROLE_START, ROLE_END = "<!-- mousse:role -->", "<!-- /mousse:role -->"
+# openclaw.json 的 channels 下不是渠道的键（OpenClaw 的 CHANNEL_CONFIG_METADATA_KEYS）
+CHANNEL_META_KEYS = ("defaults", "modelByChannel")
 # 读改写 openclaw.json / IDENTITY.md 的都排队：两个请求同时读改写，后写的会冲掉先写的。
 # RLock：编辑 Agent 时 data.py 拿着它走完「写 IDENTITY.md → 写模型 → 失败就撤销」，里面的函数还能再拿
 edit_lock = threading.RLock()
@@ -94,17 +97,91 @@ def edit_openclaw_json(change: Callable[[dict], bool], tag: str) -> bool:
 
 
 def write_entry(agent_id: str, entry: dict | None, tag: str) -> None:
-    """整条写 openclaw.json 的 agents.entries.<id>（None = 删），走 edit_openclaw_json。"""
+    """整条写 openclaw.json 的 agents.entries.<id>（None = 删），走 edit_openclaw_json。
+    加进去的是第二个 agent 时，同一次写入里把名单改成多 agent 的写法（claim_ambient）。"""
     def change(data: dict) -> bool:
-        entries = data.setdefault("agents", {}).setdefault("entries", {})
+        ag = data.setdefault("agents", {})
+        if entry is not None and not ag.get("entries") and "list" not in ag and ag.get("ownership") != "explicit":
+            ag["entries"] = {"main": {}}  # 没写名单 = 只有一个隐含的 main（OpenClaw 读配置时也这么补）；不补上，新 Agent 就成了唯一的 agent
+        entries = ag.setdefault("entries", {})
         if entry is None:
             if agent_id not in entries:
                 return False
             del entries[agent_id]
+            if len(entries) <= 1:
+                ag.pop("ownership", None)  # 又只剩一个：和 OpenClaw 自己删 agent 一样去掉（再加 agent 时 claim_ambient 重新写上）
         else:
+            sole = next(iter(entries)) if len(entries) == 1 and agent_id not in entries else None
             entries[agent_id] = entry
+            if sole:
+                claim_ambient(data, sole)
         return True
     edit_openclaw_json(change, tag)
+
+
+def claim_ambient(data: dict, owner: str) -> None:
+    """名单刚从一个 agent（owner）变成多个时（write_entry 刚加了第二个），把 owner 默认管着的写明归它，就地改 data。
+    OpenClaw（查过 2026.8.2 到 2026.9.7）多 agent 的名单要写明 agents.ownership = "explicit"（或者一个已退役的 default: true 标记），
+    不然 `openclaw config validate` 不过：新装的 OpenClaw 在 app 里第一次新建 Agent 就是这样失败回滚的。写明以后没有「唯一的 agent」兜底，
+    没写归属的就停：渠道消息报 AGENT_SELECTION_REQUIRED、heartbeat 不跑、不带 --agent 的命令和没指定 agent 的 cron 没人接。
+    OpenClaw 自己改配置（`openclaw config set`、`openclaw agents add`）在这一步会把这些写成原来那个 agent 的；我们不走那条路
+    （见 edit_openclaw_json），照着做一样的（和 2026.9.6 的 `config set` 写出来的逐项对过，2026.9.7 这段没变）：
+      - 没写 ownership 的写上 "explicit"，去掉 default 标记；
+      - owner 没写 workspace 的，写上它一直在用的那个（agents.defaults.workspace，没有就 <openclaw_home>/workspace）；
+      - channels 里没关掉的渠道，还没有整条渠道（accountId "*"）的绑定的，各加一条绑到 owner；
+      - agents.defaults 的 heartbeat（哪儿都没配过 heartbeat 时）、systemAgent、authInheritance（owner 不叫 main 时）、
+        sessionStore（session.store 是一个固定文件时），还有 talk：没写 agentId 的写成 owner。
+    只看得见写在 openclaw.json 里的渠道：只靠环境变量或登录状态开着的渠道，要自己加绑定（`openclaw doctor` 会报出来）。"""
+    ag, aid = data["agents"], owner.strip().lower()
+    entries = ag["entries"]
+    if "ownership" not in ag:
+        ag["ownership"] = "explicit"
+        if any(isinstance(e, dict) and e.get("default") is True for e in entries.values()):
+            for e in entries.values():
+                if isinstance(e, dict):
+                    e.pop("default", None)
+    d = ag.get("defaults", {})
+    mine = entries[owner]
+    if isinstance(mine, dict) and ("workspace" not in mine or isinstance(mine["workspace"], str) and not mine["workspace"].strip()):
+        ws = d.get("workspace") if isinstance(d, dict) else None
+        mine["workspace"] = ws.strip() if isinstance(ws, str) and ws.strip() else str(settings.openclaw_home / "workspace")
+    bindings, channels = data.get("bindings"), data.get("channels")
+    if (bindings is None or isinstance(bindings, list)) and isinstance(channels, dict):
+        routes = [b for b in bindings or [] if isinstance(b, dict) and b.get("type") != "acp"]
+        ids = sorted({k.strip().lower() for k, v in channels.items()
+                      if k.strip() and k.strip() not in CHANNEL_META_KEYS and not (isinstance(v, dict) and v.get("enabled") is False)})
+        new = [{"agentId": aid, "match": {"channel": c, "accountId": "*"}} for c in ids if not any(channel_wide(b, c) for b in routes)]
+        if new:
+            data["bindings"] = [*(bindings or []), *new]
+    if isinstance(d, dict):
+        def unset(k: str) -> bool:
+            return k not in d or isinstance(d[k], dict) and "agentId" not in d[k]
+        session = data.get("session")
+        store = session.get("store") if isinstance(session, dict) else None
+        claims = [k for k, yes in (
+            ("heartbeat", "heartbeat" not in d and not any(isinstance(e, dict) and e.get("heartbeat") not in (None, False, 0, "") for e in entries.values())),
+            ("systemAgent", unset("systemAgent")),
+            ("authInheritance", aid != "main" and unset("authInheritance")),
+            ("sessionStore", isinstance(store, str) and bool(store.strip()) and "{agentId}" not in store and unset("sessionStore")),
+        ) if yes]
+        for k in claims:
+            d[k] = {**(d[k] if isinstance(d.get(k), dict) else {}), "agentId": aid}
+        if claims:
+            ag["defaults"] = d
+    if "talk" not in data:
+        data["talk"] = {"agentId": aid}
+    elif isinstance(data["talk"], dict) and "agentId" not in data["talk"]:
+        data["talk"]["agentId"] = aid
+
+
+def channel_wide(binding: dict, channel: str) -> bool:
+    """这条绑定是不是把一整条渠道（所有账号）交给了一个 agent：accountId "*"，没有 peer / guildId / teamId / roles。"""
+    m = binding.get("match")
+    if not isinstance(m, dict) or not isinstance(m.get("channel"), str) or m["channel"].strip().lower() != channel:
+        return False
+    filled = [v for v in (m.get("guildId"), m.get("teamId")) if isinstance(v, str) and v.strip()]
+    return (isinstance(m.get("accountId"), str) and m["accountId"].strip() == "*" and "peer" not in m and not filled
+            and not (isinstance(m.get("roles"), list) and m["roles"]))
 
 
 def entry_of(agent_id: str) -> dict | None:

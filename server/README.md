@@ -78,6 +78,8 @@ With `packs/core/skills/agent-builder` installed on the main agent (the installe
 | `PATCH /api/groups/{id}` | `{name?, icon?, color?, purpose?, model?}` → `{ok, group}` (`group` has the same shape as in GET). Only fields you send that actually differ change; `color: null` = back to the default |
 | `DELETE /api/groups/{id}` | Removes the OpenClaw entry and the routing; the workspace moves to `archive/` |
 
+The first extra Agent turns a one-agent OpenClaw into a multi-agent one. OpenClaw then requires `agents.ownership: "explicit"` in `openclaw.json` and stops falling back to "the only agent", so in the same write the server does what OpenClaw's own `openclaw agents add` does: the agent you already had (normally `main`) is written down as the owner of what it handled implicitly: a channel-wide binding for each channel configured in `openclaw.json`, the heartbeat, system work (`agents.defaults.systemAgent`) and Talk. Channels turned on only by environment variables or a login aren't in the file: bind those yourself (`openclaw agents bind --agent main --bind <channel>:*`); `openclaw doctor` lists them.
+
 POST and PATCH check the same things: the name can't be empty (400) or the same as another Agent's, ignoring case (409); `icon` is an icon key, lowercase letters and hyphens, at most 24 characters (the app ships moon, dumbbell, utensils, book, wallet, briefcase, heart, plane, coffee, music, camera, code, cart, home, car, paw, leaf, gamepad, palette, globe, graduation, lightbulb, trophy, pill); `color` is one of cyan, gold, green, purple, pink, orange (400 otherwise).
 
 What a PATCH touches besides the database:
