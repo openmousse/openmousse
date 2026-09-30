@@ -80,7 +80,8 @@ def outline_of(course: str) -> dict:
                             "status": "ready" if m["files"] else "later", "progress": None, "missing": 0})
         out.sort(key=lambda x: (x["n"] is None, x["n"] or 0, x["title"]))
     done = sum(1 for x in out if x["status"] == "done")
-    taught = sum(1 for x in out if (x["date"] and x["date"] <= today) or (not x["date"] and x["status"] in ("done", "doing", "todo", "ready")))
+    # 已上：有日期的按日期；老课（没有档案、没有日期）只数写了学习页的（课件常常提前就到了，不能算上过）
+    taught = sum(1 for x in out if (x["date"] and x["date"] <= today) or (not x["date"] and x["n"] is not None and x["status"] in ("done", "doing", "todo")))
     return {"name": course, "title": tree.get("title") or course, "code": tree.get("code") or cf.short_code(tree.get("title") or course),
             "profile": bool(tree.get("profile")), "sessions": out, "done": done, "taught": taught, "total": len([x for x in out if x["n"] is not None])}
 
