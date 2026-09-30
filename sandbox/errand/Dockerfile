@@ -1,5 +1,5 @@
-# The errand Agent's shell sandbox: OpenClaw's default image + a few tools, and Sentinel's CA as the ONLY trusted root.
-# Every HTTPS request leaves through Sentinel (the network has no other way out), which re-signs it with this CA,
+# The errand Agent's shell sandbox: OpenClaw's default image + a few tools, and Doorman's CA as the ONLY trusted root.
+# Every HTTPS request leaves through Doorman (the network has no other way out), which re-signs it with this CA,
 # so trusting nothing else costs nothing and makes a direct connection fail even if one were possible.
 FROM openclaw-sandbox:bookworm-slim
 USER root

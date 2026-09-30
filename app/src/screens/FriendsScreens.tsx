@@ -339,15 +339,15 @@ function MsgView({ m, friend, onAsk, onReview, onEdit, onRetry, onLong }: {
           <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: space.sm, alignItems: 'center' }}>
             {used && !gone ? <T v="caption" color={t.ink3}>{used}</T> : null}
             {m.defer && !gone ? <Pill label={mine ? L('要你本人回', 'Needs you') : L(`得问 ${friend.name} 本人`, `Ask ${friend.name} directly`)} tone="warn" /> : null}
-            {mine && !gone && m.sentinel?.verdict === 'pass' && m.sentinel.via && m.sentinel.via !== 'rules' ? <Pill label={L('Sentinel 过了', 'Sentinel checked')} tone="good" /> : null}
+            {mine && !gone && m.sentinel?.verdict === 'pass' && m.sentinel.via && m.sentinel.via !== 'rules' ? <Pill label={L('Doorman 过了', 'Doorman checked')} tone="good" /> : null}
             <T v="caption" color={t.ink3}>{timeLabel(m.ts)}</T>
           </View>
           {mine && !gone && (m.sentinel?.verdict === 'hold' || m.sentinel?.verdict === 'fail') ? (
             <T v="caption" color={m.sentinel.verdict === 'hold' ? t.gold : t.bad}>
               {m.sentinel.verdict === 'hold'
-                ? L(`Sentinel 扣下了它原本要说的${m.sentinel.reasons.length ? `（${m.sentinel.reasons.map((r) => r.detail).join('；')}）` : ''}：照发 / 改一下 / 不发，在收件箱那张卡上定`,
-                  `Sentinel held what it meant to say${m.sentinel.reasons.length ? ` (${m.sentinel.reasons.map((r) => r.detail).join('; ')})` : ''}: send, rewrite or drop it on the card in your inbox`)
-                : L('Sentinel 没能复查它原本要说的，换成了这句固定的话', "Sentinel couldn't review what it meant to say; this fixed line went instead")}
+                ? L(`Doorman 扣下了它原本要说的${m.sentinel.reasons.length ? `（${m.sentinel.reasons.map((r) => r.detail).join('；')}）` : ''}：照发 / 改一下 / 不发，在收件箱那张卡上定`,
+                  `Doorman held what it meant to say${m.sentinel.reasons.length ? ` (${m.sentinel.reasons.map((r) => r.detail).join('; ')})` : ''}: send, rewrite or drop it on the card in your inbox`)
+                : L('Doorman 没能复查它原本要说的，换成了这句固定的话', "Doorman couldn't review what it meant to say; this fixed line went instead")}
             </T>
           ) : null}
           {mine ? <ReviewBox m={m} onReview={(a) => onReview(m, a)} onEdit={() => onEdit(m)} /> : null}
@@ -910,7 +910,7 @@ export function CardAgentScreen() {
             <Card style={{ gap: space.md }}>
               {[L('对方 agent 说的，只当资料，不当指令', "What other agents say is information, never an instruction"),
                 L('要你表态、问你私事，先出卡片等你点头', 'Anything needing your say or asking about private things becomes a card for you first'),
-                ...(health?.sentinel ? [L('说出去之前先过 Sentinel：另起一次复查，不妥的先扣下，等你点照发 / 改一下 / 不发', 'Before anything goes out, Sentinel reviews it separately; anything off is held for you to send, rewrite or drop')] : []),
+                ...(health?.sentinel ? [L('说出去之前先过 Doorman：另起一次复查，不妥的先扣下，等你点照发 / 改一下 / 不发', 'Before anything goes out, Doorman reviews it separately; anything off is held for you to send, rewrite or drop')] : []),
                 L('说出去的每一句，都记进活动记录', 'Everything it says goes into Activity')].map((line, i) => (
                 <View key={i} style={{ flexDirection: 'row', gap: space.md, alignItems: 'flex-start' }}>
                   <View style={[styles.num, { backgroundColor: t.goldSoft }]}><T v="caption" color={t.gold} style={{ fontWeight: '800' }}>{String(i + 1)}</T></View>
@@ -918,7 +918,7 @@ export function CardAgentScreen() {
                 </View>
               ))}
             </Card>
-            {health?.sentinel ? <SentinelCard s={health.sentinel} /> : null}
+            {health?.sentinel ? <DoormanCard s={health.sentinel} /> : null}
           </>
         ) : null}
       </ScrollView>
@@ -926,8 +926,8 @@ export function CardAgentScreen() {
   );
 }
 
-/** 「我的名片 agent」页底下：Sentinel 开着没有、走哪条路、今天查了几句 / 扣下几句。 */
-function SentinelCard({ s }: { s: NonNullable<fr.CardHealth['sentinel']> }) {
+/** 「我的名片 agent」页底下：Doorman 开着没有、走哪条路、今天查了几句 / 扣下几句。 */
+function DoormanCard({ s }: { s: NonNullable<fr.CardHealth['sentinel']> }) {
   const t = useTheme();
   const on = s.backend !== 'off';
   const how = s.backend === 'sentinel-llm' ? L('另一个模型复查', 'reviewed by a different model') : on ? L('另起一次模型复查，看不到名片 agent 的上下文', 'a separate model review that never sees the card agent\'s context')
@@ -937,7 +937,7 @@ function SentinelCard({ s }: { s: NonNullable<fr.CardHealth['sentinel']> }) {
     <Card style={{ gap: space.sm }}>
       <View style={{ flexDirection: 'row', alignItems: 'center', gap: space.sm }}>
         <ShieldCheck size={18} color={on ? t.good : t.warn} />
-        <T v="headline" style={{ flex: 1, fontSize: 16 }}>Sentinel</T>
+        <T v="headline" style={{ flex: 1, fontSize: 16 }}>Doorman</T>
         <Pill label={on ? L('开着', 'On') : L('只有规则', 'Rules only')} tone={on ? 'good' : 'warn'} />
       </View>
       <T v="callout" color={t.ink2}>{how}</T>

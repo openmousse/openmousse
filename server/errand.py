@@ -1,6 +1,6 @@
-"""「代办」Agent：替你在外面办事（查、比、填表、发信、订东西）的 Agent，只在 OpenClaw 的 Docker 沙箱里跑，只能经 Sentinel 出网（egress.py）。
+"""「代办」Agent：替你在外面办事（查、比、填表、发信、订东西）的 Agent，只在 OpenClaw 的 Docker 沙箱里跑，只能经 Doorman 出网（egress.py）。
 
-  python3 errand.py setup            装好 / 补齐：Sentinel 的 CA 和配置、Docker 网络、主机防火墙（要 sudo）、代理服务、OpenClaw 里的 errand、app 里的「代办」
+  python3 errand.py setup            装好 / 补齐：Doorman 的 CA 和配置、Docker 网络、主机防火墙（要 sudo）、代理服务、OpenClaw 里的 errand、app 里的「代办」
   python3 errand.py status           每一样查一遍（✓ / ✗ + 怎么修），--json 给程序用
   python3 errand.py secret set <名字> --host api.example.com [--host …]   真值从标准输入读（不回显、不进命令行）
   python3 errand.py secret list | rm <名字>
@@ -10,13 +10,13 @@
 
 装好以后的样子：
 - openclaw.json agents.entries.errand：sandbox mode all、scope agent、workspaceAccess none（看不到任何工作区，连自己的 AGENTS.md 也改不了）；
-  shell 镜像 mousse-errand（只认 Sentinel 的 CA）、浏览器镜像 mousse-errand-browser（Chromium 写死走 Sentinel）；
+  shell 镜像 mousse-errand（只认 Doorman 的 CA）、浏览器镜像 mousse-errand-browser（Chromium 写死走 Doorman）；
   网络 mousse-errand、DNS 指向 127.0.0.1（查不到外面）、1 GB 内存；工具只有 exec / process / 读写文件 / 沙箱浏览器，
-  主机上跑的（web_fetch、web_search、发消息、记忆检索、派子会话）一律关掉：它们不经过沙箱，会绕开 Sentinel。skills 一个都没有。
+  主机上跑的（web_fetch、web_search、发消息、记忆检索、派子会话）一律关掉：它们不经过沙箱，会绕开 Doorman。skills 一个都没有。
 - 网络 mousse-errand（br-mousse-err，172.30.99.0/24）：不做 NAT；openmousse-errand-net.service（root）让这个网桥上的包哪儿也转发不出去、
-  对主机只开 172.30.99.1:3128（Sentinel）。
+  对主机只开 172.30.99.1:3128（Doorman）。
 - 代理：user 服务 openmousse-sentinel（sentinel_run.py 把 egress_proxy.py 挂进 mitmproxy，自己的 venv），听 172.30.99.1:3128，用令牌 sentinel 问服务端。
-- 收件箱：Sentinel 扣下的请求是 kind egress 的卡（响铃），见 egress.py。
+- 收件箱：Doorman 扣下的请求是 kind egress 的卡（响铃），见 egress.py。
 """
 from __future__ import annotations
 
@@ -87,10 +87,10 @@ def agents_md(name: str) -> str:
 
 你替 {who} 在外面办事：查资料、比价、看网页、填表、发信、订东西。你在一个锁住的沙箱里：
 
-- **上网只有一条路：Sentinel**。沙箱里的 shell（curl、python）和浏览器（browser 工具）都已经设好走它，别改代理设置，也别想办法绕开：
+- **上网只有一条路：Doorman**。沙箱里的 shell（curl、python）和浏览器（browser 工具）都已经设好走它，别改代理设置，也别想办法绕开：
   这个网络没有别的出口，绕也绕不出去，只会让事情办不成。
-- **读随便读**：打开网页、搜索、翻页、看价格，Sentinel 直接放。
-- **要提交的会被扣下**：提交表单、发信、登录、上传、预订、下单、删东西、带着 {who} 的私事（住址、邮箱、电话……）的请求，Sentinel 会先扣下，
+- **读随便读**：打开网页、搜索、翻页、看价格，Doorman 直接放。
+- **要提交的会被扣下**：提交表单、发信、登录、上传、预订、下单、删东西、带着 {who} 的私事（住址、邮箱、电话……）的请求，Doorman 会先扣下，
   {who} 在 app 里收到一张卡，点了才发出去。你的请求会停在那里等（最多 10 分钟）：
   - 等到了放行：请求照常完成，接着办。
   - 回 403，内容里 `"sentinel": "held"`：还在等 {who} 点头。回复里告诉他在等什么（一句话），他点了以后**把一模一样的请求再发一次**（30 分钟内有效；
@@ -98,9 +98,9 @@ def agents_md(name: str) -> str:
   - 回 403 `"sentinel": "rejected"`：他没放行；`note` 里是他的话（比如「邮件主题改一下」），照着改了重新来。
   - 回 403 `"sentinel": "denied"`：规矩不许（付款还没开放、私网地址、端口、WebSocket……），换个办法或告诉 {who} 办不了。
   - 浏览器里提交被扣下时，browser 工具等不了那么久，会先报超时：**别重新点提交**，隔一两分钟再读一次页面，看是不是已经完成了
-    （放行以后请求会自己接着发完）；十分钟后页面上出现 Sentinel 的「held」说明，才按上面那条再提交一次。
+    （放行以后请求会自己接着发完）；十分钟后页面上出现 Doorman 的「held」说明，才按上面那条再提交一次。
 - **付款还没开放**：走到付款那一步就停下，把链接、金额、要填什么告诉 {who}。
-- **密码和密钥**：不要问 {who} 要密码，也不要把密码写进回复。能用的凭证是占位符 `MOUSSE_SECRET_<名字>`（有哪些见下面），填进请求里，Sentinel
+- **密码和密钥**：不要问 {who} 要密码，也不要把密码写进回复。能用的凭证是占位符 `MOUSSE_SECRET_<名字>`（有哪些见下面），填进请求里，Doorman
   只在发往绑定的网站时换成真的；发给别的网站会被挡。没有你需要的，就告诉 {who}：请他在服务器上加一个（`errand.py secret set`）。
 
 ## 能用的凭证
@@ -109,7 +109,7 @@ def agents_md(name: str) -> str:
 
 ## 发邮件
 
-有 `MOUSSE_SECRET_GMAIL_SEND` 时（见上一节），用它绑定的邮箱发信。**每一封都会被 Sentinel 扣下**，{who} 在卡片上看到收件人、主题、正文，点了才发：
+有 `MOUSSE_SECRET_GMAIL_SEND` 时（见上一节），用它绑定的邮箱发信。**每一封都会被 Doorman 扣下**，{who} 在卡片上看到收件人、主题、正文，点了才发：
 
 ```python
 import base64, requests
@@ -141,22 +141,22 @@ print(r.status_code, r.text[:300])
 
 You run errands outside for {who}: research, compare prices, read pages, fill in forms, send email, book things. You work in a locked sandbox:
 
-- **The only way online is Sentinel.** The sandbox shell (curl, python) and the browser (browser tool) already go through it. Don't change
+- **The only way online is Doorman.** The sandbox shell (curl, python) and the browser (browser tool) already go through it. Don't change
   proxy settings or try to get around it: this network has no other exit, so it only makes the errand fail.
 - **Reading is free**: opening pages, searching, paging, checking prices go straight through.
 - **Anything that commits gets held**: submitting forms, sending mail, logging in, uploading, booking, ordering, deleting, or anything
-  carrying {who}'s private details (address, email, phone…) is held by Sentinel and {who} gets a card in the app. Your request waits (up to 10 minutes):
+  carrying {who}'s private details (address, email, phone…) is held by Doorman and {who} gets a card in the app. Your request waits (up to 10 minutes):
   - let through: the request completes normally; carry on.
   - HTTP 403 with `"sentinel": "held"`: still waiting for {who}. Say in your reply what it's waiting for (one line); once they OK it, **send
     the exact same request again** (valid for 30 minutes; in the browser, submit again).
   - 403 `"sentinel": "rejected"`: not let through; `note` has their words (e.g. "change the subject"). Change it and try again.
   - 403 `"sentinel": "denied"`: not allowed (payments aren't open yet, private addresses, ports, WebSockets…). Find another way or tell {who}.
   - When a browser submit is held, the browser tool can't wait that long and times out first: **don't submit again**. Read the page again
-    after a minute or two to see whether it went through (once let through, the request finishes by itself); only if Sentinel's "held"
+    after a minute or two to see whether it went through (once let through, the request finishes by itself); only if Doorman's "held"
     page shows up after ten minutes, submit again as above.
 - **No payments yet**: stop at the payment step and tell {who} the link, the amount and what to fill in.
 - **Passwords and keys**: never ask {who} for a password or put one in a reply. Usable credentials are placeholders `MOUSSE_SECRET_<NAME>` (listed
-  below); put them in the request and Sentinel swaps in the real value only for the site they're bound to. Anywhere else they're blocked.
+  below); put them in the request and Doorman swaps in the real value only for the site they're bound to. Anywhere else they're blocked.
   If you need one that isn't there, ask {who} to add it on the server (`errand.py secret set`).
 
 ## Credentials you can use
@@ -165,7 +165,7 @@ You run errands outside for {who}: research, compare prices, read pages, fill in
 
 ## Sending email
 
-With `MOUSSE_SECRET_GMAIL_SEND` (see above) you can send from the mailbox it's bound to. **Every email is held by Sentinel**; {who} sees the
+With `MOUSSE_SECRET_GMAIL_SEND` (see above) you can send from the mailbox it's bound to. **Every email is held by Doorman**; {who} sees the
 recipients, subject and body on a card and it goes out only when they tap it:
 
 ```python
@@ -224,8 +224,8 @@ def build_workspace(name: str, purpose: str) -> Path:
 
 def entry(ws: Path) -> dict:
     env = {k: PROXY for k in ("HTTP_PROXY", "HTTPS_PROXY", "http_proxy", "https_proxy")}
-    # 容器里的 127.0.0.1 是容器自己（浏览器镜像启动时要探一下自己的 CDP）：不经代理。出不了容器，不算绕开 Sentinel；
-    # 页面里的 Chromium 另有 --proxy-bypass-list=<-loopback>，照样走 Sentinel、被挡
+    # 容器里的 127.0.0.1 是容器自己（浏览器镜像启动时要探一下自己的 CDP）：不经代理。出不了容器，不算绕开 Doorman；
+    # 页面里的 Chromium 另有 --proxy-bypass-list=<-loopback>，照样走 Doorman、被挡
     local = "localhost,127.0.0.1,::1"
     env.update({"NO_PROXY": local, "no_proxy": local, "ALL_PROXY": "", "all_proxy": ""})
     return {
@@ -262,7 +262,7 @@ def ensure_ca() -> list[str]:
     if not (mitm / "mitmproxy-ca.pem").is_file():
         mitm.mkdir(mode=0o700, exist_ok=True)
         code = ("from mitmproxy.certs import CertStore\nfrom pathlib import Path\nimport sys\np=Path(sys.argv[1])\n"
-                "CertStore.create_store(p,'mitmproxy',2048,organization='OpenMousse',cn='OpenMousse Sentinel (errand sandbox only)')\n")
+                "CertStore.create_store(p,'mitmproxy',2048,organization='OpenMousse',cn='OpenMousse Doorman (errand sandbox only)')\n")
         run([str(venv() / "bin/python"), "-c", code, str(mitm)], check=True)
         for f in ("mitmproxy-ca.pem", "mitmproxy-ca.p12"):
             if (mitm / f).exists():
@@ -274,7 +274,7 @@ def ensure_ca() -> list[str]:
     (d / "ca.spki").write_text(spki + "\n")
     os.chmod(d / "ca.pem", 0o644)
     os.chmod(d / "ca.spki", 0o644)
-    return [L("Sentinel 的 CA：", "Sentinel CA: ") + str(d / "ca.pem")]
+    return [L("Doorman 的 CA：", "Doorman CA: ") + str(d / "ca.pem")]
 
 
 def ensure_token() -> str:
@@ -368,7 +368,7 @@ def unit_text() -> str:
     d = sentinel_dir()
     wait = f"for i in $(seq 1 60); do ip -4 addr show {BRIDGE} 2>/dev/null | grep -q {GATEWAY} && exit 0; sleep 2; done; exit 1"
     return f"""[Unit]
-Description=OpenMousse Sentinel: egress proxy for the errand sandbox
+Description=OpenMousse Doorman: egress proxy for the errand sandbox
 After=network-online.target
 
 [Service]
@@ -439,9 +439,9 @@ def ensure_agent() -> list[str]:
             conn.execute("INSERT INTO groups(id, name, icon, color, purpose, created_at) VALUES(?,?,?,?,?,?)",
                          (AGENT, name, "globe", "orange", purpose, now_iso()))
     if not have:
-        log_activity(L("新建 Agent「代办」（沙箱里跑，只能经 Sentinel 出网）", 'Created agent "Errand" (sandboxed, online only through Sentinel)'), "edit")
-    return [L(f"OpenClaw 里的 {AGENT}：沙箱 + Sentinel；app 里的「{name}」：{'已有' if have else '建好了'}",
-              f"{AGENT} in OpenClaw: sandbox + Sentinel; \"{name}\" in the app: {'present' if have else 'created'}")]
+        log_activity(L("新建 Agent「代办」（沙箱里跑，只能经 Doorman 出网）", 'Created agent "Errand" (sandboxed, online only through Doorman)'), "edit")
+    return [L(f"OpenClaw 里的 {AGENT}：沙箱 + Doorman；app 里的「{name}」：{'已有' if have else '建好了'}",
+              f"{AGENT} in OpenClaw: sandbox + Doorman; \"{name}\" in the app: {'present' if have else 'created'}")]
 
 
 def check_images() -> list[str]:
@@ -472,7 +472,7 @@ def setup() -> int:
 def status() -> list[tuple[bool, str, str]]:
     out: list[tuple[bool, str, str]] = []
     d = sentinel_dir()
-    out.append(((d / "mitm/mitmproxy-ca.pem").is_file(), L("Sentinel 的 CA", "Sentinel CA"), str(d / "ca.pem")))
+    out.append(((d / "mitm/mitmproxy-ca.pem").is_file(), L("Doorman 的 CA", "Doorman CA"), str(d / "ca.pem")))
     out.append(((d / "proxy.json").is_file(), L("代理配置", "Proxy config"), str(d / "proxy.json")))
     img = [i for i in (IMAGE, BROWSER_IMAGE) if run(["docker", "image", "inspect", i]).returncode == 0]
     out.append((len(img) == 2, L("沙箱镜像", "Sandbox images"), ", ".join(img) or "-"))

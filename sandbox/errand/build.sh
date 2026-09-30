@@ -2,14 +2,14 @@
 # Builds the errand Agent's two sandbox images (see README in this folder):
 #   openclaw-sandbox:bookworm-slim          OpenClaw's default sandbox image (skipped when present, --force rebuilds)
 #   openclaw-sandbox-browser:bookworm-slim  OpenClaw's browser image, from the OpenClaw source matching the installed version
-#   mousse-errand:bookworm-slim             shell sandbox + Sentinel's CA as the only trusted root
-#   mousse-errand-browser:bookworm-slim     browser + Chromium forced through Sentinel
+#   mousse-errand:bookworm-slim             shell sandbox + Doorman's CA as the only trusted root
+#   mousse-errand-browser:bookworm-slim     browser + Chromium forced through Doorman
 # Usage: build.sh <sentinel dir with ca.pem and ca.spki> [--force]
 set -euo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 SENT="${1:?sentinel dir (ca.pem, ca.spki)}"
 FORCE="${2:-}"
-[ -s "$SENT/ca.pem" ] && [ -s "$SENT/ca.spki" ] || { echo "no ca.pem / ca.spki in $SENT (start Sentinel once first)" >&2; exit 1; }
+[ -s "$SENT/ca.pem" ] && [ -s "$SENT/ca.spki" ] || { echo "no ca.pem / ca.spki in $SENT (start Doorman once first)" >&2; exit 1; }
 have() { docker image inspect "$1" >/dev/null 2>&1; }
 CTX="$(mktemp -d)"; trap 'rm -rf "$CTX"' EXIT
 

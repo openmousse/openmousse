@@ -62,7 +62,7 @@ export function receiptText(item: InboxItem, name: string): { head: string; sub:
   const exec = item.kind === 'exec';
   const title = item.title;
   if (item.kind === 'social' && item.social?.ask === 'review') {
-    // Sentinel 扣下的一句（server/cardagent.py 的 release）：点了就已经送到对方那里
+    // Doorman 扣下的一句（server/cardagent.py 的 release）：点了就已经送到对方那里
     const peer = item.social.peer;
     if (item.status === 'rejected') return { head: L(`没发 · ${title}`, `Not sent · ${title}`), sub: L(`告诉了 ${peer}「这个答不了」`, `Told ${peer} it can't be answered`) };
     if (item.status === 'done' || item.status === 'approved') {
@@ -171,7 +171,7 @@ function PendingCard({ item, chat }: { item: InboxItem; chat: boolean }) {
   const [busy, setBusy] = useState<InboxAction | null>(null);
   const [more, setMore] = useState(false);
   const [alertShown, setAlertShown] = useState(false);  // 提醒卡画出了通知预览：detail 是同一句的文字版，不再显示
-  const [rewrite, setRewrite] = useState<string | null>(null);  // Sentinel 扣下的那句 / 扣下的代办请求：「改一下」时你写的话
+  const [rewrite, setRewrite] = useState<string | null>(null);  // Doorman 扣下的那句 / 扣下的代办请求：「改一下」时你写的话
   const exec = item.kind === 'exec';
   const review = item.kind === 'social' && item.social?.ask === 'review';
   const act = (action: InboxAction, note?: string) => {
@@ -243,7 +243,7 @@ function PendingCard({ item, chat }: { item: InboxItem; chat: boolean }) {
             <CardBtn kind="primary" label={L('这一次同意', 'Allow once')} busy={busy === 'approve'} disabled={!!busy} onPress={() => act('approve')} />
           </>
         ) : review && rewrite != null ? (
-          // Sentinel 扣下的那句，「改一下」：写你要发的话，发出去替它那句（算你说的）
+          // Doorman 扣下的那句，「改一下」：写你要发的话，发出去替它那句（算你说的）
           <View style={{ flex: 1, gap: space.sm }}>
             <TextInput value={rewrite} onChangeText={setRewrite} multiline maxLength={400} autoFocus
               placeholder={L(`写你想让 ${item.social?.peer ?? ''} 看到的那句`, `What ${item.social?.peer ?? 'they'} should see`)} placeholderTextColor={t.ink3}
@@ -256,14 +256,14 @@ function PendingCard({ item, chat }: { item: InboxItem; chat: boolean }) {
             </View>
           </View>
         ) : review ? (
-          // Sentinel 扣下的那句：不发（告诉对方答不了）/ 改一下 / 照发
+          // Doorman 扣下的那句：不发（告诉对方答不了）/ 改一下 / 照发
           <>
             <CardBtn kind="quiet" label={L('不发', "Don't send")} busy={busy === 'reject'} disabled={!!busy} onPress={() => act('reject')} />
             <CardBtn kind="quiet" label={L('改一下', 'Rewrite')} disabled={!!busy} onPress={() => setRewrite(item.social?.original ?? '')} />
             <CardBtn kind="primary" label={item.approveLabel || L('照发', 'Send as is')} icon={Check} busy={busy === 'approve'} disabled={!!busy} onPress={() => act('approve')} />
           </>
         ) : item.kind === 'egress' && rewrite != null ? (
-          // Sentinel 出口扣下的代办请求，「改一下」：写上怎么改，代办那边收到 403 和你的话，照着重新来
+          // Doorman 出口扣下的代办请求，「改一下」：写上怎么改，代办那边收到 403 和你的话，照着重新来
           <View style={{ flex: 1, gap: space.sm }}>
             <TextInput value={rewrite} onChangeText={setRewrite} multiline maxLength={400} autoFocus
               placeholder={L('告诉代办要怎么改（比如：主题改成 Hi）', 'Tell the errand what to change (e.g. make the subject "Hi")')} placeholderTextColor={t.ink3}

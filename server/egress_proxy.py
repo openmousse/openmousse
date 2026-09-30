@@ -1,4 +1,4 @@
-"""Sentinel 出口代理：mitmproxy 插件。「代办」Agent 的沙箱（Docker 网络 mousse-errand）只能连到这里，规矩见 egress.py。
+"""Doorman 出口代理：mitmproxy 插件。「代办」Agent 的沙箱（Docker 网络 mousse-errand）只能连到这里，规矩见 egress.py。
 
 跑法（errand.py 写好的 user 服务 openmousse-sentinel）：sentinel_run.py 把这里的插件直接挂进 mitmproxy（别用 mitmdump -s：
   脚本一变它就重新加载，加载失败会不带规则接着当普通代理）。钩子里出任何错都按挡下处理（fail closed）。
@@ -96,15 +96,15 @@ def reply(flow: http.HTTPFlow, code: int, kind: str, message: str, **extra) -> N
     accept = flow.request.headers.get("accept", "")
     if "text/html" in accept and "json" not in accept:
         esc = message.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
-        page = (f"<!doctype html><meta charset=utf-8><title>Sentinel</title><body style='font:16px system-ui;margin:2em'>"
-                f"<h3>Sentinel · {kind}</h3><p>{esc}</p><pre>{json.dumps(extra, ensure_ascii=False)}</pre></body>")
+        page = (f"<!doctype html><meta charset=utf-8><title>Doorman</title><body style='font:16px system-ui;margin:2em'>"
+                f"<h3>Doorman · {kind}</h3><p>{esc}</p><pre>{json.dumps(extra, ensure_ascii=False)}</pre></body>")
         flow.response = http.Response.make(code, page.encode(), {"Content-Type": "text/html; charset=utf-8", "X-Sentinel": kind})
     else:
         flow.response = http.Response.make(code, json.dumps(body, ensure_ascii=False).encode(),
                                            {"Content-Type": "application/json; charset=utf-8", "X-Sentinel": kind})
 
 
-class Sentinel:
+class Doorman:
     def __init__(self) -> None:
         self.cfg = load_json("proxy.json")
         self.secrets: dict = {}
@@ -151,7 +151,7 @@ class Sentinel:
             with urllib.request.urlopen(o.get("token_uri") or "https://oauth2.googleapis.com/token", data=data, timeout=20) as r:  # noqa: S310
                 j = json.loads(r.read().decode("utf8"))
         except Exception as e:  # noqa: BLE001
-            log.warning("sentinel: refreshing %s failed: %s", name, type(e).__name__)
+            log.warning("doorman: refreshing %s failed: %s", name, type(e).__name__)
             return None
         tok = j.get("access_token") or ""
         if not tok:
@@ -169,28 +169,28 @@ class Sentinel:
         try:
             await self._server_connect(data)
         except Exception as e:  # noqa: BLE001 — 查不了就不连（fail closed）
-            log.error("sentinel: server_connect failed: %s", type(e).__name__)
-            data.server.error = "Sentinel: internal error, not connecting"
+            log.error("doorman: server_connect failed: %s", type(e).__name__)
+            data.server.error = "Doorman: internal error, not connecting"
 
     async def _server_connect(self, data) -> None:
         host, port = data.server.address
         if port not in PORTS:
-            data.server.error = f"Sentinel: port {port} is not allowed"
+            data.server.error = f"Doorman: port {port} is not allowed"
             return
         name = str(host).lower().rstrip(".")
         if name in BAD_NAMES:
-            data.server.error = f"Sentinel: {name} is not allowed"
+            data.server.error = f"Doorman: {name} is not allowed"
             return
         try:
             infos = await asyncio.get_running_loop().getaddrinfo(name, port, type=socket.SOCK_STREAM)
         except OSError as e:
-            data.server.error = f"Sentinel: can't resolve {name} ({e})"
+            data.server.error = f"Doorman: can't resolve {name} ({e})"
             return
         ips = [i[4][0] for i in infos]
         if time.monotonic() - self.own_at > 600:
             self.own, self.own_at = own_ips(), time.monotonic()
         if not ips or any(bad_ip(ip) or ip in self.own for ip in ips):
-            data.server.error = f"Sentinel: {name} resolves to a private or reserved address"
+            data.server.error = f"Doorman: {name} resolves to a private or reserved address"
             return
         if not data.server.sni and not re.fullmatch(r"[0-9.:]+", name):
             data.server.sni = name
@@ -242,8 +242,8 @@ class Sentinel:
         try:
             await self._request(flow)
         except Exception as e:  # noqa: BLE001 — 规则出错：这一个请求挡下（fail closed），不能让它原样出去
-            log.error("sentinel: request hook failed: %s", type(e).__name__)
-            reply(flow, 403, "denied", "Sentinel hit an internal error, so this request is blocked.")
+            log.error("doorman: request hook failed: %s", type(e).__name__)
+            reply(flow, 403, "denied", "Doorman hit an internal error, so this request is blocked.")
 
     async def _request(self, flow: http.HTTPFlow) -> None:
         req = flow.request
@@ -251,13 +251,13 @@ class Sentinel:
         host = (req.host or "").lower().rstrip(".")
         hh = (req.host_header or "").lower().rstrip(".")
         if hh and hh.rsplit(":", 1)[0].strip("[]") != host.strip("[]") and hh != host:
-            return reply(flow, 403, "denied", f"Sentinel: the Host header ({hh}) doesn't match where this goes ({host}).")
+            return reply(flow, 403, "denied", f"Doorman: the Host header ({hh}) doesn't match where this goes ({host}).")
         if req.port not in PORTS:
-            return reply(flow, 403, "denied", f"Sentinel only lets errands reach ports 80 and 443 (not {req.port}).")
+            return reply(flow, 403, "denied", f"Doorman only lets errands reach ports 80 and 443 (not {req.port}).")
         if host in BAD_NAMES or (re.fullmatch(r"[0-9.:\[\]]+", host) and bad_ip(host.strip("[]"))):
-            return reply(flow, 403, "denied", f"Sentinel doesn't let errands reach {host} (private or local address).")
+            return reply(flow, 403, "denied", f"Doorman doesn't let errands reach {host} (private or local address).")
         if req.headers.get("upgrade", "").lower() == "websocket":
-            return reply(flow, 403, "denied", "Sentinel doesn't allow WebSocket connections from errands.")
+            return reply(flow, 403, "denied", "Doorman doesn't allow WebSocket connections from errands.")
         # 占位符：只许发往绑定的网站
         url_b = req.url.encode()
         blob = url_b + b"\n" + b"\n".join(v.encode("utf8", "replace") for v in req.headers.values()) + b"\n" + (req.raw_content or b"")
@@ -274,8 +274,8 @@ class Sentinel:
         try:
             out = await asyncio.to_thread(self.ask, "/api/egress/check", pl, 75)
         except Exception as e:  # noqa: BLE001 — 服务端不在：挡
-            log.warning("sentinel: check failed: %s", type(e).__name__)
-            return reply(flow, 403, "denied", "Sentinel couldn't reach its server, so nothing goes out right now.")
+            log.warning("doorman: check failed: %s", type(e).__name__)
+            return reply(flow, 403, "denied", "Doorman couldn't reach its server, so nothing goes out right now.")
         d = out.get("decision")
         if d == "drop":
             flow.response = http.Response.make(204, b"", {"X-Sentinel": "dropped"})
@@ -283,13 +283,13 @@ class Sentinel:
         if d == "hold":
             d, out = await self.wait(flow, out)
         if d != "allow":
-            return reply(flow, 403, out.get("kind") or "denied", out.get("reason") or "Sentinel blocked this request.",
+            return reply(flow, 403, out.get("kind") or "denied", out.get("reason") or "Doorman blocked this request.",
                          **{k: out[k] for k in ("inbox", "note") if out.get(k)})
         if names:
             values = {n: await asyncio.to_thread(self.secret_value, n) for n in names}
             missing = [n for n, v in values.items() if not v]
             if missing:
-                return reply(flow, 403, "denied", f"Sentinel couldn't get a working value for {', '.join(missing)} right now.", secrets=missing)
+                return reply(flow, 403, "denied", f"Doorman couldn't get a working value for {', '.join(missing)} right now.", secrets=missing)
             self.substitute(req, values)
 
     async def wait(self, flow: http.HTTPFlow, out: dict) -> tuple[str, dict]:
@@ -339,8 +339,8 @@ class Sentinel:
         try:
             self._response(flow)
         except Exception as e:  # noqa: BLE001 — 没法确认里面没有真值：不交给沙箱
-            log.error("sentinel: response hook failed: %s", type(e).__name__)
-            flow.response = http.Response.make(502, b"Sentinel couldn't check this response.", {"X-Sentinel": "denied"})
+            log.error("doorman: response hook failed: %s", type(e).__name__)
+            flow.response = http.Response.make(502, b"Doorman couldn't check this response.", {"X-Sentinel": "denied"})
 
     def _response(self, flow: http.HTTPFlow) -> None:
         known = self.known_values()
@@ -425,4 +425,4 @@ def flatten(v, prefix: str = "") -> list[dict]:
     return out[:MAX_FIELDS]
 
 
-addons = [Sentinel()]
+addons = [Doorman()]

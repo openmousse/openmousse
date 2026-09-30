@@ -1,4 +1,4 @@
-"""Sentinel 出口代理的启动器（openmousse-sentinel 服务跑的就是它）：用 Sentinel 自己的 venv 跑。
+"""Doorman 出口代理的启动器（openmousse-sentinel 服务跑的就是它）：用 Doorman 自己的 venv 跑。
 
   <venv>/bin/python sentinel_run.py --host 172.30.99.1 --port 3128 --confdir <data_dir>/sentinel/mitm
   （环境变量 MOUSSE_SENTINEL_DIR 指向 <data_dir>/sentinel，见 egress_proxy.py）

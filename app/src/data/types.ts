@@ -51,7 +51,7 @@ export interface Approval {
 /** 收件箱：要你点头的事。exec = OpenClaw 的执行命令审批（id 是 exec:<审批 id>），其余是 Agent 自己交上来的提案。 */
 export type InboxKind = 'exec' | 'task' | 'write' | 'send' | 'spend' | 'schedule' | 'push' | 'skill' | 'agent' | 'block' | 'project' | 'code' | 'calendar' | 'social' | 'egress' | 'app' | 'other';
 /** 名片 agent 要你表态的卡（server/cardagent.py）：约时间（decision，能「换个时间」）还是问你私事（private，「知道了」）；谁问的、从哪来（a2a / chat） */
-/** review = Sentinel 扣下了名片 agent 的一句（original 原话、reasons 原因）：照发 / 改一下 / 不发 */
+/** review = Doorman 扣下了名片 agent 的一句（original 原话、reasons 原因）：照发 / 改一下 / 不发 */
 export interface InboxSocialInfo { ask: 'decision' | 'private' | 'review'; counter: boolean; peer: string; channel: string; original?: string; reasons?: { kind: string; detail: string }[] }
 export type InboxStatus = 'pending' | 'approved' | 'rejected' | 'revising' | 'done' | 'failed' | 'withdrawn' | 'expired';
 export type InboxAction = 'approve' | 'reject' | 'revise';

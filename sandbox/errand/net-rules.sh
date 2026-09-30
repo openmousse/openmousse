@@ -1,7 +1,7 @@
 #!/bin/sh
 # OpenMousse errand sandbox: host firewall rules for the Docker network mousse-errand (bridge br-mousse-err, 172.30.99.0/24).
 # Installed as /usr/local/sbin/openmousse-errand-net and run by openmousse-errand-net.service (root, after docker).
-#   up    nothing on the bridge is forwarded anywhere (DOCKER-USER); towards this host only Sentinel's port is open (INPUT),
+#   up    nothing on the bridge is forwarded anywhere (DOCKER-USER); towards this host only Doorman's port is open (INPUT),
 #         plus replies to connections the host opened (OpenClaw reaching the browser's CDP port through Docker's port mapping)
 #   down  removes them
 # The network itself also has no NAT and no outside DNS: these rules are the second lock, not the only one.

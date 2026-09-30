@@ -38,10 +38,10 @@ export interface FriendMsg {
   review: 'pending' | 'ok' | 'edited' | 'revoked' | null;
   ts: string; edited: boolean;
   share?: SharedSnapshot; about?: string | null; used?: string[]; usedLabel?: string; defer?: boolean; outcome?: string; error?: string | null;
-  /** 我的名片 agent 的代答过 Sentinel 的结论（只在我这边） */
+  /** 我的名片 agent 的代答过 Doorman 的结论（只在我这边） */
   sentinel?: SentinelVerdict;
 }
-/** Sentinel（名片 agent 说出去之前再过一道）对一句的结论：pass 放行 / hold 扣下 / fail 复查不了（换成了固定的话）；
+/** Doorman（名片 agent 说出去之前再过一道）对一句的结论：pass 放行 / hold 扣下 / fail 复查不了（换成了固定的话）；
  * released = 扣下后你放行的，owner = 你自己写的 */
 export interface SentinelVerdict { verdict: 'pass' | 'hold' | 'fail' | 'released' | 'owner' | string; reasons: { kind: string; detail: string }[]; via?: string; ms?: number }
 export interface FriendThread { friend: Friend; messages: FriendMsg[]; recent: FriendMsg[]; agent: boolean; canAsk: boolean }
@@ -92,7 +92,7 @@ export const sendShare = (sid: string, b: { friends: string[]; ask: boolean; lin
 
 /** 名片 agent 出给你的一张卡（card_asks）：卡过了 7 天不在收件箱里，靠它还能写一行结果 */
 export interface CardAsk {
-  /** review = Sentinel 扣下的一句（照发 / 改一下 / 不发） */
+  /** review = Doorman 扣下的一句（照发 / 改一下 / 不发） */
   kind: 'decision' | 'private' | 'review'; status: string; outcome: string; summary: string;
   proposal: { what?: string; date?: string; start?: string; end?: string; place?: string } | null;
 }
@@ -104,7 +104,7 @@ export interface CardLogItem {
   status: string; inboxId: string | null; ask: CardAsk | null; outcome: string;
   /** 对方要它做、它没照做的；blocked：服务端拦下了它原本要说的（原因），original 是原句（只给你看） */
   declined: string[]; blocked: string[]; original: string;
-  /** 说出去的：Sentinel 的结论；进来的：injection = 这句像是在指挥你的名片 agent */
+  /** 说出去的：Doorman 的结论；进来的：injection = 这句像是在指挥你的名片 agent */
   sentinel: SentinelVerdict | null; injection: boolean;
 }
 /** 你的名片 agent 去问朋友的 agent（a2a_out）。outcome = 对方本人在卡上的决定 */

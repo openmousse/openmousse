@@ -14,7 +14,7 @@
 - kind social：名片 agent（cardagent.py）要你表态、问你私事的卡。线程是虚拟的 card（不挂在任何对话里，app 看到的 thread 是空的，
   所以没有「去对话里说」「跟进」）；点了由钩子自己把话告诉对方，不往任何 Agent 的线程里发话：对方说的一个字都不进主 agent。
   Agent 用 inbox_ctl.py 列不出、读不到这类卡（请求带 X-Mousse-Client: ctl）。
-- kind egress：Sentinel 出口（egress.py）扣下的代办请求（在沙箱里提交表单、发信、用你的凭证……）。虚拟线程 sentinel，Agent 读不到；
+- kind egress：Doorman 出口（egress.py）扣下的代办请求（在沙箱里提交表单、发信、用你的凭证……）。虚拟线程 sentinel，Agent 读不到；
   点了由钩子直接告诉正在等的代理（放行 / 不放行 / 改一下的话），不往任何线程里发话。
 - kind app：连接器（apps.py）里设成「先问我」的工具，Agent 调一次就是一张卡（响铃），挂在那个 Agent 的线程里。卡上的参数是定死的：
   同意 = 钩子照原样调一次，结果当「做完了」发给 Agent；改一下 = 让它改好参数重新调（新卡），不能 update 这一张。
@@ -61,10 +61,10 @@ HOOKS: dict[str, Callable[[dict, str], Awaitable[dict | None]]] = {}
 # 这些 kind 的「改一下」也交给钩子（hook(it, "revise")，你写的话在 it["note"]），不往线程里发话。钩子回 {"silent": True}（可以带 result）
 # = 不往线程里发任何话：同意后不发「【收件箱】已同意…」，改一下直接算处理完。
 REVISE_BY_HOOK = {"social", "egress", "app"}
-# 「改一下」必须写话的卡（别的 social 卡可以空着，比如「换个时间」）：fn(iid) -> bool，在锁外调。cardagent 注册：Sentinel 扣下的那句（kind review）。
+# 「改一下」必须写话的卡（别的 social 卡可以空着，比如「换个时间」）：fn(iid) -> bool，在锁外调。cardagent 注册：Doorman 扣下的那句（kind review）。
 NEEDS_NOTE: list[Callable[[str], bool]] = []
 PRIVATE_KINDS = {"social", "egress"}  # 线程是虚拟的、Agent 读不到的
-# 这些卡挂在哪个虚拟线程：social → card（名片 agent），egress → sentinel（Sentinel 出口扣下的代办请求，egress.py）
+# 这些卡挂在哪个虚拟线程：social → card（名片 agent），egress → sentinel（Doorman 出口扣下的代办请求，egress.py）
 VIRTUAL_THREADS = {"social": "card", "egress": "sentinel"}
 # kind → 条目 JSON 里多给 app 的东西（在锁外调）。projects.py 注册 project：提案内容（预览）和开好的项目（「去看看」）。
 EXTRAS: dict[str, Callable[[str], dict | None]] = {}
@@ -597,7 +597,7 @@ async def act(iid: str, body: ActIn):
     silent = bool(done and done.get("silent"))  # 钩子自己办完了，不往线程里发话（social：对方说的不能进 Agent 的线程）
     out: dict = {"ok": True, "item": it}
     if action == "revise" and done and done.get("status") == "done" and not done.get("failed"):
-        # 钩子按你写的话办完了（Sentinel 扣下的那句，你改了以后发出去了）：不用再等谁改，直接算处理完
+        # 钩子按你写的话办完了（Doorman 扣下的那句，你改了以后发出去了）：不用再等谁改，直接算处理完
         with _lock, idb() as conn:
             conn.execute("UPDATE inbox SET status='done', result=?, decided_at=?, updated_at=? WHERE id=?", (done.get("result") or "", now_iso(), now_iso(), iid))
         out["item"] = it = item(iid)
@@ -624,7 +624,7 @@ async def act(iid: str, body: ActIn):
             out["run"] = kick(it["thread"], approve_text(it, note))
     elif action == "reject":
         log_activity(L(f"拒绝了{who}的「{title}」", f'Declined "{title}" from {who}'), "denied")
-        if done and done.get("result") and not done.get("failed"):  # 钩子写了办成什么样（Sentinel 那张：没发，告诉对方答不了）
+        if done and done.get("result") and not done.get("failed"):  # 钩子写了办成什么样（Doorman 那张：没发，告诉对方答不了）
             with _lock, idb() as conn:
                 conn.execute("UPDATE inbox SET result=?, updated_at=? WHERE id=?", (done["result"], now_iso(), iid))
             out["item"] = it = item(iid)

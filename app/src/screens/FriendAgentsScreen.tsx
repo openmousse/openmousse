@@ -47,7 +47,7 @@ function usedLine(it: CardLogItem): string {
   return names.length ? L(`用了：${names.join('、')}`, `Used: ${names.join(', ')}`) : '';
 }
 
-/** Sentinel 的原因连成一句（「说了资料里没有的近况；提到了别的朋友（小林）」）。 */
+/** Doorman 的原因连成一句（「说了资料里没有的近况；提到了别的朋友（小林）」）。 */
 const reasonsText = (it: CardLogItem) => (it.sentinel?.reasons ?? []).map((r) => r.detail || r.kind).filter(Boolean).join(L('；', '; '));
 
 /** 服务端拦下它原本要说的一句时，为什么。 */
@@ -55,11 +55,11 @@ function blockedLine(it: CardLogItem): string {
   const b = it.blocked;
   const why = reasonsText(it);
   if (b.includes('sentinel:hold')) {
-    const lead = it.ask?.kind === 'review' ? L('Sentinel 扣下了原话，先回了一句「我确认一下」，出了一张卡等你点', 'Sentinel held the original; it said "let me check" and made you a card')
-      : L('Sentinel 扣下了原话，换成了「我去问一下」', 'Sentinel held the original; it said "I\'ll ask" instead');
+    const lead = it.ask?.kind === 'review' ? L('Doorman 扣下了原话，先回了一句「我确认一下」，出了一张卡等你点', 'Doorman held the original; it said "let me check" and made you a card')
+      : L('Doorman 扣下了原话，换成了「我去问一下」', 'Doorman held the original; it said "I\'ll ask" instead');
     return why ? `${lead}${L('（', ' (')}${why}${L('）', ')')}` : lead;
   }
-  if (b.includes('sentinel:fail')) return L('Sentinel 没能复查这句，换成了一句固定的话', "Sentinel couldn't review it; a fixed line went instead");
+  if (b.includes('sentinel:fail')) return L('Doorman 没能复查这句，换成了一句固定的话', "Doorman couldn't review it; a fixed line went instead");
   if (b.some((x) => x.startsWith('leak'))) return L('原话里有这一档没放出来的东西，没发出去，换成了「得问本人」', "The original had something this tier doesn't get; it was replaced with \"ask them directly\"");
   if (b.includes('commit')) return L('原话像是替你答应了，改成了「我去问一下」，并出了卡给你', 'The original sounded like a yes on your behalf; it became "I\'ll ask" and a card for you');
   if (b.includes('empty')) return L('它没给出回答，换成了一句固定的话', 'It gave no answer; a fixed line went instead');
@@ -129,7 +129,7 @@ function TheirLine({ name, text, chip, injection }: { name: string; text: string
         {injection ? (
           <View style={styles.inj}>
             <Ban size={13} color={t.bad} />
-            <T v="caption" color={t.bad} style={{ flex: 1 }}>{L('Sentinel：这句像是在指挥你的名片 agent，只当资料', "Sentinel: this tries to steer your card agent; it's taken as information only")}</T>
+            <T v="caption" color={t.bad} style={{ flex: 1 }}>{L('Doorman：这句像是在指挥你的名片 agent，只当资料', "Doorman: this tries to steer your card agent; it's taken as information only")}</T>
           </View>
         ) : null}
       </View>
@@ -145,8 +145,8 @@ function MineLine({ it }: { it: CardLogItem }) {
   const used = owner ? '' : usedLine(it);
   const why = blockedLine(it);
   const sv = it.sentinel?.verdict;
-  // Sentinel：模型复查过、放行的标一个「Sentinel 过了」（只过规则的固定句子不标）；扣下后你放行的标「你放行的」
-  const svChip = sv === 'pass' && it.sentinel?.via && it.sentinel.via !== 'rules' ? L('Sentinel 过了', 'Sentinel checked') : sv === 'released' ? L('你放行的', 'You let it through') : '';
+  // Doorman：模型复查过、放行的标一个「Doorman 过了」（只过规则的固定句子不标）；扣下后你放行的标「你放行的」
+  const svChip = sv === 'pass' && it.sentinel?.via && it.sentinel.via !== 'rules' ? L('Doorman 过了', 'Doorman checked') : sv === 'released' ? L('你放行的', 'You let it through') : '';
   return (
     <View style={styles.line}>
       <AgentLens mine />
@@ -355,8 +355,8 @@ function SaidCard({ r, friend, card }: { r: Extract<Round, { kind: 'in' }>; frie
     ...(used.length ? used.map((u) => ({ tone: t.good, text: u })) : [{ tone: t.good, text: L('没用你的任何资料', 'None of your information') }]),
     ...(asks ? [{ tone: t.gold, text: L(`要你定的出了 ${asks} 张卡，没替你答应`, `${asks} card${asks === 1 ? '' : 's'} for you; it agreed to nothing`) }] : []),
     ...(declined.length ? [{ tone: t.bad, text: L(`没照做：${declined.join('；')}`, `Didn't do: ${declined.join('; ')}`) }] : []),
-    ...(reviewed || held ? [{ tone: held ? t.gold : t.good, text: held ? L(`Sentinel 复查了 ${reviewed} 句，扣下 ${held} 句等你定`, `Sentinel reviewed ${reviewed}, held ${held} for you`)
-      : L(`说出去的 ${reviewed} 句都过了 Sentinel`, `All ${reviewed} line${reviewed === 1 ? '' : 's'} passed Sentinel`) }] : []),
+    ...(reviewed || held ? [{ tone: held ? t.gold : t.good, text: held ? L(`Doorman 复查了 ${reviewed} 句，扣下 ${held} 句等你定`, `Doorman reviewed ${reviewed}, held ${held} for you`)
+      : L(`说出去的 ${reviewed} 句都过了 Doorman`, `All ${reviewed} line${reviewed === 1 ? '' : 's'} passed Doorman`) }] : []),
     ...(steered ? [{ tone: t.bad, text: L('对方有话像是在指挥你的名片 agent，只当了资料', 'Something they said tried to steer your card agent; it was taken as information only') }] : []),
     { tone: t.bad, text: L(`「${friend.tierName}」这一档它看不到：${hiddenFor(card, friend.tier).join('、')}`, `At "${friend.tierName}" it can't see: ${hiddenFor(card, friend.tier).join(', ')}`) },
   ];

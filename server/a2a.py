@@ -17,7 +17,7 @@
 - a2a_tasks：别人问我们、要你表态的任务（id、context、谁、状态、状态消息、结果、历史、收件箱卡、推送设置）。
 - a2a_seen：(谁, messageId) → 当时的回应：同一条消息再发一遍，回一样的东西（A2A 3.3.1 幂等）。
 - a2a_out：我们问别人（经 /api/a2a/send）：对方的任务 id、context、状态，推回来的进展也记这里。
-- a2a_cards：卡 → 任务。一个任务可以同时挂几张等你点的卡（约时间的、Sentinel 扣下的）：都点完（或过期）任务才结束。
+- a2a_cards：卡 → 任务。一个任务可以同时挂几张等你点的卡（约时间的、Doorman 扣下的）：都点完（或过期）任务才结束。
 """
 from __future__ import annotations
 
@@ -252,7 +252,7 @@ def expire_task(task: dict) -> None:
     lang = ask.get("lang") or settings.language
     who = settings.user_name or settings.app_name
     if gone and all((cardagent.ask_row(c["inbox_id"]) or {}).get("kind") == "review" for c in gone):
-        # 过期的只有 Sentinel 扣下的那句（一直没人放行）：一句普通的「答不了」，不是本人的决定
+        # 过期的只有 Doorman 扣下的那句（一直没人放行）：一句普通的「答不了」，不是本人的决定
         msg = agent_message(cardagent.say("cant", lang), task["context_id"], task["id"])
     else:
         text = cardagent.spaced(f"{who}没来得及回，这次先算了。") if lang == "zh" else f"{who} didn't get to this in time; let's leave it."
@@ -333,7 +333,7 @@ async def send_message(peer: social.Peer, params: dict) -> dict:
     if seen:  # 同一条消息又来了一遍（网断了重试）：回当时的结果，不再问模型、不再记一句
         return json.loads(seen["result"])
     k = (key, m["messageId"])
-    if k in _inflight:  # 第一次还在跑（名片 agent + Sentinel 可能要一分多钟）：等它，回一样的
+    if k in _inflight:  # 第一次还在跑（名片 agent + Doorman 可能要一分多钟）：等它，回一样的
         try:
             return await asyncio.wait_for(asyncio.shield(_inflight[k]), timeout=120)
         except TimeoutError:
@@ -438,7 +438,7 @@ async def deliver(ask: dict, text: str, data: dict) -> bool:
     task = row_dict(r)
     outcome = data.get("outcome")
     others = open_cards(task["id"], but=ask["inbox_id"])  # 这个任务里还有卡在等你：先别结束任务
-    # Sentinel 扣下的那句，你放行 / 改写 / 不发：就是一句普通的回话（不是本人对提议的决定），不带 decision
+    # Doorman 扣下的那句，你放行 / 改写 / 不发：就是一句普通的回话（不是本人对提议的决定），不带 decision
     plain = outcome in ("released", "rewritten", "withheld")
     decision = {"outcome": outcome, **({"proposal": data["proposal"]} if data.get("proposal") else {}),
                 **({"note": data["note"]} if data.get("note") else {}), "by": "owner", "at": ts()}

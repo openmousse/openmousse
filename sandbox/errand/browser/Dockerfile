@@ -1,5 +1,5 @@
 # The errand Agent's browser: OpenClaw's sandbox browser image, with Chromium wrapped so that it always goes through
-# Sentinel (--proxy-server, loopback included) and accepts only certificates chaining to Sentinel's CA key.
+# Doorman (--proxy-server, loopback included) and accepts only certificates chaining to Doorman's CA key.
 FROM openclaw-sandbox-browser:bookworm-slim
 ARG CA_SPKI
 USER root

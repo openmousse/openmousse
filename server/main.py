@@ -89,7 +89,7 @@ from widget import router as widget_router  # noqa: E402 — 小组件（app 1.0
 from share import public_router as share_public_router, router as share_router  # noqa: E402 — 分享（社交第一层）
 import friends  # noqa: E402 — 朋友（社交第二层）：/api/friends…、/api/card；/f/… 只挂在公网小服务 public.py 上
 from a2a import router as a2a_router  # noqa: E402 — agent 之间（社交第三层）：/api/a2a…、/api/card…，顺带挂上收件箱 social 类的钩子
-from egress import router as egress_router  # noqa: E402 — Sentinel 出口（第 9 步）：代办沙箱的出网判断 /api/egress…，顺带挂上收件箱 egress 类的钩子
+from egress import router as egress_router  # noqa: E402 — Doorman 出口（第 9 步）：代办沙箱的出网判断 /api/egress…，顺带挂上收件箱 egress 类的钩子
 
 DIST = settings.dist
 settings.db.parent.mkdir(parents=True, exist_ok=True)  # 新实例第一次启动：数据目录还不存在
@@ -224,7 +224,7 @@ async def guard(request: Request, call_next):
                                                              "No valid access token. On the server run python3 tokens.py add <name> and enter the token on the app's connect screen.")},
                                     status_code=401)
             request.state.principal = who
-            # Sentinel 代理的令牌只管出网判断：别的接口（对话、收件箱……）一律不给，免得它能替你点头
+            # Doorman 代理的令牌只管出网判断：别的接口（对话、收件箱……）一律不给，免得它能替你点头
             if who == "token:sentinel" and not request.url.path.startswith("/api/egress/"):
                 return JSONResponse({"ok": False, "error": "this token is only for /api/egress"}, status_code=403)
             # MCP 令牌（mcp、mcp-<agent id>）只给 /mcp：只拿着它的 claw（沙箱里的、云上的）不能经 /api 替你点头、配对新设备

@@ -301,7 +301,7 @@ def msg_json(r) -> dict:
         out["defer"] = bool(d.get("defer"))
         if d.get("outcome"):
             out["outcome"] = d["outcome"]
-        if r["dir"] == "out" and isinstance(d.get("sentinel"), dict):  # Sentinel 的结论（只给你看）
+        if r["dir"] == "out" and isinstance(d.get("sentinel"), dict):  # Doorman 的结论（只给你看）
             out["sentinel"] = {"verdict": str(d["sentinel"].get("verdict") or ""), "reasons": d["sentinel"].get("reasons") or [],
                                "via": str(d["sentinel"].get("via") or "")}
     if r["dir"] == "out" and r["status"] == "failed":
@@ -832,7 +832,7 @@ async def deliver_chat(ask: dict, text: str, data: dict) -> bool:
                 about = None   # 那条分享收回了
     if about is None:
         return False
-    owner = (data or {}).get("by") == "owner"  # 你在卡上自己写的（Sentinel 扣下后「改一下」）：算你说的
+    owner = (data or {}).get("by") == "owner"  # 你在卡上自己写的（Doorman 扣下后「改一下」）：算你说的
     insert_out(fid, "answer", text, data={"used": [str(u)[:60] for u in ((data or {}).get("usedNames") or [])][:5] if not owner else [],
                                          "usedLabel": str((data or {}).get("label") or "")[:80], "defer": False,
                                          "outcome": str((data or {}).get("outcome") or "")[:20],

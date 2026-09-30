@@ -1184,7 +1184,7 @@ def channel_fact(name: str, c: dict) -> dict:
 
 
 def sentinel_fact() -> dict | None:
-    """名片 agent 往外说的话过 Sentinel（第 9 步安全底座的第一块，sentinel.py）：装了名片 agent 才有这一行。"""
+    """名片 agent 往外说的话过 Doorman（第 9 步安全底座的第一块，sentinel.py）：装了名片 agent 才有这一行。"""
     try:
         import sentinel
         h = sentinel.health()
@@ -1197,7 +1197,7 @@ def sentinel_fact() -> dict | None:
            "off": L("规则（没有可用的模型，名片 agent 只说固定的话）", "rules only (no model; the card agent only says fixed lines)")}.get(b, b)
     today = L(f"今天查了 {t['checked']} 句，扣下 {t['held']} 句" + (f"，复查不了 {t['failed']} 句" if t["failed"] else "") + "。",
               f"Today: {t['checked']} checked, {t['held']} held" + (f", {t['failed']} couldn't be reviewed" if t["failed"] else "") + ".")
-    return {"title": L("Sentinel · 名片 agent 说出去的话", "Sentinel · what your card agent says"),
+    return {"title": L("Doorman · 名片 agent 说出去的话", "Doorman · what your card agent says"),
             "sub": L(f"每一句发出去之前先过规则和{how}；不妥的先扣下，出卡等你点照发 / 改一下 / 不发，复查不了的换成固定的话。", 
                      f"Every line goes through rules and {how} before it leaves; anything off is held for you to send, rewrite or drop, and a line that can't be reviewed becomes a fixed one. ") + today,
             "state": L("开着", "On") if b != "off" else L("只有规则", "Rules only"), "tone": "good" if b != "off" else "warn"}
@@ -1272,9 +1272,9 @@ async def security():
     plan = [
         {"title": L("隔离执行环境", "Isolated execution"),
          "sub": L("浏览器、填表等代办任务在沙箱里跑，碰不到服务器上的密钥和文件。", "Errands like browsing and filling in forms run in a sandbox, away from the server's keys and files.")},
-        {"title": L("Sentinel 出网审批（代办任务）", "Sentinel egress approval (errands)"),
-         "sub": L("沙箱的出网请求先过一个独立模型；白名单外的转成审批卡。名片 agent 说出去的话已经过 Sentinel（上面那一行）。",
-                  "Outbound requests from the sandbox pass a separate model first; anything off the allowlist becomes an approval card. What your card agent says already goes through Sentinel (above).")},
+        {"title": L("Doorman 出网审批（代办任务）", "Doorman egress approval (errands)"),
+         "sub": L("沙箱的出网请求先过一个独立模型；白名单外的转成审批卡。名片 agent 说出去的话已经过 Doorman（上面那一行）。",
+                  "Outbound requests from the sandbox pass a separate model first; anything off the allowlist becomes an approval card. What your card agent says already goes through Doorman (above).")},
         {"title": L("凭证代位", "Credential stand-ins"),
          "sub": L("沙箱里只有占位 token，真实凭证在出口处才注入。", "The sandbox only holds placeholder tokens; real credentials are added on the way out.")},
     ]

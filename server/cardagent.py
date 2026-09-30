@@ -14,7 +14,7 @@
 - 要你表态（定时间、花钱、答应什么）、问你私事的：出收件箱卡（kind social，默认不推送，server.json 的 social.push 开了才静音推）。
   你点了以后，服务端自己告诉对方（经注册的渠道 DELIVER：a2a / chat），同意的约会进日程。这类卡的钩子不往主 agent 的线程里发任何话。
 - 说出去的每一句都记下来（card_log + activity_log），每个人每天有条数上限、每条有长度上限。
-- 发出去之前还过 Sentinel（sentinel.py，第 9 步安全底座）：规则 + 另起一次的独立复查，觉得不妥就扣下（对方先听到「我确认一下」，
+- 发出去之前还过 Doorman（sentinel.py，第 9 步安全底座）：规则 + 另起一次的独立复查，觉得不妥就扣下（对方先听到「我确认一下」，
   你收到一张 kind review 的卡：照发 / 改一下 / 不发），复查不了就换成固定句子。
 - 陌生人（不在好友表里的、签名认不出的、删掉的朋友）默认一律不理：server.json 的 card.strangers 是 true 才答（只有固定句子、不出卡）。
 
@@ -465,8 +465,8 @@ async def via_openai(llm: dict, prompt: str, input_: dict, timeout: float, need:
 async def via_llm_task(prompt: str, input_: dict, timeout: float, *, schema: dict | None = None, need: str = "reply",
                        thinking: str | None = None, agent: str | None = None, card_settings: bool = True) -> tuple[dict, str]:
     """OpenClaw 的 llm-task（POST /tools/invoke）：TASK = 规矩，INPUT_JSON = 资料和对方的话，零工具、新会话，回来的 JSON 按 schema 校验过
-    （默认名片 agent 的 SCHEMA；Sentinel 传它自己的，need = 必须有的那个字符串键）。card_settings = 用不用 card 段的 model / agent / thinking
-    （Sentinel 不用：它有自己的 agent，不跟着名片 agent 换模型）。"""
+    （默认名片 agent 的 SCHEMA；Doorman 传它自己的，need = 必须有的那个字符串键）。card_settings = 用不用 card 段的 model / agent / thinking
+    （Doorman 不用：它有自己的 agent，不跟着名片 agent 换模型）。"""
     c = cfg()
     args: dict = {"prompt": prompt, "input": input_, "schema": schema or SCHEMA, "timeoutMs": int(timeout * 1000),
                   "thinking": str(thinking or (c.get("thinking") if card_settings else None) or "low")}
@@ -526,7 +526,7 @@ def backend() -> str:
 async def think(peer: dict, mats: list[dict], history: list[dict], question: str, lang: str,
                 deadline: float | None = None) -> tuple[dict, str]:
     """(模型回的 JSON, 走的哪条路)。模型那条路不通就用固定模板，从不抛错。deadline = time.monotonic() 的时刻：
-    到那时连 Sentinel 的复查（SENTINEL_RESERVE 秒）都要做完，所以名片 agent 自己的超时、要不要重试都按剩下的算。"""
+    到那时连 Doorman 的复查（SENTINEL_RESERVE 秒）都要做完，所以名片 agent 自己的超时、要不要重试都按剩下的算。"""
     global _last_error
     prompt, input_ = task_prompt(), task_input(peer, mats, history, question)
     b = backend()
@@ -698,7 +698,7 @@ def write_log(peer: dict, channel: str, ref: str, direction: str, text: str, sta
 
 
 def set_meta(lid: str, **kv) -> None:
-    """给记下的一句补几个字段（进来的那句被 Sentinel 看出在指挥名片 agent：injection）。"""
+    """给记下的一句补几个字段（进来的那句被 Doorman 看出在指挥名片 agent：injection）。"""
     with _lock, cdb() as conn:
         r = conn.execute("SELECT meta FROM card_log WHERE id=?", (lid,)).fetchone()
         if r:
@@ -738,7 +738,7 @@ async def answer(friend: dict | None, question: str, *, channel: str = "chat", m
     → {text, used, usedNames, usedLabel, defer, declined, limited, log_id, via}（陌生人不让问时 text 是空的、refused 为真）：used 是资料的 id，usedNames 是给人看的名字；
       text 发给对方的话；defer = None 或 {kind: decision|private, inbox_id, summary}（出了卡、等你点）；limited = 到了今天的上限（text 是一句客气话，
       发不发调用方定）；log_id 给「收回」「我来改」用。"""
-    t_start = time.monotonic()  # 名片 agent + Sentinel 一共的时间要在对方等的 90 秒以内（ANSWER_BUDGET）
+    t_start = time.monotonic()  # 名片 agent + Doorman 一共的时间要在对方等的 90 秒以内（ANSWER_BUDGET）
     peer = peer_of(friend, kid, name)
     if peer["tier"] == "stranger" and not strangers_allowed():
         # 陌生人不理：不调模型、不出卡、不记一句（A2A 接口在前面就回 403 了，这里是第二道）
@@ -769,7 +769,7 @@ async def answer(friend: dict | None, question: str, *, channel: str = "chat", m
     fixed = bool(blocked)  # 这句已经是固定的话（服务端换过）
     if peer["tier"] == "stranger" and out["ask_owner"]:
         out["reply"], out["ask_owner"], fixed = say("friends_only", lang), None, True  # 陌生人不能往你的收件箱里塞卡
-    # Sentinel：模型写的句子另起一次复查，固定句子只过规则（sentinel.py）。留给它的时间 = 总预算里还剩的
+    # Doorman：模型写的句子另起一次复查，固定句子只过规则（sentinel.py）。留给它的时间 = 总预算里还剩的
     sv = await sentinel.review(peer, scope, mats, hist, q, out, model_written=via not in ("template", "limit", "refused") and not fixed,
                                budget=ANSWER_BUDGET - (time.monotonic() - t_start))
     held = None
@@ -780,7 +780,7 @@ async def answer(friend: dict | None, question: str, *, channel: str = "chat", m
         elif out["ask_owner"]:
             out["reply"] = say("ask", lang)   # 名片 agent 本来就要出卡问你（约时间）：那张卡就是你的关口
         elif review_cards_today(peer) >= REVIEW_CARDS_PER_DAY:
-            out["reply"] = say("cant", lang)  # 这个人今天已经让 Sentinel 扣下好几句了：不再出卡（免得被刷屏），原话只记下来给你看
+            out["reply"] = say("cant", lang)  # 这个人今天已经让 Doorman 扣下好几句了：不再出卡（免得被刷屏），原话只记下来给你看
         else:
             out["reply"] = say("hold", lang)  # 先说「我确认一下」，你在卡上决定照发 / 改一下 / 不发
             out["ask_owner"] = {"kind": "review", "summary": sentinel.reasons_line(sv), "proposal": None, "original": held["reply"],
@@ -804,9 +804,9 @@ async def answer(friend: dict | None, question: str, *, channel: str = "chat", m
     say_log(peer, out["reply"], label)
     if sv["verdict"] in ("hold", "fail"):
         why = sentinel.reasons_line(sv)
-        log_activity(LZ(f"Sentinel 扣下了一句给{peer['name']}的话：{why}" if sv["verdict"] == "hold" else f"Sentinel 没能复查给{peer['name']}的一句，换成了固定的话",
-                        f"Sentinel held a reply to {peer['name']}: {why}" if sv["verdict"] == "hold" else f"Sentinel couldn't review a reply to {peer['name']}; a fixed line went instead"),
-                     "social", actor="Sentinel")
+        log_activity(LZ(f"Doorman 扣下了一句给{peer['name']}的话：{why}" if sv["verdict"] == "hold" else f"Doorman 没能复查给{peer['name']}的一句，换成了固定的话",
+                        f"Doorman held a reply to {peer['name']}: {why}" if sv["verdict"] == "hold" else f"Doorman couldn't review a reply to {peer['name']}; a fixed line went instead"),
+                     "social", actor="Doorman")
     if out["declined"]:
         log_activity(LZ(f"没照做（{peer['name']}）：" + "；".join(out["declined"]), f"Didn't do ({peer['name']}): " + "; ".join(out["declined"])),
                      "social", actor=L("名片 agent", "Card agent"))
@@ -816,8 +816,8 @@ async def answer(friend: dict | None, question: str, *, channel: str = "chat", m
 
 
 ANSWER_BUDGET = 80.0          # 秒：对方（OpenMousse）等 90 秒，留一点给网络
-SENTINEL_RESERVE = 25.0       # 名片 agent 自己最多用到预算减这么多，剩下的留给 Sentinel 复查
-REVIEW_CARDS_PER_DAY = 3      # 每个人每天最多几张 Sentinel 扣下的卡，再多的直接「答不了」（原话照样记下来给你看）
+SENTINEL_RESERVE = 25.0       # 名片 agent 自己最多用到预算减这么多，剩下的留给 Doorman 复查
+REVIEW_CARDS_PER_DAY = 3      # 每个人每天最多几张 Doorman 扣下的卡，再多的直接「答不了」（原话照样记下来给你看）
 REVIEW_DAYS = 3               # 扣下的卡几天没点就过期（A2A 任务收尾成一句「答不了」）
 
 
@@ -884,7 +884,7 @@ def push_level() -> str:
 def dedupe_key(channel: str, ref: str, ask: dict) -> str:
     """收件箱卡的去重键。同一段对话里还有一张在等你的：用它的键（新的提议原地换掉旧的）；否则按「这件事」算：
     同一个时间你拒过的，30 天内再提会被挡回（对方听到「之前说过不行了」），换个时间就是一件新的事。"""
-    if ask["kind"] == "review":  # Sentinel 扣下的一句：每句一张，不顶掉同一段对话里在等你的约时间的卡
+    if ask["kind"] == "review":  # Doorman 扣下的一句：每句一张，不顶掉同一段对话里在等你的约时间的卡
         return f"card:{channel}:{ref or '-'}:review:{uuid.uuid4().hex[:10]}"
     if ref:
         with _lock, cdb() as conn:
@@ -913,7 +913,7 @@ async def ask_owner(peer: dict, channel: str, ref: str, ask: dict, question: str
                                    conflicts(p)) if x)
         approve = L("同意", "Yes")
     elif ask["kind"] == "review":
-        title = LZ(f"Sentinel 扣下了一句要给{name}的话", f"Sentinel held a reply to {name}")
+        title = LZ(f"Doorman 扣下了一句要给{name}的话", f"Doorman held a reply to {name}")
         why = LZ(f"{name}（{tier_label(peer['tier'])}）问：「{clean_line(question, 80)}」。扣下的原因：{ask['summary']}",
                  f"{name} ({tier_label(peer['tier'])}) asked: \"{clean_line(question, 80)}\". Why it was held: {ask['summary']}")
         changes = [LZ(f"照发这句：「{ask.get('original') or ''}」", f"Send it as is: \"{ask.get('original') or ''}\"")]
@@ -1032,7 +1032,7 @@ async def decide(it: dict, action: str, note: str = "") -> dict | None:
 
 
 async def release(it: dict, ask: dict, peer: dict, action: str, note: str) -> dict:
-    """Sentinel 扣下的一句，你点了：照发（原话）/ 改一下（发你写的，算你说的）/ 不发（告诉对方答不了）。都经原来的渠道送到对方那里。"""
+    """Doorman 扣下的一句，你点了：照发（原话）/ 改一下（发你写的，算你说的）/ 不发（告诉对方答不了）。都经原来的渠道送到对方那里。"""
     lang, m = ask["lang"], ask["meta"]
     if action == "approve":
         text, outcome, by, used, label = str(m.get("original") or ""), "released", "agent", m.get("used") or [], str(m.get("label") or "")
