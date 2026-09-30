@@ -375,9 +375,13 @@ async def gen_session(course: str, sid: str, opts: dict) -> None:
             else:
                 steps["video"] = "skipped"
         bad = [k for k, v in steps.items() if v == "error"]
+        # 先记那行灰字再标写好：学习台一看到写好就重读对话，要能读到它
+        try:
+            await asyncio.to_thread(announce_done, course, sid)
+        except Exception as e:  # noqa: BLE001 — 没记上不影响这一节算写好
+            print(f"[study] 写好一节的那行没记上：{type(e).__name__}: {e}")
         set_job(course, sid, status="done", stage=None, steps=steps, finished=cf.now_iso(),
                 error=L(f"{'、'.join(bad)} 没生成成，可以在学习台里再点一次", f"{', '.join(bad)} failed; try again from the desk") if bad else None)
-        await asyncio.to_thread(announce_done, course, sid)
     except (llmjson.LLMError, ValueError, OSError, RuntimeError) as e:
         steps = {k: ("error" if v in ("queued", "running") and k == "page" else v) for k, v in steps.items()}
         set_job(course, sid, status="error", stage=None, steps=steps, finished=cf.now_iso(), error=str(getattr(e, "detail", None) or e)[:300])

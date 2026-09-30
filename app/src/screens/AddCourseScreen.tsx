@@ -74,7 +74,8 @@ export function AddCourseScreen() {
             <Btn flex kind="quiet" label={L('上一步', 'Back')} onPress={() => setStep(Math.max(1, step - 1))} />
           </View>
         ) : null}
-        {c && agent ? <AgentMini agent={agent} course={c.name} step={step} onReply={reload} /> : null}
+        {c && agent ? <AgentMini agent={agent} course={c.name} step={step} onReply={reload}
+          generating={c.sessions.some((s) => s.job?.status === 'queued' || s.job?.status === 'running')} /> : null}
         {c && !agent ? <T v="callout" color={t.ink3}>{L('还没有学习 Agent：新建一个 Agent，从例子里选「学习」，就能在这里问它。', 'No study Agent yet: create an Agent from the "Study" example to ask it here.')}</T> : null}
         {c ? <DeskLinkRow params={{ course: c.name }} /> : null}
       </ScrollView>
@@ -483,7 +484,7 @@ const TIPS = () => ({
   5: L('生成好一节我就在这里说一声。想换学习页的写法，直接跟我说。', "I'll post here when each session is done. Want a different writing style? Just say."),
 }) as Record<number, string>;
 
-function AgentMini({ agent, course, step, onReply }: { agent: string; course: string; step: number; onReply: () => void }) {
+function AgentMini({ agent, course, step, onReply, generating }: { agent: string; course: string; step: number; onReply: () => void; generating: boolean }) {
   const t = useTheme();
   const { threads, streaming, typing, send, refreshThread, cardsByThread, liveCards, groups } = useStore();
   useThreadOnScreen(agent);
@@ -498,6 +499,11 @@ function AgentMini({ agent, course, step, onReply }: { agent: string; course: st
   const busy = !!typing[agent];
   const [wasBusy, setWasBusy] = useState(busy);
   if (busy !== wasBusy) { setWasBusy(busy); if (!busy) onReply(); }
+  // 生成的节写好了：服务器在对话里记了一行，重读一次
+  const [wasGen, setWasGen] = useState(generating);
+  const [genDone, setGenDone] = useState(0);
+  if (generating !== wasGen) { setWasGen(generating); if (!generating) setGenDone((n) => n + 1); }
+  useEffect(() => { if (genDone) refreshThread(agent).catch(() => {}); }, [genDone, agent, refreshThread]);
   const msgs = useMemo(() => {
     if (!all || base === undefined) return [];
     const i = base ? all.findIndex((m) => m.id === base) : -1;
