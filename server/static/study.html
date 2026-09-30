@@ -167,6 +167,45 @@ a { color: var(--cyan); }
 .explain .ref { color: var(--ink3); font-size: 12px; margin-top: 4px; }
 .score { position: sticky; top: -22px; z-index: 1; background: var(--bg); padding: 8px 0 10px; font-weight: 600; }
 .score .ok { color: var(--good); }
+/* 自测：先写自己的答案，再看参考答案（也可以不写） */
+.self { max-width: 860px; margin: 0 auto; }
+.shead { position: sticky; top: -22px; z-index: 1; background: var(--bg); padding: 8px 0 10px; display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; }
+.shead .big { font-weight: 700; }
+.shead .sub { color: var(--ink3); font-size: 12.5px; }
+.shead .grow { flex: 1; }
+.shead .pill { padding: 5px 12px; font-size: 12.5px; }
+.sq { background: var(--surface); border: 1px solid var(--line); border-radius: 12px; padding: 14px 16px; margin-bottom: 12px; box-shadow: var(--shadow); }
+.sq.g-ok { border-color: var(--good); }
+.sq.g-close { border-color: var(--warn); }
+.sq.g-miss { border-color: var(--bad); }
+.sqq { display: flex; gap: 8px; align-items: baseline; margin-bottom: 10px; }
+.sqq .sqn { flex: none; font-weight: 700; color: var(--gold); }
+.sqq .sqb { flex: 1; min-width: 0; }
+.sqq .sqtag { display: inline-block; margin-bottom: 4px; padding: 1px 8px; border-radius: 999px; border: 1px solid var(--line); color: var(--ink3); font-size: 11.5px; }
+.sqq .md { font-size: 14.5px; font-weight: 600; max-width: none; margin: 0; }
+.sqq .md p:first-child { margin-top: 0; }
+.sqq .md p:last-child { margin-bottom: 0; }
+.sq textarea { display: block; width: 100%; box-sizing: border-box; min-height: 64px; resize: vertical; padding: 9px 12px; border-radius: 10px; border: 1px solid var(--line);
+  background: var(--bg); color: var(--ink); font: inherit; line-height: 1.6; outline: none; }
+.sq textarea:focus { border-color: var(--goldFill); }
+.sqa { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin-top: 10px; }
+.sqa .pill { padding: 6px 12px; font-size: 13px; }
+.cmp { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 10px; margin-top: 12px; }
+.cmp.one { grid-template-columns: minmax(0, 1fr); }
+.cmp > div { border-radius: 10px; padding: 10px 12px; min-width: 0; }
+.cmp .mine { background: var(--goldSoft); }
+.cmp .ans { background: var(--surface2); }
+.cmp .lab { font-size: 11.5px; font-weight: 700; letter-spacing: .04em; color: var(--ink3); margin-bottom: 4px; }
+.cmp .txt { white-space: pre-wrap; overflow-wrap: anywhere; line-height: 1.65; }
+.cmp .md { font-size: 14px; max-width: none; margin: 0; }
+.cmp .md p:first-child { margin-top: 0; }
+.cmp .md p:last-child { margin-bottom: 0; }
+.grade { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; margin-top: 10px; color: var(--ink3); font-size: 12.5px; }
+.grade button { padding: 4px 11px; border-radius: 999px; border: 1px solid var(--line); background: var(--surface); color: var(--ink2); font-size: 12.5px; }
+.grade button.ok.on { background: var(--goodSoft); border-color: var(--good); color: var(--good); font-weight: 600; }
+.grade button.close.on { background: var(--warnSoft); border-color: var(--warn); color: var(--warn); font-weight: 600; }
+.grade button.miss.on { background: var(--badSoft); border-color: var(--bad); color: var(--bad); font-weight: 600; }
+@media (max-width: 720px) { .cmp { grid-template-columns: minmax(0, 1fr); } }
 .vids { max-width: 1000px; margin: 0 auto; display: flex; flex-direction: column; gap: 18px; }
 .vid .vt { font-weight: 600; margin-bottom: 6px; }
 .genv { max-width: 1000px; margin: 22px auto 0; padding: 16px; border: 1px dashed var(--line); border-radius: 12px; background: var(--surface); }
@@ -576,7 +615,7 @@ function findPage(path) { const c = curCourse(); return c && [...c.pages, ...c.m
 function tabsOf(u) {
   const t = [];
   if (u.kind === 'page') {
-    t.push({ id: 'path', label: pathTabLabel(u) }, { id: 'page', label: L('学习页', 'Notes') });
+    t.push({ id: 'path', label: pathTabLabel(u) }, { id: 'page', label: L('学习页', 'Notes') }, { id: 'self', label: selfTabLabel(u) });
     for (const s of u.sources || []) t.push({ id: 'src:' + s, label: nice(base(s)) });
     if (u.readings?.total) t.push({ id: 'readings', label: L('阅读', 'Readings') + ` · ${u.readings.have}/${u.readings.total}` });
     if (u.recordings) t.push({ id: 'recs', label: L('录播', 'Lectures') + ' · ' + u.recordings });
@@ -592,6 +631,14 @@ function tabsOf(u) {
 }
 const videoTabLabel = u => L('视频', 'Videos') + ((u.videos || []).length ? ' · ' + u.videos.length : '');
 const pathTabLabel = u => L('学习路线', 'Study path') + (u.progress?.total ? ` · ${u.progress.done}/${u.progress.total}` : '');
+// 自测：写过的答案、看没看过、自己判的对错只存在这台设备的浏览器里（study.self:<课>:<学习页>）
+const selfKey = (course, path) => 'study.self:' + course + ':' + path;
+function selfLoad(course, path) { try { const st = JSON.parse(store.get(selfKey(course, path)) || '{}'); return st && typeof st === 'object' ? st : {}; } catch { return {}; } }
+function selfTabLabel(u) {
+  const st = selfLoad(S.course, u.path);
+  const seen = Object.values(st.v || {}).filter(x => x && x.open).length;
+  return L('自测', 'Self-test') + (st.n ? ` · ${seen}/${st.n}` : '');
+}
 // 子视图（阅读材料里打开的某个文件）高亮它所属的标签
 const tabKey = id => (id.startsWith('read:') ? 'readings' : id);
 function openUnit(u, tab) {
@@ -668,6 +715,7 @@ async function selectTab(id) {
         x.id = 's' + (i + 1);  // 和服务端 headings_of 的编号一致
         const title = x.dataset.title = x.textContent.trim();
         x.append(h('button', { class: 'askbtn2', title: L('就这一节提问', 'Ask about this section'), onclick: e => { e.stopPropagation(); setQuote(title, sectionText(x)); } }, L('问这一节', 'Ask')));
+        if (x.tagName === 'H2' && SELF_H.test(title)) x.append(h('button', { class: 'askbtn2', title: L('先写自己的答案，再看参考答案', 'Write your answer first, then compare'), onclick: e => { e.stopPropagation(); selectTab('self'); } }, L('去「自测」里做', 'Do it in Self-test')));
       });
       if (done(el)) {
         const target = anchor && el.querySelector('#' + anchor);
@@ -701,6 +749,8 @@ async function selectTab(id) {
     } else if (id.startsWith('vid:')) {
       const url = await fileUrl(id.slice(4), 'pages');
       done(h('video', { class: 'player', src: url, controls: true, preload: 'metadata' }));
+    } else if (id === 'self') {
+      await renderSelf(my);
     } else if (id === 'cards' || id === 'quiz') {
       await renderGen(id, my);
     } else if (id === 'videos') {
@@ -824,7 +874,8 @@ function refLabel(r) {
   return ['✎', L('小测', 'Quiz')];
 }
 function openRef(r) {
-  if (r.type === 'section') { S.anchor = r.id; selectTab('page'); } else if (r.type === 'file') {
+  if (r.type === 'section' && SELF_H.test(r.label || '')) selectTab('self');
+  else if (r.type === 'section') { S.anchor = r.id; selectTab('page'); } else if (r.type === 'file') {
     S.pdfPage = r.page || null;
     selectTab(((S.unit.sources || []).includes(r.path) ? 'src:' : 'read:') + r.path);
   } else if (r.type === 'video') selectTab('videos');
@@ -1005,6 +1056,127 @@ function drawQuiz(v, items) {
     wrap.append(box);
   });
   v.append(wrap);
+}
+
+// —— 自测：学习页「自测题」那一节，每题先写自己的答案（可以不写），再看参考答案 ——
+// 题目是那一节里每个折叠块（<details><summary>看答案</summary>…</details>）前面的一段，题号认 **1.** 或 **Q1.**
+const SELF_H = /^(?:\d+[.、．]\s*)?(?:自测题|自测|self[- ]?test|check yourself)/i;
+function selfTest(md) {
+  const lines = String(md || '').split('\n');
+  const start = lines.findIndex(l => /^##\s/.test(l) && SELF_H.test(l.replace(/^##\s+/, '').trim()));
+  if (start < 0) return [];
+  let end = lines.length;
+  for (let i = start + 1; i < lines.length; i++) if (/^##\s/.test(lines[i])) { end = i; break; }
+  const body = lines.slice(start + 1, end).join('\n');
+  const re = /<details>\s*<summary>[\s\S]*?<\/summary>([\s\S]*?)<\/details>/gi;
+  const MARK = /^\*\*\s*(Q?\s*\d+)\s*(?:[（(]([^）)\n]*)[）)])?\s*[.、．:：]?\s*\*\*[ \t]*/gim;  // **Q5（case 型）.** 括号里的算标签
+  const items = [];
+  let last = 0, m;
+  while ((m = re.exec(body))) {
+    let q = body.slice(last, m.index).trim();
+    const a = m[1].trim();
+    last = re.lastIndex;
+    let label = '', tag = '';
+    const marks = [...q.matchAll(MARK)];
+    if (marks.length) {  // 前面有说明文字的话，从最后一个题号起算
+      const k = marks[marks.length - 1];
+      label = k[1].replace(/\s+/g, '').replace(/^q/, 'Q');
+      tag = (k[2] || '').trim();
+      q = q.slice(k.index + k[0].length).trim();
+    }
+    if (!q && items.length) { items[items.length - 1].a += '\n\n' + a; continue; }  // 同一题的第二个折叠块
+    items.push({ label: label || String(items.length + 1), tag, q, a });
+  }
+  return items;
+}
+async function renderSelf(my) {
+  const v = $('#view');
+  const j = await api('/api/study/page?' + qs({ course: S.course, path: S.unit.path }));
+  if (my !== S.seq) return;
+  const items = selfTest(j.markdown);
+  v.innerHTML = '';
+  if (!items.length) {
+    v.append(h('div', { class: 'empty' }, h('h2', {}, L('这一节的学习页没有自测题', 'These notes have no self-test questions')),
+      h('p', {}, L('可以让右边出几道题考你：它先只出题，你答完再对照。', 'Ask on the right for a few questions: it asks first and checks after you answer.')),
+      h('button', { class: 'pill', onclick: () => { document.body.classList.add('ask-open'); send(L('出 5 道开放式的自测题考我。先只出题，不给答案，我答完你再对照。', 'Give me 5 open self-test questions on this session. Questions only for now; check my answers after I reply.')); } }, L('出几道题考我', 'Quiz me'))));
+    return;
+  }
+  const course = S.course, unit = S.unit;
+  const st = selfLoad(course, unit.path);
+  st.n = items.length;
+  if (!st.v || typeof st.v !== 'object') st.v = {};
+  const save = () => store.set(selfKey(course, unit.path), JSON.stringify(st));
+  save();
+  const refreshTab = () => { const b = document.querySelector('#tabs .tab[data-id="self"]'); if (b && S.unit === unit) b.textContent = selfTabLabel(unit); };
+  refreshTab();
+  const head = h('div', { class: 'shead' });
+  const paintHead = () => {
+    const vals = Object.values(st.v).filter(x => x && typeof x === 'object');
+    const seen = vals.filter(x => x.open).length, cnt = g => vals.filter(x => x.g === g).length;
+    head.innerHTML = '';
+    head.append(h('span', { class: 'big' }, L(`${items.length} 道题`, `${items.length} questions`)),
+      h('span', { class: 'sub' }, L(`看过 ${seen} · 对了 ${cnt('ok')} · 差一点 ${cnt('close')} · 没答上 ${cnt('miss')}`, `Seen ${seen} · right ${cnt('ok')} · close ${cnt('close')} · missed ${cnt('miss')}`)),
+      h('span', { class: 'grow' }),
+      h('button', { class: 'pill ghost', onclick: () => { if (!confirm(L('清掉这一节写过的答案和标记？', 'Clear your answers and marks for this session?'))) return; st.v = {}; save(); selectTab('self'); } }, L('清空重来', 'Start over')));
+  };
+  paintHead();
+  const wrap = h('div', { class: 'self' }, head,
+    h('p', { class: 'rsum' }, L('先在框里写你的答案，再点「看答案」对照；不想写也可以直接看。写的答案只存在这台设备的浏览器里。', 'Write your answer in the box, then reveal the reference to compare, or just reveal it. Your answers stay in this browser only.')));
+  items.forEach((it, i) => {
+    const rec = st.v[i] && typeof st.v[i] === 'object' ? st.v[i] : (st.v[i] = {});
+    const box = h('div', { class: 'sq' });
+    const ta = h('textarea', { rows: 3, placeholder: L('先写你的答案（可以不写）', 'Your answer first (optional)'), 'aria-label': L(`第 ${i + 1} 题你的答案`, `Your answer to question ${i + 1}`) });
+    ta.value = rec.a || '';
+    const reveal = h('button', { class: 'pill' });
+    const askB = h('button', { class: 'pill ghost', title: L('把你的答案发给右边，对照参考答案讲讲对在哪、漏了什么', 'Send your answer to the chat to compare with the reference answer') }, L('让它看看我的答案', 'Check my answer'));
+    const cmp = h('div', { class: 'cmp' });
+    const grade = h('div', { class: 'grade' });
+    const paintBtns = () => {
+      const mine = ta.value.trim();
+      reveal.textContent = rec.open ? L('盖上答案', 'Hide answer') : mine ? L('看答案，对照一下', 'Reveal and compare') : L('直接看答案', 'Just show the answer');
+      askB.style.display = mine ? '' : 'none';
+    };
+    const paint = () => {
+      box.className = 'sq' + (rec.g ? ' g-' + rec.g : '');
+      paintBtns();
+      cmp.innerHTML = '';
+      grade.innerHTML = '';
+      cmp.style.display = grade.style.display = rec.open ? '' : 'none';
+      if (!rec.open) return;
+      const mine = (rec.a || '').trim();
+      cmp.className = 'cmp' + (mine ? '' : ' one');
+      if (mine) cmp.append(h('div', { class: 'mine' }, h('div', { class: 'lab' }, L('你的答案', 'Your answer')), h('div', { class: 'txt' }, mine)));
+      cmp.append(h('div', { class: 'ans' }, h('div', { class: 'lab' }, L('参考答案', 'Reference answer')), mdEl(it.a)));
+      grade.append(h('span', {}, L('自己判一下：', 'Mark it:')),
+        ...[['ok', L('对了', 'Right')], ['close', L('差一点', 'Close')], ['miss', L('没答上', 'Missed')]].map(([g, label]) =>
+          h('button', { class: g + (rec.g === g ? ' on' : ''), 'aria-pressed': rec.g === g ? 'true' : 'false', onclick: () => { rec.g = rec.g === g ? undefined : g; save(); paint(); paintHead(); } }, label)));
+    };
+    let tm = 0;
+    ta.addEventListener('input', () => {
+      rec.a = ta.value;
+      paintBtns();
+      clearTimeout(tm);
+      tm = setTimeout(() => { save(); if (rec.open) paint(); }, 400);
+    });
+    reveal.addEventListener('click', () => { rec.a = ta.value; rec.open = !rec.open; save(); paint(); paintHead(); refreshTab(); });
+    askB.addEventListener('click', () => askSelf(it, i, ta.value.trim()));
+    box.append(h('div', { class: 'sqq' }, h('span', { class: 'sqn' }, /^\d+$/.test(it.label) ? it.label + '.' : it.label),
+      h('div', { class: 'sqb' }, it.tag ? h('div', { class: 'sqtag' }, it.tag) : null, h('div', { class: 'md', html: renderMD(it.q) }))),
+      ta, h('div', { class: 'sqa' }, reveal, askB), cmp, grade);
+    paint();
+    wrap.append(box);
+  });
+  v.append(wrap);
+}
+// 「让它看看我的答案」：题目和参考答案只给助手看（引用），对话里显示你的答案
+function askSelf(it, i, mine) {
+  if (!mine) return;
+  if (S.busy) { alert(L('右边还在回上一条，等它说完再点。', 'The chat is still answering; try again when it finishes.')); return; }
+  const n = it.label.replace(/^Q/i, '') || String(i + 1);
+  S.quote = { section: L(`自测第 ${n} 题`, `Self-test Q${n}`), text: L(`题目：${it.q}\n\n参考答案：${it.a}`, `Question: ${it.q}\n\nReference answer: ${it.a}`), sel: false };
+  paintQuote();
+  document.body.classList.add('ask-open');
+  send(L(`我的答案：${mine}\n\n对照参考答案帮我看看：对在哪、漏了什么、哪里说错了。简短点。`, `My answer: ${mine}\n\nCompare it with the reference answer: what's right, what's missing, what's wrong. Keep it short.`));
 }
 
 // —— 视频：这一节已有的 + 让助手做一个新的 ——
