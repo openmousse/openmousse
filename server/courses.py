@@ -493,7 +493,7 @@ def create_course(body: CourseIn):
 
 
 def unique_code(title: str, name: str) -> str:
-    """缩写别和学习台里别的课撞（「今天」页、截止表靠它分课）：Behavioural Economics 撞了 Business Economics 的 BE → BEE → BEH …"""
+    """缩写别和学习台里别的课撞（「今天」页、截止表靠它分课）：Behavioural Economics 撞了 Business Ethics 的 BE → BEE → BEH …"""
     taken = set()
     for other in study.courses():
         if other == name:
