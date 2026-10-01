@@ -192,9 +192,14 @@ export function TodayScreen() {
   const route = useRoute<any>();
   const focused = useIsFocused();
   const { inbox, inboxRecent, receipts, feed: allFeed, schedule, scheduleEditable, remember, rememberErrors, upcoming, groups, sideChats, dismissFeed, markFeedSeen, tasks, connected, booting, reload, refreshLive, loading, dataErrors } = useStore();
-  const feed = shownCards(allFeed);
-  const [showOff, setShowOff] = useState(false);
   const [offset, setOffset] = useState(0);
+  // 建议卡只显示今天的；看过的（上次打开这一页时看过的）收起来。这次在屏幕上看过的留到离开这一页，免得读着读着没了（Leo 2026-10-01）
+  const [keepIds, setKeepIds] = useState<Set<string>>(() => new Set());
+  const [showRead, setShowRead] = useState(false);
+  const todayCards = shownCards(allFeed).filter((f) => !f.createdAt || f.createdAt.slice(0, 10) === isoOf(0));
+  const feed = todayCards.filter((f) => f.seen === false || keepIds.has(f.id) || showRead);
+  const readHidden = todayCards.length - feed.length;
+  const [showOff, setShowOff] = useState(false);
   const [dayRefresh, setDayRefresh] = useState(0);
   const bg = tasks.filter((x) => x.status === '进行中').slice(0, 3);
   const iso = isoOf(0);
@@ -229,7 +234,7 @@ export function TodayScreen() {
       const y0 = l.pad + l.feed + it.y;
       return Math.min(bottom, y0 + it.h) - Math.max(top, y0) >= Math.min(it.h * 0.5, 160);
     }).map((x) => x.id);
-    if (ids.length) mark(ids);
+    if (ids.length) { mark(ids); setKeepIds((k) => new Set([...k, ...ids])); }
   }, []);
   const scheduleSeen = useCallback(() => {
     if (seenTimer.current) clearTimeout(seenTimer.current);
@@ -239,6 +244,13 @@ export function TodayScreen() {
     if (focused && offset === 0) scheduleSeen();
     return () => { if (seenTimer.current) clearTimeout(seenTimer.current); };
   }, [focused, offset, feed, scheduleSeen]);
+  // 离开这一页 / app 退到后台：这次看过的卡下次就不再显示
+  const resetRead = useCallback(() => { setKeepIds((k) => (k.size ? new Set() : k)); setShowRead(false); }, []);
+  useEffect(() => { if (!focused) resetRead(); }, [focused, resetRead]);
+  useEffect(() => {
+    const sub = AppState.addEventListener('change', (st) => { if (st === 'background') resetRead(); });
+    return () => sub.remove();
+  }, [resetRead]);
 
   // 回到这一页时，有回执还在等结果：看看做完没有
   useEffect(() => { if (focused && waiting && connected) reload('inboxRecent').catch(() => {}); }, [focused, waiting, connected, reload]);
@@ -252,6 +264,7 @@ export function TodayScreen() {
   if (hlAt !== seenAt) {
     setSeenAt(hlAt);
     if (hlAt) setOffset(0);
+    if (hlAt && hl?.kind === 'card') setKeepIds((k) => new Set([...k, hl.id]));  // 从通知点进来的那张，看过了也要显示
   }
   const hlRef = useRef(hl);
   // 现在页面上有哪些卡（量过的位置可能是早就划掉的那张留下的）
@@ -385,8 +398,13 @@ export function TodayScreen() {
               ))}
             </View>
           ) : (
-            <Card><T v="callout" color={t.ink2}>{L('还没有建议。起床报告和主动提醒会出现在这里。', 'No suggestions yet. Morning reports and proactive reminders will show up here.')}</T></Card>
+            <Card><T v="callout" color={t.ink2}>{readHidden ? L('今天的建议都看过了。', "You've read all of today's suggestions.") : L('还没有建议。起床报告和主动提醒会出现在这里。', 'No suggestions yet. Morning reports and proactive reminders will show up here.')}</T></Card>
           )}
+          {readHidden ? (
+            <Pressable onPress={() => setShowRead(true)} hitSlop={8} accessibilityRole="button" style={({ pressed }) => ({ paddingVertical: space.sm, opacity: pressed ? 0.6 : 1 })}>
+              <T v="caption" color={t.ink3}>{L(`看过的 ${readHidden} 张已收起 · 展开`, `${readHidden} read · Show`)}</T>
+            </Pressable>
+          ) : null}
 
           <SectionLabel>{L('接下来会自动做的事', 'Coming up automatically')}</SectionLabel>
           {upcoming.length ? (

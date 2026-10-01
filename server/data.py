@@ -543,14 +543,15 @@ def applications(all: int = 0):
 
 @router.get("/api/feed")
 def feed(date: str | None = None):
-    """不带 date：最近 20 条没划掉的（「今天」页默认）。带 date（YYYY-MM-DD）：那一天的建议卡，翻看过去 / 未来用。"""
+    """不带 date：今天（用户时区）没划掉的建议卡（「今天」页默认，2026-10-01 起只给当天的；看过的由 app 收起）。带 date（YYYY-MM-DD）：那一天的建议卡，翻看过去 / 未来用。"""
     with _lock, ddb() as conn:
         if date:
             if len(date) != 10 or date[4] != "-" or date[7] != "-":
                 raise HTTPException(400, L("date 要写成 YYYY-MM-DD", "date must be YYYY-MM-DD"))
             rows = conn.execute("SELECT * FROM feed_items WHERE dismissed=0 AND substr(created_at,1,10)=? ORDER BY created_at DESC LIMIT 50", (date,)).fetchall()
         else:
-            rows = conn.execute("SELECT * FROM feed_items WHERE dismissed=0 ORDER BY created_at DESC LIMIT 20").fetchall()
+            today_iso = datetime.now(TZ).strftime("%Y-%m-%d")
+            rows = conn.execute("SELECT * FROM feed_items WHERE dismissed=0 AND substr(created_at,1,10)=? ORDER BY created_at DESC LIMIT 50", (today_iso,)).fetchall()
     return {"ok": True, "feed": [{"id": r["id"], "groupId": r["group_id"], "title": r["title"], "body": r["body"] or "", "cta": r["cta"] or "", "kind": r["kind"] if "kind" in r.keys() else None, "data": json.loads(r["data"]) if "data" in r.keys() and r["data"] else None, "createdAt": r["created_at"],
                                   "time": when(datetime.fromisoformat(r["created_at"])), "seen": bool(r["seen_at"])} for r in rows]}
 

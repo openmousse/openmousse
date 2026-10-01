@@ -16,7 +16,9 @@ from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
 import inbox
-from chat import _lock, now_iso
+from datetime import datetime
+
+from chat import TZ, _lock, now_iso
 from data import ddb
 from i18n import L
 from push import preview
@@ -61,7 +63,7 @@ async def summary() -> dict:
             last = conn.execute("SELECT id, text, ts, origin FROM messages WHERE id=?", (c["lastId"],)).fetchone()
             threads[th] = {"n": c["n"], "mine": c["mine"],
                            "last": {"id": f"db{last['id']}", "text": preview(last["text"]), "ts": last["ts"], "origin": last["origin"]} if last else None}
-        feed_new = [r["id"] for r in conn.execute("SELECT id FROM feed_items WHERE seen_at IS NULL AND dismissed=0 ORDER BY created_at DESC LIMIT 50")]
+        feed_new = [r["id"] for r in conn.execute("SELECT id FROM feed_items WHERE seen_at IS NULL AND dismissed=0 AND substr(created_at,1,10)=? ORDER BY created_at DESC LIMIT 50", (datetime.now(TZ).strftime("%Y-%m-%d"),))]  # 只算今天的（「今天」页只显示当天的卡）
     pending = await inbox.pending_count()
     fr = friend_unread()
     return {"ok": True, "threads": threads, "feedNew": feed_new, "inbox": pending, "friends": fr,
