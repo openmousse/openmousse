@@ -8,7 +8,7 @@
 # 默认会经 Gateway 发一句测试消息看模型能不能回话（单独一个会话，不进主对话；用一点点额度），--no-chat 跳过。
 # 只用系统自带的 python3：服务、venv 坏了也能跑。
 set -u
-command -v python3 >/dev/null 2>&1 || { echo "✗ 缺 python3 / python3 is missing (sudo apt install python3)"; exit 1; }
+command -v python3 >/dev/null 2>&1 || { echo "✗ 缺 python3 / python3 is missing (Linux: sudo apt install python3; macOS: brew install python)"; exit 1; }
 exec python3 - "$@" <<'PY'
 import json
 import os
@@ -100,10 +100,45 @@ def run(cmd: list[str], timeout: float = 20) -> tuple[int, str, str]:
 
 
 HAS_SYSTEMD = shutil.which("systemctl") is not None
+IS_MAC = sys.platform == "darwin"
+HAS_LAUNCHD = IS_MAC and shutil.which("launchctl") is not None
+HAS_SERVICES = HAS_SYSTEMD or HAS_LAUNCHD
+# macOS 上我们的服务是 LaunchAgent（packs/core/setup.py、tree/openmousse_tree/cli.py 装的）：systemd 单元名 → launchd 标签
+LABELS = {"openmousse-server": "ai.openmousse.server", "mousse-tree": "ai.openmousse.tree", "openmousse-daily-close.timer": "ai.openmousse.daily-close"}
+LOGS = {"openmousse-server": "~/.openmousse/logs/server.log", "mousse-tree": "~/.mousse-tree/tree.log", "openmousse-daily-close": "~/.openmousse/logs/daily-close.log"}
+
+
+def launchd_info(label: str) -> dict:
+    """launchctl print 的几项：state、last exit code。没装上 → {}。先看登录用户的 gui 域，再看 user 域。"""
+    for d in (f"gui/{os.getuid()}", f"user/{os.getuid()}"):
+        c, o, _ = run(["launchctl", "print", f"{d}/{label}"])
+        if c == 0:
+            info = {"domain": d}
+            for k in ("state", "last exit code"):
+                m = re.search(rf"^\s*{k} = (.+)$", o, re.M)
+                if m:
+                    info[k] = m.group(1).strip()
+            return info
+    return {}
 
 
 def unit(name: str) -> str:
-    return run(["systemctl", "--user", "is-active", name])[1] or "unknown" if HAS_SYSTEMD else "no-systemd"
+    if HAS_SYSTEMD:
+        return run(["systemctl", "--user", "is-active", name])[1] or "unknown"
+    if HAS_LAUNCHD and name in LABELS:
+        info = launchd_info(LABELS[name])
+        if not info:
+            return L("没装上", "not installed")
+        if name.endswith(".timer"):  # 定时跑的：装上了就算开着
+            return "active"
+        return "active" if info.get("state") == "running" else info.get("state", "unknown")
+    return "no-systemd"
+
+
+def ts_bin() -> str:
+    """tailscale 命令：PATH 里的；macOS 上 App Store / brew --cask 装的是 app，命令行在 app 包里。"""
+    app = "/Applications/Tailscale.app/Contents/MacOS/Tailscale"
+    return shutil.which("tailscale") or (app if IS_MAC and os.access(app, os.X_OK) else "")
 
 
 def http(url: str, token: str = "", method: str = "GET", body: dict | None = None, headers: dict | None = None, timeout: float = 5) -> tuple[int, str]:
@@ -118,8 +153,17 @@ def http(url: str, token: str = "", method: str = "GET", body: dict | None = Non
         return 0, str(getattr(e, "reason", "") or type(e).__name__)
 
 
+def restart_cmd(u: str) -> str:
+    if IS_MAC:
+        return "openclaw gateway restart" if u == "openclaw-gateway" else f"launchctl kickstart -k gui/$(id -u)/{LABELS.get(u, u)}"
+    return f"systemctl --user restart {u}"
+
+
 def restart_hint(u: str) -> str:
-    return f"systemctl --user restart {u}" + L(f"；看日志 journalctl --user -u {u} -n 50", f"; logs: journalctl --user -u {u} -n 50")
+    if IS_MAC:
+        log = LOGS.get(u)
+        return restart_cmd(u) + (L(f"；看日志 tail -n 50 {log}", f"; logs: tail -n 50 {log}") if log else "")
+    return restart_cmd(u) + L(f"；看日志 journalctl --user -u {u} -n 50", f"; logs: journalctl --user -u {u} -n 50")
 
 
 # —— 开头：版本 ——
@@ -147,8 +191,14 @@ if HAS_SYSTEMD:
         ok(L("登出后服务照跑（linger）", "Services keep running after logout (linger)"))
     elif c == 0:
         warn(L("登出后服务会停（linger 没开）", "Services stop when you log out (linger is off)"), fix="sudo loginctl enable-linger $USER")
+elif HAS_LAUNCHD:
+    plist = HOME / "Library/LaunchAgents/ai.openmousse.server.plist"
+    if plist.exists():
+        ok(L("登录后自动启动（launchd）", "Starts at login (launchd)"))
+    else:
+        warn(L("还没装成开机自启", "Not set to start at login yet"), str(plist).replace(str(HOME), "~", 1), L("再跑一遍安装命令", "run the installer again"))
 else:
-    warn(L("这台机器没有 systemctl", "No systemctl on this machine"), L("服务要自己手动跑", "run the services yourself"))
+    warn(L("这台机器没有 systemctl 也没有 launchd", "No systemctl or launchd on this machine"), L("服务要自己手动跑", "run the services yourself"))
 
 # —— OpenMousse 服务 ——
 section(L("OpenMousse 服务", "OpenMousse server"))
@@ -168,7 +218,7 @@ if not (MOUSSE / "venv/bin/python").exists():
 if not repo:
     bad(L("仓库", "Repository"), L("~/.openmousse/repo 不在", "~/.openmousse/repo is missing"), L("再跑一遍安装命令", "run the installer again"))
 st = unit("openmousse-server")
-if HAS_SYSTEMD and st != "active":
+if HAS_SERVICES and st != "active":
     bad("openmousse-server", st, restart_hint("openmousse-server"))
 tok = str(tokens.get("local") or tokens.get("phone") or next((v for k, v in tokens.items() if k not in ("mcp", "sentinel") and not str(k).startswith("mcp-")), ""))  # mcp、sentinel 在 /api 上不通
 code, body = http(f"http://{host}:{port}/api/health", tok)
@@ -180,7 +230,7 @@ if code == 200:
         health = {}
     ok(L("服务在回话", "Server answers"), f"http://{host}:{port}" + (L("（还没用过：第一次打开 app 会出「从这里开始」）", " (not used yet: the app will show “Start here”)") if health.get("first_run") else ""))
 elif code in (401, 403):
-    bad(L("服务在，但令牌对不上", "Server is up but the token doesn't match"), f"HTTP {code}", L("令牌改过的话重启一下服务：", "if you changed tokens, restart it: ") + "systemctl --user restart openmousse-server")
+    bad(L("服务在，但令牌对不上", "Server is up but the token doesn't match"), f"HTTP {code}", L("令牌改过的话重启一下服务：", "if you changed tokens, restart it: ") + restart_cmd("openmousse-server"))
 else:
     bad(L("服务连不上", "Server not reachable"), f"http://{host}:{port} · {clean(body, 80)}", restart_hint("openmousse-server"))
 if code == 200:  # MCP 入口：claw 不用 shell 也能用看板、收件箱这些（server/mcp_bridge.py）
@@ -205,21 +255,23 @@ if code == 200:  # MCP 入口：claw 不用 shell 也能用看板、收件箱这
 # —— 手机怎么连 ——
 section(L("手机怎么连（Tailscale）", "Reaching it from the phone (Tailscale)"))
 ts_ip = ""
-if not shutil.which("tailscale"):
+TS = ts_bin()
+if not TS:
     warn(L("没装 Tailscale", "Tailscale isn't installed"), L("手机在外面连不上服务器", "the phone can't reach the server from outside"),
+         L("从 App Store 装 Tailscale（或 brew install --cask tailscale）并登录，再跑一遍安装命令", "install Tailscale from the App Store (or brew install --cask tailscale), sign in, then run the installer again") if IS_MAC else
          L("curl -fsSL https://tailscale.com/install.sh | sh && sudo tailscale up，再跑一遍安装命令", "curl -fsSL https://tailscale.com/install.sh | sh && sudo tailscale up, then run the installer again"))
 else:
-    c, o, e = run(["tailscale", "status", "--json"])
+    c, o, e = run([TS, "status", "--json"])
     state = ""
     try:
         state = json.loads(o).get("BackendState", "") if c == 0 else ""
     except ValueError:
         pass
-    ts_ip = (run(["tailscale", "ip", "-4"])[1].splitlines() or [""])[0]
+    ts_ip = (run([TS, "ip", "-4"])[1].splitlines() or [""])[0]
     if state == "Running" and ts_ip:
         ok("Tailscale", L(f"在线，这台机器是 {ts_ip}", f"online, this machine is {ts_ip}"))
     else:
-        bad("Tailscale", state or clean(e, 80) or L("没连上", "not connected"), "sudo tailscale up")
+        bad("Tailscale", state or clean(e, 80) or L("没连上", "not connected"), L("打开 Tailscale app 登录", "open the Tailscale app and sign in") if IS_MAC else "sudo tailscale up")
 if host.startswith("100.") and ts_ip and host != ts_ip:
     bad(L("服务听的地址不是这台机器现在的 Tailscale 地址", "The server listens on an old Tailscale address"), f"{host} ≠ {ts_ip}", L("再跑一遍安装命令（它会换过来）", "run the installer again (it switches over)"))
 elif host in ("127.0.0.1", "localhost") and ts_ip:
@@ -403,7 +455,7 @@ if not tc:
     warn(L("没装世界树", "The memory tree isn't set up"), fix=L("再跑一遍安装命令", "run the installer again"))
 else:
     st = unit("mousse-tree")
-    if HAS_SYSTEMD and st != "active":
+    if HAS_SERVICES and st != "active":
         bad("mousse-tree", st, restart_hint("mousse-tree"))
     tport = int(tc.get("port") or 8787)
     c, b = http(f"http://127.0.0.1:{tport}/health")
@@ -467,6 +519,15 @@ if HAS_SYSTEMD:
                                                 "" if res in ("success", "") else L("看日志：journalctl --user -u openmousse-daily-close -n 50", "logs: journalctl --user -u openmousse-daily-close -n 50"))
     else:
         bad(L("每晚日结的定时器没开", "The nightly digest timer is off"), st, "systemctl --user enable --now openmousse-daily-close.timer")
+elif HAS_LAUNCHD:
+    info = launchd_info(LABELS["openmousse-daily-close.timer"])
+    if not info:
+        bad(L("每晚日结没装上", "The nightly digest isn't installed"), "ai.openmousse.daily-close", L("再跑一遍安装命令", "run the installer again"))
+    else:
+        last = info.get("last exit code", "")
+        good = last in ("", "0") or last.startswith("(never")  # 还没跑过时 launchctl 写 (never exited)
+        (ok if good else warn)(L("每晚日结", "Nightly digest"), L("每天 03:45（这台 Mac 的时钟）", "daily at 03:45 (this Mac's clock)") + ("" if good else L(f"，上次退出码 {last}", f", last exit code {last}")),
+                               "" if good else L("看日志：tail -n 50 ~/.openmousse/logs/daily-close.log", "logs: tail -n 50 ~/.openmousse/logs/daily-close.log"))
 db = Path(str(cfg.get("db") or "")).expanduser() if cfg.get("db") else Path(str(cfg.get("data_dir") or MOUSSE / "data")).expanduser() / "mousse.db"
 if db.exists():
     try:

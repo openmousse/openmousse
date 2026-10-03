@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# OpenMousse 一条命令安装（Linux，已经跑着一个 claw 的机器：OpenClaw，或者别的有 OpenAI 兼容接口的 claw / agent）：
+# OpenMousse 一条命令安装（Linux、macOS 或 Windows 的 WSL 2，已经跑着一个 claw 的机器：OpenClaw，或者别的有 OpenAI 兼容接口的 claw / agent）：
 #   curl -fsSL https://raw.githubusercontent.com/openmousse/openmousse/main/install.sh | bash
 # 或在仓库里：bash install.sh
 #
@@ -26,9 +26,14 @@ if [ -n "$SELF_DIR" ] && [ -f "$SELF_DIR/server/run.py" ] && [ -f "$SELF_DIR/pac
 fi
 
 say "OpenMousse 安装 / install"
-command -v git >/dev/null || die "缺 git / git is missing (apt install git)"
-command -v python3 >/dev/null || die "缺 python3 / python3 is missing (need 3.11+)"
-python3 - <<'EOF' || die "python3 要 3.11 以上 / python3 must be 3.11 or newer"
+if [ "$(uname -s)" = Darwin ]; then  # macOS：系统自带的 python3 是 3.9，用 Homebrew 装新的
+  GIT_HINT="xcode-select --install, or brew install git"; PY_HINT="brew install python"
+else
+  GIT_HINT="sudo apt install git"; PY_HINT="sudo apt install python3"
+fi
+command -v git >/dev/null || die "缺 git / git is missing ($GIT_HINT)"
+command -v python3 >/dev/null || die "缺 python3 / python3 is missing (need 3.11+: $PY_HINT)"
+python3 - <<'EOF' || die "python3 要 3.11 以上 / python3 must be 3.11 or newer ($PY_HINT)"
 import sys; sys.exit(0 if sys.version_info >= (3, 11) else 1)
 EOF
 if ! python3 -c 'import venv, ensurepip' 2>/dev/null; then
@@ -94,7 +99,8 @@ if [ -z "$DEF_TZ" ] && [ -f "${MOUSSE_OPENCLAW_HOME:-$DEF_HOME}/openclaw.json" ]
   DEF_TZ="$(python3 -c 'import json, sys; print(((json.load(open(sys.argv[1])).get("agents") or {}).get("defaults") or {}).get("userTimezone") or "")' "${MOUSSE_OPENCLAW_HOME:-$DEF_HOME}/openclaw.json" 2>/dev/null || true)"
 fi
 if [ -z "$DEF_TZ" ]; then
-  DEF_TZ="$(cat /etc/timezone 2>/dev/null || timedatectl show -p Timezone --value 2>/dev/null || echo UTC)"
+  # Debian / Ubuntu 有 /etc/timezone；systemd 的机器问 timedatectl；macOS（和别的）看 /etc/localtime 指向哪个 zoneinfo
+  DEF_TZ="$(cat /etc/timezone 2>/dev/null || timedatectl show -p Timezone --value 2>/dev/null || readlink /etc/localtime 2>/dev/null | sed -n 's|.*zoneinfo/||p' | grep . || echo UTC)"
   [ "$DEF_TZ" = "Etc/UTC" ] && DEF_TZ="UTC"
 fi
 DEF_NAME="$(saved "c.get('app_name')")"

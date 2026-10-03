@@ -52,13 +52,13 @@ Design principles:
 
 ## Install
 
-Prerequisite: a Linux machine with OpenClaw installed and a model configured (`openclaw onboard` done, Gateway running). Then one command:
+Prerequisite: a machine running Linux, macOS or Windows (through WSL 2) with OpenClaw installed and a model configured (`openclaw onboard` done, Gateway running). Then one command:
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/openmousse/openmousse/main/install.sh | bash
 ```
 
-It asks four questions (language, where OpenClaw lives, your timezone, what to call the assistant) and does the rest: clones the repo, installs Python dependencies into `~/.openmousse/venv`, writes `~/.openmousse/server.json`, generates a phone token, wires the [`packs/core`](packs/core/) skills and the daily-close timer into your OpenClaw (backing up `openclaw.json` first and validating afterwards), installs systemd services, and finally prints how to connect your phone. Two more questions are optional: an Obsidian vault folder already synced to the server (the memory tree and the thinking space then live in it), and whether to open up public HTTPS through Tailscale Funnel (AI platforms such as Claude.ai, ChatGPT, Gemini, Notion or any other MCP client can then reach the memory tree, shares get links, and friends can add you). Running it again is safe: it only fills in what is missing.
+It asks four questions (language, where OpenClaw lives, your timezone, what to call the assistant) and does the rest: clones the repo, installs Python dependencies into `~/.openmousse/venv`, writes `~/.openmousse/server.json`, generates a phone token, wires the [`packs/core`](packs/core/) skills and the daily-close timer into your OpenClaw (backing up `openclaw.json` first and validating afterwards), sets the server to start on its own (systemd on Linux and WSL, launchd on macOS), and finally prints how to connect your phone. Two more questions are optional: an Obsidian vault folder already synced to the server (the memory tree and the thinking space then live in it), and whether to open up public HTTPS through Tailscale Funnel (AI platforms such as Claude.ai, ChatGPT, Gemini, Notion or any other MCP client can then reach the memory tree, shares get links, and friends can add you). Running it again is safe: it only fills in what is missing.
 
 Easiest if the machine is on Tailscale: the server binds to its Tailscale address and a phone with Tailscale can connect directly. Otherwise it listens on localhost only; expose it with `tailscale serve` or a reverse proxy as HTTPS.
 

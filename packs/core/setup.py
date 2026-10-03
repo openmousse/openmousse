@@ -24,7 +24,9 @@
        就在最后打印要手动跑的命令，照样装完。同一问也开分享和朋友：server.json 的 share.public_port（127.0.0.1 上只有 /s、/f 的小服务）
        + share.public_url，Funnel 开 /s、/f（见 share_public）；OpenClaw 还开 llm-task 插件（名片 agent 用，见 enable_llm_task）
      - 世界树服务已经在跑（再跑一遍安装器）就重启它：pip 刚装了新代码，配置也可能改了（换存储、加 Host）
-  6. systemd user 服务：openmousse-server、openmousse-daily-close.timer；loginctl enable-linger。没有 systemctl 的机器跳过，最后说怎么手动跑
+  6. 开机自启：Linux（含 WSL）用 systemd user 服务 openmousse-server、openmousse-daily-close.timer + loginctl enable-linger；
+     macOS 用 launchd：~/Library/LaunchAgents 里的 ai.openmousse.server、ai.openmousse.daily-close（日志在 ~/.openmousse/logs）。
+     两样都没有的机器跳过，最后说怎么手动跑
 再跑一遍是安全的：已有的不动，只补缺的。
 语言（这里的输出、server.json 的 language、AGENTS.md 规则、世界树）：--lang；没给就用 server.json 里已有的，
 再没有就看环境变量 LC_ALL / LANG（zh 开头 → 中文，其它 → English）。
@@ -52,6 +54,11 @@ HERE = Path(__file__).resolve().parent
 MOUSSE_HOME = Path("~/.openmousse").expanduser()
 SERVER_JSON = MOUSSE_HOME / "server.json"
 TREE_HOME = Path(os.environ.get("MOUSSE_TREE_HOME", Path.home() / ".mousse-tree"))  # 世界树的配置和库，和 tree/openmousse_tree/config.py 同一个位置
+IS_MAC = sys.platform == "darwin"
+LAUNCH_AGENTS = Path("~/Library/LaunchAgents").expanduser()
+LOG_DIR = MOUSSE_HOME / "logs"  # macOS：launchd 服务的输出（Linux 走 journald）
+# 我们的服务在两种系统上的名字：systemd 单元名 → launchd 标签（世界树的标签和 tree/openmousse_tree/cli.py 里的一致）
+LABELS = {"openmousse-server": "ai.openmousse.server", "openmousse-daily-close": "ai.openmousse.daily-close", "mousse-tree": "ai.openmousse.tree"}
 FUNNEL_TIMEOUT = 30  # 秒：tailnet 还没开 Funnel 时 tailscale funnel 会一直等你去后台点开，安装不能卡在那
 PUBLIC_PATHS = ("/t", "/m", "/s", "/f")  # Funnel 只开这几条：世界树的 MCP（/t /m）、分享页（/s）、朋友（/f）；app 的 /api 永远不上公网
 SHARE_PORT = 8089  # 对外小服务（server/public.py：只有 /s 和 /f）默认的本机端口，被占了就往后找
@@ -162,17 +169,113 @@ def has_systemd() -> bool:
     return shutil.which("systemctl") is not None
 
 
+def has_launchd() -> bool:
+    return IS_MAC and shutil.which("launchctl") is not None
+
+
+def has_services() -> bool:
+    """这台机器有我们会用的服务管理器吗（Linux / WSL 的 systemd，或 macOS 的 launchd）。"""
+    return has_systemd() or has_launchd()
+
+
+def restart_cmd(name: str) -> str:
+    """给人看的：在这台机器上怎么重启我们的某个服务。"""
+    if IS_MAC:
+        return f"launchctl kickstart -k gui/$(id -u)/{LABELS.get(name, name)}"
+    return f"systemctl --user restart {name}"
+
+
+def logs_cmd(name: str, n: int = 50) -> str:
+    """给人看的：怎么看我们某个服务的日志。"""
+    if IS_MAC:
+        log = TREE_HOME / "tree.log" if name == "mousse-tree" else LOG_DIR / f"{name.removeprefix('openmousse-')}.log"
+        return f"tail -n {n} {str(log).replace(str(Path.home()), '~', 1)}"
+    return f"journalctl --user -u {name} -n {n}"
+
+
+def status_cmd(name: str) -> str:
+    if IS_MAC:
+        return f"launchctl print gui/$(id -u)/{LABELS.get(name, name)}"
+    return f"systemctl --user status {name}"
+
+
+def tailscale_bin() -> str | None:
+    """tailscale 命令在哪：PATH 里的；macOS 上 App Store / brew --cask 装的是 app，命令行在 app 包里，不在 PATH。"""
+    found = shutil.which("tailscale")
+    if found:
+        return found
+    app = "/Applications/Tailscale.app/Contents/MacOS/Tailscale"
+    return app if IS_MAC and os.access(app, os.X_OK) else None
+
+
+def tailscale_install_hint() -> str:
+    if IS_MAC:
+        return L("从 App Store 装 Tailscale（或 brew install --cask tailscale）并登录", "install Tailscale from the App Store (or brew install --cask tailscale) and sign in")
+    return "curl -fsSL https://tailscale.com/install.sh | sh && sudo tailscale up"
+
+
+def launch_agent(label: str, args: list[str], *, workdir: Path | None = None, log: Path | None = None,
+                 calendar: dict | None = None, restart: bool = True) -> tuple[bool, str]:
+    """macOS：写 ~/Library/LaunchAgents/<label>.plist 并交给 launchd。常驻服务（没有 calendar）开机就起、挂了就拉起来；
+    calendar（如 {"Hour": 3, "Minute": 45}）= 按本机时钟定时跑一次。定义没变、已经在跑的常驻服务 kickstart -k 重启，换上新代码。
+    → (成功, 出错时的原文)。先试登录用户的 gui 域，没有图形会话（只 SSH 进来）就用 user 域。"""
+    import plistlib
+    import time
+    LAUNCH_AGENTS.mkdir(parents=True, exist_ok=True)
+    plist: dict = {"Label": label, "ProgramArguments": [str(x) for x in args],
+                   # launchd 给的 PATH 只有系统目录：带上安装时的 PATH，claw（npm 全局）、brew 装的 git / python 才找得到
+                   "EnvironmentVariables": {"PATH": os.environ.get("PATH") or "/usr/bin:/bin:/usr/sbin:/sbin", "LANG": os.environ.get("LANG") or "en_US.UTF-8"}}
+    if calendar:
+        plist["StartCalendarInterval"] = calendar
+    else:
+        plist.update(RunAtLoad=True, KeepAlive=True, ThrottleInterval=5)
+    if workdir:
+        plist["WorkingDirectory"] = str(workdir)
+    if log:
+        log.parent.mkdir(parents=True, exist_ok=True)
+        plist["StandardOutPath"] = plist["StandardErrorPath"] = str(log)
+    path = LAUNCH_AGENTS / f"{label}.plist"
+    data = plistlib.dumps(plist)
+    changed = not path.exists() or path.read_bytes() != data
+    path.write_bytes(data)
+    uid = os.getuid()
+    domains = [f"gui/{uid}", f"user/{uid}"]
+    loaded = next((d for d in domains if run(["launchctl", "print", f"{d}/{label}"]).returncode == 0), None)
+    if loaded and changed:  # 定义改了：卸掉重装才读新的 plist
+        run(["launchctl", "bootout", f"{loaded}/{label}"])
+        time.sleep(1)
+        loaded = None
+    if loaded:
+        run(["launchctl", "enable", f"{loaded}/{label}"])
+        if restart and not calendar:
+            r = run(["launchctl", "kickstart", "-k", f"{loaded}/{label}"])
+            if r.returncode != 0:
+                return False, (r.stderr or r.stdout).strip()[-200:]
+        return True, ""
+    err = ""
+    for d in domains:
+        for _ in range(3):  # 刚 bootout 的服务 launchd 还在收尾时，bootstrap 会报 5: Input/output error：等一下再试
+            r = run(["launchctl", "bootstrap", d, str(path)])
+            if r.returncode == 0:
+                run(["launchctl", "enable", f"{d}/{label}"])
+                return True, ""
+            err = (r.stderr or r.stdout).strip()[-200:]
+            time.sleep(1)
+    return False, err
+
+
 def tailscale_ip() -> str | None:
-    if not shutil.which("tailscale"):
+    ts = tailscale_bin()
+    if not ts:
         return None
-    r = run(["tailscale", "ip", "-4"])
+    r = run([ts, "ip", "-4"])
     ip = (r.stdout or "").strip().splitlines()
     return ip[0] if r.returncode == 0 and ip else None
 
 
 def tailscale(*args: str) -> subprocess.CompletedProcess:
     """跑 tailscale，最多等 FUNNEL_TIMEOUT 秒；超时或跑不起来都算失败（returncode -1），不抛。"""
-    cmd = ["tailscale", *args]
+    cmd = [tailscale_bin() or "tailscale", *args]
     try:
         return run(cmd, timeout=FUNNEL_TIMEOUT)
     except subprocess.TimeoutExpired as e:  # 超时的时候拿到的输出是 bytes
@@ -666,9 +769,9 @@ def tree_public(exe: Path) -> tuple[list[str], bool]:
     → (还要用户在服务器上跑的命令，[] = 都好了；世界树的配置改没改)。令牌一个都不打印。"""
     tag = L("世界树公网：", "Memory tree, public: ")
     again = L("# 然后再跑一遍安装器，「开公网」答 y", "# then run the installer again and answer y to going public")
-    if not shutil.which("tailscale"):
+    if not tailscale_bin():
         say(tag + L("这台机器没有 tailscale 命令，跳过", "no tailscale command on this machine; skipped"))
-        return ["curl -fsSL https://tailscale.com/install.sh | sh && sudo tailscale up", again], False
+        return [tailscale_install_hint(), again], False
     r = tailscale("status", "--json")
     try:
         dns = str((json.loads(r.stdout).get("Self") or {}).get("DNSName") or "").rstrip(".") if r.returncode == 0 else ""
@@ -709,14 +812,14 @@ def tree_public(exe: Path) -> tuple[list[str], bool]:
     r = run([str(exe), "init", "--host", dns])
     if r.returncode != 0:
         say(tag + L("加 Host 白名单没成功：", "adding it to the Host allowlist failed: ") + (r.stderr or r.stdout).strip()[-300:])
-        return [*todo, f"{exe} init --host {dns} && systemctl --user restart mousse-tree"], False
+        return [*todo, f"{exe} init --host {dns} && {restart_cmd('mousse-tree')}"], False
     say(tag + L(f"{dns} 加进了世界树的 Host 白名单", f"added {dns} to the memory tree's Host allowlist"))
     return todo, True
 
 
 def tailscale_dns() -> str:
     """这台机器在 Tailscale 里的 MagicDNS 名字；没装、没登录、读不到都是 ""。"""
-    if not shutil.which("tailscale"):
+    if not tailscale_bin():
         return ""
     r = tailscale("status", "--json")
     try:
@@ -746,9 +849,9 @@ def share_public() -> tuple[list[str], str]:
     → (还要用户在服务器上跑的命令，[] = 都好了；对外地址，"" = 没配成)。服务要重启才起小服务：安装器最后一步本来就重启。"""
     tag = L("分享和朋友：", "Sharing and friends: ")
     again = L("# 然后再跑一遍安装器，「开公网」答 y", "# then run the installer again and answer y to going public")
-    if not shutil.which("tailscale"):
+    if not tailscale_bin():
         say(tag + L("这台机器没有 tailscale 命令，跳过", "no tailscale command on this machine; skipped"))
-        return ["curl -fsSL https://tailscale.com/install.sh | sh && sudo tailscale up", again], ""
+        return [tailscale_install_hint(), again], ""
     dns = tailscale_dns()
     if not dns:
         say(tag + L("拿不到这台机器在 Tailscale 里的名字（还没登录？），跳过", "couldn't get this machine's Tailscale name (not logged in?); skipped"))
@@ -849,8 +952,8 @@ def wait_server(cfg: dict, wait: float = 20) -> None:
             return
         except (urllib.error.URLError, OSError):
             if time.time() >= deadline:
-                say(L(f"openmousse-server 过了 {int(wait)} 秒还没回话：`journalctl --user -u openmousse-server -n 50` 看为什么",
-                      f"openmousse-server isn't answering after {int(wait)} seconds: see why with `journalctl --user -u openmousse-server -n 50`"))
+                say(L(f"openmousse-server 过了 {int(wait)} 秒还没回话：`{logs_cmd('openmousse-server')}` 看为什么",
+                      f"openmousse-server isn't answering after {int(wait)} seconds: see why with `{logs_cmd('openmousse-server')}`"))
                 return
             time.sleep(0.5)
 
@@ -950,23 +1053,57 @@ def setup_tree(venv: Path, cfg: dict, home: Path, no_systemd: bool, vault: Path 
             r = run(["systemctl", "--user", "restart", "mousse-tree.service"])
             say(tag + (L("服务已重启（换上这次的代码和配置）", "restarted the service (picks up this run's code and config)") if r.returncode == 0 else
                        L("重启服务失败 ", "restarting the service failed ") + (r.stderr or r.stdout).strip()[-200:]))
+    elif not no_systemd and has_launchd():
+        # macOS：install-service 写 LaunchAgent 并交给 launchd；已经在跑的它会 kickstart -k，换上这次的代码和配置
+        r = run([str(exe), "install-service"])
+        say(tag + ((r.stdout or r.stderr).strip().splitlines() or [L("install-service 没输出", "install-service printed nothing")])[-1])
     elif not no_systemd:
-        say(tag + L("这台机器没有 systemctl：自己跑 `~/.openmousse/venv/bin/mousse-tree serve`（已经在跑就重启它）",
-                    "no systemctl on this machine: run `~/.openmousse/venv/bin/mousse-tree serve` yourself (restart it if it's already running)"))
+        say(tag + L("这台机器没有 systemctl 也没有 launchd：自己跑 `~/.openmousse/venv/bin/mousse-tree serve`（已经在跑就重启它）",
+                    "no systemctl or launchd on this machine: run `~/.openmousse/venv/bin/mousse-tree serve` yourself (restart it if it's already running)"))
     elif changed:
-        say(tag + L("配置改了，重启世界树服务生效（systemctl --user restart mousse-tree）",
-                    "its config changed; restart the memory tree service to apply it (systemctl --user restart mousse-tree)"))
+        say(tag + L(f"配置改了，重启世界树服务生效（{restart_cmd('mousse-tree')}）",
+                    f"its config changed; restart the memory tree service to apply it ({restart_cmd('mousse-tree')})"))
     return todo
 
 
-# —— 6：systemd ——
+# —— 6：开机自启（systemd / launchd） ——
+
+def install_services(repo: Path, venv: Path, tz: str) -> None:
+    if has_systemd():
+        install_systemd(repo, venv, tz)
+    elif has_launchd():
+        install_launchd(repo, venv, tz)
+    else:
+        say(L("没有 systemctl 也没有 launchd：手动跑 `~/.openmousse/venv/bin/python ~/.openmousse/repo/server/run.py`，日结用 cron 每天 03:45 跑 packs/core/scripts/daily_close.py",
+              "No systemctl or launchd: run `~/.openmousse/venv/bin/python ~/.openmousse/repo/server/run.py` yourself, and run "
+              "packs/core/scripts/daily_close.py from cron every day at 03:45 for the daily digest"))
+
+
+def local_tz() -> str:
+    """这台机器自己的时区名（/etc/localtime 指向的 zoneinfo），拿不到就空。"""
+    with contextlib.suppress(OSError):
+        target = os.path.realpath("/etc/localtime")
+        if "zoneinfo/" in target:
+            return target.split("zoneinfo/", 1)[1]
+    return ""
+
+
+def install_launchd(repo: Path, venv: Path, tz: str) -> None:
+    """macOS：服务常驻（登录后起、挂了拉起来），日结按本机时钟每天 03:45 跑一次。日志在 ~/.openmousse/logs。"""
+    py = venv / "bin/python"
+    jobs = ((LABELS["openmousse-server"], [py, "run.py"], dict(workdir=repo / "server", log=LOG_DIR / "server.log")),
+            (LABELS["openmousse-daily-close"], [py, repo / "packs/core/scripts/daily_close.py"],
+             dict(workdir=repo, log=LOG_DIR / "daily-close.log", calendar={"Hour": 3, "Minute": 45}, restart=False)))
+    for label, args, kw in jobs:
+        ok, err = launch_agent(label, args, **kw)
+        say(L(f"{label}：{'已启动' if ok else '启动失败 ' + err}", f"{label}: {'started' if ok else 'failed to start ' + err}"))
+    here = local_tz()
+    if tz and here and here != tz:  # launchd 只认本机时钟：时区不一样时，日结的钟点跟着这台 Mac 走
+        say(L(f"日结按这台 Mac 的时钟（{here}）每天 03:45 跑；你设的时区是 {tz}",
+              f"The daily digest runs at 03:45 on this Mac's clock ({here}); your time zone is set to {tz}"))
+
 
 def install_systemd(repo: Path, venv: Path, tz: str) -> None:
-    if not shutil.which("systemctl"):
-        say(L("没有 systemctl：手动跑 `~/.openmousse/venv/bin/python ~/.openmousse/repo/server/run.py`，日结用 cron 每天 03:45 跑 packs/core/scripts/daily_close.py",
-              "No systemctl: run `~/.openmousse/venv/bin/python ~/.openmousse/repo/server/run.py` yourself, and run "
-              "packs/core/scripts/daily_close.py from cron every day at 03:45 for the daily digest"))
-        return
     unit_dir = Path("~/.config/systemd/user").expanduser()
     unit_dir.mkdir(parents=True, exist_ok=True)
     for fn in ("openmousse-server.service", "openmousse-daily-close.service", "openmousse-daily-close.timer"):
@@ -1076,9 +1213,9 @@ def main() -> None:
     restarted = False
     self_apply = restart and gateway_applies_config(oc_path)
     if not a.no_systemd:
-        print("systemd")
-        install_systemd(repo, venv, cfg["timezone"])  # 没有 systemctl 它自己说怎么手动跑
-        if has_systemd():
+        print("launchd" if has_launchd() and not has_systemd() else "systemd")
+        install_services(repo, venv, cfg["timezone"])  # 两样都没有它自己说怎么手动跑
+        if has_services():
             wait_server(cfg)
     if self_apply:
         say(L("openclaw.json 改了，Gateway 自己会套用：能热加载的马上生效，要重启的它等手头的对话做完自己重启",
@@ -1087,6 +1224,12 @@ def main() -> None:
         run(["systemctl", "--user", "restart", "--no-block", "openclaw-gateway"])  # 不等：原因见 gateway_applies_config
         restarted = True
         say(L("openclaw-gateway 在重启（配置改了；手头的对话做完才重启）", "Restarting openclaw-gateway (its config changed; it finishes the turns in progress first)"))
+    elif restart and not a.no_systemd and has_launchd() and shutil.which(cfg.get("openclaw_bin") or "openclaw"):
+        # macOS 上 Gateway 是 OpenClaw 自己装的 LaunchAgent：让 openclaw 去重启，放到后台不等（同 --no-block，原因见 gateway_applies_config）
+        subprocess.Popen([cfg.get("openclaw_bin") or "openclaw", "gateway", "restart"], env=openclaw_env(home), stdin=subprocess.DEVNULL,
+                         stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, start_new_session=True)
+        restarted = True
+        say(L("Gateway 在重启（配置改了；手头的对话做完才重启）", "Restarting the Gateway (its config changed; it finishes the turns in progress first)"))
     elif restart:
         say(L("openclaw.json 改了，重启你的 Gateway 生效", "openclaw.json changed: restart your Gateway to apply it"))
     gw_line = ""
@@ -1171,8 +1314,8 @@ def main() -> None:
     print()
     print(L("检查：", "Check:"))
     print(f"  curl -H 'Authorization: Bearer <token>' {url}/api/health")
-    print(L("  systemctl --user status openmousse-server   # 日志：journalctl --user -u openmousse-server -f",
-            "  systemctl --user status openmousse-server   # logs: journalctl --user -u openmousse-server -f"))
+    follow = logs_cmd("openmousse-server").replace("tail -n 50", "tail -f").replace(" -n 50", " -f")
+    print(L(f"  {status_cmd('openmousse-server')}   # 日志：{follow}", f"  {status_cmd('openmousse-server')}   # logs: {follow}"))
     if public is None:
         exposed = bool(tree_config().get("public_hosts"))
         print(L("  ~/.openmousse/venv/bin/mousse-tree urls      # 世界树接各平台的地址" + ("" if exposed else "（先开公网：再跑一遍安装器，「开公网」答 y）"),
