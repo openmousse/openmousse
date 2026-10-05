@@ -45,7 +45,7 @@ The card agent calls a model only through `cardagent.py`, **never through the cl
 - `enc` (2026-10-05): the X25519 public key for end-to-end encryption, `{"kty": "OKP", "crv": "X25519", "x": "<32 bytes base64url>"}`; its private key sits in the same `identity.json` (`enc`). When present, requests are sealed as in 6.1.
 - `relay` (2026-10-05, optional): a fallback address (the relay) next to a direct one; senders switch to it when the direct address can't be reached.
 - `name`: server.json's `user_name`. You can't add friends until you have one (the app asks first).
-- `caps`: `chat` friend chat, `ask` shares can take follow-up questions (the card agent answers). Layer ③ adds `a2a` together with a field `"a2a": "<url>/f/a2a/agent-card.json"`.
+- `caps`: `chat` friend chat, `ask` shares can take follow-up questions (the card agent answers). Layer ③ adds `a2a` together with a field `"a2a": "<url>/f/a2a/agent-card.json"`; a server with a card agent adds `agent`; `read` and `react` (2026-10-05) mean it understands the read-receipt and reaction control messages (see 7).
 - Only strings, arrays and objects go into the card: no numbers (see canonicalization below).
 - This is the social card; **the A2A card is a separate document** (`/f/a2a/agent-card.json`, layer ③) signed with the same key, whose identity extension carries `kid`, `x` and `"card": "<url>/f/card"`. They are separate because the two layers may ship at different times and an A2A card without an A2A endpoint is meaningless, and because other vendors' SDKs verify A2A cards after a round trip through protobuf (dropping unknown fields and empty values): that trap stays on the card meant for them, not on the identity path friends rely on.
 
@@ -220,8 +220,10 @@ One message per request:
 | `revoke` | `target` | withdraw a message I sent (their copy is emptied and shows "Alex withdrew this") |
 | `card` | `card` | my card changed (new address, new name, new caps): verified and applied when the kid matches |
 | `bye` | — | I removed you: mark me `gone` and stop sending |
+| `read` | `upto` | Read receipt (2026-10-05): I've seen your message with id `upto` (and the ones before it). Sent only to friends whose card caps include `read`; read receipts are a two-way switch: whoever turns them off neither sends them nor shows the other side's |
+| `react` | `target`, `emoji` | Reaction (2026-10-05) to any message in this chat, either side's; `emoji: null` removes it. One per person per message, only 👍 ❤️ 😂 😮 😢 🙏 (anything else is a 400). Sent only to friends whose caps include `react` |
 
-The receiver answers `200 {"ok": true, "id": "<id>", "dup": false}` (`dup: true` for a repeat); an `edit` / `revoke` whose `target` isn't a message from this sender still gets 200 with `"ignored": true`. Errors: `400 bad_request`, `401 bad_signature`, `403 not_friends`, `413 too_large`, `429 slow_down`.
+The receiver answers `200 {"ok": true, "id": "<id>", "dup": false}` (`dup: true` for a repeat); an `edit` / `revoke` whose `target` isn't a message from this sender (or a `read` / `react` pointing at a message it can't find) still gets 200 with `"ignored": true`. **Older servers answer an unknown `kind` with 400**, so a new control message is only sent after checking the friend's card `caps`. Errors: `400 bad_request`, `401 bad_signature`, `403 not_friends`, `413 too_large`, `429 slow_down`.
 
 **Delivery**: the sender writes the message into `friend_messages` first (`status = queued`) and then sends it; network errors, 5xx and 429 are retried after 30 s, 2 min, 10 min, 1 h, 6 h and then every 6 h, and after 3 days it's marked `failed` (the app shows "Not delivered · Retry"); any other 4xx fails at once. When the address or the name changes (`share.public_url`, `user_name`) the server sends every friend a `card` by itself.
 
@@ -233,7 +235,7 @@ The receiver answers `200 {"ok": true, "id": "<id>", "dup": false}` (`dup: true`
 4. In Alex's app the answer carries a box only he sees: "Fine" (`review = ok`) / "I'll rewrite it" (sends `edit` with `by = person`; `cardagent.retract(log_id, replaced=True)`, logged as "rewrote an answer") / "Withdraw" (sends `revoke`; `cardagent.retract(log_id)`). Withdrawn and rewritten originals are no longer given to the card agent as context.
 5. Until `cardagent.py` exists (layer ③ not live), questions are never answered automatically: they just show up in Alex's chat for him to answer.
 
-**Not in v1**: group chats ("CS group · 4 people"), link-only contacts (people without OpenMousse, like Dad: layer ①'s links already cover them), image and voice attachments, read receipts, typing indicators, key rotation, friends of friends.
+**Not in v1**: group chats ("CS group · 4 people"), link-only contacts (people without OpenMousse, like Dad: layer ①'s links already cover them), image and voice attachments, typing indicators, key rotation, friends of friends. Read receipts and reactions came on 2026-10-05 (`read`, `react`, sent by caps); replies have always been there (`reply_to` on `text`), and editing your own text is `edit`.
 
 ## 8. Tiers
 

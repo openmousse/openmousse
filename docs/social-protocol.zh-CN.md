@@ -45,7 +45,7 @@
 - `enc`（2026-10-05）：端到端加密用的 X25519 公钥 `{"kty": "OKP", "crv": "X25519", "x": "<32 字节 base64url>"}`，私钥和签名种子存在同一个 `identity.json`（`enc` 字段）。有它就按 6.1 封信封。
 - `relay`（2026-10-05，可选）：直连之外的备用地址（中继），直连连不上时发件人改用它。
 - `name`：server.json 的 `user_name`。没设称呼不能加朋友（app 先让你设）。
-- `caps`：`chat` 朋友聊天、`ask` 分享能被追问（名片 agent 代答）；第三层上线后加 `a2a`，同时多一个字段 `"a2a": "<url>/f/a2a/agent-card.json"`。
+- `caps`：`chat` 朋友聊天、`ask` 分享能被追问（名片 agent 代答）；第三层上线后加 `a2a`，同时多一个字段 `"a2a": "<url>/f/a2a/agent-card.json"`；装了名片 agent 的加 `agent`；`read`、`react`（2026-10-05）= 认得已读回执和表情回应这两种控制消息（见 7）。
 - 名片里只放字符串、数组、对象，不放数字和小数（规范化见下）。
 - 这份是社交名片，**A2A 名片另是一份**（`/f/a2a/agent-card.json`，第三层）：同一把钥匙签，A2A 名片的身份 extension 里放 `kid`、`x` 和 `"card": "<url>/f/card"`。分两份是因为两层不一定同时上线，没有 A2A 接口时 A2A 名片不成立；另外别家 SDK 验 A2A 名片时会把它转成 proto 再转回来（丢掉 proto 里没有的字段和空值），这个坑只留在给别家看的那一份上。
 
@@ -220,8 +220,10 @@ Signature: om=:<base64(签名)>:
 | `revoke` | `target` | 收回我先前发的一条（对方那边清空正文，显示「Alex 收回了这条」） |
 | `card` | `card` | 我的名片变了（换了地址、改了名字、多了能力）：对方验签、kid 一样就更新 |
 | `bye` | — | 我把你删了：对方标 `gone`，不再往这边发 |
+| `read` | `upto` | 已读回执（2026-10-05）：我看到了你发来的、id 为 `upto` 的那条（和它之前的）。只发给名片 caps 里有 `read` 的朋友；已读回执是双向开关，关了的一方既不发，也不显示对方的 |
+| `react` | `target`、`emoji` | 表情回应（2026-10-05）：对这段聊天里的一条（谁发的都行）点一个表情，`emoji` 为 `null` = 取消；每人每条一个，只认 👍 ❤️ 😂 😮 😢 🙏 这 6 个，别的回 400。只发给 caps 里有 `react` 的朋友 |
 
-收的一方回 `200 {"ok": true, "id": "<id>", "dup": false}`（重复的 `dup: true`）；`edit` / `revoke` 的 `target` 不是这个人发给我的，照样 200、带 `"ignored": true`。错误：`400 bad_request`、`401 bad_signature`、`403 not_friends`、`413 too_large`、`429 slow_down`。
+收的一方回 `200 {"ok": true, "id": "<id>", "dup": false}`（重复的 `dup: true`）；`edit` / `revoke` 的 `target` 不是这个人发给我的（`read` 的 `upto`、`react` 的 `target` 找不到），照样 200、带 `"ignored": true`。**老服务器收到不认识的 `kind` 回 400**：新加的控制消息先看对方名片的 `caps` 再发。错误：`400 bad_request`、`401 bad_signature`、`403 not_friends`、`413 too_large`、`429 slow_down`。
 
 **投递**：发的一方先写进 `friend_messages`（`status = queued`）再发；网络错、5xx、429 按 30 秒、2 分钟、10 分钟、1 小时、6 小时，之后每 6 小时重试，3 天还没送到标 `failed`（app 里「没送到 · 重发」）；其余 4xx 直接 `failed`。地址换了（`share.public_url` 或名字变了）服务器自己给所有朋友发一条 `card`。
 
@@ -233,7 +235,7 @@ Signature: om=:<base64(签名)>:
 4. Alex 的 app 里这条下面有一个只有他看得到的框：「没问题」（`review = ok`）/「我来改」（发 `edit`，`by = person`；`cardagent.retract(log_id, replaced=True)`，活动记录写「改了一条代答」）/「收回」（发 `revoke`；`cardagent.retract(log_id)`）。收回和改过的原文不再给名片 agent 当上下文。
 5. `cardagent.py` 还没有（第三层没上线）时，追问一律不自动答，只出现在 Alex 的聊天里等他自己回。
 
-**v1 不做**：群聊（「CS 小组 · 4 人」）、只收链接的联系人（「爸爸」这种没装 OpenMousse 的，第一层的链接已经够用）、图片和语音附件、已读回执、正在输入、换钥匙、朋友的朋友。
+**v1 不做**：群聊（「CS 小组 · 4 人」）、只收链接的联系人（「爸爸」这种没装 OpenMousse 的，第一层的链接已经够用）、图片和语音附件、正在输入、换钥匙、朋友的朋友。已读回执和表情回应 2026-10-05 加上了（`read`、`react`，按 caps 发）；回复引用一直有（`text` 的 `reply_to`），编辑自己发的文字也是 `edit`。
 
 ## 8. 档位
 

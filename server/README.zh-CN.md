@@ -119,7 +119,7 @@ python3 inbox_ctl.py list [--status recent]
 
 ## 对话：排队、停止、引用
 
-- 一个对话同一时间只有一条回复在跑。回复进行中你又发的（`/api/chat/send`）不再 409：先记进库（status `queued`，app 上标「排队」），SSE 先回一个 `queued` 事件，连接等着；这条回复一结束（包括被停掉），排着的几条合成一轮发给模型（编号列出，前面一句说明：分开回答时每段开头单独一行写 `> 「原话」`，app 把它画成引用、点了跳回那条），等着的连接都接到这一轮上。服务重启时库里还排着的：30 分钟以内的接着发，更早的标成没发出去。定时器、转交这类系统触发（`/api/chat/trigger`、`relay`）照旧遇忙 409。
+- 一个对话同一时间只有一条回复在跑。回复进行中你又发的（`/api/chat/send`）不再 409：先记进库（status `queued`，app 上标「排队」），SSE 先回一个 `queued` 事件，连接等着；这条回复一结束（包括被停掉），排着的几条合成一轮发给模型（编号列出，前面一句说明：分开回答时每段开头单独一行写 `> 「原话」`，app 把它画成引用、点了跳回那条），等着的连接都接到这一轮上。服务重启时库里还排着的：30 分钟以内的接着发，更早的标成没发出去。定时器这类系统触发（`/api/chat/trigger`）照旧遇忙 409；转交（`relay`）改成排队（见下）。
 - `POST /api/chat/stop` `{thread}`：停掉正在进行的回复——断开到 Gateway 的连接，Gateway 就中止这一轮；已经说了的留着，末尾加「（停了）」，status `stopped`，不推送。排着的接着发。
 - 长按「引用」：`/api/chat/send` 带 `replyTo`（`db<id>`）。模型另外看到原话，这条记 `reply_to`，`/api/chat/history` 里带 `replyTo {id, role, text}`，app 在气泡上面显示。
 - 走 Gateway 的 WebSocket 对话通道（server.json `chat.transport: "ws"`，见 `gateway_ws.py`）时：回复进行中你又发的不排队，改成**插话**——`chat.send` 带 `queueMode: steer`，Gateway 在这一轮的下一步把这句交给模型，还是同一条回复（这条记 status `steered`，app 上标「插话」）；Gateway 没能插进去、排成了单独一轮的，接管它记成这条的回复。停止用 `chat.abort`。一轮由 Gateway 跑到底：服务重启时还没回完的，启动后接管或从 `chat.history` 补回回复。带图片的消息仍走 HTTP（照样排队）。第一次连会在本机回环地址自动配对，设备身份存 `<data_dir>/gateway-device.json`。
@@ -142,7 +142,7 @@ python3 inbox_ctl.py list [--status recent]
 
 主对话把问题转给某个 Agent（`scripts/ask_agent.py` → `/api/chat/relay`），或者派一个后台任务（OpenClaw 的 `sessions_spawn`），对话里都会出一张卡。见 [`cards.py`](cards.py)。
 
-- **转交卡**：问题一转出去就出现（「正在问 饮食记录…」，带着转过去的原话），答完变成「转给了 饮食记录 · 34 秒」，挂在发起转交的那条回复下面。点一下打开那个 Agent 的对话，定位到那个问题。转交记在 grava.db 的 `handoffs`；「发起转交的那条回复」= relay 进来时正在回复的那个线程（脚本不知道自己在哪个会话里；几个同时在回复时优先主 agent 的线程，再取最晚开始的）。那个 Agent 正忙（409）也记一张，状态 `busy`。
+- **转交卡**：问题一转出去就出现（「正在问 饮食记录…」，带着转过去的原话），答完变成「转给了 饮食记录 · 34 秒」，挂在发起转交的那条回复下面。点一下打开那个 Agent 的对话，定位到那个问题。转交记在 grava.db 的 `handoffs`；「发起转交的那条回复」= relay 进来时正在回复的那个线程（脚本不知道自己在哪个会话里；几个同时在回复时优先主 agent 的线程，再取最晚开始的）。2026-10-05 起转给正在忙的 Agent 不再失败：卡上写「正忙，已排队」（`queued`），那个 Agent 一空下来（你自己在那边排着的消息先发）就转进去，排队的时间算在 relay 的 `timeout` 里；到时还没轮到，relay 回 200、`status: queued`，后台接着等，最多 15 分钟，回答进那个 Agent 的对话，卡跟着变。排着的转交算进 `/api/chat/busy`，`safe_restart` 会等它们。以前的记录里可能还有 `busy`（那时 409，没转过去）。
 - **任务卡**：读 OpenClaw 的任务台账（`<openclaw_home>/state/openclaw.sqlite` 的 `task_runs` / `subagent_runs`，只读，一次几毫秒；`tasks.list` 要 2 秒）。回复进行中每 2 秒看一眼这个会话有没有新派的，有就从同一条 SSE 流发过去（`event: card`），卡片当场出现；回复结束时挂到这条回复下面（`task_links`）。进行中显示在做哪一步（「在读 L2.pdf」，读子会话记录，最多 20 秒一次）；做完显示结果开头。「改一下」把意见发给同一个子会话（`POST /api/tasks/{id}/revise`），第几轮、意见、每一轮的结果从 `task:<id>` 线程算。
 - **额度**：`server.json` 的 `tasks: {daily_limit: 10, max_minutes: 30, notify_done: true}`。只是给 Agent 看的数（`tasks_ctl.py quota`，用完了退出码 3）；真正到点停掉任务的是 OpenClaw 的 `agents.defaults.subagents.runTimeoutSeconds`。
 
@@ -157,7 +157,7 @@ python3 tasks_ctl.py list
 | `GET /api/tasks/quota` | `{today, running, limit, left, maxMinutes}`；读不到台账时 `today` / `left` 是 null |
 | `GET /api/tasks` | 多了 `quota`（外加今天用了多少 `tokens`），每个任务多了 `minutes`、`timedOut`、`step` |
 
-转交卡：`{kind: "handoff", id, thread, messageId, createdAt, status: running / done / error / busy / lost, to, toName, from, fromName, question, seconds, relayId, replyId, error}`。任务卡：`{kind: "task", id, thread, messageId, createdAt, status（进行中 / 完成 / 失败 / 已取消）, timedOut, title, deliverable: [], modelId, minutes, startedAt, finishedAt, tools, step, result, error, round, roundStatus, note, roundResult, tokens, limitMinutes, seq, dailyLimit}`（`seq` = 今天第几个派的）。`deliverable` 取任务正文里「要交：」/「Deliverable:」那一行和紧跟着的列表。
+转交卡：`{kind: "handoff", id, thread, messageId, createdAt, status: queued / running / done / error / busy / lost, to, toName, from, fromName, question, seconds, relayId, replyId, error}`。任务卡：`{kind: "task", id, thread, messageId, createdAt, status（进行中 / 完成 / 失败 / 已取消）, timedOut, title, deliverable: [], modelId, minutes, startedAt, finishedAt, tools, step, result, error, round, roundStatus, note, roundResult, tokens, limitMinutes, seq, dailyLimit}`（`seq` = 今天第几个派的）。`deliverable` 取任务正文里「要交：」/「Deliverable:」那一行和紧跟着的列表。
 
 ## 日程和「要记得的」
 
@@ -543,9 +543,12 @@ app 里「对话 → 朋友」。你的服务器和朋友的服务器直接说�
 | `GET /api/friends` | 能不能加朋友（`ready`、`why`）、你的名字和指纹、朋友和各自最后一句、未读、没用的邀请码 |
 | `POST /api/friends/invites`、`DELETE /api/friends/invites/{id}` | `{note?, tier, days?}` → 邀请链接和二维码（SVG path，只给这一次）；收回没用过的 |
 | `POST /api/friends/preview`、`POST /api/friends/accept` | `{code}` → 对方是谁（用链接里的公钥核对过）；`{code, tier, alias?}` → 兑换 |
-| `PATCH` / `DELETE /api/friends/{id}`、`POST /api/friends/{id}/block` | 档位、备注；删朋友（会告诉对方）；拉黑 / 解开 |
-| `GET /api/friends/{id}/messages?after=`、`POST …/messages`、`POST …/ask`、`POST …/read` | 聊天记录（`recent` 带状态变化）；发；对着对方的一条分享追问；标已读 |
+| `PATCH` / `DELETE /api/friends/{id}`、`POST /api/friends/{id}/block` | 档位、备注、`pinned` 置顶、`muted` 免打扰（不推送、不算角标）；删朋友（会告诉对方）；拉黑 / 解开 |
+| `GET /api/friends/{id}/messages?after=&before=`、`POST …/messages`、`POST …/ask`、`POST …/read` | 聊天记录：最新一页带 `more`（前面还有），`before` 往上翻，`after` 轮询（从早到晚给，`recent` 带状态、编辑、表情回应、`hidden`）。每条可能带 `read`（对方看过；已读回执开着才有）、`reactions` `{me, them}`、`quote`（回复的原话）。发（`replyTo` = 那条的 mid）；对着对方的一条分享追问；标已读（两边都开着已读回执时，顺带发一条 `read` 告诉对方） |
 | `POST /api/friends/messages/{id}/review`、`…/revoke`、`…/retry` | 名片 agent 的代答：`{action: ok \| edit \| revoke, text?}`；收回自己发的；重发没送到的 |
+| `POST /api/friends/messages/{id}/edit`、`…/react`、`…/hide` | 改自己发的文字（`{text}`，对方标「已编辑」）；表情回应 `{emoji}`（6 个之一，`null` 取消；对方服务器太旧回 409）；只在我这删除 |
+| `GET` / `PATCH /api/friends/prefs` | `{notify, preview, receipts, friends: [{id, name, muted}]}`：好友通知、通知里显示内容、已读回执（双向）。存在 `social_settings`，优先于 `server.json` 的 `social.push` |
+| `GET /api/friends/search?q=` | `{friends: [名字对得上的 id], hits: [{friend, name, id, mid, dir, kind, ts, snippet}]}`；`/api/search` 不带 `thread` 时也带这些（`kind: friend`） |
 | `POST /api/shares/{id}/send` | `{friends, ask, link, text?}` |
 | `GET` / `PATCH /api/card` | 档位、近况和名字（`name`；还没设时有 `suggest`） |
 | `GET /f/card`、`/f/jwks.json`、`/f/i/{token}/{key}`；`POST /f/hello`、`/f/msg` | 公开的（只在小服务上）：签名名片、公钥、邀请落地页；兑换邀请码、投消息（要签名） |
