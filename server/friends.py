@@ -669,6 +669,15 @@ def store_in(fid: str, mid: str, kind: str, text: str, *, at: str, data: dict | 
         return cur.lastrowid
 
 
+def retry_now(fid: str) -> None:
+    """对方的服务器刚送进来一条（说明它在线，或者刚换了地址）：给它排着的消息不等退避的时间，马上重发。"""
+    with _lock, db() as conn:
+        n = conn.execute("UPDATE friend_messages SET next_try=NULL WHERE friend=? AND dir='out' AND status='queued' AND next_try IS NOT NULL",
+                         (fid,)).rowcount
+    if n:
+        kick()
+
+
 def apply_control(f: dict, m: dict) -> bool:
     """edit / revoke：改对方先前发给我的那条。找不到就忽略（回 False）。"""
     target = _mid(m.get("target"))
@@ -707,6 +716,12 @@ async def receive(request: Request):
         return social.err(429, "slow_down", retry_after=60)
     if '"ok": false' in (social.get_setting("reach") or ""):  # 朋友的服务器送进来了：之前「连不到你」的结论作废
         social.set_setting("reach", json.dumps({"ok": True, "at": now_iso(), "by": f["name"]}, ensure_ascii=False))
+    try:
+        early = (json.loads(body) or {}).get("kind") != "card"  # 名片那条等新地址写进去以后再重发（见下面）
+    except (ValueError, AttributeError):
+        early = False
+    if early:
+        await asyncio.to_thread(retry_now, f["id"])  # 它在线：给它排着的马上重发
     try:
         m = json.loads(body)
         if not isinstance(m, dict) or m.get("v") != 1:
@@ -748,6 +763,7 @@ async def receive(request: Request):
             with _lock, db() as conn:
                 conn.execute("UPDATE friends SET url=?, name=?, caps=?, card=?, a2a=?, updated_at=? WHERE id=?",
                              (info["url"], info["name"], json.dumps(info["caps"]), json.dumps(info["card"], ensure_ascii=False), info["a2a"], now_iso(), f["id"]))
+            await asyncio.to_thread(retry_now, f["id"])  # 地址可能换了（比如改走中继）：按新地址马上重发
             return {"ok": True, "id": mid, "dup": False}
         elif kind == "bye":
             if store_in(f["id"], mid, "bye", "", at=at, status="applied") is None:
