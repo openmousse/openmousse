@@ -17,7 +17,7 @@
 ```bash
 pipx install "git+https://github.com/openmousse/openmousse#subdirectory=tree"      # 或 pip install --user
 mousse-tree init --name 你的称呼 --tz Asia/Shanghai         # 建库、生成各平台令牌
-mousse-tree install-service                                 # systemd 常驻，只监听 127.0.0.1:8787
+mousse-tree install-service                                 # 开机常驻（Linux：systemd；macOS：launchd），只监听 127.0.0.1:8787
 ```
 
 语言：`mousse-tree init --lang zh`（或 `en`）决定各平台看到的说明、工具描述、工具回话，以及命令行输出用中文还是英文。不给的话，第一次 `init` 看环境变量 `LANG`（zh 开头 → 中文，其它 → 英文）；加这个选项之前建的配置保持中文。改了之后重启服务生效。

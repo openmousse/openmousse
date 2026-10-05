@@ -14,13 +14,13 @@ OpenMousse doesn't replace you. It is a small server that sits next to you, plus
 
 ## 1. Check the machine
 
-OpenMousse runs on Linux next to your chat API. You need `python3` 3.11 or newer, `git` and `curl`:
+OpenMousse runs next to your chat API, on Linux, macOS or Windows (inside WSL 2). You need `python3` 3.11 or newer, `git` and `curl`:
 
 ```bash
 python3 --version && git --version && curl --version | head -1
 ```
 
-Missing ones on Ubuntu or Debian: `sudo apt install python3 python3-venv git curl`. Ask the user first, because this needs `sudo`.
+Missing ones on Ubuntu or Debian (WSL included): `sudo apt install python3 python3-venv git curl`. Ask the user first, because this needs `sudo`. On macOS: `brew install python git` (Homebrew, no `sudo`); the `python3` that ships with macOS is too old.
 
 ## 2. Turn on your chat API (not needed for OpenClaw)
 
@@ -44,6 +44,8 @@ If it isn't installed, ask the user first. Then run:
 curl -fsSL https://tailscale.com/install.sh | sh
 sudo tailscale up
 ```
+
+On macOS, Tailscale is an app rather than that script: ask the user to install it from the App Store (or run `brew install --cask tailscale`) and sign in. Its command-line tool is then `/Applications/Tailscale.app/Contents/MacOS/Tailscale`, which the installer finds on its own.
 
 `tailscale up` prints a login link. Send that link to the user so they can sign in with their own account. They also need the Tailscale app on their phone, signed in to the same account. Nothing becomes public: Tailscale is a private network between their own devices.
 

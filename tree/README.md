@@ -17,7 +17,7 @@ Every AI platform has its own "memory", none of them talk to each other, and you
 ```bash
 pipx install "git+https://github.com/openmousse/openmousse#subdirectory=tree"      # or pip install --user
 mousse-tree init --name YourName --tz Europe/London          # create the db, generate one token per platform
-mousse-tree install-service                                 # systemd, listens on 127.0.0.1:8787 only
+mousse-tree install-service                                 # starts at login (Linux: systemd; macOS: launchd), listens on 127.0.0.1:8787 only
 ```
 
 Language: `mousse-tree init --lang en` (or `zh`) sets the language of everything the platforms see (instructions, tool descriptions, tool replies) and of the command line. Without it, the first `init` follows `LANG` (`zh…` → Chinese, anything else → English); configs created before this option keep Chinese. Restart the service after changing it.

@@ -4,7 +4,7 @@
   mousse-tree serve                                                     前台跑服务（systemd 用这个）
   mousse-tree urls [--base https://xxx.ts.net]                          各平台接入地址（含令牌）
   mousse-tree install-openclaw [--openclaw-home DIR]                   给 OpenClaw 的 openclaw.json 加导出目录的检索路径（先备份，后校验，不过就恢复）
-  mousse-tree install-service                                           装 systemd user 服务并启动
+  mousse-tree install-service                                           装开机自启的服务并启动（Linux：systemd user 服务；macOS：launchd）
   mousse-tree add --source myclaw --text "..." [--kind ...] [--tags ...]
   mousse-tree recall --q 关键词 | recent [--days 7] | stats | export
   mousse-tree confirm <id> | forget <id>
@@ -35,7 +35,7 @@ USAGE_EN = """mousse-tree command line.
   mousse-tree serve                                                     run the service in the foreground (systemd uses this)
   mousse-tree urls [--base https://xxx.ts.net]                          each platform's connection URL (with its token)
   mousse-tree install-openclaw [--openclaw-home DIR]                   add the export directory to OpenClaw's openclaw.json search paths (backup first, validate after, restore if it fails)
-  mousse-tree install-service                                           install and start the systemd user service
+  mousse-tree install-service                                           install and start the service (Linux: a systemd user service; macOS: launchd)
   mousse-tree add --source myclaw --text "..." [--kind ...] [--tags ...]
   mousse-tree recall --q keyword | recent [--days 7] | stats | export
   mousse-tree confirm <id> | forget <id>
@@ -57,6 +57,57 @@ RestartSec=5
 [Install]
 WantedBy=default.target
 """
+
+
+LABEL = "ai.openmousse.tree"  # macOS 的 launchd 标签（packs/core/setup.py 里同一个）
+IS_MAC = sys.platform == "darwin"
+
+
+def restart_cmd() -> str:
+    """给人看的：在这台机器上怎么重启世界树服务。"""
+    return f"launchctl kickstart -k gui/$(id -u)/{LABEL}" if IS_MAC else "systemctl --user restart mousse-tree"
+
+
+def install_launchd(exe: list[str]) -> None:
+    """macOS：~/Library/LaunchAgents/ai.openmousse.tree.plist，登录后起、挂了拉起来；已经在跑就 kickstart -k 换上新代码。
+    先试登录用户的 gui 域，没有图形会话（只 SSH 进来）就用 user 域。"""
+    import plistlib
+    import time
+    log = C.HOME / "tree.log"
+    log.parent.mkdir(parents=True, exist_ok=True)
+    path = Path.home() / "Library/LaunchAgents" / f"{LABEL}.plist"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    data = plistlib.dumps({"Label": LABEL, "ProgramArguments": [*exe, "serve"], "RunAtLoad": True, "KeepAlive": True, "ThrottleInterval": 5,
+                           "StandardOutPath": str(log), "StandardErrorPath": str(log),
+                           "EnvironmentVariables": {"PATH": os.environ.get("PATH") or "/usr/bin:/bin:/usr/sbin:/sbin",
+                                                    "LANG": os.environ.get("LANG") or "en_US.UTF-8"}})
+    changed = not path.exists() or path.read_bytes() != data
+    path.write_bytes(data)
+    run = lambda *c: subprocess.run(["launchctl", *c], capture_output=True, text=True)
+    uid = os.getuid()
+    domains = [f"gui/{uid}", f"user/{uid}"]
+    loaded = next((d for d in domains if run("print", f"{d}/{LABEL}").returncode == 0), None)
+    if loaded and changed:
+        run("bootout", f"{loaded}/{LABEL}")
+        time.sleep(1)
+        loaded = None
+    if loaded:
+        r = run("kickstart", "-k", f"{loaded}/{LABEL}")
+        if r.returncode != 0:
+            sys.exit(C.L(f"重启服务失败：{(r.stderr or r.stdout).strip()[-200:]}", f"Restarting the service failed: {(r.stderr or r.stdout).strip()[-200:]}"))
+        print(C.L(f"服务已在运行，已重启（{path}）；日志：{log}", f"The service was running and has been restarted ({path}); logs: {log}"))
+        return
+    err = ""
+    for d in domains:
+        for _ in range(3):  # 刚 bootout 的服务还在收尾时 bootstrap 会报 5: Input/output error：等一下再试
+            r = run("bootstrap", d, str(path))
+            if r.returncode == 0:
+                run("enable", f"{d}/{LABEL}")
+                print(C.L(f"已装 {path}；状态：launchctl print {d}/{LABEL}；日志：{log}", f"Installed {path}; status: launchctl print {d}/{LABEL}; logs: {log}"))
+                return
+            err = (r.stderr or r.stdout).strip()[-200:]
+            time.sleep(1)
+    sys.exit(C.L(f"写了 {path}，但 launchd 没接受：{err}", f"Wrote {path}, but launchd refused it: {err}"))
 
 
 def cmd_init(a: argparse.Namespace) -> None:
@@ -151,7 +202,7 @@ def cmd_migrate(a: argparse.Namespace) -> None:
         C.save(cfg)
         S.sync_profile(S.connect())
         print(C.L(f"已换回 SQLite 存储：{n} 条写回 tree.db。笔记文件夹原样留着。", f"Switched back to SQLite storage: wrote {n} memories to tree.db. The notes folder is left as it is."))
-    print(C.L("重启服务生效：systemctl --user restart mousse-tree", "Restart the service to apply: systemctl --user restart mousse-tree"))
+    print(C.L(f"重启服务生效：{restart_cmd()}", f"Restart the service to apply: {restart_cmd()}"))
 
 
 def cmd_check(_: argparse.Namespace) -> None:
@@ -240,11 +291,14 @@ def cmd_install_openclaw(a: argparse.Namespace) -> None:
             sys.exit(C.L(f"openclaw config validate 没通过，{oc} 已恢复原样：", f"openclaw config validate failed; {oc} is restored as it was: ")
                      + (r.stdout + r.stderr).strip()[-500:])
     print(C.L(f"{oc} 的 extraPaths 加了 {export_dir}（备份 {backup}）", f"{oc}: added {export_dir} to extraPaths (backup {backup})"))
-    print(C.L("重启 gateway 生效：systemctl --user restart openclaw-gateway",
-              "Restart the gateway to apply it: systemctl --user restart openclaw-gateway"))
+    gw = "openclaw gateway restart" if IS_MAC else "systemctl --user restart openclaw-gateway"
+    print(C.L(f"重启 gateway 生效：{gw}", f"Restart the gateway to apply it: {gw}"))
 
 
 def cmd_install_service(_: argparse.Namespace) -> None:
+    if IS_MAC and shutil.which("launchctl"):
+        install_launchd([shutil.which("mousse-tree")] if shutil.which("mousse-tree") else [sys.executable, "-m", "openmousse_tree.cli"])
+        return
     exe = shutil.which("mousse-tree") or f"{sys.executable} -m openmousse_tree.cli"
     unit = Path.home() / ".config/systemd/user/mousse-tree.service"
     unit.parent.mkdir(parents=True, exist_ok=True)
@@ -314,8 +368,8 @@ def cmd_token(action: str):
         if action == "rotate":
             tokens[secrets.token_urlsafe(24)] = a.platform
         C.save(cfg)
-        print(C.L(f"{a.platform}：{'已换新令牌' if action == 'rotate' else '令牌已删除'}。重启服务生效：systemctl --user restart mousse-tree",
-                  f"{a.platform}: {'new token issued' if action == 'rotate' else 'token revoked'}. Restart the service to apply: systemctl --user restart mousse-tree"))
+        print(C.L(f"{a.platform}：{'已换新令牌' if action == 'rotate' else '令牌已删除'}。重启服务生效：{restart_cmd()}",
+                  f"{a.platform}: {'new token issued' if action == 'rotate' else 'token revoked'}. Restart the service to apply: {restart_cmd()}"))
         if action == "rotate":
             print(C.L("新地址见 mousse-tree urls，记得在该平台的连接器设置里换掉。",
                       "See mousse-tree urls for the new address, and update it in that platform's connector settings."))

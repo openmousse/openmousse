@@ -52,13 +52,13 @@
 
 ## 装
 
-前提：一台 Linux 机器，装好了 OpenClaw、配好了模型（`openclaw onboard` 跑过，Gateway 在跑）。然后一条命令：
+前提：一台 Linux、macOS 或 Windows（通过 WSL 2）的机器，装好了 OpenClaw、配好了模型（`openclaw onboard` 跑过，Gateway 在跑）。然后一条命令：
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/openmousse/openmousse/main/install.sh | bash
 ```
 
-问四个问题（语言、OpenClaw 在哪、时区、助手叫什么），其余全做：clone 仓库、装 Python 依赖到 `~/.openmousse/venv`、写 `~/.openmousse/server.json`、生成手机令牌、把 [`packs/core`](packs/core/) 的 skills 和日结定时器接进你的 OpenClaw（改 `openclaw.json` 前备份、改完校验）、装成 systemd 服务，最后打印手机怎么连。另外两个问题可以跳过：服务器上已经在同步的 Obsidian 库文件夹（世界树和思考空间就放进去），以及开不开公网（用 Tailscale Funnel：Claude.ai、ChatGPT、Gemini、Notion 等支持 MCP 的 AI 平台能连世界树，分享能发链接，能加朋友）。再跑一遍是安全的，只补缺的。
+问四个问题（语言、OpenClaw 在哪、时区、助手叫什么），其余全做：clone 仓库、装 Python 依赖到 `~/.openmousse/venv`、写 `~/.openmousse/server.json`、生成手机令牌、把 [`packs/core`](packs/core/) 的 skills 和日结定时器接进你的 OpenClaw（改 `openclaw.json` 前备份、改完校验）、设好开机自启（Linux 和 WSL 用 systemd，macOS 用 launchd），最后打印手机怎么连。另外两个问题可以跳过：服务器上已经在同步的 Obsidian 库文件夹（世界树和思考空间就放进去），以及开不开公网（用 Tailscale Funnel：Claude.ai、ChatGPT、Gemini、Notion 等支持 MCP 的 AI 平台能连世界树，分享能发链接，能加朋友）。再跑一遍是安全的，只补缺的。
 
 机器在 Tailscale 里最省事：服务自动绑到 Tailscale 地址，手机装 Tailscale 就能连。不在的话服务只听本机，用 `tailscale serve` 或反向代理暴露成 HTTPS。
 

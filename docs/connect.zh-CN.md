@@ -14,13 +14,13 @@ OpenMousse 不替代你。它是一个装在你旁边的小服务器，加上一
 
 ## 1. 看看这台机器
 
-OpenMousse 跑在 Linux 上，和你的对话接口在同一台。要有 `python3` 3.11 以上、`git`、`curl`：
+OpenMousse 和你的对话接口在同一台机器上，可以是 Linux、macOS 或 Windows（在 WSL 2 里）。要有 `python3` 3.11 以上、`git`、`curl`：
 
 ```bash
 python3 --version && git --version && curl --version | head -1
 ```
 
-Ubuntu / Debian 上缺的话：`sudo apt install python3 python3-venv git curl`。这要 `sudo`，先问用户。
+Ubuntu / Debian（包括 WSL）上缺的话：`sudo apt install python3 python3-venv git curl`。这要 `sudo`，先问用户。macOS 上：`brew install python git`（Homebrew，不用 `sudo`）；macOS 自带的 `python3` 版本太低。
 
 ## 2. 打开你的对话接口（OpenClaw 不用）
 
@@ -44,6 +44,8 @@ OpenMousse 经你在这台机器上的 OpenAI 兼容对话接口，把用户的�
 curl -fsSL https://tailscale.com/install.sh | sh
 sudo tailscale up
 ```
+
+macOS 上 Tailscale 是一个 app，不用上面的脚本：请用户从 App Store 安装（或运行 `brew install --cask tailscale`）并登录。它的命令行在 `/Applications/Tailscale.app/Contents/MacOS/Tailscale`，安装器会自己找到。
 
 `tailscale up` 会打印一个登录链接，把它发给用户，让他用自己的账号登录。手机上也要装 Tailscale app，登同一个账号。什么都不会公开：Tailscale 是他自己几台设备之间的私网。
 
