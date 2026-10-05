@@ -39,4 +39,6 @@ npx wrangler dev --port 8790 --ip 127.0.0.1
 2. `wrangler.toml` 的 `routes` 改成你的域名（官方的是 `relay.openmousse.ai`，Cloudflare 自动建 DNS 记录和证书）。
 3. `npx wrangler deploy`。部署完 `curl https://<你的域名>/health` 应该回 `{"ok":true,"service":"openmousse-relay","v":1}`。
 
-Durable Objects 用 SQLite 版（`new_sqlite_classes`），Workers 免费档就能跑；用量上来再换付费档。
+Durable Objects 用 SQLite 版（`new_sqlite_classes`），Workers 免费档就能跑；用量上来再换付费档。`workers_dev = false`：只用自定义域名，不开 `*.workers.dev` 地址。
+
+Cloudflare 的「浏览器完整性检查」会拦 Python 自带 urllib 的默认 User-Agent（错误 1010）；服务器之间用的 httpx、aiohttp 不受影响，自己写测试脚本时带一个 User-Agent。

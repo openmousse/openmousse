@@ -39,4 +39,6 @@ Give two test servers `"relay": {"url": "http://127.0.0.1:8790"}` and `"social":
 2. Point `routes` in `wrangler.toml` at your domain (the official one is `relay.openmousse.ai`; Cloudflare creates the DNS record and certificate).
 3. `npx wrangler deploy`. Afterward `curl https://<your domain>/health` should return `{"ok":true,"service":"openmousse-relay","v":1}`.
 
-Durable Objects use the SQLite backend (`new_sqlite_classes`), which runs on the Workers free plan; move to a paid plan as usage grows.
+Durable Objects use the SQLite backend (`new_sqlite_classes`), which runs on the Workers free plan; move to a paid plan as usage grows. `workers_dev = false`: only the custom domain, no `*.workers.dev` address.
+
+Cloudflare's Browser Integrity Check blocks Python urllib's default User-Agent (error 1010); httpx and aiohttp, which servers use, aren't affected. Set a User-Agent in your own test scripts.

@@ -2,7 +2,7 @@
 name = "openmousse-relay"
 main = "src/index.js"
 compatibility_date = "2026-06-01"
-workers_dev = true
+workers_dev = false
 
 # 官方中继的自定义域名（Cloudflare 会自动建 DNS 记录和证书）；自己部署一份就改成你的域名
 routes = [{ pattern = "relay.openmousse.ai", custom_domain = true }]
