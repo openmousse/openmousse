@@ -360,6 +360,15 @@ def sdb() -> sqlite3.Connection:
         CREATE TABLE IF NOT EXISTS social_nonces (kid TEXT NOT NULL, nonce TEXT NOT NULL, at REAL NOT NULL, PRIMARY KEY (kid, nonce));
         CREATE TABLE IF NOT EXISTS social_settings (key TEXT PRIMARY KEY, value TEXT NOT NULL);
         """)
+        # 2026-10-05 后加的列（聊天第一期）：置顶、免打扰、对方读到我哪一条（read_upto = 我发出的那条在本机的行 id）、
+        # 我上次告诉对方读到哪一条（read_sent = 对方那条的 mid）；消息「只在我这删除」（hidden_at）
+        have = {r[1] for r in conn.execute("PRAGMA table_info(friends)")}
+        for col, decl in (("pinned_at", "TEXT"), ("muted", "INTEGER NOT NULL DEFAULT 0"), ("read_upto", "INTEGER"),
+                          ("read_at", "TEXT"), ("read_sent", "TEXT")):
+            if col not in have:
+                conn.execute(f"ALTER TABLE friends ADD COLUMN {col} {decl}")
+        if "hidden_at" not in {r[1] for r in conn.execute("PRAGMA table_info(friend_messages)")}:
+            conn.execute("ALTER TABLE friend_messages ADD COLUMN hidden_at TEXT")
         _ready = True
     return conn
 

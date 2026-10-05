@@ -781,7 +781,7 @@ async def notify_out(fr: dict, outcome: str, text: str) -> None:
     """你的名片 agent 问过的事，对方那边有了结果：按 server.json 的 social.push.agents 推（没写就跟着 answered 那一档）。"""
     try:
         import friends
-        line = cardagent.clean_line(text, 120)
+        line = cardagent.clean_line(text, 120) if friends.preview_on() else ""  # 「通知里不显示内容」：只写结果，不带对方原话
         await friends.notify(fr, "agents", outcome_line(fr["name"], outcome) + (L(f"：「{line}」", f': "{line}"') if line else ""))
     except Exception:  # noqa: BLE001 — 推不出去不影响收进展
         pass

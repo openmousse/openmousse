@@ -341,6 +341,15 @@ def search(q: str, thread: str | None = None, limit: int = 60):
         for r in conn.execute(jq, (*args, *([thread] if thread else []), limit)).fetchall():
             hits.append({"kind": "journal", "id": r["id"], "thread": r["group_id"], "role": "user", "day": day_of(r["ts"]),
                          "ts": r["ts"], "time": hhmm(r["ts"]), "snippet": snippet(r["text"], words)})
+    if not thread:  # 全部对话：好友聊天也搜（2026-10-05）。kind friend，friend = {id, name}，id 是好友消息在本机的行 id
+        try:
+            import friends  # 延迟导入：friends 依赖本模块
+            for h in friends.search_messages(words, limit):
+                hits.append({"kind": "friend", "id": str(h["id"]), "thread": None, "friend": {"id": h["friend"], "name": h["name"]},
+                             "role": "user" if h["dir"] == "out" else "friend", "day": day_of(h["ts"]), "ts": h["ts"], "time": hhmm(h["ts"]),
+                             "snippet": h["snippet"]})
+        except Exception:  # noqa: BLE001 — 好友表没建好不影响别的
+            pass
     hits.sort(key=lambda h: h["ts"], reverse=True)
     return {"ok": True, "q": q, "hits": hits[:limit]}
 
@@ -1138,6 +1147,9 @@ def busy_threads():
     """正在回复的线程和排着的消息数。safe_restart.py 等它们都没了再重启服务（重启会掐断进行中的回复）。"""
     running = [t for t, r in RUNS.items() if not r.done]
     queued = {t: len(v) for t, v in QUEUED.items() if v}
+    for t, n in RELAY_WAITING.items():  # 排队等着转进去的转交（重启会把它们丢掉）
+        if n:
+            queued[t] = queued.get(t, 0) + n
     return {"ok": True, "running": running, "queued": queued, "idle": not running and not queued}
 
 
@@ -1165,23 +1177,85 @@ class RelayBody(BaseModel):
     timeout: int = 150
 
 
+RELAY_WAIT_S = 15 * 60          # 转交排队最多等多久（和收件箱 start_when_free 一样）
+RELAY_WAITING: dict[str, int] = {}  # 线程 → 排队等着转进去的问题数（busy_threads 报给 safe_restart，重启前等它们转完）
+
+
+def relay_slot_free(thread: str) -> bool:
+    """这个线程能接转交了：没在回复，也没有用户排着的消息（用户的先发）。"""
+    return not busy(thread) and not QUEUED.get(thread)
+
+
+async def relay_when_free(thread: str, text: str, deadline: float) -> Run | None:
+    """排队：每秒看一次那个 Agent 空下来没有，空了就转进去。到 deadline 还没轮到回 None。"""
+    while time.time() < deadline:
+        if relay_slot_free(thread):
+            try:
+                return start_run(thread, PREFIX_RELAY + text, None, origin="relay", level="none")
+            except HTTPException as e:
+                if e.status_code != 409:  # 409 = 被别的抢先了，接着等
+                    raise
+        await asyncio.sleep(1)
+    return None
+
+
+_relay_tasks: set[asyncio.Task] = set()
+
+
+async def relay_later(thread: str, text: str, hid: str | None, until: float) -> None:
+    """relay 等到 timeout 还没轮到：后台接着排，最多到 until；转进去以后回答照样进它的对话，卡跟着更新（on_run_end）。"""
+    import cards as cards_mod
+    try:
+        run = await relay_when_free(thread, text, until)
+        if run:
+            cards_mod.handoff_begin(hid, run)
+        else:
+            cards_mod.handoff_dropped(hid, L("排队超过 15 分钟，未转交", "Waited over 15 minutes; not handed over"))
+            log_activity(L(f"转给「{thread}」的问题排队超过 15 分钟，未转交", f'A question for "{thread}" waited over 15 minutes and was not handed over'), "failed")
+    except Exception as e:  # noqa: BLE001
+        cards_mod.handoff_dropped(hid, str(e)[:200])
+    finally:
+        RELAY_WAITING[thread] = max(0, RELAY_WAITING.get(thread, 1) - 1)
+
+
 @router.post("/api/chat/relay")
 async def relay(body: RelayBody):
     """主对话把问题转给某个 Agent：记进那个 Agent 的线程（role=auto，app 里显示成「主对话转来」），等它答完，把答案带回去。
-    不推送（用户在主对话里等着）。上一条没回完 → 409。超时 → 200 但 status=timeout，回复仍会在后台完成并入库。
-    同时记一张转交卡（cards.py）：发起转交的那次回复当场出「正在问 …」，答完变成「转给了 …」，挂在那条回复下面。"""
+    不推送（用户在主对话里等着）。超时 → 200 但 status=timeout，回复仍会在后台完成并入库。
+    那个 Agent 正在回复（2026-10-05 起不再 409）：排进它的队列，空下来就转进去，整个过程都算在 timeout 里；到时还没轮到 →
+    200、status=queued，后台接着排（最多 15 分钟），回答进它的对话。
+    同时记一张转交卡（cards.py）：发起转交的那次回复当场出「正在问 …」（排队时是「排队中」），答完变成「转给了 …」，挂在那条回复下面。"""
     text = body.text.strip()
     if not text:
         raise HTTPException(400, L("空消息", "Empty message"))
     import cards as cards_mod  # 延迟导入：cards.py 依赖本模块
-    try:
-        run = start_run(body.thread, PREFIX_RELAY + text, None, origin="relay", level="none")
-    except HTTPException as e:
-        if e.status_code == 409:  # 那个 Agent 上一条还没回完：也记一张（没转过去），主对话里看得到
-            cards_mod.handoff_start(body.thread, text, None, status="busy")
-        raise
-    cards_mod.handoff_start(body.thread, text, run)
-    deadline = time.time() + min(max(body.timeout, 10), 600)
+    t0 = time.time()
+    deadline = t0 + min(max(body.timeout, 10), 600)
+    run: Run | None = None
+    if relay_slot_free(body.thread):
+        try:
+            run = start_run(body.thread, PREFIX_RELAY + text, None, origin="relay", level="none")
+        except HTTPException as e:
+            if e.status_code != 409:
+                raise
+    if run is None:  # 那个 Agent 正忙：排队
+        hid = cards_mod.handoff_start(body.thread, text, None, status="queued")
+        RELAY_WAITING[body.thread] = RELAY_WAITING.get(body.thread, 0) + 1
+        try:
+            run = await relay_when_free(body.thread, text, deadline)
+        except BaseException:
+            RELAY_WAITING[body.thread] = max(0, RELAY_WAITING.get(body.thread, 1) - 1)
+            cards_mod.handoff_dropped(hid, L("未转交", "Not handed over"))
+            raise
+        if run is None:
+            task = asyncio.create_task(relay_later(body.thread, text, hid, t0 + RELAY_WAIT_S))
+            _relay_tasks.add(task)
+            task.add_done_callback(_relay_tasks.discard)
+            return {"ok": False, "status": "queued", "thread": body.thread, "seconds": round(time.time() - t0, 1)}
+        RELAY_WAITING[body.thread] = max(0, RELAY_WAITING.get(body.thread, 1) - 1)
+        cards_mod.handoff_begin(hid, run)
+    else:
+        cards_mod.handoff_start(body.thread, text, run)
     while not run.done and time.time() < deadline:
         await asyncio.sleep(0.5)
     if not run.done:

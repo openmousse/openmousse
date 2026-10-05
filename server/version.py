@@ -26,6 +26,9 @@ VERSION = "2026.10.5"
 API = 1
 FEATURES = (
     "card.name",  # PATCH /api/card {name}：在 app 里设好友看到的名字
+    "friends.prefs",    # GET / PATCH /api/friends/prefs：好友通知开关、通知里显示内容、已读回执；PATCH /api/friends/{id} {pinned, muted}
+    "friends.actions",  # POST /api/friends/messages/{id}/edit · /react · /hide；消息带 read、reactions、quote，GET …/messages 带 more、可 before 翻页
+    "friends.search",   # GET /api/friends/search；/api/search 不限线程时带好友聊天（kind friend）
 )
 
 

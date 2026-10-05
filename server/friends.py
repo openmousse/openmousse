@@ -12,6 +12,10 @@
   （review pending），你在对话里「没问题 / 我来改 / 收回」；不能追问的回一句固定的「得问他本人」。没有 cardagent 时不自动答，只给你看。
 - 朋友发来的算未读（unread.py 把它算进角标）。推送是新的推送类型：server.json social.push 里开了才推（{"message": "ring",
   "answered": "quiet", "friend": "quiet"}，不写 = 不推）。
+- 聊天第一期（2026-10-05）：已读回执（控制消息 read{upto}：app 标已读时告诉对方读到哪一条；两边都开着才显示 ✓✓，默认开、可关，
+  关了双向都没有）、表情回应（react{target, emoji}，固定 6 个）、改自己发的文字（edit）、回复（reply_to，消息带 quote 原话）、
+  只在我这删除（hidden_at）、置顶 / 免打扰（friends.pinned_at / muted：免打扰不推送、不算角标）、app 里设通知（social_settings 的
+  push / push_preview / receipts 优先于 server.json）、搜索。read / react 只发给名片 caps 里有它们的朋友（老服务器收到不认识的 kind 回 400）。
 """
 from __future__ import annotations
 
@@ -61,8 +65,11 @@ MID_RE = re.compile(r"^[0-9a-f]{32}$")
 FID_RE = re.compile(r"^fr-[0-9a-f]{8}$")
 IID_RE = re.compile(r"^iv-[0-9a-f]{8}$")
 CODE_RE = re.compile(r"(https?://[^\s/?#<>\"']+(?:/[A-Za-z0-9._~-]+){0,4}?)/f/i/([A-Za-z0-9_-]{22})/([A-Za-z0-9_-]{43})")  # 根地址可以带路径前缀（中继的 /u/<kid>）
-SHOW = ("text", "share", "ask", "answer", "system")   # 在对话里显示的；edit / revoke / card / bye 是控制消息
-CONTROL = ("edit", "revoke", "card", "bye")
+SHOW = ("text", "share", "ask", "answer", "system")   # 在对话里显示的；edit / revoke / card / bye / read / react 是控制消息
+CONTROL = ("edit", "revoke", "card", "bye", "read", "react")
+MSGS = ("text", "share", "ask", "answer")   # 朋友之间说的话（算未读、能已读、能回应、能搜）
+# 表情回应只有这 6 个（2026-10-05）：收到别的一律不认，免得对方往你的聊天里塞任意文字
+REACTIONS = ("👍", "❤️", "😂", "😮", "😢", "🙏")
 NAME_OF_TIER = {"close": ("亲近", "Close"), "friend": ("朋友", "Friend"), "mate": ("同学", "Classmate"), "stranger": ("陌生", "Stranger")}
 
 
@@ -268,6 +275,35 @@ def friend_or_404(fid: str) -> dict:
     return f
 
 
+# —— 聊天的偏好（2026-10-05，存在 social_settings；app 的「设置 → 通知」改它们）——
+
+def receipts_on() -> bool:
+    """已读回执，默认开。双向：关了既不告诉朋友我读到哪，也不显示朋友读到哪（和 WhatsApp 一样）。"""
+    return social.get_setting("receipts") != "off"
+
+
+def preview_on() -> bool:
+    """通知里显示消息内容，默认显示；关了只写「发来一条消息」（正文不经 Apple / Google 的推送服务）。"""
+    return social.get_setting("push_preview") != "off"
+
+
+def push_prefs() -> dict:
+    """推送档位：app 里改过的（social_settings.push）优先，没改过用 server.json 的 social.push。"""
+    try:
+        saved = json.loads(social.get_setting("push") or "null")
+    except ValueError:
+        saved = None
+    if isinstance(saved, dict):
+        return saved
+    p = social.cfg().get("push")
+    return p if isinstance(p, dict) else {}
+
+
+def can(f: dict, cap: str) -> bool:
+    """对方的服务器认不认这种控制消息（看对方名片的 caps）：老服务器收到不认识的 kind 回 400，所以先看再发。"""
+    return cap in (f.get("caps") or [])
+
+
 # —— 消息 ——
 
 _loop: asyncio.AbstractEventLoop | None = None   # 主服务的事件循环：投递循环在它上面跑（公网小服务在另一个线程）
@@ -325,13 +361,51 @@ def wire(r) -> dict:
         out["target"] = d.get("target")
     elif k == "card":
         out["card"] = social.my_card()
+    elif k == "read":
+        out["upto"] = d.get("upto")
+    elif k == "react":
+        out.update(target=d.get("target"), emoji=d.get("emoji"))
     return out
 
 
-def msg_json(r) -> dict:
+def quote_of(q) -> dict:
+    """被回复的那条（app 在气泡上面画一行原话，点一下跳过去）：收回、删掉的不给原文。"""
+    gone = q["status"] == "revoked" or bool(q["hidden_at"])
+    text = "" if gone else preview_of(q) if q["kind"] == "share" else " ".join((q["text"] or "").split())[:120]
+    return {"mid": q["mid"], "id": q["id"], "dir": q["dir"], "kind": q["kind"], "text": text, "gone": gone}
+
+
+def thread_ctx(fid: str, rows) -> dict:
+    """一批消息共用的：对方读到我哪一条（已读回执关了就是 None）、回复的原话。"""
+    f = social.friend(fid)
+    on = receipts_on()
+    upto = (f or {}).get("read_upto") if on else None
+    mids = sorted({r["reply_to"] for r in rows if r["kind"] == "text" and r["reply_to"]})
+    quotes = {}
+    if mids:
+        with _lock, db() as conn:
+            for q in conn.execute(f"SELECT * FROM friend_messages WHERE friend=? AND kind IN ('text','share','ask','answer') "  # noqa: S608
+                                  f"AND mid IN ({','.join('?' * len(mids))})", (fid, *mids)):
+                quotes[q["mid"]] = quote_of(q)
+    return {"receipts": on, "upto": upto, "quotes": quotes}
+
+
+def msg_json(r, ctx: dict | None = None) -> dict:
     d = row_data(r)
+    ctx = ctx if ctx is not None else thread_ctx(r["friend"], [r])
     out = {"id": r["id"], "mid": r["mid"], "dir": r["dir"], "kind": r["kind"], "by": r["by"], "text": r["text"], "replyTo": r["reply_to"],
            "status": r["status"], "review": r["review"], "ts": r["ts"], "edited": bool(r["edited_at"])}
+    if r["hidden_at"]:
+        out["hidden"] = True
+    if r["dir"] == "out" and r["status"] == "sent" and ctx.get("receipts"):  # 对方看过没有（已读回执关着就不给这个字段）
+        out["read"] = bool(ctx.get("upto")) and r["id"] <= ctx["upto"]
+    if r["kind"] == "text" and r["reply_to"] and r["reply_to"] in ctx.get("quotes", {}):
+        out["quote"] = ctx["quotes"][r["reply_to"]]
+    rx = d.get("reactions")
+    if isinstance(rx, dict):
+        rx = {k: v for k, v in rx.items() if k in ("me", "them") and v in REACTIONS}
+        if rx:
+            out["reactions"] = rx
     if r["kind"] == "share":
         out["share"] = d.get("share") or {}
         if out["share"].get("kind") == "thread":
@@ -491,18 +565,22 @@ def run_on_main(coro) -> None:
 
 def push_level(kind: str) -> str:
     """server.json social.push：{"message": "ring", "answered": "quiet", "friend": "quiet", "agents": "quiet"}；不写 = 不推（新的推送类型要你点头才开）。
+    app 的「设置 → 通知」改过的存在 social_settings（push_prefs），优先于 server.json。
     agents（你的名片 agent 问过的事、对方本人定了）没写就跟着 answered（朋友问了你的名片 agent）那一档（2026-09-28 定）。"""
-    p = social.cfg().get("push")
-    lv = p.get(kind) if isinstance(p, dict) else None
-    if lv is None and kind == "agents" and isinstance(p, dict):
+    p = push_prefs()
+    lv = p.get(kind)
+    if lv is None and kind == "agents":
         lv = p.get("answered")
     return lv if lv in ("ring", "quiet") else "none"
 
 
 async def notify(f: dict, kind: str, body: str) -> None:
+    """推一条朋友那边的事。免打扰的朋友不推；「通知里不显示内容」关了，朋友的话换成固定的一句。"""
     level = push_level(kind)
-    if level == "none":
+    if level == "none" or f.get("muted"):
         return
+    if kind == "message" and not preview_on():
+        body = LS("发来一条消息", "Sent you a message")
     try:
         import push
         await push.send_push(f["name"], body, {"thread": "today", "target": {"type": "friend", "id": f["id"]}}, thread_id=f"friend:{f['id']}",
@@ -715,6 +793,32 @@ def apply_control(f: dict, m: dict) -> bool:
         return True
 
 
+def apply_read(f: dict, upto: str) -> bool:
+    """对方看到了我发的、id 为 upto 的那条（以及之前的）：记下它在本机的行 id。找不到就忽略。"""
+    with _lock, db() as conn:
+        r = conn.execute("SELECT id FROM friend_messages WHERE friend=? AND dir='out' AND mid=?", (f["id"], upto)).fetchone()
+        if not r:
+            return False
+        conn.execute("UPDATE friends SET read_upto=MAX(COALESCE(read_upto, 0), ?), read_at=? WHERE id=?", (r["id"], now_iso(), f["id"]))
+    return True
+
+
+def apply_react(f: dict, target: str, emoji: str | None) -> bool:
+    """对方对这段聊天里的一条（谁发的都行）点了表情回应；emoji 为空 = 取消。每人每条一个。"""
+    with _lock, db() as conn:
+        r = conn.execute("SELECT * FROM friend_messages WHERE friend=? AND mid=? AND kind IN ('text','share','ask','answer') "
+                         "ORDER BY id DESC LIMIT 1", (f["id"], target)).fetchone()
+        if not r or r["status"] == "revoked":
+            return False
+        d = row_data(r)
+        rx = {k: v for k, v in (d.get("reactions") or {}).items() if k == "me"}
+        if emoji:
+            rx["them"] = emoji
+        d["reactions"] = rx
+        conn.execute("UPDATE friend_messages SET data=? WHERE id=?", (json.dumps(d, ensure_ascii=False), r["id"]))
+    return True
+
+
 @public_router.post("/f/msg")
 async def receive(request: Request):
     """朋友的服务器投一条消息（签过名）。"""
@@ -769,6 +873,20 @@ async def receive(request: Request):
             if store_in(f["id"], mid, kind, "", at=at, data={"target": target}, status="applied") is None:
                 return {"ok": True, "id": mid, "dup": True}
             done = await asyncio.to_thread(apply_control, f, m)
+            return {"ok": True, "id": mid, "dup": False, **({} if done else {"ignored": True})}
+        elif kind == "read":  # 已读回执（2026-10-05）：对方看到我哪一条了
+            upto = _mid(m.get("upto"))
+            if store_in(f["id"], mid, "read", "", at=at, data={"upto": upto}, status="applied") is None:
+                return {"ok": True, "id": mid, "dup": True}
+            done = await asyncio.to_thread(apply_read, f, upto)
+            return {"ok": True, "id": mid, "dup": False, **({} if done else {"ignored": True})}
+        elif kind == "react":  # 表情回应（2026-10-05）：只认固定的 6 个，null = 取消
+            target, emoji = _mid(m.get("target")), m.get("emoji")
+            if emoji is not None and emoji not in REACTIONS:
+                raise ValueError("unknown reaction")
+            if store_in(f["id"], mid, "react", "", at=at, data={"target": target, "emoji": emoji}, status="applied") is None:
+                return {"ok": True, "id": mid, "dup": True}
+            done = await asyncio.to_thread(apply_react, f, target, emoji)
             return {"ok": True, "id": mid, "dup": False, **({} if done else {"ignored": True})}
         elif kind == "card":
             try:
@@ -830,7 +948,7 @@ def history_of(fid: str, before_id: int, n: int = 10) -> list[dict]:
     """这段聊天最近几轮（给名片 agent 当资料）：收回的、改掉的原文不给。"""
     with _lock, db() as conn:
         rows = conn.execute("SELECT * FROM friend_messages WHERE friend=? AND id<? AND kind IN ('text','ask','answer','share') "
-                            "AND status!='revoked' ORDER BY id DESC LIMIT ?", (fid, before_id, n)).fetchall()
+                            "AND status!='revoked' AND hidden_at IS NULL ORDER BY id DESC LIMIT ?", (fid, before_id, n)).fetchall()
     out = []
     for r in reversed(rows):
         if r["kind"] == "share":
@@ -939,6 +1057,8 @@ register_delivery()
 # 装了名片 agent（有 cardagent 模块）就在名片上写 "agent"：朋友那边显示「有 agent」。按装没装算、不按此刻能不能调模型，
 # 免得模型一时不通就改名片、给所有朋友发一遍 card。
 social.CARD_HOOKS.append(lambda: {"caps": ["agent"]} if cardagent_mod() is not None else {})
+# 认得已读回执和表情回应（2026-10-05）：朋友的服务器看到这两个才给我发 read / react（老服务器收到不认识的 kind 回 400）
+social.CARD_HOOKS.append(lambda: {"caps": ["read", "react"]})
 
 
 # —— 给 app 的：朋友、邀请码 ——
@@ -947,11 +1067,13 @@ def unread_counts() -> dict[str, dict]:
     """{朋友 id: {n, last: {text, ts, kind}}}：朋友发来、还没看的（unread.py 用）。"""
     with _lock, db() as conn:
         rows = conn.execute("SELECT friend, COUNT(*) n, MAX(id) last FROM friend_messages WHERE dir='in' AND status='new' "
-                            "AND kind IN ('text','share','ask','answer') GROUP BY friend").fetchall()
+                            "AND kind IN ('text','share','ask','answer') AND hidden_at IS NULL GROUP BY friend").fetchall()
+        muted = {r["id"] for r in conn.execute("SELECT id FROM friends WHERE muted=1")}
         out = {}
         for r in rows:
             m = conn.execute("SELECT text, ts, kind, data FROM friend_messages WHERE id=?", (r["last"],)).fetchone()
-            out[r["friend"]] = {"n": r["n"], "last": {"text": preview_of(m), "ts": m["ts"], "kind": m["kind"]} if m else None}
+            out[r["friend"]] = {"n": r["n"], "last": {"text": preview_of(m), "ts": m["ts"], "kind": m["kind"]} if m else None,
+                                **({"muted": True} if r["friend"] in muted else {})}  # 免打扰的不算进 app 图标的角标（unread.badge）
     return out
 
 
@@ -967,7 +1089,7 @@ def friend_json(f: dict, unread: dict | None = None, last=None) -> dict:
     return {"id": f["id"], "name": f["name"], "cardName": f["card_name"], "alias": f.get("alias"), "tier": f["tier"], "tierName": tier_name(f["tier"]),
             "status": f["status"], "caps": f["caps"], "agent": "agent" in f["caps"] or "a2a" in f["caps"],
             "fingerprint": social.fingerprint(f["pub"]), "url": f["url"], "note": f.get("note"), "createdAt": f["created_at"],
-            "unread": (unread or {}).get("n", 0),
+            "unread": (unread or {}).get("n", 0), "pinned": bool(f.get("pinned_at")), "muted": bool(f.get("muted")),
             "last": {"text": preview_of(last), "ts": last["ts"], "kind": last["kind"], "dir": last["dir"], "by": last["by"]} if last else None}
 
 
@@ -979,10 +1101,12 @@ def friends_payload() -> dict:
         lasts = {}
         for r in frows:
             lasts[r["id"]] = conn.execute("SELECT * FROM friend_messages WHERE friend=? AND kind IN ('text','share','ask','answer','system') "
-                                          "ORDER BY id DESC LIMIT 1", (r["id"],)).fetchone()
+                                          "AND hidden_at IS NULL ORDER BY id DESC LIMIT 1", (r["id"],)).fetchone()
         inv = conn.execute("SELECT * FROM friend_invites ORDER BY created_at DESC LIMIT 50").fetchall()
     fl = [friend_json(social.friend_dict(r), unread.get(r["id"]), lasts.get(r["id"])) for r in frows]  # type: ignore[arg-type]
     fl.sort(key=lambda x: (x["last"] or {}).get("ts") or x["createdAt"], reverse=True)
+    pins = {r["id"]: r["pinned_at"] for r in frows if r["pinned_at"]}
+    fl.sort(key=lambda x: pins.get(x["id"]) or "", reverse=True)  # 置顶的在最上面（后置顶的在前），其余按最后一条的时间
     why = not_ready()
     return {"ok": True, "ready": why is None, "why": why,
             "me": {"name": social.my_name(), "fingerprint": ids["fingerprint"], "url": social.my_url(),
@@ -1093,9 +1217,91 @@ async def accept(body: AcceptIn):
     return {"ok": True, "friend": friend_json(f), "unreachable": reach is False, "publicFix": public_fix()}
 
 
+# —— 通知与已读回执（app「设置 → 通知」，2026-10-05）——
+
+def prefs_json() -> dict:
+    friends_list = [{"id": f["id"], "name": f["name"], "muted": bool(f.get("muted"))} for f in social.friends()]
+    return {"ok": True, "notify": push_level("message") != "none", "preview": preview_on(), "receipts": receipts_on(), "friends": friends_list}
+
+
+@router.get("/api/friends/prefs")
+async def get_prefs():
+    return await asyncio.to_thread(prefs_json)
+
+
+class PrefsIn(BaseModel):
+    notify: bool | None = None     # 好友消息的通知（关 = 好友的几类推送都不发）
+    preview: bool | None = None    # 通知里显示内容
+    receipts: bool | None = None   # 已读回执（双向）
+
+
+def set_prefs(body: PrefsIn) -> None:
+    if body.notify is not None:
+        cur = push_prefs()
+        if body.notify:  # 打开：server.json 里本来写了档位的照旧，没写的用新装的默认（setup.py 写的那一组）
+            on = {"message": "ring", "answered": "quiet", "friend": "quiet"}
+            new = {k: (cur.get(k) if cur.get(k) in ("ring", "quiet") else v) for k, v in on.items()}
+            if cur.get("agents") in ("ring", "quiet"):
+                new["agents"] = cur["agents"]
+        else:
+            new = {"message": "none", "answered": "none", "friend": "none", "agents": "none"}
+        social.set_setting("push", json.dumps(new))
+    if body.preview is not None:
+        social.set_setting("push_preview", None if body.preview else "off")
+    if body.receipts is not None:
+        social.set_setting("receipts", None if body.receipts else "off")
+
+
+@router.patch("/api/friends/prefs")
+async def patch_prefs(body: PrefsIn):
+    await asyncio.to_thread(set_prefs, body)
+    return await asyncio.to_thread(prefs_json)
+
+
+# —— 搜索：好友聊天（好友页顶上的搜索框；「历史」的全部对话搜索也带上它）——
+
+def search_messages(words: list[str], limit: int = 60) -> list[dict]:
+    """多个词都要出现。分享按标题和正文搜；收回的、只在我这删除的不搜。"""
+    if not words:
+        return []
+    like = " AND ".join(["lower(text || ' ' || CASE WHEN kind='share' THEN IFNULL(data, '') ELSE '' END) LIKE ?"] * len(words))
+    with _lock, db() as conn:
+        rows = conn.execute("SELECT * FROM friend_messages WHERE kind IN ('text','share','ask','answer') AND status!='revoked' "  # noqa: S608
+                            f"AND hidden_at IS NULL AND {like} ORDER BY id DESC LIMIT ?", (*[f"%{w}%" for w in words], limit)).fetchall()
+        names = {r["id"]: social.friend_dict(r)["name"] for r in conn.execute("SELECT * FROM friends")}  # type: ignore[index]
+    out = []
+    for r in rows:
+        if r["kind"] == "share":
+            sh = row_data(r).get("share") or {}
+            text = " · ".join(x for x in (sh.get("title") or "", r["text"] or "", sh.get("text") or "") if x)
+        else:
+            text = r["text"] or ""
+        flat = " ".join(text.split())
+        low = flat.lower()
+        pos = min((low.find(w) for w in words if low.find(w) >= 0), default=0)
+        start = max(0, pos - 30)
+        out.append({"friend": r["friend"], "name": names.get(r["friend"]) or "", "id": r["id"], "mid": r["mid"], "dir": r["dir"], "kind": r["kind"],
+                    "by": r["by"], "ts": r["ts"], "snippet": ("…" if start else "") + flat[start:start + 90] + ("…" if start + 90 < len(flat) else "")})
+    return out
+
+
+@router.get("/api/friends/search")
+async def search(q: str = "", limit: int = 60):
+    """好友页的搜索：名字（备注、名片上的名字）和聊天内容。"""
+    words = [w.lower() for w in q.split() if w.strip()]
+    if not words:
+        return {"ok": True, "friends": [], "hits": []}
+    people = [f["id"] for f in social.friends(("active", "gone", "blocked"))
+              if all(w in f"{f['name']} {f['card_name']}".lower() for w in words)]
+    hits = await asyncio.to_thread(search_messages, words, max(1, min(200, limit)))
+    return {"ok": True, "friends": people, "hits": hits}
+
+
 class FriendPatch(BaseModel):
     alias: str | None = None
     tier: str | None = None
+    pinned: bool | None = None   # 置顶（2026-10-05）
+    muted: bool | None = None    # 免打扰：不推送、不算进 app 图标的角标
 
 
 @router.patch("/api/friends/{fid}")
@@ -1108,6 +1314,10 @@ async def patch_friend(fid: str, body: FriendPatch):
         if body.tier not in social.FRIEND_TIERS:
             raise bad(400, "档位只能是 close / friend / mate", "tier must be close, friend or mate")
         sets["tier"] = body.tier
+    if body.pinned is not None and body.pinned != bool(f.get("pinned_at")):
+        sets["pinned_at"] = now_iso() if body.pinned else None
+    if body.muted is not None:
+        sets["muted"] = 1 if body.muted else 0
     if sets:
         sets["updated_at"] = now_iso()
         with _lock, db() as conn:
@@ -1149,25 +1359,33 @@ async def block_friend(fid: str, body: BlockIn):
 
 @router.get("/api/friends/{fid}/messages")
 async def messages(fid: str, before: int | None = None, after: int | None = None, limit: int = 60):
+    """一段聊天：默认最新的 limit 条；before = 往上翻（更早的）；after = 轮询（新来的，从早到晚给，多了下次接着拿，不跳过）。
+    more = 前面还有更早的。只在我这删除的（hidden_at）不给；轮询时 recent 里带着它们（hidden: true），别的设备好拿掉。"""
     f = friend_or_404(fid)
     limit = max(1, min(200, limit))
-    q, args = "SELECT * FROM friend_messages WHERE friend=? AND kind IN ('text','share','ask','answer','system')", [fid]
+    q, args = "SELECT * FROM friend_messages WHERE friend=? AND kind IN ('text','share','ask','answer','system') AND hidden_at IS NULL", [fid]
     if after is not None:
         q += " AND id>?"
         args.append(after)
     if before is not None:
         q += " AND id<?"
         args.append(before)
-    q += " ORDER BY id DESC LIMIT ?"
+    q += (" ORDER BY id ASC LIMIT ?" if after is not None else " ORDER BY id DESC LIMIT ?")
     args.append(limit)
     with _lock, db() as conn:
         rows = conn.execute(q, args).fetchall()  # noqa: S608 — 条件是上面写死的
+        if after is None:
+            rows = list(reversed(rows))
         changed = []
-        if after is not None:  # 轮询时顺带拿回已经显示过、后来被改过 / 收回 / 送达状态变了的
-            changed = conn.execute("SELECT * FROM friend_messages WHERE friend=? AND id<=? AND kind IN ('text','share','ask','answer') "
-                                   "ORDER BY id DESC LIMIT 60", (fid, after)).fetchall()
-    return {"ok": True, "friend": friend_json(f), "messages": [msg_json(r) for r in reversed(rows)],
-            "recent": [msg_json(r) for r in reversed(changed)], "agent": agent_available(),
+        if after is not None:  # 轮询时顺带拿回已经显示过、后来被改过 / 收回 / 送达状态变了 / 有了表情回应 / 删掉的
+            changed = list(reversed(conn.execute("SELECT * FROM friend_messages WHERE friend=? AND id<=? AND kind IN ('text','share','ask','answer') "
+                                                 "ORDER BY id DESC LIMIT 60", (fid, after)).fetchall()))
+        more = bool(rows) and after is None and conn.execute("SELECT 1 FROM friend_messages WHERE friend=? AND id<? AND hidden_at IS NULL "
+                                                             "AND kind IN ('text','share','ask','answer','system') LIMIT 1",
+                                                             (fid, rows[0]["id"])).fetchone() is not None
+    ctx = thread_ctx(fid, [*rows, *changed])
+    return {"ok": True, "friend": friend_json(f), "messages": [msg_json(r, ctx) for r in rows],
+            "recent": [msg_json(r, ctx) for r in changed], "more": more, "receipts": receipts_on(), "agent": agent_available(),
             "canAsk": social.tier_scopes(f["tier"])["shares"] == "ask"}
 
 
@@ -1222,6 +1440,21 @@ class ReadIn(BaseModel):
     upto: int | None = None
 
 
+def send_read(fid: str) -> None:
+    """已读回执：告诉对方我看到了它发来的哪一条（最新一条看过的）。两边都开着、对方认得 read 才发；排着没发出去的旧回执换成这一条。"""
+    f = social.friend(fid)
+    if not f or f["status"] != "active" or not receipts_on() or not can(f, "read"):
+        return
+    with _lock, db() as conn:
+        r = conn.execute("SELECT mid FROM friend_messages WHERE friend=? AND dir='in' AND status='read' AND kind IN ('text','share','ask','answer') "
+                         "ORDER BY id DESC LIMIT 1", (fid,)).fetchone()
+        if not r or r["mid"] == f.get("read_sent"):
+            return
+        conn.execute("UPDATE friends SET read_sent=? WHERE id=?", (r["mid"], fid))
+        conn.execute("DELETE FROM friend_messages WHERE friend=? AND dir='out' AND kind='read' AND status='queued'", (fid,))
+    insert_out(fid, "read", data={"upto": r["mid"]})
+
+
 @router.post("/api/friends/{fid}/read")
 async def mark_read(fid: str, body: ReadIn):
     friend_or_404(fid)
@@ -1230,6 +1463,7 @@ async def mark_read(fid: str, body: ReadIn):
             conn.execute("UPDATE friend_messages SET status='read' WHERE friend=? AND dir='in' AND status='new'", (fid,))
         else:
             conn.execute("UPDATE friend_messages SET status='read' WHERE friend=? AND dir='in' AND status='new' AND id<=?", (fid, body.upto))
+    await asyncio.to_thread(send_read, fid)
     return {"ok": True}
 
 
@@ -1306,6 +1540,74 @@ async def retry(rid: int):
     _set(rid, status="queued", tries=0, next_try=None, error=None, ts=now_iso())
     kick()
     return {"ok": True, "message": msg_json(message_row(rid))}
+
+
+# —— 长按：编辑、表情回应、只在我这删除（2026-10-05）——
+
+class EditIn(BaseModel):
+    text: str
+
+
+@router.post("/api/friends/messages/{rid}/edit")
+async def edit_message(rid: int, body: EditIn):
+    """改我发的一条文字：已经送到的发一条 edit（v1 起都认），对方那边标「已编辑」；还没送到的直接改要发的内容。"""
+    r = message_row(rid)
+    if r["dir"] != "out" or r["kind"] != "text" or r["by"] != "person":
+        raise bad(400, "只能编辑自己发送的文字消息", "You can only edit text you sent")
+    if r["status"] == "revoked":
+        raise bad(409, "该消息已收回", "Already withdrawn")
+    f = friend_or_404(r["friend"])
+    need_active(f)
+    text = body.text.replace("\r\n", "\n").strip()
+    if not text or len(text) > TEXT_MAX:
+        raise bad(400, f"内容需在 1–{TEXT_MAX} 字之间", f"The text must be 1–{TEXT_MAX} characters")
+    if text != r["text"]:
+        if r["status"] in ("queued", "failed"):  # 还没送到：发出去的就是改过的
+            _set(rid, text=text)
+        else:
+            _set(rid, text=text, edited_at=now_iso())
+            insert_out(r["friend"], "edit", data={"target": r["mid"], "text": text})
+    return {"ok": True, "message": msg_json(message_row(rid))}
+
+
+class ReactIn(BaseModel):
+    emoji: str | None = None
+
+
+@router.post("/api/friends/messages/{rid}/react")
+async def react(rid: int, body: ReactIn):
+    """对一条消息（谁发的都行）点表情回应，emoji 为空 = 取消。每人每条一个；对方的服务器认得 react 才行。"""
+    r = message_row(rid)
+    if r["kind"] not in MSGS or r["status"] == "revoked" or r["hidden_at"]:
+        raise bad(400, "该消息无法回应", "You can't react to that")
+    if body.emoji is not None and body.emoji not in REACTIONS:
+        raise bad(400, "不支持该表情", "Unsupported reaction")
+    f = friend_or_404(r["friend"])
+    need_active(f)
+    if not can(f, "react"):
+        raise bad(409, f"{f['name']} 的服务器版本较旧，暂不支持表情回应。", f"{f['name']}'s server is too old for reactions.")
+    d = row_data(r)
+    rx = {k: v for k, v in (d.get("reactions") or {}).items() if k == "them"}
+    if body.emoji:
+        rx["me"] = body.emoji
+    d["reactions"] = rx
+    with _lock, db() as conn:
+        conn.execute("UPDATE friend_messages SET data=? WHERE id=?", (json.dumps(d, ensure_ascii=False), rid))
+        for q in conn.execute("SELECT id, data FROM friend_messages WHERE friend=? AND dir='out' AND kind='react' AND status='queued'", (f["id"],)).fetchall():
+            if row_data(q).get("target") == r["mid"]:  # 同一条还没发出去的回应：换成这一次的
+                conn.execute("DELETE FROM friend_messages WHERE id=?", (q["id"],))
+    insert_out(f["id"], "react", data={"target": r["mid"], "emoji": body.emoji})
+    return {"ok": True, "message": msg_json(message_row(rid))}
+
+
+@router.post("/api/friends/messages/{rid}/hide")
+async def hide_message(rid: int):
+    """只在我这删除：本机不再显示（也不给名片 Agent 当上下文），对方那边不变。"""
+    r = message_row(rid)
+    if r["kind"] not in SHOW:
+        raise bad(400, "该消息无法删除", "You can't delete that")
+    _set(rid, hidden_at=now_iso(), **({"status": "read"} if r["dir"] == "in" and r["status"] == "new" else {}))
+    return {"ok": True}
 
 
 # —— 分享发给朋友 ——

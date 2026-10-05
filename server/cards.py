@@ -5,8 +5,10 @@
   （source_run：exec 起的脚本不知道自己在哪个会话里，只能这样认；同时有几个在回复时优先主 agent 的线程，再取最晚开始的）。
   Telegram 那边转的在 app 里没有对应的回复，from_thread 为空，只在 Agent 那边显示「主对话转来」。
 - 给发起转交的那次回复发 SSE 事件 card（app 当场出「正在问 …」），被转的 Agent 答完 / 出错再发一次。发起转交的那次回复结束时
-  （chat.run_gateway → on_run_end）把它挂到那条回复下面（message_id）。被转的 Agent 正忙（409）也记一行，status=busy。
-- 状态：running 在问 → done 答完 / error 出错；busy 那边正忙，没转过去；lost 服务重启了，没等到（回答在 Agent 那边的对话里）。
+  （chat.run_gateway → on_run_end）把它挂到那条回复下面（message_id）。被转的 Agent 正忙时（2026-10-05 起）不再失败：记一行 status=queued，
+  排进它的队列（chat.relay 等它回完再转过去，handoff_begin 改成 running）。
+- 状态：queued 排队中 → running 在问 → done 答完 / error 出错；lost 服务重启了，没等到（回答在 Agent 那边的对话里，排队的没转过去）；
+  busy 是 10/5 以前的记录：那边正忙，没转过去。
 
 任务（OpenClaw 子会话，sessions_spawn）
 - 台账在 OpenClaw 的 <openclaw_home>/state/openclaw.sqlite（task_runs、subagent_runs），这里只读，一次几毫秒；
@@ -61,6 +63,7 @@ PUSH_WINDOW = 15 * 60  # 做完多久以内的才推：服务停过一阵再起�
 RESULT_MAX = 1200      # 卡片上结果的字数上限（app 只显示开头几行，全文在任务详情）
 _bg: set[asyncio.Task] = set()                   # 后台协程（留个引用，免得被回收）
 _sources: dict[str, chat.Run] = {}               # 转交 id → 发起转交的那次回复：被转的 Agent 答完时给它补发一次 card
+_waiting: set[str] = set()                       # 正在排队的转交（服务重启以后不在这里的 queued 就是 lost）
 _detail: dict[str, tuple[float, dict]] = {}      # 任务 id → (读的时间, {name, label, tokens, final})
 _fetching: set[str] = set()
 
@@ -353,6 +356,8 @@ def handoff_json(h: sqlite3.Row, nm: dict[str, str]) -> dict:
         live = chat.RUNS.get(to)
         if not (live and not live.done and live.user_id == h["relay_id"]):
             status = "lost"
+    elif status == "queued" and h["id"] not in _waiting:  # 排着队的时候服务重启了：没转过去
+        status = "lost"
     return {"kind": "handoff", "id": h["id"], "thread": frm, "messageId": h["message_id"], "createdAt": h["created_at"],
             "status": status, "to": to, "toName": nm.get(to) or to, "from": frm or "main", "fromName": nm.get(frm or "main") or frm,
             "question": h["question"], "seconds": round(h["seconds"]) if h["seconds"] is not None else None,
@@ -386,13 +391,44 @@ def handoff_start(target: str, question: str, run: chat.Run | None, status: str 
             conn.execute("INSERT INTO handoffs(id, from_thread, to_thread, question, status, relay_id, created_at) VALUES(?,?,?,?,?,?,?)",
                          (hid, src.thread if src else None, target, question.strip(), status, run.user_id if run else None, now_iso()))
             row = conn.execute("SELECT * FROM handoffs WHERE id=?", (hid,)).fetchone()
+        if status == "queued":
+            _waiting.add(hid)
         if src:
-            if run:
+            if run or status == "queued":
                 _sources[hid] = src
             publish(src, handoff_json(row, names()))
         return hid
     except Exception:  # noqa: BLE001
         return None
+
+
+def handoff_begin(hid: str | None, run: chat.Run) -> None:
+    """排队的转交轮到了：那个 Agent 开始答（relay_id 记上这一轮，on_run_end 按它更新）。发起转交的回复还在就补发 card。"""
+    if not hid:
+        return
+    try:
+        with _lock, cdb() as conn:
+            conn.execute("UPDATE handoffs SET status='running', relay_id=? WHERE id=?", (run.user_id, hid))
+            row = conn.execute("SELECT * FROM handoffs WHERE id=?", (hid,)).fetchone()
+        _waiting.discard(hid)
+        src = _sources.get(hid)
+        if row and src and not src.done:
+            publish(src, handoff_json(row, names()))
+    except Exception:  # noqa: BLE001
+        pass
+
+
+def handoff_dropped(hid: str | None, error: str) -> None:
+    """排了 15 分钟还没轮到（或者转不过去）：卡上写没转过去。"""
+    if not hid:
+        return
+    try:
+        with _lock, cdb() as conn:
+            conn.execute("UPDATE handoffs SET status='error', error=?, finished_at=? WHERE id=?", (error, now_iso(), hid))
+        _waiting.discard(hid)
+        _sources.pop(hid, None)
+    except Exception:  # noqa: BLE001
+        pass
 
 
 def on_run_end(run: chat.Run) -> None:

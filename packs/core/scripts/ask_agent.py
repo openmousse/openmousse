@@ -7,7 +7,7 @@ Agent 用自己的 skills 和记忆回答，回复入库、不推送，这里拿
 用法：
   ask_agent.py <agent id> "问题"  [--timeout 180]
   ask_agent.py --list                 # 现在有哪些 Agent（id、名字、职责）
-退出码：0 有答案；2 超时（Agent 还在答，稍后在它的线程里能看到）；1 其它错误。
+退出码：0 有答案；2 超时或排队（Agent 还在答 / 在忙、问题排进了它的队列，稍后在它的线程里能看到）；1 其它错误。
 输出给主对话的 agent 读，语言跟 server.json 的 language。
 """
 from __future__ import annotations
@@ -63,6 +63,11 @@ def main() -> None:
     except (urllib.error.URLError, TimeoutError) as exc:
         print(L(f"转不过去：{exc}", f"Couldn't hand it over: {exc}"))
         sys.exit(1)
+    if r.get("status") == "queued":  # 那个 Agent 一直在忙（2026-10-05 起排队，不再 409）：轮到了自动转进去
+        print(L(f"{a.agent} 正在回答别的问题，这个问题已排进它的队列（等了 {r.get('seconds')} 秒），轮到时自动转交；回答稍后在它的对话里。",
+                f"{a.agent} is busy with another question. This one is queued (waited {r.get('seconds')} s so far) and goes in when it's free; "
+                "the answer will show up in its thread."))
+        sys.exit(2)
     if r.get("status") == "timeout":
         print(L(f"{a.agent} 还在答（{r.get('seconds')} 秒了）。已答的部分：\n{r.get('text') or '（还没有）'}\n完整回复稍后在它的线程里。",
                 f"{a.agent} is still answering ({r.get('seconds')} s so far). What it has so far:\n{r.get('text') or '(nothing yet)'}\n"

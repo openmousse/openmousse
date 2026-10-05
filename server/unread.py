@@ -4,7 +4,8 @@
   老消息不会一下子全变未读；之后新开的线程没有这一行 = 从头算。
 - 只算这些线程：main、每个 Agent（groups）、没归档的独立空间。学习台（study-*）、任务（task:*）之类不算。
 - n = 读到的位置之后助手回了几条（role=grava）；mine = 其中回的是你自己发的话（messages.origin=user），定时器、收件箱触发的不算。
-- 角标 badge = 收件箱待你点头（含 OpenClaw 执行审批）+ 各线程 mine 之和 + 朋友发来还没看的（friends：{朋友 id: {n, last}}）。
+- 角标 badge = 收件箱待你点头（含 OpenClaw 执行审批）+ 各线程 mine 之和 + 朋友发来还没看的（friends：{朋友 id: {n, last, muted?}}，
+  免打扰的朋友不算进角标）。
 - 新卡片 feedNew：feed_items.seen_at 为空、没划掉的卡（app 用 /api/feed/seen 标成看过，见 data.py）。
 - 执行审批的条数要起一次 openclaw CLI（一个 node 进程），这里走单独的 60 秒缓存，app 频繁轮询也不会每次都起。
 """
@@ -67,7 +68,7 @@ async def summary() -> dict:
     pending = await inbox.pending_count()
     fr = friend_unread()
     return {"ok": True, "threads": threads, "feedNew": feed_new, "inbox": pending, "friends": fr,
-            "badge": pending + sum(t["mine"] for t in threads.values()) + sum(c["n"] for c in fr.values())}
+            "badge": pending + sum(t["mine"] for t in threads.values()) + sum(c["n"] for c in fr.values() if not c.get("muted"))}
 
 
 def friend_unread() -> dict[str, dict]:
@@ -83,7 +84,7 @@ async def badge() -> int:
     """app 图标上的数：收件箱待你点头 + 给你的未读回复。"""
     with _lock, udb() as conn:
         mine = sum(c["mine"] for c in counts(conn).values())
-    return mine + await inbox.pending_count() + sum(c["n"] for c in friend_unread().values())
+    return mine + await inbox.pending_count() + sum(c["n"] for c in friend_unread().values() if not c.get("muted"))  # 免打扰的朋友不算
 
 
 @router.get("/api/unread")
