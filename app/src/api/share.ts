@@ -2,7 +2,7 @@
 // 发之前服务器先把私事挡住（住址、家人的名字、邮箱电话、身体数字），这里一处处「放出来」；原文不出服务器。
 import { request } from './base';
 
-export type ShareKind = 'message' | 'note' | 'text';
+export type ShareKind = 'message' | 'note' | 'text' | 'thread';
 export type ShareStyle = 'link' | 'clean';
 export interface ShareMask {
   id: string; kind: 'address' | 'name' | 'contact' | 'body' | 'custom'; label: string;
@@ -22,6 +22,8 @@ export interface Share {
   masks?: ShareMask[]; segments?: ShareSegment[];
   /** 发给过哪些朋友（社交第二层；老服务器没有） */
   sentTo?: { id: string; name: string }[];
+  /** 合并转发的聊天记录（kind thread）：几条、里面有哪些朋友说的话（有就不能追问）、一条条（挡好的，full 才有） */
+  count?: number; external?: string[]; items?: { who: string; name: string; at: string; text: string }[];
 }
 export type ShareFrom = { kind: 'message'; thread: string; id: string } | { kind: 'note'; topic?: string; path?: string } | { kind: 'text'; title?: string; text: string };
 export interface ShareCard { dataUri: string; width: number; height: number }

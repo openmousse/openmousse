@@ -227,7 +227,10 @@ function Picker({ kind, friendId, friendName, onBack, onFriend, onAdd, have }: {
 }
 
 /** 长按一条「放进播客」：新开一期（标题取这一条的开头；朋友说的不拿来当标题），或者放进最近的一期。 */
-export function PutInPodcast({ kind, target, close, onOpen }: { kind: MatKind; target: string; close: () => void; onOpen: (e: PodBrief) => void }) {
+export function PutInPodcast({ kind, target, more, close, onOpen }: {
+  kind: MatKind; target: string; /** 合并转发放进播客：其余几条跟着放进同一期 */ more?: { kind: MatKind; target: string }[];
+  close: () => void; onOpen: (e: PodBrief) => void;
+}) {
   const t = useTheme();
   const [eps, setEps] = useState<PodBrief[] | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
@@ -240,7 +243,9 @@ export function PutInPodcast({ kind, target, close, onOpen }: { kind: MatKind; t
     setBusy(episode ?? 'new');
     try {
       const r = await pod.quick(kind, target, episode);
-      setDone({ episode: r.episode, count: r.count });
+      let count = r.count;
+      for (const m of more ?? []) count = (await pod.quick(m.kind, m.target, r.episode.id)).count;
+      setDone({ episode: r.episode, count });
     } catch (e) { showError(L('添加失败', "Couldn't add it"), e); } finally { setBusy(null); }
   };
   if (done) {

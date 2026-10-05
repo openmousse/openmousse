@@ -213,7 +213,7 @@ Signature: om=:<base64(签名)>:
 | kind | 字段 | 说明 |
 |---|---|---|
 | `text` | `text`、`reply_to?` | 人说的话 |
-| `share` | `share: {sid, kind, title, text, quote, when, link?, can_ask}`、`text?` | 分享发给朋友：挡过私事以后的快照（挡住的地方是 `▇▇▇`，原文不出服务器）；`link` 只在「有链接的人都能看」时带；`can_ask` = 这条能不能追问（分享页的开关 × 对方的档位） |
+| `share` | `share: {sid, kind, title, text, quote, when, link?, can_ask, items?, convs?}`、`text?` | 分享发给朋友：挡过私事以后的快照（挡住的地方是 `▇▇▇`，原文不出服务器）；`link` 只在「有链接的人都能看」时带；`can_ask` = 这条能不能追问（分享页的开关 × 对方的档位）。`kind: thread`（2026-10-05）是合并转发的聊天记录：`text` 是整段 Markdown（老服务器就显示它），`items` = `[{who, name, at, s, e}]`，`s` / `e` 是这条在 `text` 里的位置（Python 的字符位置），`who` 是 `me`（发的人）/ `agent` / `friend` / `friend_agent` / `my_card`，`convs` = 来自哪几段对话。里面有第三个人说的话的，`can_ask` 一律是 false |
 | `ask` | `about`（分享那条消息的 id）、`text` | 对着分享追问对方的名片 agent |
 | `answer` | `about`（追问那条的 id）、`text`、`used`（用了什么，比如 `["这期节目"]`）、`defer`（true = 「得问他本人」） | 名片 agent 代答（`by = agent`） |
 | `edit` | `target`、`text`、`by?` | 改我先前发的一条（Alex 改名片 agent 的代答时 `by = person`，对方显示「Alex 改过」） |

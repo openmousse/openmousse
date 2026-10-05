@@ -26,6 +26,8 @@ import { Action } from '../components/ChatView';
 import { podFeatures } from '../api/podcast';
 import { PutInPodcast } from '../think/Materials';
 import { openEpisode } from '../think/Podcast';
+import * as fw from '../api/forward';
+import { BasketPill, BundleCard, SelectBar, SelectMark, Transcript, forwardActions, setBasketCount, useSelect } from '../components/Forward';
 
 export { AgentLens, timeLabel };
 
@@ -306,14 +308,37 @@ function StatusLine({ m, onRetry }: { m: FriendMsg; onRetry: () => void }) {
 
 function SharedCard({ m, friend, mine, onAsk }: { m: FriendMsg; friend: Friend; mine: boolean; onAsk?: () => void }) {
   const t = useTheme();
+  const sheet = useSheet();
   const [open, setOpen] = useState(false);
   const s = m.share;
   if (!s) return null;
   const gone = m.status === 'revoked';
+  // 合并转发的聊天记录：一张聊天记录卡，点开看全部（收回了、老服务器没切好的走下面的普通卡）
+  const items = s.kind === 'thread' && !gone ? (s.items ?? []) : [];
+  if (items.length) {
+    const rows = items.map((i) => ({ ...i, when: timeLabel(i.at) }));
+    return (
+      <View style={{ alignSelf: mine ? 'flex-end' : 'flex-start', maxWidth: '88%', gap: 6, alignItems: mine ? 'flex-end' : 'flex-start' }}>
+        <BundleCard mine={mine} title={s.title} n={items.length} convs={s.convs} lines={items}
+          onOpen={() => sheet.open({ title: s.title || L('聊天记录', 'Messages'), content: () => <Transcript items={rows} /> })} />
+        {m.text ? <T v="callout">{m.text}</T> : null}
+        {s.can_ask || (!mine && s.can_ask && onAsk) ? (
+          <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: space.sm, alignItems: 'center' }}>
+            <Pill label={mine ? L('可追问', 'Takes questions') : L(`可向 ${friend.name} 的名片 Agent 追问`, `You can ask ${friend.name}'s card agent`)} tone="gold" />
+            {!mine && onAsk ? (
+              <Pressable onPress={onAsk} accessibilityRole="button" style={({ pressed }) => [styles.mini, { backgroundColor: t.goldSoft, opacity: pressed ? 0.7 : 1 }]}>
+                <T v="callout" color={t.gold} style={{ fontWeight: '700' }}>{L('追问', 'Ask')}</T>
+              </Pressable>
+            ) : null}
+          </View>
+        ) : null}
+      </View>
+    );
+  }
   return (
     <View style={[styles.shareCard, { backgroundColor: t.surface, borderColor: t.line, alignSelf: mine ? 'flex-end' : 'flex-start' }]}>
       <T v="caption" color={t.cyan} style={{ fontWeight: '600' }}>
-        {`${s.kind === 'note' ? L('笔记', 'Note') : s.kind === 'message' ? L('对话摘录', 'From a chat') : L('分享', 'Shared')}${s.when ? ` · ${s.when}` : ''}`}
+        {`${s.kind === 'note' ? L('笔记', 'Note') : s.kind === 'message' ? L('对话摘录', 'From a chat') : s.kind === 'thread' ? L('聊天记录', 'Messages') : L('分享', 'Shared')}${s.when ? ` · ${s.when}` : ''}`}
       </T>
       {gone ? (
         <T v="callout" color={t.ink3}>{mine ? L('你已收回此分享', 'You withdrew this share') : L(`${friend.name} 已收回此分享`, `${friend.name} withdrew this share`)}</T>
@@ -379,7 +404,7 @@ function MsgView({ m, friend, onAsk, onReview, onEdit, onRetry, onLong }: {
   if (m.kind === 'system') return <T v="caption" color={t.ink3} style={{ textAlign: 'center' }}>{m.text}</T>;
   if (m.kind === 'share') {
     return (
-      <Pressable onLongPress={mine ? () => onLong(m) : undefined} delayLongPress={350} style={{ gap: 4 }}>
+      <Pressable onLongPress={m.status !== 'revoked' ? () => onLong(m) : undefined} delayLongPress={350} style={{ gap: 4 }}>
         <SharedCard m={m} friend={friend} mine={mine} onAsk={friend.status === 'active' ? () => onAsk(m) : undefined} />
         <T v="caption" color={t.ink3} style={{ alignSelf: mine ? 'flex-end' : 'flex-start' }}>{timeLabel(m.ts)}</T>
         <StatusLine m={m} onRetry={() => onRetry(m)} />
@@ -519,6 +544,8 @@ export function FriendChatScreen() {
   const [agentAsk, setAgentAsk] = useState<{ prev: A2AOut | null } | null>(null);
   const [outs, setOuts] = useState<A2AOut[]>([]);
   const [sending, setSending] = useState(false);
+  // 合并转发：多选 / 「选这一段」时消息左边出勾，输入栏换成「加入转发篮 · 转发」
+  const sel = useSelect();
   const scroller = useRef<ScrollView>(null);
   const input = useRef<TextInput>(null);
   const root = useRef<View>(null);
@@ -609,19 +636,31 @@ export function FriendChatScreen() {
   const onRetry = (m: FriendMsg) => { fr.retry(m.id).then(put).catch((e) => showError(L('重试失败', "Couldn't retry"), e)); };
   const withdraw = (m: FriendMsg) => confirm(L('收回此消息？', 'Withdraw this?'), L('对方那边的内容将被清除，并显示为已收回。', 'It is removed on their side and shows as withdrawn.'), L('收回', 'Withdraw'),
     () => { fr.revokeMsg(m.id).then(put).catch((e) => showError(L('收回失败', "Couldn't withdraw"), e)); });
-  // 长按一条：放进播客（两边说的都行，朋友说的只在那一期里用）、收回（你发的）
+  // 长按一条：复制、转发（转发 / 选这一段 / 多选 / 加入转发篮）、放进播客（两边说的都行，朋友说的只在那一期里用）、收回（你发的）
   const onLong = (m: FriendMsg) => {
-    const canWithdraw = m.dir === 'out' && m.status !== 'revoked' && (m.kind === 'text' || m.kind === 'share');
-    const podOk = canPod && (m.kind === 'text' || m.kind === 'ask' || m.kind === 'answer') && m.status !== 'revoked' && !!m.text.trim();
-    if (!podOk) { if (canWithdraw) withdraw(m); return; }
-    sheet.open({ title: m.dir === 'out' ? L('此消息', 'This message') : L(`${friend?.name ?? ''}的消息`, `From ${friend?.name ?? ''}`), content: (close) => (
+    const gone = m.status === 'revoked';
+    const canWithdraw = m.dir === 'out' && !gone && (m.kind === 'text' || m.kind === 'share');
+    const podOk = canPod && (m.kind === 'text' || m.kind === 'ask' || m.kind === 'answer') && !gone && !!m.text.trim();
+    const copyText = m.kind === 'share' ? (m.share?.text || m.share?.quote || m.share?.title || '') : m.text;
+    const canFwd = !gone && m.kind !== 'system' && (!!m.text.trim() || m.kind === 'share');
+    const ref = fw.friendRef(id, m.id);
+    if (gone) return;
+    sheet.open({ title: m.dir === 'out' ? L('此消息', 'This message') : L(`${friend?.name ?? ''} 的消息`, `From ${friend?.name ?? ''}`), content: (close) => (
       <View style={{ gap: space.sm }}>
+        {copyText.trim() ? <Action icon={Copy} label={L('复制', 'Copy')} onPress={() => { close(); Clipboard.setStringAsync(copyText).catch(() => {}); }} /> : null}
+        {canFwd ? forwardActions({
+          forward: () => { close(); nav.navigate('Forward', { refs: [ref] }); },
+          around: () => { close(); sel.around(ref); },
+          pick: () => { close(); sel.start(ref); },
+          basket: () => { close(); fw.addToBasket([ref]).then(setBasketCount).catch((e) => showError(L('添加失败', "Couldn't add it"), e)); },
+        }).map((a) => <Action key={a.label} {...a} />) : null}
+        {podOk ? 
         <Action icon={Mic} label={L('添加到播客', 'Add to a podcast')} note={m.dir === 'in'
           ? L(`用作一期播客的素材；${friend?.name ?? '朋友'}的发言仅用于该期，不会原文写入库或世界树`, `Use it in an episode; ${friend?.name ? `${friend.name}'s` : 'their'} words stay in that episode, never quoted into the vault or memory tree`)
           : L('用作一期播客的素材：录制前准备、主持人提问和整理都会参考', "Use it in an episode: prep, the host's questions and the note draw on it")}
           onPress={() => sheet.open({ title: L('选择一期', 'Which episode'), content: (c) => (
             <PutInPodcast kind="friend" target={`${id}:${m.id}`} close={c} onOpen={(e) => openEpisode(nav, e)} />
-          ) })} />
+          ) })} /> : null}
         {canWithdraw ? <Action icon={Undo2} label={L('收回', 'Withdraw')} danger note={L('对方那边的内容将被清除，并显示为已收回', 'It disappears on their side')} onPress={() => { close(); withdraw(m); }} /> : null}
       </View>
     ) });
@@ -665,9 +704,21 @@ export function FriendChatScreen() {
                 : L('发送消息，或在对话中长按一条消息 →「分享」发送给对方。', 'Send a message, or long-press a message in a chat → Share to send it here.')}
             </T>
           ) : null}
-          {friend ? lines.map((x) => (x.kind === 'out'
-            ? <AskOutCard key={x.o.id} o={x.o} name={friend.name} onOpen={isLocalOut(x.o) ? undefined : openAgents} onMore={active ? () => onMore(x.o) : undefined} />
-            : <MsgView key={x.m.id} m={x.m} friend={friend} onAsk={onAsk} onReview={onReview} onEdit={onEdit} onRetry={onRetry} onLong={onLong} />)) : null}
+          {friend ? lines.map((x) => {
+            if (x.kind === 'out') return <AskOutCard key={x.o.id} o={x.o} name={friend.name} onOpen={isLocalOut(x.o) ? undefined : openAgents} onMore={active ? () => onMore(x.o) : undefined} />;
+            const view = <MsgView key={x.m.id} m={x.m} friend={friend} onAsk={onAsk} onReview={onReview} onEdit={onEdit} onRetry={onRetry} onLong={onLong} />;
+            if (!sel.on) return view;
+            // 多选时：能转的消息左边一个勾，点整行勾上 / 去掉
+            const ok = x.m.kind !== 'system' && x.m.status !== 'revoked' && (!!x.m.text.trim() || x.m.kind === 'share');
+            const ref = ok ? fw.friendRef(id, x.m.id) : null;
+            return (
+              <Pressable key={x.m.id} onPress={ref ? () => sel.toggle(ref) : undefined} disabled={!ref} accessibilityRole="checkbox" accessibilityState={{ checked: !!ref && sel.has(ref) }}
+                style={{ flexDirection: 'row', gap: space.sm, alignItems: 'flex-start' }}>
+                {ref ? <SelectMark on={sel.has(ref)} /> : <View style={{ width: 22 }} />}
+                <View style={{ flex: 1, minWidth: 0 }} pointerEvents="none">{view}</View>
+              </Pressable>
+            );
+          }) : null}
           {friend && !agentOn && msgs.some((m) => m.kind === 'ask' && m.dir === 'in') ? (
             <T v="caption" color={t.ink3} style={{ textAlign: 'center' }}>{L('你的名片 Agent 尚未开启：对方的提问需要你亲自回复。', "Your card agent is off: answer their questions yourself.")}</T>
           ) : null}
@@ -678,8 +729,13 @@ export function FriendChatScreen() {
               <T v="callout" color={t.ink3} style={{ padding: space.md, textAlign: 'center' }}>
                 {friend.status === 'blocked' ? L('已屏蔽。可在右上角「…」中解除。', 'Blocked. Unblock from … at the top right.') : L('你们已不是好友，无法发送消息。', "You're no longer friends; messages can't be sent.")}
               </T>
+            ) : sel.on ? (
+              <SelectBar n={sel.refs.length} busy={sel.busy} onCancel={sel.stop}
+                onBasket={() => { fw.addToBasket(sel.refs).then((n) => { setBasketCount(n); sel.stop(); }).catch((e) => showError(L('添加失败', "Couldn't add it"), e)); }}
+                onForward={() => { nav.navigate('Forward', { refs: sel.refs, gist: sel.gist || undefined }); sel.stop(); }} />
             ) : (
               <>
+                <BasketPill onPress={() => nav.navigate('Forward', { basket: true })} />
                 {askOf || editOf || agentAsk ? (
                   <View style={{ paddingHorizontal: space.md, paddingTop: space.sm }}>
                     <View style={[styles.quote, { backgroundColor: t.goldSoft }]}>

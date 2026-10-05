@@ -183,7 +183,7 @@ def resolve_all(refs: list[str]) -> list[dict]:
             seen.add(it["ref"])
             items.append(it)
     if not items:
-        raise HTTPException(404, L("这些消息找不到了，或者不能转发", "Those messages are gone or can't be forwarded"))
+        raise HTTPException(404, L("消息不存在或无法转发", "Those messages are gone or can't be forwarded"))
     order = list(dict.fromkeys(i["conv"] for i in items))
     items.sort(key=lambda i: (order.index(i["conv"]), i["_order"]))
     return items[:MAX_ITEMS]
@@ -311,7 +311,7 @@ def window_of(ref: str) -> tuple[list[dict], int]:
     items = [it for r in rows if (it := resolve(f"{src}:{where}:{r['id']}", names))]
     at = next((k for k, it in enumerate(items) if it["_order"] == mid), -1)
     if at < 0:
-        raise HTTPException(404, L("这条消息找不到了，或者不能转发", "That message is gone or can't be forwarded"))
+        raise HTTPException(404, L("该消息不存在或无法转发", "That message is gone or can't be forwarded"))
     return items, at
 
 
@@ -399,7 +399,7 @@ def thread_snapshot(refs: list[str], gist: str | None) -> tuple[str, dict, str, 
 
 # —— 转给自己的 Agent ——
 
-INTENT_LABEL = {"remember": ("记下来", "Remember this"), "handle": ("去处理", "Take care of it"), "look": ("先看看", "Take a look")}
+INTENT_LABEL = {"remember": ("记录", "Remember"), "handle": ("处理", "Handle"), "look": ("仅阅读", "Read only")}
 INTENT_RULE = {
     "remember": ("记下来。把里面有用的信息存进你负责的记录或记忆（按你自己的规矩，该进哪里就进哪里）。做完用一两句话告诉 TA 记了什么。",
                  "Remember this: put what's useful into the records or memory you keep (by your own rules, wherever it belongs). "
@@ -571,7 +571,7 @@ async def to_agent(body: AgentIn):
 async def to_save(body: RefsIn):
     items = await asyncio.to_thread(resolve_all, body.refs)
     if any(i["external"] for i in items):
-        raise HTTPException(409, L("里面有朋友说的话，不能存进收藏（收藏可以再交给 Agent）", "It includes a friend's words, so it can't go into Saved (saved items can be handed to an Agent)"))
+        raise HTTPException(409, L("包含好友的发言，无法收藏（收藏可交给 Agent 处理）", "It includes a friend's messages, so it can't be saved (saved items can be handed to an Agent)"))
     import saves  # 延迟导入：saves.py 依赖本模块之外的很多东西
     gist = clean_gist(body.gist) or first_gist(items)
     text = "\n\n".join(f"{i['name']} · {when(i['at'])}\n{i['text']}" for i in items)
@@ -612,7 +612,7 @@ async def add_basket(body: BasketIn):
         if it:
             refs.append(it["ref"])
     if not refs:
-        raise HTTPException(400, L("这些消息不能转发", "Those messages can't be forwarded"))
+        raise HTTPException(400, L("这些消息无法转发", "Those messages can't be forwarded"))
     ts = now_iso()
     with _lock, fdb() as conn:
         n = conn.execute("SELECT COUNT(*) FROM forward_basket").fetchone()[0]
@@ -638,11 +638,11 @@ async def drop_basket(body: BasketIn | None = None):
 @router.get("/api/forward/{fid}")
 async def get_forward(fid: str):
     if not re.match(r"^fw-[0-9a-f]{8}$", fid or ""):
-        raise HTTPException(404, L("找不到这份转发", "Forward not found"))
+        raise HTTPException(404, L("未找到该转发", "Forward not found"))
     with _lock, fdb() as conn:
         r = conn.execute("SELECT * FROM forwards WHERE id=?", (fid,)).fetchone()
     if not r:
-        raise HTTPException(404, L("找不到这份转发", "Forward not found"))
+        raise HTTPException(404, L("未找到该转发", "Forward not found"))
     return {"ok": True, "forward": {"id": r["id"], "to": r["to_thread"], "intent": r["intent"], "note": r["note"] or "", "gist": r["gist"],
                                     "items": json.loads(r["items"] or "[]"), "createdAt": r["created_at"]}}
 

@@ -184,7 +184,7 @@ export class HttpApi implements GravaApi {
     const messages: Message[] = (j.messages as any[]).map((m) => ({
       id: m.id, role: m.role, time: m.time, modelId: m.modelId ?? undefined, fallbackFrom: m.fallbackFrom ?? undefined, body: { type: 'text', text: m.text, attachments: withBase(m) },
       error: m.status === 'error' ? L('未收到回复', 'No reply was received') : undefined,
-      ...(m.status === 'queued' ? { queued: true } : {}), ...(m.status === 'steered' ? { steered: true } : {}), ...(m.replyTo?.id ? { replyTo: m.replyTo } : {}),
+      ...(m.status === 'queued' ? { queued: true } : {}), ...(m.status === 'steered' ? { steered: true } : {}), ...(m.replyTo?.id ? { replyTo: m.replyTo } : {}), ...(m.forward ? { forward: m.forward } : {}),
     }));
     return { messages, modelId: j.modelId as string, inFlight: j.inFlight ?? null };
   }
