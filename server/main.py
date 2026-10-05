@@ -89,6 +89,7 @@ from widget import router as widget_router  # noqa: E402 — 小组件（app 1.0
 from share import public_router as share_public_router, router as share_router  # noqa: E402 — 分享（社交第一层）
 import relay  # noqa: E402 — 中继（relay.py）：没有公网入口时朋友经它连进来
 import friends  # noqa: E402 — 朋友（社交第二层）：/api/friends…、/api/card；/f/… 只挂在公网小服务 public.py 上
+from forward import router as forward_router  # noqa: E402 — 合并转发：几条消息合成一份，发给朋友或转给自己的 Agent
 from a2a import router as a2a_router  # noqa: E402 — agent 之间（社交第三层）：/api/a2a…、/api/card…，顺带挂上收件箱 social 类的钩子
 from egress import router as egress_router  # noqa: E402 — Doorman 出口（第 9 步）：代办沙箱的出网判断 /api/egress…，顺带挂上收件箱 egress 类的钩子
 
@@ -162,6 +163,7 @@ app.include_router(podcast_router)
 app.include_router(share_router)
 app.include_router(share_public_router)  # /s/<令牌>：分享的链接页，公开（这里只在自己的设备上开得到；外网走 public.py）
 app.include_router(friends.router)  # 在 share 之后注册也行：/api/shares/{sid}/send 和 share 的路由不重叠
+app.include_router(forward_router)  # /api/forward/basket 在 /api/forward/{fid} 之前定义（同一个 router 里按顺序）
 app.include_router(a2a_router)
 app.include_router(egress_router)
 if apps is not None:

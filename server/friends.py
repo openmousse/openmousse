@@ -52,6 +52,8 @@ public_router = APIRouter()   # 给别人的：/f/i/…、/f/hello、/f/msg（pu
 INVITE_DAYS, INVITE_MAX_DAYS, INVITE_OPEN_MAX = 7, 30, 20
 HELLO_MAX = 16_000
 TEXT_MAX, ASK_MAX, SHARE_TEXT_MAX, NOTE_MAX = 4000, 1000, 60_000, 500
+THREAD_ITEMS_MAX = 80   # 合并转发的聊天记录最多几条（forward.py 发的是 60 条以内）
+THREAD_WHO = ("me", "agent", "friend", "friend_agent", "my_card")
 PER_MINUTE, PER_DAY, HELLO_PER_HOUR = 30, 500, 30
 RETRY = (30, 120, 600, 3600, 21600)   # 之后每 6 小时
 GIVE_UP = 3 * 86400
@@ -332,6 +334,8 @@ def msg_json(r) -> dict:
            "status": r["status"], "review": r["review"], "ts": r["ts"], "edited": bool(r["edited_at"])}
     if r["kind"] == "share":
         out["share"] = d.get("share") or {}
+        if out["share"].get("kind") == "thread":
+            out["share"] = {**out["share"], "items": thread_lines(out["share"])}
     if r["kind"] in ("ask", "answer"):
         out["about"] = r["reply_to"]
     if r["kind"] == "answer":
@@ -649,10 +653,23 @@ def clean_share(s) -> dict:
         raise ValueError("share is not an object")
     link = s.get("link")
     link = link if isinstance(link, str) and link.startswith(("https://", "http://")) and len(link) <= 300 else None
-    return {"sid": _str(s.get("sid") or "", 40, empty=True), "kind": _str(s.get("kind") or "", 16, empty=True),
-            "title": _str(s.get("title") or "", 200, empty=True), "text": _str(s.get("text") or "", SHARE_TEXT_MAX, empty=True),
-            "quote": _str(s.get("quote") or "", 500, empty=True), "when": _str(s.get("when") or "", 40, empty=True),
-            "link": link, "can_ask": s.get("can_ask") is True}
+    out = {"sid": _str(s.get("sid") or "", 40, empty=True), "kind": _str(s.get("kind") or "", 16, empty=True),
+           "title": _str(s.get("title") or "", 200, empty=True), "text": _str(s.get("text") or "", SHARE_TEXT_MAX, empty=True),
+           "quote": _str(s.get("quote") or "", 500, empty=True), "when": _str(s.get("when") or "", 40, empty=True),
+           "link": link, "can_ask": s.get("can_ask") is True}
+    if out["kind"] == "thread":  # 合并转发的聊天记录：每条是正文里的一段（s / e），说话人另记；位置不对的丢掉
+        items = []
+        for it in s.get("items") if isinstance(s.get("items"), list) else []:
+            if not isinstance(it, dict) or len(items) >= THREAD_ITEMS_MAX:
+                continue
+            a, b = it.get("s"), it.get("e")
+            if not (isinstance(a, int) and isinstance(b, int) and 0 <= a <= b <= len(out["text"])):
+                continue
+            who = it.get("who") if it.get("who") in THREAD_WHO else "other"
+            items.append({"who": who, "name": _str(it.get("name") or "", 80, empty=True), "at": _str(it.get("at") or "", 40, empty=True), "s": a, "e": b})
+        out["items"] = items
+        out["convs"] = [_str(c, 80, empty=True) for c in (s.get("convs") if isinstance(s.get("convs"), list) else [])[:8] if isinstance(c, str)]
+    return out
 
 
 def store_in(fid: str, mid: str, kind: str, text: str, *, at: str, data: dict | None = None, reply_to: str | None = None,
@@ -688,7 +705,7 @@ def apply_control(f: dict, m: dict) -> bool:
         if m["kind"] == "revoke":
             d = row_data(r)
             if r["kind"] == "share":
-                d["share"] = {**(d.get("share") or {}), "text": "", "quote": "", "title": ""}
+                d["share"] = {**(d.get("share") or {}), "text": "", "quote": "", "title": "", "items": [], "convs": []}
             conn.execute("UPDATE friend_messages SET status='revoked', text='', data=?, edited_at=? WHERE id=?",
                          (json.dumps(d, ensure_ascii=False), now_iso(), r["id"]))
             return True
@@ -1303,8 +1320,21 @@ class ShareSendIn(BaseModel):
 def share_snapshot(r) -> dict:
     masks = json.loads(r["masks"] or "[]")
     rel = set(json.loads(r["released"] or "[]"))
-    return {"sid": r["id"], "kind": r["kind"], "title": share.mask_title(r), "text": share.apply_masks(r["body"] or "", masks, rel),
-            "quote": share.quote_of(r), "when": share.local_day(r["published_at"] or r["created_at"]), "link": share.link_of(r)}
+    out = {"sid": r["id"], "kind": r["kind"], "title": share.mask_title(r), "text": share.apply_masks(r["body"] or "", masks, rel),
+           "quote": share.quote_of(r), "when": share.local_day(r["published_at"] or r["created_at"]), "link": share.link_of(r)}
+    if r["kind"] == "thread":  # 聊天记录：正文还是整段（老版本照样能看），每条只记位置和说话人，不重复带一遍原文
+        shown, items = share.thread_view(r)
+        out["text"] = shown
+        out["items"] = [{k: i[k] for k in ("who", "name", "at", "s", "e")} for i in items]
+        out["convs"] = json.loads(r["source"] or "{}").get("convs") or []
+    return out
+
+
+def thread_lines(snap: dict) -> list[dict]:
+    """收到 / 发出的聊天记录：按位置切回一条条给 app（服务器之间都是 Python 的字符位置，切得准）。"""
+    text = snap.get("text") or ""
+    return [{"who": i.get("who") or "", "name": i.get("name") or "", "at": i.get("at") or "", "text": text[i["s"]:i["e"]]}
+            for i in snap.get("items") or [] if isinstance(i, dict) and isinstance(i.get("s"), int) and isinstance(i.get("e"), int)]
 
 
 @router.post("/api/shares/{sid}/send")
@@ -1328,8 +1358,9 @@ async def send_share(sid: str, body: ShareSendIn):
     r = share.row(sid)
     snap = share_snapshot(r)
     note = " ".join((body.text or "").split())[:NOTE_MAX]
+    other = r["kind"] == "thread" and bool(json.loads(r["source"] or "{}").get("external"))  # 里面有朋友说的话：名片 Agent 不替别人答
     for f in targets:
-        can = body.ask and social.tier_scopes(f["tier"])["shares"] == "ask"
+        can = body.ask and not other and social.tier_scopes(f["tier"])["shares"] == "ask"
         insert_out(f["id"], "share", note, data={"share": {**snap, "can_ask": can}})
     names = "、".join(f["name"] for f in targets) if L("zh", "en") == "zh" else ", ".join(f["name"] for f in targets)
     log_activity(L(f"把分享「{snap['title']}」发给了 {names}", f"Sent the share \"{snap['title']}\" to {names}"), "share")

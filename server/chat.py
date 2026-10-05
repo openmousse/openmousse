@@ -196,6 +196,8 @@ def db() -> sqlite3.Connection:
         conn.execute("ALTER TABLE messages ADD COLUMN origin TEXT")  # 回复是被什么引出来的（user / auto / relay），未读里的「给你的」按它算
     if "reply_to" not in cols:
         conn.execute("ALTER TABLE messages ADD COLUMN reply_to INTEGER")  # 长按「引用」着发的：引的是哪条消息（app 在气泡上面显示原话）
+    if "forward" not in cols:
+        conn.execute("ALTER TABLE messages ADD COLUMN forward TEXT")  # 合并转发给这个 Agent 的：转发卡（forward.py 的 forward_card，JSON）
     conn.execute("""CREATE TABLE IF NOT EXISTS activity_log (
         id INTEGER PRIMARY KEY AUTOINCREMENT, ts TEXT NOT NULL, actor TEXT NOT NULL, text TEXT NOT NULL, kind TEXT NOT NULL)""")
     return conn
@@ -235,10 +237,18 @@ def hhmm(ts: str) -> str:
 
 def row_to_msg(r: sqlite3.Row) -> dict:
     fallback = r["requested"] if r["requested"] and r["requested"] != r["model"] else None
-    att = r["attachments"] if "attachments" in r.keys() else None
-    return {"id": f"db{r['id']}", "role": "user" if r["role"] == "user" else "auto" if r["role"] == "auto" else "grava", "text": r["text"],
-            "modelId": r["model"], "fallbackFrom": fallback, "time": hhmm(r["ts"]), "status": r["status"],
-            "attachments": json.loads(att) if att else None}
+    keys = r.keys()
+    att = r["attachments"] if "attachments" in keys else None
+    fwd = r["forward"] if "forward" in keys else None
+    out = {"id": f"db{r['id']}", "role": "user" if r["role"] == "user" else "auto" if r["role"] == "auto" else "grava", "text": r["text"],
+           "modelId": r["model"], "fallbackFrom": fallback, "time": hhmm(r["ts"]), "status": r["status"],
+           "attachments": json.loads(att) if att else None}
+    if fwd:
+        try:
+            out["forward"] = json.loads(fwd)
+        except ValueError:
+            pass
+    return out
 
 
 def with_quote(m: dict, ref: sqlite3.Row | None) -> dict:

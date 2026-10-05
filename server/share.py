@@ -11,6 +11,8 @@
   没配 public_url 时 app 只给图，不给链接。主服务上也挂着 /s/（只在自己的设备上能开，不算浏览次数）。
 - 收回：链接页变成「已经收回了」，快照正文清空（标题留着，你的列表里还看得到）；卡片缓存删掉。草稿 7 天没发就删。
 - 状态：draft 草稿 / live 链接能打开 / friends 只发给了朋友（社交第二层，见 friends.py；/s/ 打不开）/ revoked 收回了。
+- 种类：message 一条回复 / note 一篇笔记 / text 一段文字 / thread 合并转发的几条聊天记录（forward.py 拼正文；source.items 记每条的说话人和
+  在正文里的位置，挡私事以后按位置切回一条条，给 app 画成聊天记录）。
 - 不调模型，不花额度。
 """
 from __future__ import annotations
@@ -269,6 +271,49 @@ def mask_title(r: sqlite3.Row, mark: str = BLOCK) -> str:
     return t
 
 
+# —— 合并转发的聊天记录（kind = thread）——
+
+def _hidden(masks: list[dict], rel: set[str]) -> list[tuple[int, int]]:
+    """还挡着的那几段（和 apply_masks 一样：重叠的只算先开始的）。"""
+    out, end = [], -1
+    for m in sorted(masks, key=lambda m: m["start"]):
+        if m["id"] in rel or m["start"] < end:
+            continue
+        out.append((m["start"], m["end"]))
+        end = m["end"]
+    return out
+
+
+def _remap(pos: int, hidden: list[tuple[int, int]], mark: str) -> int:
+    """原文里的位置 → 挡好以后的位置（落在挡住的那段中间的，算到灰条后面）。"""
+    shift = 0
+    for s, e in hidden:
+        if e <= pos:
+            shift += (e - s) - len(mark)
+        elif s < pos:
+            return s - shift + len(mark)
+        else:
+            break
+    return pos - shift
+
+
+def thread_view(r: sqlite3.Row, mark: str = BLOCK) -> tuple[str, list[dict]]:
+    """合并转发：挡好的正文，和一条条 {who, name, at, s, e, text}（s / e 是这条在挡好的正文里的位置；name 是挡好的说话人）。"""
+    body = r["body"] or ""
+    masks = json.loads(r["masks"] or "[]")
+    rel = set(json.loads(r["released"] or "[]"))
+    shown = apply_masks(body, masks, rel, mark)
+    hidden = _hidden(masks, rel)
+    items = []
+    for it in json.loads(r["source"] or "{}").get("items") or []:
+        try:
+            hs, he, s, e = (_remap(int(it[k]), hidden, mark) for k in ("hs", "he", "s", "e"))
+        except (KeyError, TypeError, ValueError):
+            continue
+        items.append({"who": str(it.get("who") or ""), "name": shown[hs:he], "at": str(it.get("at") or ""), "s": s, "e": e, "text": shown[s:e]})
+    return shown, items
+
+
 # —— 纯文字、默认那句话 ——
 
 MD_STRIP = [(re.compile(r"```.*?```", re.S), " "), (re.compile(r"!\[[^\]]*\]\([^)]*\)"), ""), (re.compile(r"\[([^\]]*)\]\([^)]*\)"), r"\1"),
@@ -305,14 +350,15 @@ def default_quote(shown: str, title: str) -> str:
 # —— 快照 ——
 
 class ShareIn(BaseModel):
-    kind: str                       # message | note | text
+    kind: str                       # message | note | text | thread
     thread: str | None = None       # message：哪个对话
     id: str | None = None           # message：哪条（db123 或 123）
     withQuestion: bool | None = None  # message：回复前面带上你问的那句（默认带）
     topic: str | None = None        # note：想完了的主题（用它存下的那篇笔记）
     path: str | None = None         # note：库里的笔记（相对库的路径）
-    title: str | None = None        # text
+    title: str | None = None        # text、thread（要点）
     text: str | None = None         # text
+    items: list[str] | None = None  # thread：哪几条（forward.py 的 ref：chat:<线程>:<id> / friend:<好友>:<行 id>）
 
 
 def _note_file(rel_path: str) -> Path:
@@ -378,6 +424,9 @@ def snapshot(b: ShareIn) -> tuple[str, dict, str, str]:
         if not text:
             raise HTTPException(400, L("没有内容", "Nothing to share"))
         return "text", {}, (b.title or "").strip()[:80] or first_line(text), text
+    if kind == "thread":
+        import forward  # 延迟导入：forward.py 依赖本模块
+        return forward.thread_snapshot(b.items or [], b.title)
     raise HTTPException(400, L("不认识的分享类型", "Unknown kind"))
 
 
@@ -392,7 +441,7 @@ def create(b: ShareIn) -> str:
     with _lock, sdb() as conn:
         old = conn.execute("SELECT id FROM shares WHERE kind=? AND source=? AND status IN ('draft','live') AND body=? "
                            "ORDER BY created_at DESC LIMIT 1", (kind, src, body)).fetchone()
-        if old and kind != "text":
+        if old and kind not in ("text", "thread"):
             return old["id"]  # 同一条再点分享：还是原来那份（链接不变，放出来的也还在）
     masks = find_private(body)
     sid = f"sh-{uuid.uuid4().hex[:8]}"
@@ -428,6 +477,12 @@ def card_sig(r: sqlite3.Row, style: str) -> str:
 def quote_of(r: sqlite3.Row, mark: str = BLOCK) -> str:
     if r["quote"]:
         return r["quote"]
+    if r["kind"] == "thread":  # 聊天记录：第一条「谁：说了什么」（正文开头是说话人那一行，不能按句子挑）
+        first = next((i for i in thread_view(r, mark)[1] if i["text"].strip()), None)
+        if first:
+            line = " ".join(plain(first["text"]).split())
+            line = line if len(line) <= 70 else line[:69].rstrip() + "…"
+            return L(f"{first['name']}：{line}", f"{first['name']}: {line}")
     rel = set(json.loads(r["released"] or "[]"))
     return default_quote(apply_masks(r["body"] or "", json.loads(r["masks"] or "[]"), rel, mark), mask_title(r, mark))
 
@@ -464,6 +519,12 @@ def share_json(r: sqlite3.Row, full: bool = False) -> dict:
             out.update(hook(r) or {})
         except Exception:  # noqa: BLE001 — 补不上就不补
             pass
+    if r["kind"] == "thread":
+        src = out["source"]
+        out["count"] = len(src.get("items") or [])
+        out["external"] = src.get("external") or []  # 里面有谁说的话（朋友本人、朋友的名片 Agent）：不能追问
+        if full:
+            out["items"] = [{k: i[k] for k in ("who", "name", "at", "text")} for i in thread_view(r)[1]]
     if full:
         out["masks"] = [{"id": m["id"], "kind": m["kind"], "label": m["label"], "text": body[m["start"]:m["end"]],
                          "before": " ".join(body[max(0, m["start"] - 16):m["start"]].split()),
