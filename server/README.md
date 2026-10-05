@@ -505,6 +505,26 @@ Share a reply or a Done-thinking note as a link page or a clean image card: long
 | `GET /api/shares/{id}/card?style=clean\|link` | The card as a data URI; `/card.png` for the image itself |
 | `GET /s/{token}`, `/s/{token}/card.png` | Public: the link page and its preview image |
 
+## Forwarding
+
+Long-press any message, in an Agent chat or a friend chat, for **Forward**, **Select this conversation** (the model checks the messages around it on the same topic and writes a one-line title), **Select messages**, or **Add to basket** (collect messages from several chats and send them together later). See [`forward.py`](forward.py).
+
+- **To friends** the bundle becomes a share of `kind: thread` (above): private bits are hidden first, the friend can ask about it (the card agent answers from that bundle only), and withdrawing it clears their copy. A bundle with someone else's words in it (a friend, their card agent) can't take questions, and each line says who said it.
+- **To your own Agent** it is a message from you in that Agent's chat, with an intent (remember / handle / read only) and an optional note; the app draws the bundle above it. A busy Agent gets it queued. **A friend's words never enter a tool-capable turn**: they are condensed into points by a model without tools (`llm-task`, or `card.llm`), and the Agent only sees the points; with neither, it's told how many lines it didn't get.
+- Bundles with a friend's words can go into a podcast but not into Saved (a saved item can be handed to an Agent).
+
+| Route | What |
+|---|---|
+| `POST /api/forward/preview` | `{refs, gist?}` → the lines, a one-line title, which chats, whose words |
+| `POST /api/forward/segment` | `{ref}` → the messages on the same topic around it, and a title |
+| `POST /api/forward/share` | `{refs, gist}` → a draft `thread` share (then the share routes: masks, `/send`) |
+| `POST /api/forward/agent` | `{refs, gist, agent, intent, note?}` → posts it into that Agent's chat |
+| `POST /api/forward/save` | `{refs, gist}` → one saved item |
+| `GET` / `POST` / `DELETE /api/forward/basket` | The basket (`DELETE` without refs empties it) |
+| `GET /api/forward/{id}` | A bundle sent to an Agent, in full |
+
+Refs are `chat:<thread>:<message id>` or `friend:<friend id>:<row id>`.
+
 ## Friends
 
 Chat → Friends in the app. Your server and a friend's server talk directly: identity is an Ed25519 key per server (not the address), you become friends through a one-time invite, and every request between the two servers is signed. The protocol is [`../docs/social-protocol.md`](../docs/social-protocol.md); the code is [`social.py`](social.py) (identity, card, signatures, tables, tiers) and [`friends.py`](friends.py) (invites, chat, delivery, shares to friends, follow-up questions).

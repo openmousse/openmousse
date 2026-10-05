@@ -504,6 +504,26 @@ app 的「思考」tab（2026-09-28 起界面上叫 **Zen**，代码和接口仍
 | `GET /api/shares/{id}/card?style=clean\|link` | 卡片图（data URI）；`/card.png` 是图本身 |
 | `GET /s/{token}`、`/s/{token}/card.png` | 公开的：链接页和预览图 |
 
+## 合并转发
+
+在 Agent 的对话或朋友的聊天里长按任意一条：**转发**、**选这一段**（模型把前后说同一件事的几条勾上，顺带写一句要点）、**多选**、**加入转发篮**（在几个对话里各挑几条，攒到一起再发）。见 [`forward.py`](forward.py)。
+
+- **发给朋友**：变成一份 `kind: thread` 的分享（见上），先挡私事，朋友能追问（名片 Agent 只拿这一份回答），收回以后对方那边清空。里面有别人说的话（朋友本人、朋友的名片 Agent）的不能追问，每条都写明是谁说的。
+- **转给自己的 Agent**：在它的对话里记成你发的一条，带一个意图（记录 / 处理 / 仅阅读）和一句补充说明，app 在上面画聊天记录卡；它正在回复就排队。**朋友说的话不进能用工具的回合**：先交给不带工具的模型（`llm-task` 或 `card.llm`）整理成要点，Agent 只看到要点；两条路都没有，只告诉它有几条没给。
+- 含朋友的话的能放进播客，不能收藏（收藏可以再交给 Agent）。
+
+| 接口 | 做什么 |
+|---|---|
+| `POST /api/forward/preview` | `{refs, gist?}` → 一条条、一句要点、来自哪几段对话、里面有谁说的话 |
+| `POST /api/forward/segment` | `{ref}` → 前后说同一件事的几条和一句要点 |
+| `POST /api/forward/share` | `{refs, gist}` → 一份 `thread` 草稿分享（之后走分享的接口：挡私事、`/send`） |
+| `POST /api/forward/agent` | `{refs, gist, agent, intent, note?}` → 记进那个 Agent 的对话 |
+| `POST /api/forward/save` | `{refs, gist}` → 一条收藏 |
+| `GET` / `POST` / `DELETE /api/forward/basket` | 转发篮（`DELETE` 不给 refs = 清空） |
+| `GET /api/forward/{id}` | 转给 Agent 的那一份（全文） |
+
+ref 是 `chat:<线程>:<消息 id>` 或 `friend:<好友 id>:<行 id>`。
+
 ## 朋友
 
 app 里「对话 → 朋友」。你的服务器和朋友的服务器直接说话：身份是每台服务器一把 Ed25519 密钥（不是地址），加朋友靠一次性邀请码，两台服务器之间的每个请求都带签名。协议见 [`../docs/social-protocol.zh-CN.md`](../docs/social-protocol.zh-CN.md)；代码是 [`social.py`](social.py)（身份、名片、签名、表、档位）和 [`friends.py`](friends.py)（邀请码、聊天、投递、分享发给朋友、追问）。

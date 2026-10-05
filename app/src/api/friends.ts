@@ -35,7 +35,11 @@ export interface FriendsHome {
 }
 
 export type FriendMsgKind = 'text' | 'share' | 'ask' | 'answer' | 'system';
-export interface SharedSnapshot { sid: string; kind: string; title: string; text: string; quote: string; when: string; link: string | null; can_ask: boolean }
+export interface SharedSnapshot {
+  sid: string; kind: string; title: string; text: string; quote: string; when: string; link: string | null; can_ask: boolean;
+  /** 合并转发的聊天记录（kind thread）：一条条（服务器按位置切好的）、来自哪几个对话。老服务器发来的没有 */
+  items?: { who: string; name: string; at: string; text: string }[]; convs?: string[];
+}
 export interface FriendMsg {
   id: number; mid: string; dir: 'in' | 'out'; kind: FriendMsgKind; by: 'person' | 'agent'; text: string; replyTo: string | null;
   /** 发出去的：queued 发送中 / sent 送到了 / failed 没送到；收到的：new / read；都可能 revoked（收回了） */

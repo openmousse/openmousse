@@ -1,4 +1,5 @@
 // app 里的数据类型。2026-09-23 起全部对应服务器上的真实来源（server/data.py 的表格写了每一项的真源）。
+import type { ForwardCard } from '../api/forward';
 
 export type Billing = '订阅' | 'API' | '免费';
 export type CostTier = '省' | '中' | '贵';
@@ -407,6 +408,8 @@ export interface Message {
   steered?: boolean;
   /** 长按「引用」着发的：引的是这个对话里哪条（app 在气泡上面显示原话，点了跳回去） */
   replyTo?: { id: string; role: 'user' | 'grava'; text: string };
+  /** 合并转发给这个 Agent 的：气泡上面画转发卡（server/forward.py） */
+  forward?: ForwardCard;
 }
 
 /** Grava 的建议（起床报告、主动提醒，第 8 步起才有）。 */

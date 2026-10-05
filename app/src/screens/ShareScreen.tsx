@@ -41,7 +41,7 @@ function downloadWeb(dataUri: string, name: string) {
   a.remove();
 }
 
-function MaskRow({ m, last, onToggle }: { m: ShareMask; last: boolean; onToggle: () => void }) {
+export function MaskRow({ m, last, onToggle }: { m: ShareMask; last: boolean; onToggle: () => void }) {
   const t = useTheme();
   return (
     <View style={[styles.maskRow, !last && { borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: t.line }]}>

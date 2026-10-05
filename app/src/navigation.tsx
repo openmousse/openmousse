@@ -39,6 +39,7 @@ import { FilePreviewScreen } from './screens/FilePreviewScreen';
 import { AddCourseScreen } from './screens/AddCourseScreen';
 import { StudyHomeScreen, StudyPageScreen, StudySessionScreen } from './screens/StudyScreens';
 import { ShareScreen } from './screens/ShareScreen';
+import { ForwardScreen } from './screens/ForwardScreen';
 import { SharesScreen } from './screens/SharesScreen';
 import { AddFriendScreen, CardAgentScreen, FriendChatScreen, MyNameScreen } from './screens/FriendsScreens';
 import { FriendAgentsScreen } from './screens/FriendAgentsScreen';
@@ -278,6 +279,7 @@ export function RootNavigator() {
         <Stack.Screen name="FilePreview" component={FilePreviewScreen} options={{ presentation: 'fullScreenModal', animation: 'fade', gestureEnabled: false }} />
         {/* 分享（社交第一层，2026-09-28）：先挡私事，再发链接或干净版卡片 */}
         <Stack.Screen name="Share" component={ShareScreen} />
+        <Stack.Screen name="Forward" component={ForwardScreen} />
         <Stack.Screen name="Shares" component={SharesScreen} />
         {/* 朋友（社交第二层，2026-09-28）：朋友列表在「对话」页里切，这几页叠在上面 */}
         <Stack.Screen name="FriendChat" component={FriendChatScreen} />

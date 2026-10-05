@@ -28,6 +28,8 @@ import { PutInPodcast } from '../think/Materials';
 import { useReplyProgress } from '../api/progress';
 import { StepsLine, ThinkingPanel, WritingDots } from './Thinking';
 import { openEpisode } from '../think/Podcast';
+import * as fw from '../api/forward';
+import { BasketPill, BundleCard, ForwardTranscript, SelectBar, SelectMark, forwardActions, openBack, setBasketCount, useForwardSupported, useSelect } from './Forward';
 
 // 从「今天」的「去对话里说」带过来、还没发出去的引用，也按线程记着。
 const quotes = new Map<string, ChatQuote>();
@@ -241,7 +243,8 @@ export function Bubble({ m, showAvatar, onLongPress, before, from, highlight, on
   resolveQuote?: (q: string) => string | undefined;
 }) {
   const t = useTheme();
-  const { avatar } = useStore();
+  const { avatar, groups } = useStore();
+  const sheet = useSheet();
   const att = m.body.attachments ?? [];
   const text = att.length && m.body.text === PLACEHOLDER_TEXT ? '' : m.body.text;
   if (m.role === 'auto') {
@@ -277,8 +280,14 @@ export function Bubble({ m, showAvatar, onLongPress, before, from, highlight, on
     );
   }
   if (m.role === 'user') {
+    const fwd = m.forward;
+    // 合并转发给这个 Agent 的：上面一张聊天记录卡，点开看全部（每段能回到原来的对话）
+    const openFwd = fwd ? () => sheet.open({ title: fwd.gist || L('聊天记录', 'Messages'), content: (close) => (
+      <ForwardTranscript id={fwd.id} onBack={(it) => { close(); openBack(it.back, groups.map((g) => g.id)); }} />
+    ) }) : undefined;
     return (
       <View style={{ alignItems: 'flex-end', gap: 6 }}>
+        {fwd ? <BundleCard mine title={fwd.gist} n={fwd.n} convs={fwd.convs} lines={fwd.lines} onOpen={openFwd} /> : null}
         {att.length ? <AttachmentList items={att} mine /> : null}
         {text ? (
           <Pressable onLongPress={onLongPress} delayLongPress={350} accessibilityHint={L('长按可复制、引用、撤回、重新编辑或删除', 'Long-press to copy, quote, unsend, edit or delete')}
@@ -402,6 +411,10 @@ export function ChatView({ threadId, placeholder, empty, welcome, quote: quotePr
   // 回调不能每次渲染换一个：KeyboardChatScrollView 会跟着重新挂监听，打字时每个字都要做一遍
   const setInset = useCallback((b: number) => { list.current.inset = b; }, []);
   const nav = useNavigation<any>();
+  // 合并转发：多选 / 「选这一段」时消息左边出勾，输入栏换成「加入转发篮 · 转发」
+  const sel = useSelect();
+  const { on: picking, refs: picked, toggle } = sel;
+  const canForward = useForwardSupported();
   // 长按「放进播客」：服务器有播客素材才显示（老服务器没有）
   const [canPod, setCanPod] = useState(false);
   useEffect(() => { podFeatures().then((f) => setCanPod(f.materials)).catch(() => {}); }, []);
@@ -559,6 +572,12 @@ export function ChatView({ threadId, placeholder, empty, welcome, quote: quotePr
             <Action icon={Quote} label={L('引用', 'Quote')} note={L('引用这条消息回复：Agent 能看到所引原文，你的消息上方也会显示原话', 'Reply to this message: the Agent sees the quoted text, and your message shows it')}
               onPress={() => { close(); setQuote({ replyTo: m.id, title: text.replace(/\s+/g, ' ').slice(0, 40) }); setTimeout(() => input.current?.focus(), 250); }} />
           ) : null}
+          {canForward && m.id.startsWith('db') && m.role !== 'auto' && text.trim() ? forwardActions({
+            forward: () => { close(); nav.navigate('Forward', { refs: [fw.chatRef(threadId, m.id)] }); },
+            around: () => { close(); sel.around(fw.chatRef(threadId, m.id)); },
+            pick: () => { close(); sel.start(fw.chatRef(threadId, m.id)); },
+            basket: () => { close(); fw.addToBasket([fw.chatRef(threadId, m.id)]).then(setBasketCount).catch(fail); },
+          }).map((a) => <Action key={a.label} {...a} />) : null}
           {m.id.startsWith('db') && m.role !== 'auto' ? (
             <Action icon={Bookmark} label={L('收藏', 'Save')} note={L('保存到「Zen → 收藏」，之后可搜索或交给 Agent', 'Keep it in Zen → Saved to search or hand to an Agent later')}
               onPress={() => { close(); saveMessage(threadId, m.id).then(() => Alert.alert(L('已收藏', 'Saved'), L('可在「Zen → 收藏」中查看', 'Find it in Zen → Saved'))).catch(fail); }} />
@@ -612,13 +631,24 @@ export function ChatView({ threadId, placeholder, empty, welcome, quote: quotePr
     <>
         {msgs.map((m, i) => {
           const above = placed.above.get(i);
+          const bubble = (
+            <Bubble m={m} showAvatar={m.role === 'grava' && msgs[i - 1]?.role !== 'grava'} onLongPress={() => handlers.current.openActions(m)}
+              before={above?.length ? above.map((c) => <HandoffChip key={c.id} card={c} />) : undefined}
+              from={m.role === 'auto' ? incoming.find((h) => h.relayId === m.id) : undefined} highlight={flash === m.id}
+              onJump={onJump} resolveQuote={findQuote} />
+          );
+          // 多选时：能转的消息左边一个勾，点整行勾上 / 去掉
+          const ref = picking && m.id.startsWith('db') && m.role !== 'auto' && m.body.text.trim() ? fw.chatRef(threadId, m.id) : null;
           return (
             <React.Fragment key={m.id}>
               <View onLayout={(e) => { ys.current[m.id] = e.nativeEvent.layout.y; }}>
-                <Bubble m={m} showAvatar={m.role === 'grava' && msgs[i - 1]?.role !== 'grava'} onLongPress={() => handlers.current.openActions(m)}
-                  before={above?.length ? above.map((c) => <HandoffChip key={c.id} card={c} />) : undefined}
-                  from={m.role === 'auto' ? incoming.find((h) => h.relayId === m.id) : undefined} highlight={flash === m.id}
-                  onJump={onJump} resolveQuote={findQuote} />
+                {picking ? (
+                  <Pressable onPress={ref ? () => toggle(ref) : undefined} disabled={!ref} accessibilityRole="checkbox" accessibilityState={{ checked: !!ref && picked.includes(ref) }}
+                    style={{ flexDirection: 'row', gap: space.sm, alignItems: 'flex-start' }}>
+                    {ref ? <SelectMark on={picked.includes(ref)} /> : <View style={{ width: 22 }} />}
+                    <View style={{ flex: 1, minWidth: 0 }} pointerEvents="none">{bubble}</View>
+                  </Pressable>
+                ) : bubble}
               </View>
               <ChatTasks cards={placed.below.get(i)} onRevise={(c) => handlers.current.reviseCard(c)} thread={threadId} />
               <ChatInbox items={slots.get(i)} />
@@ -626,7 +656,7 @@ export function ChatView({ threadId, placeholder, empty, welcome, quote: quotePr
           );
         })}
     </>
-  ), [msgs, placed, slots, incoming, flash, threadId, onJump, findQuote]);
+  ), [msgs, placed, slots, incoming, flash, threadId, onJump, findQuote, picking, picked, toggle]);
 
   // 它正在回复也能发（服务器排队，回完一起发给它）；改一下任务不经过这个对话
   const canSend = quote?.taskId ? !!draft.trim() && !transcribing : (!!draft.trim() || pending.length > 0) && !transcribing;
@@ -700,6 +730,12 @@ export function ChatView({ threadId, placeholder, empty, welcome, quote: quotePr
         {busy ? <ChatTasks cards={liveTasks} onRevise={reviseCard} thread={threadId} /> : null}
       </ChatScroll>
       <KeyboardSticky offset={bottom.offset} style={[styles.composerWrap, { borderTopColor: t.line, backgroundColor: t.bg }]}>
+        {sel.on ? (
+          <SelectBar n={sel.refs.length} busy={sel.busy} onCancel={sel.stop}
+            onBasket={() => { fw.addToBasket(sel.refs).then((n) => { setBasketCount(n); sel.stop(); }).catch(fail); }}
+            onForward={() => { nav.navigate('Forward', { refs: sel.refs, gist: sel.gist || undefined }); sel.stop(); }} />
+        ) : <>
+        <BasketPill onPress={() => nav.navigate('Forward', { basket: true })} />
         {composerTop}
         {quote ? (
           <View style={{ paddingHorizontal: space.md, paddingTop: space.sm }}>
@@ -776,6 +812,7 @@ export function ChatView({ threadId, placeholder, empty, welcome, quote: quotePr
             )}
           </View>
         )}
+        </>}
       </KeyboardSticky>
     </View>
   );

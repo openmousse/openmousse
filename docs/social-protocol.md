@@ -213,7 +213,7 @@ One message per request:
 | kind | fields | meaning |
 |---|---|---|
 | `text` | `text`, `reply_to?` | what a person said |
-| `share` | `share: {sid, kind, title, text, quote, when, link?, can_ask}`, `text?` | a share sent to a friend: the snapshot after private bits were hidden (hidden spots are `▇▇▇`; the original never leaves the server); `link` only when anyone with the link may see it; `can_ask` = whether it takes follow-up questions (the share's switch × the friend's tier) |
+| `share` | `share: {sid, kind, title, text, quote, when, link?, can_ask, items?, convs?}`, `text?` | a share sent to a friend: the snapshot after private bits were hidden (hidden spots are `▇▇▇`; the original never leaves the server); `link` only when anyone with the link may see it; `can_ask` = whether it takes follow-up questions (the share's switch × the friend's tier). `kind: thread` (2026-10-05) is a forwarded bundle of messages: `text` is the whole transcript in Markdown (what older servers show), `items` = `[{who, name, at, s, e}]` where `s`/`e` are the line's position in `text` (Python character offsets) and `who` is `me` (the sender) / `agent` / `friend` / `friend_agent` / `my_card`, `convs` = which chats it came from. A bundle carrying a third person's words always has `can_ask: false` |
 | `ask` | `about` (the share message's id), `text` | a follow-up question for the other person's card agent |
 | `answer` | `about` (the question's id), `text`, `used` (what it drew on, e.g. `["this episode"]`), `defer` (true = "you'd have to ask him") | the card agent's answer (`by = agent`) |
 | `edit` | `target`, `text`, `by?` | replace the text of a message I sent (when Alex rewrites the card agent's answer, `by = person` and the friend sees "edited by Alex") |
