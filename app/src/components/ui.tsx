@@ -115,13 +115,14 @@ export function Pill({ label, tone = 'neutral', colors, lines }: { label: string
 }
 
 /** 青色的未读数（Agent 列表、侧栏）。0 不显示。 */
-export function CountPill({ n, small }: { n: number; small?: boolean }) {
+/** 未读数。muted：免打扰的好友，灰色（不算进 app 图标的角标）。 */
+export function CountPill({ n, small, muted }: { n: number; small?: boolean; muted?: boolean }) {
   const t = useTheme();
   if (!n) return null;
   const h = small ? 20 : 24;
   return (
     <View accessible accessibilityLabel={L(`${n} 条未读`, `${n} unread`)}
-      style={{ minWidth: h, height: h, borderRadius: h / 2, paddingHorizontal: small ? 6 : 7, backgroundColor: t.cyan, alignItems: 'center', justifyContent: 'center' }}>
+      style={{ minWidth: h, height: h, borderRadius: h / 2, paddingHorizontal: small ? 6 : 7, backgroundColor: muted ? t.ink3 : t.cyan, alignItems: 'center', justifyContent: 'center' }}>
       <Text style={{ color: t.surface, fontSize: small ? 11 : 13, fontWeight: '700' }}>{n > 99 ? '99+' : String(n)}</Text>
     </View>
   );

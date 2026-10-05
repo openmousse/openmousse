@@ -193,7 +193,8 @@ export interface HandoffCard {
   thread: string | null;
   messageId: number | null;
   createdAt: string;
-  status: 'running' | 'done' | 'error' | 'busy' | 'lost';
+  /** queued：那个 Agent 正忙，问题排进了它的队列（2026-10-05 起）；busy 是以前的「正忙，没转过去」 */
+  status: 'queued' | 'running' | 'done' | 'error' | 'busy' | 'lost';
   to: string;
   toName: string;
   from: string;
@@ -588,7 +589,9 @@ export interface SecurityInfo {
 /** 历史页：某个线程有记录的逻辑日（04:00 为界）。 */
 export interface DayInfo { day: string; count: number; first: string; lastTs: string }
 /** 关键词搜索命中：对话 / 建议卡 / 日志。 */
-export interface SearchHit { kind: 'message' | 'card' | 'journal'; id: string; thread: string | null; role: 'user' | 'grava' | 'auto'; day: string; ts: string; time: string; snippet: string }
+/** kind friend：好友聊天（thread 为 null，friend = 哪位好友，id 是那条消息在服务器上的行 id） */
+export interface SearchHit { kind: 'message' | 'card' | 'journal' | 'friend'; id: string; thread: string | null; role: 'user' | 'grava' | 'auto' | 'friend'; day: string; ts: string; time: string; snippet: string;
+  friend?: { id: string; name: string } }
 
 /** 「要记得的」的分组：可疑的安全提醒置顶 / 过了的 / 明天 / 一周内 / 以后 / 没定日子的要办 / 邮件动态（没日子的钱和状态）。 */
 export type RememberGroup = 'security' | 'overdue' | 'tomorrow' | 'week' | 'later' | 'nodate' | 'news';

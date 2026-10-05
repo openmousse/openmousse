@@ -13,6 +13,8 @@ export interface Friend {
   id: string; name: string; cardName: string; alias: string | null; tier: Tier; tierName: string; status: FriendStatus;
   caps: string[]; /** 对方有名片 agent（能替他答追问） */ agent: boolean;
   fingerprint: string; url: string; note: string | null; createdAt: string; unread: number; last: FriendLast | null;
+  /** 置顶、免打扰（免打扰：不推送、不算进角标）。老服务器没有 */
+  pinned?: boolean; muted?: boolean;
 }
 export interface Invite {
   id: string; note: string; tier: Tier; createdAt: string; expiresAt: string; status: 'open' | 'used' | 'expired' | 'revoked';
@@ -52,11 +54,23 @@ export interface FriendMsg {
   nextTry?: string | null;
   /** 我的名片 agent 的代答过 Doorman 的结论（只在我这边） */
   sentinel?: SentinelVerdict;
+  /** 我发出去、已送到的：对方看过没有（已读回执两边都开着才有这个字段；没有 = 只显示 ✓） */
+  read?: boolean;
+  /** 表情回应：me 我点的、them 对方点的（每人每条一个） */
+  reactions?: { me?: string; them?: string };
+  /** 回复的那条原话（gone：收回或删掉了） */
+  quote?: { mid: string; id: number; dir: 'in' | 'out'; kind: FriendMsgKind; text: string; gone: boolean };
+  /** 只在我这删除了（轮询的 recent 里会带，好在这台设备上也拿掉） */
+  hidden?: boolean;
 }
+
+/** 表情回应只有这 6 个（和服务器 friends.REACTIONS 一致） */
+export const REACTIONS = ['👍', '❤️', '😂', '😮', '😢', '🙏'] as const;
 /** Doorman（名片 agent 说出去之前再过一道）对一句的结论：pass 放行 / hold 扣下 / fail 复查不了（换成了固定的话）；
  * released = 扣下后你放行的，owner = 你自己写的 */
 export interface SentinelVerdict { verdict: 'pass' | 'hold' | 'fail' | 'released' | 'owner' | string; reasons: { kind: string; detail: string }[]; via?: string; ms?: number }
-export interface FriendThread { friend: Friend; messages: FriendMsg[]; recent: FriendMsg[]; agent: boolean; canAsk: boolean }
+/** more：前面还有更早的（老服务器没有）；receipts：已读回执开着没有 */
+export interface FriendThread { friend: Friend; messages: FriendMsg[]; recent: FriendMsg[]; agent: boolean; canAsk: boolean; more?: boolean; receipts?: boolean }
 
 export interface CardSettings {
   tiers: Record<AnyTier, Record<ScopeKey, string>>;
@@ -79,14 +93,15 @@ export const preview = (code: string) =>
 /** unreachable：对方的服务器试着连回你、没连上（你的公网访问没开好）；老服务器没有这一项 */
 export const accept = (b: { code: string; tier: Tier; alias?: string }) =>
   request<{ friend: Friend; unreachable?: boolean; publicFix?: string }>('/api/friends/accept', { method: 'POST', body: b, timeoutMs: 30000 });
-export const patchFriend = (id: string, b: { alias?: string; tier?: Tier }) =>
+export const patchFriend = (id: string, b: { alias?: string; tier?: Tier; pinned?: boolean; muted?: boolean }) =>
   request<{ friend: Friend }>(`/api/friends/${id}`, { method: 'PATCH', body: b }).then((j) => j.friend);
 export const removeFriend = (id: string) => request(`/api/friends/${id}`, { method: 'DELETE' });
 export const blockFriend = (id: string, blocked: boolean) =>
   request<{ friend: Friend }>(`/api/friends/${id}/block`, { method: 'POST', body: { blocked } }).then((j) => j.friend);
 
-export const thread = (id: string, after?: number) =>
-  request<FriendThread>(`/api/friends/${id}/messages${after ? `?after=${after}` : ''}`);
+/** after：轮询（新来的，从早到晚）；before：往上翻（更早的） */
+export const thread = (id: string, after?: number, before?: number) =>
+  request<FriendThread>(`/api/friends/${id}/messages${after ? `?after=${after}` : before ? `?before=${before}` : ''}`);
 export const sendText = (id: string, text: string, replyTo?: string) =>
   request<{ message: FriendMsg }>(`/api/friends/${id}/messages`, { method: 'POST', body: { text, replyTo } }).then((j) => j.message);
 export const ask = (id: string, about: string, text: string) =>
@@ -98,6 +113,25 @@ export const revokeMsg = (msgId: number) =>
   request<{ message: FriendMsg }>(`/api/friends/messages/${msgId}/revoke`, { method: 'POST' }).then((j) => j.message);
 export const retry = (msgId: number) =>
   request<{ message: FriendMsg }>(`/api/friends/messages/${msgId}/retry`, { method: 'POST' }).then((j) => j.message);
+/** 改我发的一条文字（对方那边标「已编辑」） */
+export const editMsg = (msgId: number, text: string) =>
+  request<{ message: FriendMsg }>(`/api/friends/messages/${msgId}/edit`, { method: 'POST', body: { text } }).then((j) => j.message);
+/** 表情回应；null = 取消 */
+export const react = (msgId: number, emoji: string | null) =>
+  request<{ message: FriendMsg }>(`/api/friends/messages/${msgId}/react`, { method: 'POST', body: { emoji } }).then((j) => j.message);
+/** 只在我这删除（对方那边不变） */
+export const hideMsg = (msgId: number) => request(`/api/friends/messages/${msgId}/hide`, { method: 'POST' });
+
+/** 好友通知和已读回执（设置 → 通知）。notify：好友消息的通知；preview：通知里显示内容；receipts：已读回执（双向） */
+export interface FriendPrefs { notify: boolean; preview: boolean; receipts: boolean; friends: { id: string; name: string; muted: boolean }[] }
+export const prefs = () => request<FriendPrefs>('/api/friends/prefs');
+export const patchPrefs = (b: Partial<Pick<FriendPrefs, 'notify' | 'preview' | 'receipts'>>) =>
+  request<FriendPrefs>('/api/friends/prefs', { method: 'PATCH', body: b });
+
+/** 好友页的搜索：名字对得上的好友 id、聊天里的命中 */
+export interface FriendHit { friend: string; name: string; id: number; mid: string; dir: 'in' | 'out'; kind: FriendMsgKind; by: string; ts: string; snippet: string }
+export const search = (q: string) =>
+  request<{ friends: string[]; hits: FriendHit[] }>(`/api/friends/search?q=${encodeURIComponent(q)}`);
 
 /** 分享发给朋友：ask = 朋友能追问（还看对方那一档），link = 有链接的人都能看（否则只发给这几个朋友，链接不开） */
 export const sendShare = (sid: string, b: { friends: string[]; ask: boolean; link: boolean; text?: string }) =>

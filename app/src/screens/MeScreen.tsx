@@ -7,7 +7,7 @@ import Constants from 'expo-constants';
 import { useFocusEffect, useNavigation } from '@react-navigation/native';
 import { agentName } from '../brand';
 import {
-  Activity, BookOpen, Brain, CalendarDays, Check, ClipboardList, Cpu, Globe, IdCard, Info, LogOut, Palette, Plug, Plus, Server, ShareIcon, ShieldCheck, SunMoon,
+  Activity, Bell, BookOpen, Brain, CalendarDays, Check, ClipboardList, Cpu, Globe, IdCard, Info, LogOut, Palette, Plug, Plus, Server, ShareIcon, ShieldCheck, SunMoon,
   TreeDeciduous, User,
 } from '../components/icons';
 import { LensAvatar } from '../components/LensAvatar';
@@ -19,7 +19,7 @@ import { appsApi, noApps, type AppSummary } from '../api/apps';
 import { activeClawId, listClaws, pingClaw, switchToClaw, touchClaw, type Claw } from '../api/claws';
 import { defaultBase, getBase } from '../api/base';
 import { podFeatures } from '../api/podcast';
-import { serverOutdated } from '../api/version';
+import { serverOutdated, supports } from '../api/version';
 import { L, useLang, type LangPref } from '../i18n';
 import { useStore } from '../store';
 import { space, useAppearance, useTheme } from '../theme';
@@ -253,6 +253,7 @@ export function MeScreen() {
             onPress={() => pick(L('外观', 'Appearance'), looks, appearance, setAppearance)} />
           <Row icon={<Globe size={22} color={t.cyan} />} title={L('语言', 'Language')} value={langs.find((o) => o.value === pref)?.label}
             onPress={() => pick(L('语言', 'Language'), langs, pref, setPref)} />
+          {supports('friends.prefs') ? <Row icon={<Bell size={22} color={t.cyan} />} title={L('通知', 'Notifications')} onPress={() => nav.navigate('Notify')} /> : null}
           <Row icon={<CalendarDays size={22} color={t.cyan} />} title={L('日程订阅', 'Calendar feed')} value={L('iPhone 日历', 'iPhone Calendar')} onPress={() => nav.navigate('ScheduleFeed')} />
           <Row icon={<Info size={22} color={t.cyan} />} title={L('关于', 'About')} value={version} onPress={about} />
         </Group>

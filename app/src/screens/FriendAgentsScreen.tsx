@@ -17,7 +17,7 @@ import { useStore } from '../store';
 import { radius, space, type, useTheme } from '../theme';
 import { AgentLens, timeLabel } from '../components/FriendBits';
 
-type Round =
+export type Round =
   | { kind: 'in'; key: string; at: number; items: CardLogItem[] }
   | { kind: 'out'; key: string; at: number; items: A2AOut[] };
 
@@ -26,8 +26,8 @@ const ms = (iso: string) => {
   return Number.isNaN(n) ? 0 : n;
 };
 
-/** 按对话分成一轮一轮，早的在前（服务器给的是新的在前）。 */
-function toRounds(log: CardLogItem[], out: A2AOut[]): Round[] {
+/** 按对话分成一轮一轮，早的在前（服务器给的是新的在前）。好友聊天里也用它把对方 Agent 来问的折成一行。 */
+export function toRounds(log: CardLogItem[], out: A2AOut[]): Round[] {
   const ins = new Map<string, CardLogItem[]>();
   for (const it of [...log].reverse()) ins.set(it.ref || it.id, [...(ins.get(it.ref || it.id) ?? []), it]);
   const outs = new Map<string, A2AOut[]>();
@@ -66,7 +66,7 @@ function blockedLine(it: CardLogItem): string {
   return '';
 }
 
-function askOutcome(a: CardAsk): { label: string; tone: 'good' | 'gold' | 'neutral' } {
+export function askOutcome(a: CardAsk): { label: string; tone: 'good' | 'gold' | 'neutral' } {
   switch (a.outcome) {
     case 'released': return { label: L('已照发', 'You sent it as is'), tone: 'good' };
     case 'rewritten': return { label: L('已修改后发送', 'You rewrote it'), tone: 'good' };
@@ -195,7 +195,7 @@ function Declined({ items }: { items: string[] }) {
 
 /** 这句出的那张卡：收件箱里还在（等你点、7 天内点过的）就画真卡，能直接点；再早的按记录写一行。
  * 收件箱还没读完（ready 为假）先不画，免得真卡出来之前闪一下那一行。 */
-function AskCard({ id, ask, ready }: { id: string; ask: CardAsk | null; ready: boolean }) {
+export function AskCard({ id, ask, ready }: { id: string; ask: CardAsk | null; ready: boolean }) {
   const t = useTheme();
   const { inbox, inboxRecent, receipts } = useStore();
   const item = inbox.find((i) => i.id === id) ?? receipts.find((r) => r.item.id === id)?.item ?? inboxRecent.find((i) => i.id === id);
@@ -210,7 +210,7 @@ function AskCard({ id, ask, ready }: { id: string; ask: CardAsk | null; ready: b
   );
 }
 
-function InRound({ r, name, ready }: { r: Extract<Round, { kind: 'in' }>; name: string; ready: boolean }) {
+export function InRound({ r, name, ready }: { r: Extract<Round, { kind: 'in' }>; name: string; ready: boolean }) {
   const t = useTheme();
   const carded = new Set<string>();
   return (
@@ -266,7 +266,7 @@ function Steps({ o, name }: { o: A2AOut; name: string }) {
 }
 
 /** 两个透镜叠在一起（你的名片 agent 和对方的）。 */
-function PairLens({ bg, size = 22 }: { bg: string; size?: number }) {
+export function PairLens({ bg, size = 22 }: { bg: string; size?: number }) {
   return (
     <View style={{ width: size * 1.6, height: size + 2 }}>
       <View style={{ position: 'absolute', left: 0, top: 1 }}><AgentLens mine size={size} /></View>

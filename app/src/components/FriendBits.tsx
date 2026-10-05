@@ -33,3 +33,30 @@ export function timeLabel(ts: string | null | undefined): string {
   if (d.getFullYear() === now.getFullYear()) return `${d.getMonth() + 1}/${d.getDate()}`;
   return `${d.getFullYear()}/${d.getMonth() + 1}/${d.getDate()}`;
 }
+
+/** 气泡角上的钟点（按天分隔以后每条只写几点几分）。 */
+export function clockLabel(ts: string | null | undefined): string {
+  if (!ts) return '';
+  const d = new Date(ts);
+  if (Number.isNaN(d.getTime())) return '';
+  return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
+}
+
+/** 本机时区的哪一天（分隔用的键）。 */
+export function dayKey(ts: string | null | undefined): string {
+  const d = new Date(ts ?? '');
+  return Number.isNaN(d.getTime()) ? '' : ymd(d);
+}
+
+/** 聊天里的日期分隔：今天、昨天、今年的「10月3日 周五」，更早的带年份。 */
+export function dayLabel(ts: string | null | undefined): string {
+  const d = new Date(ts ?? '');
+  if (Number.isNaN(d.getTime())) return '';
+  const now = new Date();
+  if (ymd(d) === ymd(now)) return L('今天', 'Today');
+  if (ymd(d) === ymd(new Date(now.getTime() - 86400000))) return L('昨天', 'Yesterday');
+  const wk = L(['周日', '周一', '周二', '周三', '周四', '周五', '周六'][d.getDay()], ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'][d.getDay()]);
+  const mon = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'][d.getMonth()];
+  if (d.getFullYear() === now.getFullYear()) return L(`${d.getMonth() + 1}月${d.getDate()}日 ${wk}`, `${wk}, ${mon} ${d.getDate()}`);
+  return L(`${d.getFullYear()}年${d.getMonth() + 1}月${d.getDate()}日`, `${mon} ${d.getDate()}, ${d.getFullYear()}`);
+}

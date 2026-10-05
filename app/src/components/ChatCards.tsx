@@ -85,6 +85,7 @@ export function HandoffChip({ card }: { card: HandoffCard }) {
   const elapsed = running && now && !Number.isNaN(started) ? Math.max(0, Math.round((now - started) / 1000)) : null;
   const name = groups.find((g) => g.id === card.to)?.name ?? card.toName;
   const head = {
+    queued: L(zh(name, '正忙，已排队'), `${name} is busy · queued`),
     running: L(`正在询问 ${name}`, `Asking ${name}`),
     done: L(`已转交 ${name}`, `Asked ${name}`),
     error: L(`询问 ${name} 失败`, `Couldn't reach ${name}`),
@@ -93,7 +94,8 @@ export function HandoffChip({ card }: { card: HandoffCard }) {
   }[card.status];
   const meta = running ? (elapsed != null ? secs(elapsed) : '')
     : card.status === 'done' && card.seconds != null ? L(`用时 ${secs(card.seconds)}`, `answered in ${secs(card.seconds)}`)
-      : card.status === 'lost' ? L('回答见该 Agent 的对话', "see the Agent's chat") : '';
+      : card.status === 'lost' ? L('回答见该 Agent 的对话', "see the Agent's chat")
+        : card.status === 'queued' ? L('空闲后自动转交', 'goes in when it is free') : '';
   const canOpen = card.status !== 'busy';
   const open = () => openThread(card.to, groups.some((g) => g.id === card.to), undefined, card.relayId ?? undefined);
   return (

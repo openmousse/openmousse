@@ -308,7 +308,7 @@ const POLL_MS = 45_000;
 /** 看着的对话里有还在问的转交、还在做的任务：隔多久重读一次卡片（回复进行中不用，流里会来） */
 const CARD_POLL_MS = 6_000;
 /** 这张卡还在变（在问、在做、在改）。 */
-const cardBusy = (c: ChatCard) => (c.kind === 'handoff' ? c.status === 'running' : c.kind === 'task' ? c.status === '进行中' || c.roundStatus === 'running' : false);
+const cardBusy = (c: ChatCard) => (c.kind === 'handoff' ? c.status === 'running' || c.status === 'queued' : c.kind === 'task' ? c.status === '进行中' || c.roundStatus === 'running' : false);
 
 export function StoreProvider({ children }: { children: React.ReactNode }) {
   const api = useRef<GravaApi>(new OfflineApi());
@@ -544,7 +544,7 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
     const st = latest.current;
     const tids = new Set<string>((pending ?? st.inbox).map((i) => i.thread));
     for (const [tid, list] of Object.entries(st.inboxByThread)) if (list.some((i) => !FINAL.has(i.status))) tids.add(tid);
-    if (st.activeThread) tids.add(st.activeThread);
+    if (st.activeThread && !st.activeThread.startsWith('friend:')) tids.add(st.activeThread);
     tids.forEach((tid) => { loadThreadInbox(tid).catch(() => {}); });
   }, [loadThreadInbox]);
 
@@ -555,10 +555,11 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
   }, []);
 
   // —— 小窗 ——
-  /** 正看着的那个对话不弹。 */
+  /** 正看着的那个对话不弹。好友聊天在屏幕上时 activeThread 是 `friend:<好友 id>`（FriendChat 调 useThreadOnScreen）。 */
   const bannerAllowed = (tg: PushTarget | null | undefined) => {
     const onScreen = latest.current.activeThread;
-    const th = !tg ? undefined : tg.type === 'thread' ? tg.thread : tg.type === 'card' || tg.type === 'inbox' ? tg.thread : undefined;
+    const th = !tg ? undefined : tg.type === 'thread' ? tg.thread : tg.type === 'card' || tg.type === 'inbox' ? tg.thread
+      : tg.type === 'friend' ? `friend:${tg.id}` : undefined;
     return !(onScreen && th && th === onScreen);
   };
   // 冥想时间里不弹小窗（推送服务器那边已经压住了，这里管 app 开着时的）

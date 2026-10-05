@@ -93,6 +93,9 @@ export { default as List } from 'lucide-react-native/icons/list';
 export { default as FolderKanban } from 'lucide-react-native/icons/folder-kanban';
 export { default as Flag } from 'lucide-react-native/icons/flag';
 export { default as Pin } from 'lucide-react-native/icons/pin';
+export { default as PinOff } from 'lucide-react-native/icons/pin-off';
+export { default as Reply } from 'lucide-react-native/icons/reply';
+export { default as ArrowDown } from 'lucide-react-native/icons/arrow-down';
 export { default as NotebookPen } from 'lucide-react-native/icons/notebook-pen';
 // 积木看板第三批（2026-09-27）：提醒、功能包
 export { default as Bell } from 'lucide-react-native/icons/bell';

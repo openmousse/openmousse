@@ -80,6 +80,7 @@ export function HistoryScreen() {
 
   const openHit = (h: SearchHit) => {
     if (h.kind === 'journal') { nav.navigate('Journal'); return; }
+    if (h.kind === 'friend' && h.friend) { nav.navigate('FriendChat', { id: h.friend.id, focus: Number(h.id) }); return; }
     nav.navigate('HistoryDay', { thread: h.thread ?? 'main', day: h.day, focus: h.kind === 'message' ? h.id : undefined });
   };
 
@@ -89,7 +90,7 @@ export function HistoryScreen() {
       <View style={{ paddingHorizontal: space.lg, paddingTop: space.sm, gap: space.sm }}>
         <View style={[styles.search, { backgroundColor: t.surface2 }]}>
           <Search size={18} color={t.ink3} />
-          <TextInput value={q} onChangeText={changeQ} placeholder={L('搜索对话、建议卡和日志', 'Search chats, suggestion cards, journal')} placeholderTextColor={t.ink3} autoCorrect={false} returnKeyType="search"
+          <TextInput value={q} onChangeText={changeQ} placeholder={L('搜索对话、好友聊天、建议卡和日志', 'Search chats, friends, suggestion cards, journal')} placeholderTextColor={t.ink3} autoCorrect={false} returnKeyType="search"
             style={[styles.input, { color: t.ink }]} accessibilityLabel={L('关键词搜索', 'Search')} />
           {q ? <Pressable onPress={() => changeQ('')} hitSlop={8} accessibilityRole="button" accessibilityLabel={L('清空', 'Clear')}><X size={16} color={t.ink3} /></Pressable> : null}
         </View>
@@ -117,8 +118,9 @@ export function HistoryScreen() {
                   <Pressable key={`${h.kind}-${h.id}`} onPress={() => openHit(h)} accessibilityRole="button"
                     style={({ pressed }) => [styles.hit, i < list.length - 1 && { borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: t.line }, { opacity: pressed ? 0.6 : 1 }]}>
                     <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, marginBottom: 4 }}>
-                      <SourcePill source={h.thread} label={name(h.thread)} />
-                      <Pill label={h.kind === 'card' ? L('建议卡', 'Suggestion card') : h.kind === 'journal' ? L('日志', 'Journal') : h.role === 'user' ? L('你', 'You') : h.role === 'auto' ? L('自动', 'Auto') : `${agentName()}`} />
+                      {h.kind === 'friend' ? <Pill label={L(`好友 · ${h.friend?.name ?? ''}`, `Friend · ${h.friend?.name ?? ''}`)} tone="cyan" /> : <SourcePill source={h.thread} label={name(h.thread)} />}
+                      <Pill label={h.kind === 'card' ? L('建议卡', 'Suggestion card') : h.kind === 'journal' ? L('日志', 'Journal') : h.role === 'user' ? L('你', 'You') : h.role === 'auto' ? L('自动', 'Auto')
+                        : h.role === 'friend' ? (h.friend?.name ?? L('对方', 'Them')) : `${agentName()}`} />
                       <T v="caption" color={t.ink3}>{h.time}</T>
                     </View>
                     <T v="callout" numberOfLines={3}>{h.snippet}</T>
