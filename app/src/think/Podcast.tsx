@@ -14,14 +14,14 @@ import { usePodPlayer } from './podAudio';
 
 const NO_SEGMENTS: PodSegment[] = [];  // 播放器的初始段落用同一个数组：每次渲染给新数组，播整期时它会把 play 给的段落冲掉，只放得完第一段
 
-export const modeName = (m: PodMode) => ({ solo: L('自己讲', 'Solo'), host: L('有主持人', 'With a host'), friends: L('约朋友', 'With friends'), feynman: L('费曼', 'Feynman') }[m]);
+export const modeName = (m: PodMode) => ({ solo: L('独白', 'Solo'), host: L('主持人', 'With a host'), friends: L('多人对谈', 'With friends'), feynman: L('费曼', 'Feynman') }[m]);
 
 export function modeLook(t: Theme, m: PodMode) {
   switch (m) {
-    case 'solo': return { Icon: Mic, ...t.tints.purple, sub: L('纯输出，它只听', 'You talk, it listens') };
-    case 'host': return { Icon: MessageCircle, ...t.tints.gold, sub: L('你停下，它问一个', 'Pause and it asks one') };
-    case 'friends': return { Icon: Users, ...t.tints.pink, sub: L('一台手机，一起录', 'One phone, together') };
-    default: return { Icon: GraduationCap, ...t.tints.cyan, sub: L('讲给外行听，对照课件', 'Teach a layperson, check the slides') };
+    case 'solo': return { Icon: Mic, ...t.tints.purple, sub: L('只录制，不提问', 'Just you, no questions') };
+    case 'host': return { Icon: MessageCircle, ...t.tints.gold, sub: L('每次停顿后提一个问题', 'One question after each pause') };
+    case 'friends': return { Icon: Users, ...t.tints.pink, sub: L('一台手机共同录制', 'Record together on one phone') };
+    default: return { Icon: GraduationCap, ...t.tints.cyan, sub: L('向外行讲解，对照课件核查', 'Explain to a layperson, checked against slides') };
   }
 }
 
@@ -76,7 +76,7 @@ export function Podcast() {
       const h = await pod.home();
       setData(h);
       if (h.suggestions === null) pick();
-    } catch (e) { showError(L('播客没打开', "Couldn't load the podcast"), e); }
+    } catch (e) { showError(L('无法加载播客', "Couldn't load the podcast"), e); }
   }, [pick]);
   useFocusEffect(useCallback(() => { load(); }, [load]));
 
@@ -86,14 +86,14 @@ export function Podcast() {
     try {
       const e = await pod.create({ title, mode: m, source });
       nav.navigate(then === 'prep' ? 'PodPrep' : 'PodRec', { id: e.id });
-    } catch (e) { showError(L('没开成', "Couldn't start"), e); } finally { setBusy(null); }
+    } catch (e) { showError(L('无法开始', "Couldn't start"), e); } finally { setBusy(null); }
   };
   const fromSuggestion = (s: PodSuggestion) => (s.mode === 'friends'  // 朋友画像来的「约小林聊…」：去约朋友那页（人和题目带过去，等他在了再开录）
     ? nav.navigate('PodFriends', { title: s.title, person: s.source.person, name: s.source.name })
     : start(s.title, s.mode, s.source, s.mode === 'host' ? 'prep' : 'rec'));
   const askTopic = (then: 'prep' | 'rec') => {
     if (mode === 'friends' && then === 'rec') { nav.navigate('PodFriends'); return; }
-    sheet.open({ title: then === 'prep' ? L('录前先聊聊', 'Talk it through first') : L(`开始录 · ${modeName(mode)}`, `Record · ${modeName(mode)}`),
+    sheet.open({ title: then === 'prep' ? L('录前讨论', 'Talk it through first') : L(`开始录制 · ${modeName(mode)}`, `Record · ${modeName(mode)}`),
       content: (close) => <TopicSheet mode={mode} then={then} close={close} onGo={(title) => start(title, mode, { kind: 'own' }, then)} /> });
   };
   const playAll = async (e: PodBrief) => {
@@ -102,13 +102,13 @@ export function Podcast() {
       const full = await pod.get(e.id);
       if (!full.segments.length) return;
       player.play(e.id, full.segments[0].idx, 0, null, true, full.segments);
-    } catch (err) { showError(L('放不了', "Couldn't play"), err); }
+    } catch (err) { showError(L('无法播放', "Couldn't play"), err); }
   };
   const del = (e: PodBrief) => {
-    const go = () => pod.remove(e.id).then(load).catch((err) => showError(L('没删掉', "Couldn't delete"), err));
-    const msg = L('原声和逐字稿一起删；存进库的笔记还在。', 'Deletes the audio and transcript; a note you saved stays in the vault.');
+    const go = () => pod.remove(e.id).then(load).catch((err) => showError(L('删除失败', "Couldn't delete"), err));
+    const msg = L('原始录音和逐字稿将一并删除；已存入库中的笔记会保留。', 'Deletes the audio and transcript. A note you saved stays in the vault.');
     if (Platform.OS === 'web') { if (window.confirm(`${e.title}\n${msg}`)) go(); return; }
-    Alert.alert(L(`删掉「${e.title}」？`, `Delete “${e.title}”?`), msg, [{ text: L('取消', 'Cancel'), style: 'cancel' }, { text: L('删掉', 'Delete'), style: 'destructive', onPress: go }]);
+    Alert.alert(L(`删除「${e.title}」？`, `Delete “${e.title}”?`), msg, [{ text: L('取消', 'Cancel'), style: 'cancel' }, { text: L('删除', 'Delete'), style: 'destructive', onPress: go }]);
   };
 
   const sugg = data?.suggestions ?? [];
@@ -118,7 +118,7 @@ export function Podcast() {
     <View style={{ flex: 1 }}>
       <ScrollView contentContainerStyle={{ paddingHorizontal: space.lg, paddingBottom: 110, gap: 10 }} refreshControl={<PullRefresh onRefresh={load} />}>
         <View style={styles.labelRow}>
-          <T v="label" color={t.ink3} style={styles.caps}>{L('今天聊点什么', 'Talk about today')}</T>
+          <T v="label" color={t.ink3} style={styles.caps}>{L('今日话题', 'Talk about today')}</T>
           <Pressable onPress={() => pick(sugg.map((s) => s.title))} disabled={picking} hitSlop={8} accessibilityRole="button" style={{ flexDirection: 'row', alignItems: 'center', gap: 4, opacity: picking ? 0.5 : 1 }}>
             <RefreshCw size={13} color={t.gold} />
             <T v="callout" color={t.gold} style={{ fontWeight: '600', fontSize: 13 }}>{L('换一批', 'Others')}</T>
@@ -126,17 +126,17 @@ export function Podcast() {
         </View>
         <View style={[styles.card, { backgroundColor: t.surface, borderColor: t.line }]}>
           {picking && !sugg.length ? (
-            <View style={styles.wait}><ActivityIndicator color={t.gold} /><T v="callout" color={t.ink2}>{L('在从你的笔记、学习台和截止日期里挑…', 'Picking from your notes, study desk and deadlines…')}</T></View>
+            <View style={styles.wait}><ActivityIndicator color={t.gold} /><T v="callout" color={t.ink2}>{L('正在从你的笔记、学习台和截止日期中挑选…', 'Picking from your notes, study desk and deadlines…')}</T></View>
           ) : pickError && !sugg.length ? (
             <View style={[styles.wait, { flexDirection: 'column', alignItems: 'stretch' }]}>
-              <T v="callout" color={t.warn}>{L(`没挑出来：${pickError}`, `Couldn't pick: ${pickError}`)}</T>
-              <Btn label={L('再挑一次', 'Try again')} kind="quiet" onPress={() => pick()} />
+              <T v="callout" color={t.warn}>{L(`未能生成话题：${pickError}`, `Couldn't get topics: ${pickError}`)}</T>
+              <Btn label={L('重试', 'Try again')} kind="quiet" onPress={() => pick()} />
             </View>
           ) : !sugg.length ? (
-            <View style={styles.wait}><T v="callout" color={t.ink2}>{L('今天没挑出来。自己起个题，点下面「开始录」。', 'Nothing picked today. Pick your own topic with Record below.')}</T></View>
+            <View style={styles.wait}><T v="callout" color={t.ink2}>{L('今日暂无推荐话题。可自拟题目，点按下方「开始录制」。', 'No topics today. Set your own with Record below.')}</T></View>
           ) : sugg.map((s, i) => {
             const lk = sourceLook(t, s.source);
-            const act = s.mode === 'host' ? L('先聊聊', 'Talk first') : s.mode === 'feynman' ? L('费曼', 'Feynman') : s.mode === 'friends' ? L('约', 'Invite') : L('录', 'Record');
+            const act = s.mode === 'host' ? L('先讨论', 'Talk first') : s.mode === 'feynman' ? L('费曼', 'Feynman') : s.mode === 'friends' ? L('邀请', 'Invite') : L('录制', 'Record');
             return (
               <Pressable key={`${s.title}${i}`} onPress={() => fromSuggestion(s)} disabled={!!busy} accessibilityRole="button" accessibilityLabel={`${s.title}，${s.source.label ?? ''}，${act}`}
                 style={({ pressed }) => [styles.row, i ? { borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: t.line } : null, { opacity: pressed ? 0.7 : 1 }]}>
@@ -153,7 +153,7 @@ export function Podcast() {
           })}
         </View>
 
-        <T v="label" color={t.ink3} style={[styles.caps, { paddingTop: 8, paddingHorizontal: 4 }]}>{L('怎么录', 'How')}</T>
+        <T v="label" color={t.ink3} style={[styles.caps, { paddingTop: 8, paddingHorizontal: 4 }]}>{L('录制方式', 'Mode')}</T>
         <View style={styles.grid}>
           {(['solo', 'host', 'friends', 'feynman'] as const).map((m) => {
             const lk = modeLook(t, m);
@@ -173,7 +173,7 @@ export function Podcast() {
         {mode !== 'friends' ? (
           <Pressable onPress={() => askTopic('prep')} accessibilityRole="button" style={({ pressed }) => [styles.prepRow, { backgroundColor: t.surface, borderColor: t.line, opacity: pressed ? 0.7 : 1 }]}>
             <View style={[styles.mi, { backgroundColor: t.surface2 }]}><TextAlignStart size={16} color={t.ink2} /></View>
-            <T v="body" style={{ flex: 1, fontSize: 15, fontWeight: '600' }}>{L('录前先聊聊，出一张提纲卡', 'Talk it through first, get an outline card')}</T>
+            <T v="body" style={{ flex: 1, fontSize: 15, fontWeight: '600' }}>{L('录前讨论，生成提纲卡', 'Talk it through first, get an outline card')}</T>
             <ChevronRight size={16} color={t.ink3} />
           </Pressable>
         ) : null}
@@ -189,7 +189,7 @@ export function Podcast() {
                 <Pressable key={e.id} onPress={() => openEpisode(nav, e)} onLongPress={() => del(e)} accessibilityRole="button"
                   style={({ pressed }) => [styles.row, i ? { borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: t.line } : null, { opacity: pressed ? 0.7 : 1 }]}>
                   <Pressable onPress={() => playAll(e)} disabled={!e.duration} hitSlop={6} accessibilityRole="button"
-                    accessibilityLabel={playing ? L('停', 'Stop') : L(`播放：${e.title}`, `Play: ${e.title}`)}
+                    accessibilityLabel={playing ? L('停止', 'Stop') : L(`播放：${e.title}`, `Play: ${e.title}`)}
                     style={[styles.play, { backgroundColor: lk.soft, opacity: e.duration ? 1 : 0.4 }]}>
                     {playing ? <Square size={12} color={lk.fg} fill={lk.fg} /> : <Play size={13} color={lk.fg} fill={lk.fg} />}
                   </Pressable>
@@ -207,7 +207,7 @@ export function Podcast() {
       <View style={styles.bottom} pointerEvents="box-none">
         <Pressable onPress={() => askTopic('rec')} accessibilityRole="button" style={({ pressed }) => [styles.startBtn, { backgroundColor: t.goldFill, opacity: pressed ? 0.85 : 1 }]}>
           <ml.Icon size={20} color={t.onGold} />
-          <Text style={[type.headline, { color: t.onGold, fontWeight: '700' }]}>{L(`开始录 · ${modeName(mode)}`, `Record · ${modeName(mode)}`)}</Text>
+          <Text style={[type.headline, { color: t.onGold, fontWeight: '700' }]}>{L(`开始录制 · ${modeName(mode)}`, `Record · ${modeName(mode)}`)}</Text>
         </Pressable>
       </View>
     </View>
@@ -232,14 +232,14 @@ function TopicSheet({ mode, then, close, onGo }: { mode: PodMode; then: 'prep' |
   };
   return (
     <View style={{ gap: space.md }}>
-      <TextInput value={title} onChangeText={setTitle} autoFocus placeholder={mode === 'feynman' ? L('讲哪个概念？比如：边际成本', 'Which concept? e.g. marginal cost') : L('这期聊什么？一句话就行', 'What is this episode about? One line')}
-        placeholderTextColor={t.ink3} returnKeyType="go" onSubmitEditing={go} accessibilityLabel={L('这期聊什么', 'Topic')}
+      <TextInput value={title} onChangeText={setTitle} autoFocus placeholder={mode === 'feynman' ? L('讲解哪个概念？例如：边际成本', 'Which concept? e.g. marginal cost') : L('本期主题（一句话）', 'Episode topic, in one line')}
+        placeholderTextColor={t.ink3} returnKeyType="go" onSubmitEditing={go} accessibilityLabel={L('本期主题', 'Topic')}
         style={[type.body, { backgroundColor: t.surface, color: t.ink, borderRadius: radius.md, paddingHorizontal: space.lg, paddingVertical: 12 }]} />
-      <Btn label={then === 'prep' ? L('先聊几句', 'Talk first') : L('开录', 'Start recording')} onPress={go} />
+      <Btn label={then === 'prep' ? L('开始讨论', 'Talk first') : L('开始录制', 'Start recording')} onPress={go} />
       <T v="caption" color={t.ink3}>{then === 'prep'
-        ? L('它先问你一句第一反应，按你的话排一张提纲卡；不进主对话。', "It asks for your first reaction and drafts an outline card from your words. Not in the main chat.")
-        : mode === 'feynman' ? L('讲完它会对照学习台的课件；没有课件就按公认的讲法对照。', "Afterwards it checks against your study desk materials, or the standard view if there are none.")
-          : L('原声留在你的服务器上，录完帮你理成笔记。', 'The audio stays on your server; afterwards it turns it into a note.')}</T>
+        ? L('主持人先询问你的第一反应，再根据你的回答整理提纲卡；内容不进入主对话。', "The host asks for your first reaction and drafts an outline card from your answers. It stays out of the main chat.")
+        : mode === 'feynman' ? L('讲解结束后将对照学习台的课件核查；无课件时按通行解释核查。', "Afterwards your explanation is checked against your study desk materials, or the standard view if there are none.")
+          : L('原始录音保存在你的服务器上，录制结束后整理为笔记。', 'The audio stays on your server and is turned into a note afterwards.')}</T>
     </View>
   );
 }

@@ -15,7 +15,7 @@ export function GoalsScreen() {
   const t = useTheme();
   const sheet = useSheet();
   const { goals, goalsClosed, goalsEditable, weightTrend, refreshGoals, dataErrors, connected, booting } = useStore();
-  const edit = (g?: Goal) => sheet.open({ title: g ? L('改目标', 'Edit goal') : L('加一个目标', 'New goal'), content: (close) => <GoalEditor g={g} close={close} /> });
+  const edit = (g?: Goal) => sheet.open({ title: g ? L('编辑目标', 'Edit goal') : L('添加目标', 'New goal'), content: (close) => <GoalEditor g={g} close={close} /> });
   const open = (g: Goal) => sheet.open({ title: g.title, content: (close) => <GoalSheet g={g} close={close} onEdit={() => edit(g)} /> });
   // 体重：有体重目标就画在那个目标的卡里（带目标区间），没有就在健康那一节单独一张
   const weightGoal = goals.find((g) => g.metric === 'weight');
@@ -25,15 +25,15 @@ export function GoalsScreen() {
     <Screen>
       <ScrollView contentContainerStyle={{ paddingBottom: space.xxl }} refreshControl={<PullRefresh onRefresh={refreshGoals} />}>
         <LargeHeader title={L('目标', 'Goals')}
-          sub={goalsEditable ? L(`在这里改，或者直接告诉 ${agentName()}`, `Change them here, or just tell ${agentName()}`) : undefined}
+          sub={goalsEditable ? L(`可在此编辑，或直接告诉 ${agentName()}`, `Edit them here, or tell ${agentName()}`) : undefined}
           right={goalsEditable ? <AddGoalButton onPress={() => edit()} /> : undefined} />
         <View style={{ paddingHorizontal: space.lg }}>
-          {!connected ? <Card style={{ marginTop: space.md }}><T v="callout" color={t.ink2}>{booting ? L('正在连服务器…', 'Connecting to the server…') : L('没连上服务器。', 'Not connected to the server.')}</T></Card> : null}
-          {dataErrors.goals ? <Card style={{ marginTop: space.md }}><T v="callout" color={t.bad}>{L(`读不到目标：${dataErrors.goals}`, `Couldn't load goals: ${dataErrors.goals}`)}</T></Card> : null}
+          {!connected ? <Card style={{ marginTop: space.md }}><T v="callout" color={t.ink2}>{booting ? L('正在连接服务器…', 'Connecting to the server…') : L('未连接服务器。', 'Not connected to the server.')}</T></Card> : null}
+          {dataErrors.goals ? <Card style={{ marginTop: space.md }}><T v="callout" color={t.bad}>{L(`无法加载目标：${dataErrors.goals}`, `Couldn't load goals: ${dataErrors.goals}`)}</T></Card> : null}
           <GoalChangesStrip />
           {empty ? (
             <Card style={{ marginTop: space.md }}>
-              <T v="callout" color={t.ink2}>{L(`还没有目标。点右上角「加一个目标」，或者在对话里告诉 ${agentName()}。`, `No goals yet. Tap "Add a goal" at the top, or tell ${agentName()} in chat.`)}</T>
+              <T v="callout" color={t.ink2}>{L(`尚无目标。点按右上角「添加目标」，或在对话中告诉 ${agentName()}。`, `No goals yet. Tap "Add goal" at the top, or tell ${agentName()} in chat.`)}</T>
             </Card>
           ) : null}
           {CATEGORIES.map((cat) => {

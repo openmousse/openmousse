@@ -56,9 +56,9 @@ function MaskRow({ m, last, onToggle }: { m: ShareMask; last: boolean; onToggle:
           {m.after ? `${m.after}…` : ''}
         </Text>
       </View>
-      <Pressable onPress={onToggle} accessibilityRole="button" accessibilityLabel={`${m.released ? L('挡回去', 'Hide') : L('放出来', 'Show')} ${m.label}`}
+      <Pressable onPress={onToggle} accessibilityRole="button" accessibilityLabel={`${m.released ? L('隐藏', 'Hide') : L('显示', 'Show')} ${m.label}`}
         style={({ pressed }) => [styles.mini, { backgroundColor: t.surface2, opacity: pressed ? 0.7 : 1 }]}>
-        <T v="callout" style={{ fontWeight: '600' }}>{m.released ? L('挡回去', 'Hide') : L('放出来', 'Show')}</T>
+        <T v="callout" style={{ fontWeight: '600' }}>{m.released ? L('隐藏', 'Hide') : L('显示', 'Show')}</T>
       </Pressable>
     </View>
   );
@@ -87,7 +87,7 @@ export function ShareScreen() {
   useEffect(() => { fr.home().then((h) => setFriends(h.friends.filter((f) => f.status === 'active'))).catch(() => setFriends([])); }, []);
 
   const load = useCallback(() => {
-    const go = openId ? shareApi.getShare(openId) : from ? shareApi.createShare(from) : Promise.reject(new Error(L('没说分享什么', 'Nothing to share')));
+    const go = openId ? shareApi.getShare(openId) : from ? shareApi.createShare(from) : Promise.reject(new Error(L('未指定分享内容', 'Nothing to share')));
     go.then((s) => { setShare(s); setErr(''); }).catch((e) => setErr(e instanceof Error ? e.message : String(e)));
   }, [openId, from]);
   useEffect(() => { load(); }, [load]);
@@ -105,7 +105,7 @@ export function ShareScreen() {
 
   const update = async (patch: Parameters<typeof shareApi.patchShare>[1]) => {
     if (!share) return;
-    try { setShare(await shareApi.patchShare(share.id, patch)); } catch (e) { showError(L('没改成', "Couldn't change it"), e); }
+    try { setShare(await shareApi.patchShare(share.id, patch)); } catch (e) { showError(L('修改失败', "Couldn't update"), e); }
   };
   const toggle = (m: ShareMask) => update(m.released ? { hide: [m.id] } : { release: [m.id] });
   const quoteText = quote && share && quote.id === share.id ? quote.text : share?.quote ?? '';
@@ -134,17 +134,17 @@ export function ShareScreen() {
         await NativeShare.share(Platform.OS === 'ios' ? { url: s.url, message: s.title } : { message: `${s.title}\n${s.url}`, title: s.title });
       } catch {
         await Clipboard.setStringAsync(s.url);  // 网页版的浏览器不支持系统分享：复制链接
-        setNote(L('链接复制好了，粘贴给对方就行', 'Link copied. Paste it to them.'));
+        setNote(L('链接已复制，粘贴给对方即可', 'Link copied. Paste it to them.'));
       }
-    } catch (e) { showError(L('没发出去', "Couldn't share"), e); } finally { setBusy(false); }
+    } catch (e) { showError(L('分享失败', "Couldn't share"), e); } finally { setBusy(false); }
   };
   const copyLink = async () => {
     if (!share || busy) return;
     setBusy(true);
     try {
       const s = await publish();
-      if (s?.url) { await Clipboard.setStringAsync(s.url); setNote(L('链接复制好了', 'Link copied')); }
-    } catch (e) { showError(L('没复制上', "Couldn't copy"), e); } finally { setBusy(false); }
+      if (s?.url) { await Clipboard.setStringAsync(s.url); setNote(L('链接已复制', 'Link copied')); }
+    } catch (e) { showError(L('复制失败', "Couldn't copy"), e); } finally { setBusy(false); }
   };
   const shareImage = async () => {
     if (!share || busy) return;
@@ -153,9 +153,9 @@ export function ShareScreen() {
     setBusy(true);
     setNote('');
     try {
-      if (Platform.OS === 'web') { downloadWeb(data.dataUri, `${share.title || 'card'}.png`); setNote(L('图片存下来了', 'Image saved')); }
+      if (Platform.OS === 'web') { downloadWeb(data.dataUri, `${share.title || 'card'}.png`); setNote(L('图片已保存', 'Image saved')); }
       else await NativeShare.share({ url: data.dataUri });
-    } catch (e) { showError(L('没分享出去', "Couldn't share"), e); } finally { setBusy(false); }
+    } catch (e) { showError(L('分享失败', "Couldn't share"), e); } finally { setBusy(false); }
   };
   const sendToFriends = async () => {
     if (!share || busy || !picked.length) return;
@@ -166,16 +166,16 @@ export function ShareScreen() {
       setShare(r.share);
       const names = friends.filter((f) => picked.includes(f.id)).map((f) => f.name);
       setPicked([]);
-      setNote(L(`发给了 ${names.join('、')}`, `Sent to ${names.join(', ')}`));
-    } catch (e) { showError(L('没发出去', "Couldn't send"), e); } finally { setBusy(false); }
+      setNote(L(`已发送给 ${names.join('、')}`, `Sent to ${names.join(', ')}`));
+    } catch (e) { showError(L('发送失败', "Couldn't send"), e); } finally { setBusy(false); }
   };
   const revoke = () => {
     if (!share) return;
     const go = async () => {
-      try { await shareApi.revokeShare(share.id); setShare(await shareApi.getShare(share.id)); } catch (e) { showError(L('没收回', "Couldn't withdraw"), e); }
+      try { await shareApi.revokeShare(share.id); setShare(await shareApi.getShare(share.id)); } catch (e) { showError(L('收回失败', "Couldn't withdraw"), e); }
     };
     if (Platform.OS === 'web') { go(); return; }
-    Alert.alert(L('收回这条分享？', 'Withdraw this share?'), L('链接马上打不开，对方看到「已经收回了」；发给朋友的那几份也一起收回。已经存下的图片收不回来。', "The link stops working right away and shows “withdrawn”; copies sent to friends are withdrawn too. Images people already saved can't be taken back."),
+    Alert.alert(L('收回此分享？', 'Withdraw this share?'), L('链接将立即失效，对方会看到分享已收回；发送给好友的副本也将一并收回。已保存的图片无法收回。', "The link stops working right away and shows “withdrawn”; copies sent to friends are withdrawn too. Images people already saved can't be taken back."),
       [{ text: L('取消', 'Cancel'), style: 'cancel' }, { text: L('收回', 'Withdraw'), style: 'destructive', onPress: go }]);
   };
 
@@ -184,14 +184,14 @@ export function ShareScreen() {
   const shown = card?.key === cardKey ? card.data : null;
   const cardError = !shown && cardErr?.key === cardKey ? cardErr.text : '';
   const fullText = (share?.segments || []).map((s) => (s.m && !s.released ? BLOCK : s.t)).join('');
-  const kindLine = share ? [share.kind === 'note' ? L('笔记', 'Note') : share.kind === 'message' ? L('对话里的一条', 'From a chat') : L('一段文字', 'Text'),
-    share.status === 'live' ? L(`已发出 · 看过 ${share.views} 次`, `Shared · ${share.views} view${share.views === 1 ? '' : 's'}`) : share.status === 'friends' ? L('只发给了朋友', 'Sent to friends only')
+  const kindLine = share ? [share.kind === 'note' ? L('笔记', 'Note') : share.kind === 'message' ? L('对话消息', 'From a chat') : L('文本', 'Text'),
+    share.status === 'live' ? L(`已发布 · 浏览 ${share.views} 次`, `Shared · ${share.views} view${share.views === 1 ? '' : 's'}`) : share.status === 'friends' ? L('仅发送给好友', 'Sent to friends only')
       : share.status === 'revoked' ? L('已收回', 'Withdrawn') : ''].filter(Boolean).join(' · ') : '';
   const sentTo = share?.sentTo ?? [];
   const notYet = friends.filter((f) => !sentTo.some((x) => x.id === f.id));  // 发过的不再列出来（在下面「已经发给」里）
   const friendsBlock = share && share.status !== 'revoked' && (notYet.length || sentTo.length) ? (
     <>
-      <SectionLabel>{L('发给朋友', 'Send to friends')}</SectionLabel>
+      <SectionLabel>{L('发送给好友', 'Send to friends')}</SectionLabel>
       <Card style={{ gap: space.md }}>
         {notYet.length ? <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: space.sm }}>
           {notYet.map((f) => {
@@ -206,21 +206,21 @@ export function ShareScreen() {
         </View> : null}
         {notYet.length ? <><View style={styles.switchRow}>
           <View style={{ flex: 1, gap: 2 }}>
-            <T v="body">{L('朋友能追问', 'Friends can ask about it')}</T>
-            <T v="caption" color={t.ink3} style={{ fontSize: 13 }}>{L('你的名片 agent 按对方那一档答（「同学」只能看）', 'Your card agent answers by their tier (Classmates can only read)')}</T>
+            <T v="body">{L('允许好友追问', 'Friends can ask about it')}</T>
+            <T v="caption" color={t.ink3} style={{ fontSize: 13 }}>{L('你的名片 Agent 按对方所在档位回答（「同学」档仅可查看）', 'Your card agent answers by their tier (Classmates can only read)')}</T>
           </View>
-          <Switch value={canAsk} onValueChange={setCanAsk} accessibilityLabel={L('朋友能追问', 'Friends can ask about it')} trackColor={{ true: t.cyan, false: t.track }} thumbColor="#FFFFFF" />
+          <Switch value={canAsk} onValueChange={setCanAsk} accessibilityLabel={L('允许好友追问', 'Friends can ask about it')} trackColor={{ true: t.cyan, false: t.track }} thumbColor="#FFFFFF" />
         </View>
         {share.canLink && share.status !== 'live' ? (
           <View style={{ gap: space.xs }}>
-            <T v="caption" color={t.ink3}>{L('谁能看', 'Who can see it')}</T>
+            <T v="caption" color={t.ink3}>{L('可见范围', 'Who can see it')}</T>
             <Segmented<'only' | 'link'> value={withLink ? 'link' : 'only'} onChange={(v) => setWithLink(v === 'link')}
-              options={[{ value: 'only', label: L('只发给的人', 'Only them') }, { value: 'link', label: L('有链接的人', 'Anyone with the link') }]} />
+              options={[{ value: 'only', label: L('仅接收者', 'Only them') }, { value: 'link', label: L('知道链接的人', 'Anyone with the link') }]} />
           </View>
         ) : null}
-        <Btn label={busy ? L('正在发…', 'Sending…') : picked.length ? (picked.length === 1 ? L(`发给 ${friends.find((f) => f.id === picked[0])?.name}`, `Send to ${friends.find((f) => f.id === picked[0])?.name}`) : L(`发给这 ${picked.length} 个`, `Send to these ${picked.length}`)) : L('先选发给谁', 'Pick who to send it to')}
+        <Btn label={busy ? L('正在发送…', 'Sending…') : picked.length ? (picked.length === 1 ? L(`发送给 ${friends.find((f) => f.id === picked[0])?.name}`, `Send to ${friends.find((f) => f.id === picked[0])?.name}`) : L(`发送给 ${picked.length} 位好友`, `Send to ${picked.length} friends`)) : L('请选择接收者', 'Select recipients')}
           icon={<Users size={17} color={t.onGold} />} onPress={sendToFriends} /></> : null}
-        {sentTo.length ? <T v="caption" color={t.ink3}>{L(`已经发给：${sentTo.map((x) => x.name).join('、')}`, `Already sent to: ${sentTo.map((x) => x.name).join(', ')}`)}</T> : null}
+        {sentTo.length ? <T v="caption" color={t.ink3}>{L(`已发送给：${sentTo.map((x) => x.name).join('、')}`, `Already sent to: ${sentTo.map((x) => x.name).join(', ')}`)}</T> : null}
       </Card>
     </>
   ) : null;
@@ -229,20 +229,20 @@ export function ShareScreen() {
     <Screen>
       <NavHeader title={L('分享', 'Share')} sub={kindLine || undefined} onBack={() => nav.goBack()} />
       <ScrollView contentContainerStyle={{ padding: space.lg, paddingBottom: space.xxl, gap: space.md }} automaticallyAdjustKeyboardInsets keyboardShouldPersistTaps="handled">
-        {err ? <Card><T v="callout" color={t.bad}>{L(`没打开：${err}`, `Couldn't open it: ${err}`)}</T></Card> : null}
+        {err ? <Card><T v="callout" color={t.bad}>{L(`无法打开：${err}`, `Couldn't open it: ${err}`)}</T></Card> : null}
         {!share && !err ? <ActivityIndicator color={t.gold} style={{ marginTop: space.xl }} /> : null}
 
         {share ? (
           <Card style={{ gap: 4 }}>
-            <T v="headline" style={{ fontSize: 17 }} numberOfLines={3}>{share.title ? masked(share.title, `${t.ink3}59`) : L('（没有标题）', '(untitled)')}</T>
+            <T v="headline" style={{ fontSize: 17 }} numberOfLines={3}>{share.title ? masked(share.title, `${t.ink3}59`) : L('（无标题）', '(untitled)')}</T>
             <T v="caption" color={t.ink3}>{`${share.day} ${share.time}`}</T>
           </Card>
         ) : null}
 
         {share?.status === 'revoked' ? (
           <Card style={{ gap: space.sm }}>
-            <T v="headline">{L('这条已经收回了', 'This share was withdrawn')}</T>
-            <T v="callout" color={t.ink2}>{L('链接打开是「已经收回了」，服务器上的这份快照也清掉了。想再发就回到原来那条再分享一次（会是新链接）。', 'The link now says it was withdrawn and the snapshot on the server is gone. Share the original again for a new link.')}</T>
+            <T v="headline">{L('此分享已收回', 'This share was withdrawn')}</T>
+            <T v="callout" color={t.ink2}>{L('链接现显示为已收回，服务器上的快照也已删除。如需再次分享，请回到原内容重新分享（将生成新链接）。', 'The link now says it was withdrawn and the snapshot on the server is gone. Share the original again for a new link.')}</T>
           </Card>
         ) : null}
 
@@ -252,9 +252,9 @@ export function ShareScreen() {
               <View style={styles.shieldHead}>
                 <View style={[styles.shield, { backgroundColor: t.goodSoft }]}><ShieldCheck size={17} color={t.good} /></View>
                 <View style={{ flex: 1, gap: 2 }}>
-                  <T v="headline">{share.maskCount === 0 ? L('没看到要挡的私事', 'Nothing private spotted')
-                    : share.blocked > 0 ? L(`发之前，先挡住了 ${share.blocked} 处`, `Hidden before sharing: ${share.blocked}`) : L(`${share.maskCount} 处你都放出来了`, `You showed all ${share.maskCount}`)}</T>
-                  <T v="caption" color={t.ink3} style={{ fontSize: 13, lineHeight: 18 }}>{L('住址、家人的名字、邮箱电话、身体数字。挡住的原文不会离开你的服务器。', 'Addresses, family names, contact details, body numbers. Hidden text never leaves your server.')}</T>
+                  <T v="headline">{share.maskCount === 0 ? L('未发现需要隐藏的隐私信息', 'Nothing private spotted')
+                    : share.blocked > 0 ? L(`发送前已隐藏 ${share.blocked} 处`, `Hidden before sharing: ${share.blocked}`) : L(`${share.maskCount} 处已全部显示`, `You showed all ${share.maskCount}`)}</T>
+                  <T v="caption" color={t.ink3} style={{ fontSize: 13, lineHeight: 18 }}>{L('住址、家人姓名、邮箱和电话、身体数据。隐藏的原文不会离开你的服务器。', 'Addresses, family names, contact details, body numbers. Hidden text never leaves your server.')}</T>
                 </View>
               </View>
               {masks.map((m, i) => <MaskRow key={m.id} m={m} last={i === masks.length - 1} onToggle={() => toggle(m)} />)}
@@ -263,41 +263,41 @@ export function ShareScreen() {
             {share.kind === 'message' && share.source.hasQuestion ? (
               <Card style={styles.switchRow}>
                 <View style={{ flex: 1, gap: 2 }}>
-                  <T v="body">{L('带上我问的那句', 'Include my question')}</T>
-                  <T v="caption" color={t.ink3} style={{ fontSize: 13 }}>{L('放在回复前面，对方知道在说什么', 'Shown above the reply so they know the context')}</T>
+                  <T v="body">{L('包含我的提问', 'Include my question')}</T>
+                  <T v="caption" color={t.ink3} style={{ fontSize: 13 }}>{L('显示在回复上方，便于对方了解上下文', 'Shown above the reply so they know the context')}</T>
                 </View>
-                <Switch value={!!q} onValueChange={(v) => update({ withQuestion: v })} accessibilityLabel={L('带上我问的那句', 'Include my question')}
+                <Switch value={!!q} onValueChange={(v) => update({ withQuestion: v })} accessibilityLabel={L('包含我的提问', 'Include my question')}
                   trackColor={{ true: t.cyan, false: t.track }} thumbColor="#FFFFFF" />
               </Card>
             ) : null}
 
-            <SectionLabel>{L('卡片样子', 'Card')}</SectionLabel>
+            <SectionLabel>{L('卡片样式', 'Card')}</SectionLabel>
             <Segmented<ShareStyle> value={style} onChange={(v) => { setStyle(v); setNote(''); }}
-              options={[{ value: 'link', label: L('带链接', 'With link') }, { value: 'clean', label: L('干净版', 'Clean') }]} />
+              options={[{ value: 'link', label: L('含链接', 'With link') }, { value: 'clean', label: L('简洁版', 'Clean') }]} />
             <View style={[styles.preview, { backgroundColor: t.surface2, aspectRatio: style === 'clean' ? 1080 / 1440 : 1200 / 630 }]}>
               {shown ? <Image source={{ uri: shown.dataUri }} style={StyleSheet.absoluteFill} resizeMode="contain" accessibilityLabel={L('卡片预览', 'Card preview')} />
                 : cardError ? <T v="callout" color={t.bad} style={{ padding: space.md }}>{cardError}</T>
                   : <ActivityIndicator color={t.gold} />}
             </View>
             <T v="caption" color={t.ink3} style={{ fontSize: 13 }}>
-              {style === 'link' ? L('发微信、WhatsApp：对方点开链接就能看全文，不用装 app。聊天里显示的就是这张预览图。', 'For WhatsApp or WeChat: they tap the link to read it all, no app needed. This is the preview they see.')
-                : L('发小红书：图里没有网址、二维码和 app 名字。', 'For Xiaohongshu and the like: no link, QR code or app name in the image.')}
+              {style === 'link' ? L('适用于微信、WhatsApp：对方点开链接即可阅读全文，无需安装 app。对话中显示的即为此预览图。', 'For WhatsApp or WeChat: they tap the link to read it all, no app needed. This is the preview they see.')
+                : L('适用于小红书：图片中不含网址、二维码和 app 名称。', 'For Xiaohongshu and the like: no link, QR code or app name in the image.')}
             </T>
 
-            <SectionLabel>{L('卡片上那一句', 'The line on the card')}</SectionLabel>
+            <SectionLabel>{L('卡片文案', 'The line on the card')}</SectionLabel>
             <Card style={{ gap: space.sm }}>
               <TextInput value={quoteText} onChangeText={(v) => setQuote({ id: share.id, text: v })} onBlur={saveQuote} onSubmitEditing={saveQuote}
-                multiline blurOnSubmit returnKeyType="done" maxLength={140} placeholder={L('写一句要放在卡片上的话', 'A line for the card')} placeholderTextColor={t.ink3}
-                style={[type.body, styles.input, { color: t.ink, borderColor: t.line }]} accessibilityLabel={L('卡片上那一句', 'The line on the card')} />
+                multiline blurOnSubmit returnKeyType="done" maxLength={140} placeholder={L('输入卡片上显示的一句话', 'A line for the card')} placeholderTextColor={t.ink3}
+                style={[type.body, styles.input, { color: t.ink, borderColor: t.line }]} accessibilityLabel={L('卡片文案', 'The line on the card')} />
               {share.quoteCustom ? (
                 <Pressable onPress={() => update({ quote: '' })} accessibilityRole="button" style={{ alignSelf: 'flex-start' }}>
-                  <T v="callout" color={t.cyan} style={{ fontWeight: '600' }}>{L('用回默认那句', 'Use the default line')}</T>
+                  <T v="callout" color={t.cyan} style={{ fontWeight: '600' }}>{L('恢复默认文案', 'Use the default line')}</T>
                 </Pressable>
               ) : null}
             </Card>
 
             <Pressable onPress={() => setShowAll(!showAll)} accessibilityRole="button" style={styles.fold}>
-              <T v="callout" color={t.ink2} style={{ fontWeight: '600', flex: 1 }}>{L('看要发出去的全文', 'See the full text they get')}</T>
+              <T v="callout" color={t.ink2} style={{ fontWeight: '600', flex: 1 }}>{L('查看将发送的全文', 'See the full text they get')}</T>
               <Disclosure open={showAll} />
             </Pressable>
             {showAll ? <Card><Markdown text={fullText} /></Card> : null}
@@ -307,33 +307,33 @@ export function ShareScreen() {
             {style === 'link' && !share.canLink ? (
               <View style={[styles.warn, { backgroundColor: t.warnSoft }]}>
                 <TriangleAlert size={17} color={t.warn} />
-                <T v="callout" color={t.ink} style={{ flex: 1 }}>{L('服务器还没开对外的链接地址，链接发出去别人打不开。干净版卡片不受影响，现在就能发。', "The server doesn't have a public address for links yet, so others couldn't open one. The clean card works now.")}</T>
+                <T v="callout" color={t.ink} style={{ flex: 1 }}>{L('服务器尚未配置公网链接地址，他人无法打开分享链接。简洁版卡片不受影响，可直接发送。', "The server doesn't have a public address for links yet, so others couldn't open one. The clean card works now.")}</T>
               </View>
             ) : null}
 
             {style === 'link' ? (share.canLink ? (
               <View style={{ gap: space.sm }}>
-                <Btn label={busy ? L('正在发…', 'Sharing…') : L('分享链接', 'Share link')} icon={<ShareIcon size={18} color={t.onGold} />} onPress={shareLink} />
+                <Btn label={busy ? L('正在分享…', 'Sharing…') : L('分享链接', 'Share link')} icon={<ShareIcon size={18} color={t.onGold} />} onPress={shareLink} />
                 <Btn label={L('复制链接', 'Copy link')} kind="quiet" icon={<Copy size={18} color={t.ink} />} onPress={copyLink} />
               </View>
-            ) : <Btn label={L('改发干净版卡片', 'Send the clean card instead')} kind="quiet" onPress={() => setStyle('clean')} />) : (
+            ) : <Btn label={L('改用简洁版卡片', 'Send the clean card instead')} kind="quiet" onPress={() => setStyle('clean')} />) : (
               <Btn label={L('分享图片', 'Share image')} icon={<ShareIcon size={18} color={t.onGold} />} onPress={shareImage} />
             )}
             {note ? <View style={styles.noteRow}><Check size={16} color={t.good} /><T v="callout" color={t.good}>{note}</T></View> : null}
 
             {share.status === 'friends' ? (
               <Card style={{ gap: space.sm, marginTop: space.sm }}>
-                <T v="callout" color={t.ink2}>{L('这条只发给了朋友，链接没开。', 'Sent to friends only; the link is closed.')}</T>
-                <Btn label={L('收回（朋友那边也收回）', 'Withdraw (from friends too)')} kind="danger" onPress={revoke} />
+                <T v="callout" color={t.ink2}>{L('此分享仅发送给好友，链接未开放。', 'Sent to friends only; the link is closed.')}</T>
+                <Btn label={L('收回（好友处一并收回）', 'Withdraw (from friends too)')} kind="danger" onPress={revoke} />
               </Card>
             ) : null}
             {share.status === 'live' ? (
               <Card style={{ gap: space.sm, marginTop: space.sm }}>
                 <View style={styles.noteRow}>
                   <Link2 size={16} color={t.cyan} />
-                  <T v="callout" color={t.ink2} style={{ flex: 1 }} numberOfLines={1}>{share.url || L('链接只在你自己的设备上打得开', 'The link only opens on your own devices')}</T>
+                  <T v="callout" color={t.ink2} style={{ flex: 1 }} numberOfLines={1}>{share.url || L('链接仅可在你自己的设备上打开', 'The link only opens on your own devices')}</T>
                 </View>
-                {share.path ? <Btn label={L('在浏览器里看看', 'Open in browser')} kind="quiet" onPress={() => Linking.openURL(share.url || localUrl(share.path!)).catch((e) => showError(L('打不开', "Couldn't open it"), e))} /> : null}
+                {share.path ? <Btn label={L('在浏览器中打开', 'Open in browser')} kind="quiet" onPress={() => Linking.openURL(share.url || localUrl(share.path!)).catch((e) => showError(L('无法打开', "Couldn't open it"), e))} /> : null}
                 <Btn label={L('收回链接', 'Withdraw link')} kind="danger" onPress={revoke} />
               </Card>
             ) : null}

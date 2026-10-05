@@ -561,7 +561,7 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
   const showBanner = (b: BannerSpec) => { if (bannerAllowed(b.target) && !isMeditating()) banner.show(b); };
   // 小窗的 key 由 Banner 按「来源 + 去处」算：同一件事再来一条就替换，不重复排队
   const inboxBanner = (it: InboxItem, subtitle?: string): BannerSpec => ({
-    kind: 'inbox', title: it.title, subtitle: subtitle || `${L('要你点头', 'Needs your OK')} · ${kindLabel(it.kind)}`,
+    kind: 'inbox', title: it.title, subtitle: subtitle || `${L('待你确认', 'Needs your approval')} · ${kindLabel(it.kind)}`,
     body: it.why || it.changes[0] || '', source: it.source, target: { type: 'inbox', id: it.id, thread: it.thread },
   });
   const cardBanner = (f: FeedItem, subtitle?: string, fallback?: string, kind = 'card'): BannerSpec => ({
@@ -608,7 +608,7 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
       if (!st.typing[tid]) refreshThread(tid).catch(() => {});
       // 网页版没有推送：只为「你发的消息有了回复」弹小窗（mine 变多了），后台自己跑出来的只标未读
       if (web && tid !== active && u.last && u.mine > (prev.threads[tid]?.mine ?? 0)) {
-        showBanner({ kind: 'reply', title: '', subtitle: L('回复了', 'Replied'), body: preview(u.last.text), source: tid, target: { type: 'thread', thread: tid } });
+        showBanner({ kind: 'reply', title: '', subtitle: L('新回复', 'Replied'), body: preview(u.last.text), source: tid, target: { type: 'thread', thread: tid } });
       }
     }
     if (unknown) reload('groups', 'sideChats').catch(() => {});  // 别的设备上刚建的 Agent / 空间
@@ -710,8 +710,8 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
     const st = latest.current;
     const tg: PushTarget = p.target ?? { type: 'today' };
     if (action === 'approve' && tg.type === 'inbox') {
-      const fail = (msg: string) => banner.show({ kind: 'inbox', title: L('没同意成', "Couldn't approve"), subtitle: '', body: msg, source: tg.thread ?? 'main', target: tg });
-      if (!st.connected) { fail(L('没连上服务器。', 'Not connected to the server.')); return; }
+      const fail = (msg: string) => banner.show({ kind: 'inbox', title: L('审批失败', "Couldn't approve"), subtitle: '', body: msg, source: tg.thread ?? 'main', target: tg });
+      if (!st.connected) { fail(L('未连接服务器。', 'Not connected to the server.')); return; }
       try {
         const item = await decide(tg.id, 'approve');
         banner.show({ kind: 'inbox', title: L(`已同意：${item.title || p.body}`, `Approved: ${item.title || p.body}`), subtitle: '', body: '', source: item.source, target: tg });
@@ -756,12 +756,12 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
     const kind = p.kind ?? undefined;
     if (tg?.type === 'inbox') {
       const it = (got.inbox ?? now.inbox).find((i) => i.id === tg.id) ?? Object.values(now.inboxByThread).flat().find((i) => i.id === tg.id);
-      showBanner(it ? { ...inboxBanner(it, p.subtitle), kind: kind ?? 'inbox' } : { kind: kind ?? 'inbox', title: p.body, subtitle: p.subtitle || L('要你点头', 'Needs your OK'), body: '', source: tg.thread ?? 'main', target: tg });
+      showBanner(it ? { ...inboxBanner(it, p.subtitle), kind: kind ?? 'inbox' } : { kind: kind ?? 'inbox', title: p.body, subtitle: p.subtitle || L('待你确认', 'Needs your approval'), body: '', source: tg.thread ?? 'main', target: tg });
     } else if (tg?.type === 'card') {
       const f = (got.feed ?? now.feed).find((x) => x.id === tg.id);
       showBanner(f ? cardBanner(f, p.subtitle, p.body, kind) : { kind: kind ?? 'card', title: p.body, subtitle: p.subtitle, body: '', source: tg.thread ?? 'main', target: tg });
     } else if (tg?.type === 'thread' && tg.thread !== 'today') {
-      showBanner({ kind: kind ?? 'reply', title: '', subtitle: p.subtitle || L('回复了', 'Replied'), body: p.body, source: tg.thread, target: tg });
+      showBanner({ kind: kind ?? 'reply', title: '', subtitle: p.subtitle || L('新回复', 'Replied'), body: p.body, source: tg.thread, target: tg });
     } else {
       const title = p.title && p.title !== agentName() ? p.title : '';
       showBanner({ kind: kind ?? 'report', title: title || p.body, subtitle: p.subtitle, body: title ? p.body : '', source: 'main', target: tg ?? { type: 'today' } });
@@ -935,7 +935,7 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
       { ...(opts?.inboxId ? { inboxId: opts.inboxId } : {}), ...(opts?.ref ? { ref: opts.ref } : {}), ...(opts?.save ? { save: opts.save } : {}), ...(opts?.replyTo ? { replyTo: opts.replyTo } : {}),
         ...(opts?.study ? { study: opts.study } : {}),
         onCard: onLiveCard(threadId), onQueued: queuedAs, onDequeued: dequeued })
-      .catch((e: unknown): Message => ({ id: id('r'), role: 'grava', time: timeNow(), modelId, body: { type: 'text', text: L('（这条没发出去。）', "(This message wasn't sent.)") }, error: errText(e) }))
+      .catch((e: unknown): Message => ({ id: id('r'), role: 'grava', time: timeNow(), modelId, body: { type: 'text', text: L('（此消息发送失败。）', "(This message wasn't sent.)") }, error: errText(e) }))
       // 可能刚写了一张建议卡、提了一件要你点头的事、转给了某个 Agent、派了任务
       .then((reply) => {
         reload('feed', 'schedule', 'remember', 'goals'); loadThreadInbox(threadId).catch(() => {}); loadThreadCards(threadId, true).catch(() => {});
@@ -979,7 +979,7 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
     reload,
     syncHealthNow,
     imUp: async () => {
-      if (!(await postSignal('up'))) throw new Error(L('没连上服务器', 'Not connected to the server'));
+      if (!(await postSignal('up'))) throw new Error(L('未连接服务器', 'Not connected to the server'));
       await reload('wake');
     },
     send,

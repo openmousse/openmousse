@@ -32,7 +32,7 @@ function Row({ item, last, onPress }: { item: InboxItem; last: boolean; onPress:
   const nameOf = useSourceName();
   const name = item.sourceName || nameOf(item.source);
   return (
-    <Pressable onPress={onPress} accessibilityRole="button" accessibilityHint={L('看详情', 'Shows the details')}
+    <Pressable onPress={onPress} accessibilityRole="button" accessibilityHint={L('查看详情', 'Shows the details')}
       style={({ pressed }) => [styles.row, !last && { borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: t.line }, { opacity: pressed ? 0.6 : 1 }]}>
       <View style={{ marginTop: 1 }}><StatusCircle status={item.status} exec={item.kind === 'exec'} size={30} /></View>
       <View style={{ flex: 1, gap: 2 }}>
@@ -60,14 +60,14 @@ export function InboxScreen() {
     return [...m.entries()];
   }, [inboxRecent]);
   const status = !connected
-    ? (booting ? L('正在连服务器…', 'Connecting to the server…') : L('没连上服务器。检查「我 → 服务器」后下拉刷新。', 'Not connected to the server. Check Me → Server, then pull down to refresh.'))
-    : dataErrors.inboxRecent ? L(`读不到：${dataErrors.inboxRecent}`, `Couldn't load: ${dataErrors.inboxRecent}`)
-      : serverSupport.inbox === false ? L('服务器还没更新到有收件箱的版本，这里暂时没有记录。', "The server hasn't been updated to a version with an inbox yet, so there's nothing here.")
-        : !inboxRecent.length ? (loading.inboxRecent ? L('正在读…', 'Loading…') : L('最近 7 天没有点过头的事。', 'Nothing decided in the last 7 days.'))
+    ? (booting ? L('正在连接服务器…', 'Connecting to the server…') : L('未连接服务器。请检查「我 → 服务器」后下拉刷新。', 'Not connected to the server. Check Me → Server, then pull down to refresh.'))
+    : dataErrors.inboxRecent ? L(`无法加载：${dataErrors.inboxRecent}`, `Couldn't load: ${dataErrors.inboxRecent}`)
+      : serverSupport.inbox === false ? L('当前服务器版本尚不支持收件箱，暂无记录。', "The server version doesn't support the inbox yet, so there's nothing here.")
+        : !inboxRecent.length ? (loading.inboxRecent ? L('正在加载…', 'Loading…') : L('最近 7 天暂无已处理事项。', 'Nothing decided in the last 7 days.'))
           : '';
   return (
     <Screen>
-      <NavHeader title={L('已处理', 'Handled')} sub={L('最近 7 天你点过头的事', 'What you decided in the last 7 days')} onBack={() => nav.goBack()} />
+      <NavHeader title={L('已处理', 'Handled')} sub={L('最近 7 天你处理过的事项', 'What you decided in the last 7 days')} onBack={() => nav.goBack()} />
       <ScrollView contentContainerStyle={{ padding: space.lg, paddingTop: space.xs, paddingBottom: space.xxl }}
         refreshControl={<PullRefresh onRefresh={() => reload('inboxRecent')} />}>
         {status ? <Card style={{ marginTop: space.lg }}><T v="callout" color={dataErrors.inboxRecent ? t.bad : t.ink2}>{status}</T></Card> : null}

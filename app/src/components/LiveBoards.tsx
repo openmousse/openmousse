@@ -28,8 +28,8 @@ export function NoSourceCard({ kind, hint }: { kind: string; hint?: string }) {
   const t = useTheme();
   return (
     <Card style={{ gap: space.xs }}>
-      <T v="headline">{L(`还没接${kind}数据`, `No ${kind} data connected yet`)}</T>
-      <T v="callout" color={t.ink2}>{hint ?? L(`直接在对话里告诉 ${agentName()}，它会记下来；也可以在服务器上接一个提供${kind}数据的软件或脚本。`, `Just tell ${agentName()} in chat and it'll keep track, or connect an app or script on the server that provides ${kind} data.`)}</T>
+      <T v="headline">{L(`尚未接入${kind}数据`, `No ${kind} data connected yet`)}</T>
+      <T v="callout" color={t.ink2}>{hint ?? L(`在对话中告诉 ${agentName()} 即可记录；也可在服务器上接入提供${kind}数据的应用或脚本。`, `Tell ${agentName()} in chat to log it, or connect an app or script on the server that provides ${kind} data.`)}</T>
     </Card>
   );
 }
@@ -52,13 +52,13 @@ export function HealthCaption() {
   const err = liveErrors.health;
   const at = live?.health?.synced_at;
   const text = busy ? L('正在同步…', 'Syncing…')
-    : err ? (canSync ? L('同步失败，点一下重试', 'Sync failed, tap to retry') : L("Apple 健康 · 没读到", "Apple Health · couldn't load"))
-      : at ? `${L('Apple 健康', 'Apple Health')} · ${syncedLabel(at)}` : L('Apple 健康 · 还没同步', 'Apple Health · not synced yet');
+    : err ? (canSync ? L('同步失败，点按重试', 'Sync failed, tap to retry') : L("Apple 健康 · 无法加载", "Apple Health · couldn't load"))
+      : at ? `${L('Apple 健康', 'Apple Health')} · ${syncedLabel(at)}` : L('Apple 健康 · 尚未同步', 'Apple Health · not synced yet');
   const color = err && !busy ? t.bad : t.ink3;
   if (!canSync) return <Caption color={color}>{text}</Caption>;
   const sync = () => { if (busy) return; setBusy(true); syncHealthNow(true).catch(() => {}).finally(() => setBusy(false)); };
   return (
-    <Pressable onPress={sync} disabled={busy} hitSlop={10} accessibilityRole="button" accessibilityLabel={L(`${text}。点一下同步 Apple 健康`, `${text}. Tap to sync Apple Health`)}
+    <Pressable onPress={sync} disabled={busy} hitSlop={10} accessibilityRole="button" accessibilityLabel={L(`${text}。点按以同步 Apple 健康`, `${text}. Tap to sync Apple Health`)}
       style={{ flexDirection: 'row', alignItems: 'center', gap: 4, flexShrink: 1 }}>
       <Caption color={color}>{text}</Caption>
       <RefreshCw size={11} color={busy ? t.ink3 : t.cyan} />
@@ -120,20 +120,20 @@ export function RecoveryDetails({ score = true, strip = true }: { score?: boolea
               <T v="headline">{L('恢复分', 'Recovery score')}{rec.date !== last.date ? ` · ${rec.date.slice(5)}` : ''}</T>
               <Pill label={rec.label} tone={bandTone(rec.band)} />
             </View>
-            <T v="caption" color={t.ink2}>{rec.notes.length ? rec.notes.join(' · ') : L('各项都在基线附近', 'Everything is near baseline')}</T>
+            <T v="caption" color={t.ink2}>{rec.notes.length ? rec.notes.join(' · ') : L('各项指标接近基线', 'All metrics are near baseline')}</T>
           </View>
         </View>
       ) : null}
       <View style={{ flexDirection: 'row', alignItems: 'baseline', gap: space.sm }}>
         <Moon size={16} color={t.ink2} />
         <T v="headline" style={{ flex: 1 }}>{last.date === days[days.length - 1]?.date
-          ? L(`昨晚 睡了 ${hhmm(last.sleep_min)}`, `Slept ${hhmm(last.sleep_min)} last night`)
-          : L(`${last.date.slice(5)} 睡了 ${hhmm(last.sleep_min)}`, `Slept ${hhmm(last.sleep_min)} on ${last.date.slice(5)}`)}</T>
+          ? L(`昨晚睡眠 ${hhmm(last.sleep_min)}`, `Slept ${hhmm(last.sleep_min)} last night`)
+          : L(`${last.date.slice(5)} 睡眠 ${hhmm(last.sleep_min)}`, `Slept ${hhmm(last.sleep_min)} on ${last.date.slice(5)}`)}</T>
         {last.bed_start ? <T v="caption" color={t.ink3} style={{ fontVariant: ['tabular-nums'] }}>{last.bed_start}–{last.bed_end}</T> : null}
       </View>
       {last.deep_min != null ? (
         <T v="callout" color={t.ink2} style={{ fontVariant: ['tabular-nums'] }}>
-          {L(`深睡 ${hhmm(last.deep_min)} · REM ${hhmm(last.rem_min)} · 核心 ${hhmm(last.core_min)} · 醒着 ${Math.round(last.awake_min ?? 0)} 分钟`,
+          {L(`深睡 ${hhmm(last.deep_min)} · REM ${hhmm(last.rem_min)} · 核心 ${hhmm(last.core_min)} · 清醒 ${Math.round(last.awake_min ?? 0)} 分钟`,
             `Deep ${hhmm(last.deep_min)} · REM ${hhmm(last.rem_min)} · Core ${hhmm(last.core_min)} · Awake ${Math.round(last.awake_min ?? 0)} min`)}
         </T>
       ) : null}
@@ -156,7 +156,7 @@ export function RecoveryDetails({ score = true, strip = true }: { score?: boolea
       {recDays.length ? (
         <View style={{ gap: 6 }}>
           {strip ? <ScoreStrip days={recDays} /> : null}
-          <T v="caption" color={t.ink3}>{L(`近 ${recDays.length} 天恢复分。${agentName()} 自己算的：HRV 40% · 静息心率 25% · 睡眠 25% · 手腕温度 10%，各和前 14 天中位数比；昨天练得重扣 5。`, `Recovery score, last ${recDays.length} days, worked out by ${agentName()}: HRV 40% · resting HR 25% · sleep 25% · wrist temperature 10%, each against the prior 14-day median; minus 5 after a hard workout yesterday.`)}</T>
+          <T v="caption" color={t.ink3}>{L(`近 ${recDays.length} 天恢复分，由 ${agentName()} 计算：HRV 40% · 静息心率 25% · 睡眠 25% · 手腕温度 10%，各项与前 14 天中位数对比；前一天高强度训练扣 5 分。`, `Recovery score, last ${recDays.length} days, worked out by ${agentName()}: HRV 40% · resting HR 25% · sleep 25% · wrist temperature 10%, each against the prior 14-day median; minus 5 after a hard workout yesterday.`)}</T>
         </View>
       ) : null}
     </View>
@@ -172,12 +172,12 @@ export function NoRecoveryCard() {
     <Card style={{ gap: space.sm }}>
       <View style={{ flexDirection: 'row', alignItems: 'center', gap: space.sm }}>
         <HeartPulse size={18} color={t.ink2} />
-        <T v="headline">{L('还没有恢复数据', 'No recovery data yet')}</T>
+        <T v="headline">{L('暂无恢复数据', 'No recovery data yet')}</T>
       </View>
       <T v="callout" color={t.ink2}>
         {canSync
-          ? L('点右上角的「Apple 健康」同步，第一次会弹出 Apple 健康的授权页，勾上睡眠、心率变异性、静息心率。', 'Tap "Apple Health" at the top right to sync. The first time, Apple Health asks for access: turn on Sleep, Heart Rate Variability and Resting Heart Rate.')
-          : L(`在 iPhone 上的 ${agentName()} app 里打开这一页，会自动同步 Apple 健康。`, `Open this page in the ${agentName()} app on your iPhone and it syncs Apple Health automatically.`)}
+          ? L('点按右上角「Apple 健康」进行同步。首次同步时会弹出 Apple 健康授权页，请开启睡眠、心率变异性和静息心率。', 'Tap "Apple Health" at the top right to sync. The first time, Apple Health asks for access: turn on Sleep, Heart Rate Variability and Resting Heart Rate.')
+          : L(`在 iPhone 上的 ${agentName()} app 中打开此页面，将自动同步 Apple 健康。`, `Open this page in the ${agentName()} app on your iPhone to sync Apple Health automatically.`)}
       </T>
       {liveErrors.health ? <T v="caption" color={t.bad}>{liveErrors.health}</T> : null}
     </Card>
@@ -210,7 +210,7 @@ export function DeficitBars({ days }: { days: LiveEnergyDay[] }) {
         {days.map((d) => {
           const v = d.deficit;
           const h = v == null ? 0 : Math.max(3, Math.round((Math.abs(v) / max) * (H - 2)));
-          const label = v == null ? L('没有记录', 'No data') : v >= 0 ? L(`缺口 ${Math.round(v)} kcal`, `Deficit ${Math.round(v)} kcal`) : L(`超出 ${Math.round(-v)} kcal`, `Over by ${Math.round(-v)} kcal`);
+          const label = v == null ? L('无记录', 'No data') : v >= 0 ? L(`缺口 ${Math.round(v)} kcal`, `Deficit ${Math.round(v)} kcal`) : L(`超出 ${Math.round(-v)} kcal`, `Over by ${Math.round(-v)} kcal`);
           return (
             <View key={d.date} style={{ flex: 1, alignItems: 'center' }} accessibilityLabel={`${weekdayName(d.weekday)} ${label}`}>
               <View style={{ height: H, justifyContent: 'flex-end' }}>
@@ -268,7 +268,7 @@ export function MealPlanCard({ plan }: { plan: MealPlan }) {
       ) : null}
       {plan.vs_target ? <T v="caption" color={t.ink3}>{plan.vs_target}</T> : null}
       {plan.why ? <T v="caption" color={t.ink2}>{plan.why}</T> : null}
-      {plan.shopping?.length ? <T v="caption" color={t.gold}>{L(`要买：${plan.shopping.join('、')}`, `To buy: ${plan.shopping.join(', ')}`)}</T> : null}
+      {plan.shopping?.length ? <T v="caption" color={t.gold}>{L(`采购清单：${plan.shopping.join('、')}`, `Shopping list: ${plan.shopping.join(', ')}`)}</T> : null}
     </View>
   );
 }

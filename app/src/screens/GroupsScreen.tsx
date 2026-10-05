@@ -22,7 +22,7 @@ function ViewToggle({ value, onChange }: { value: View_; onChange: (v: View_) =>
   const Icon = next === 'grid' ? LayoutGrid : List;
   return (
     <Pressable onPress={() => onChange(next)} accessibilityRole="button" hitSlop={4}
-      accessibilityLabel={next === 'grid' ? L('横排：两列卡片', 'Grid') : L('竖排：一行一个', 'List')}
+      accessibilityLabel={next === 'grid' ? L('网格视图', 'Grid') : L('列表视图', 'List')}
       style={({ pressed }) => [styles.add, { backgroundColor: t.surface2, opacity: pressed ? 0.6 : 1 }]}>
       <Icon size={19} color={t.ink} />
     </Pressable>
@@ -49,7 +49,7 @@ export function GroupsScreen() {
     if (id === 'diet' && live?.diet) {
       return live.diet.item_count
         ? L(`今天 ${live.diet.totals.kcal} kcal · 蛋白质 ${live.diet.totals.protein} g`, `Today: ${live.diet.totals.kcal} kcal · ${live.diet.totals.protein} g protein`)
-        : L('今天训记里还没有饮食记录', 'No meals logged today yet');
+        : L('今日训记中暂无饮食记录', 'No meals logged today yet');
     }
     return purpose;
   };
@@ -69,7 +69,7 @@ export function GroupsScreen() {
       const next = mine.filter((a) => a.deadline && (a.daysLeft ?? 0) >= 0).sort((a, b) => (a.deadline ?? '').localeCompare(b.deadline ?? ''))[0];
       if (mine.length) {
         const d = next?.deadline ? `${Number(next.deadline.slice(5, 7))}/${Number(next.deadline.slice(8, 10))}` : '';
-        return L(`${mine.length} 个在跟${next ? ` · 最近 ${d} ${next.org}` : ''}`, `${mine.length} active${next ? ` · next ${d} ${next.org}` : ''}`);
+        return L(`${mine.length} 个进行中${next ? ` · 最近 ${d} ${next.org}` : ''}`, `${mine.length} active${next ? ` · next ${d} ${next.org}` : ''}`);
       }
     }
     return subtitle(id, lastLine, purpose);
@@ -77,11 +77,11 @@ export function GroupsScreen() {
   return (
     <Screen>
       <ScrollView contentContainerStyle={{ paddingBottom: space.xxl }} refreshControl={<PullRefresh onRefresh={() => reload('groups', 'feed', 'inbox', 'unread')} />}>
-        <LargeHeader title="Agents" sub={L('每个 Agent 管一件事，记忆各自独立', 'Each agent handles one thing and has its own memory')}
+        <LargeHeader title="Agents" sub={L('每个 Agent 负责一个领域，记忆相互独立', 'Each Agent handles one area and has its own memory')}
           right={
             <View style={{ flexDirection: 'row', alignItems: 'center', gap: space.sm, marginBottom: 4 }}>
               <ViewToggle value={view} onChange={pick} />
-              <Pressable onPress={() => nav.navigate('NewGroup')} accessibilityRole="button" accessibilityLabel={L('新建 Agent', 'New agent')}
+              <Pressable onPress={() => nav.navigate('NewGroup')} accessibilityRole="button" accessibilityLabel={L('新建 Agent', 'New Agent')}
                 style={[styles.add, { backgroundColor: t.goldFill }]}>
                 <Plus size={20} color={t.onGold} />
               </Pressable>
@@ -90,8 +90,8 @@ export function GroupsScreen() {
         <View style={{ paddingHorizontal: space.lg, gap: space.md }}>
           {!connected || dataErrors.groups ? (
             <T v="callout" color={dataErrors.groups ? t.bad : t.ink2}>{dataErrors.groups
-              ? L(`读不到 Agents：${dataErrors.groups}`, `Couldn't load agents: ${dataErrors.groups}`)
-              : booting ? L('正在连服务器…', 'Connecting to the server…') : L('没连上服务器。', 'Not connected to the server.')}</T>
+              ? L(`无法加载 Agents：${dataErrors.groups}`, `Couldn't load Agents: ${dataErrors.groups}`)
+              : booting ? L('正在连接服务器…', 'Connecting to the server…') : L('未连接服务器。', 'Not connected to the server.')}</T>
           ) : null}
           {view === 'grid' ? (
             <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: space.md }}>
@@ -108,14 +108,14 @@ export function GroupsScreen() {
                     <T v="headline" numberOfLines={1} style={{ fontSize: 17 }}>{g.name}</T>
                     <T v="callout" color={t.ink2} numberOfLines={2}>{stat(g.id, g.dashboard, g.lastLine, g.purpose)}</T>
                     <View style={{ flex: 1 }} />
-                    {pending ? <Pill label={L(`${pending} 个等你点头`, `${pending} to approve`)} tone="gold" /> : <T v="caption" color={t.ink3}>{modelOf(g.modelId)?.short ?? g.modelId}</T>}
+                    {pending ? <Pill label={L(`${pending} 项待确认`, `${pending} to approve`)} tone="gold" /> : <T v="caption" color={t.ink3}>{modelOf(g.modelId)?.short ?? g.modelId}</T>}
                   </Pressable>
                 );
               })}
               <Pressable onPress={() => nav.navigate('NewGroup')} accessibilityRole="button"
                 style={[styles.tile, styles.newTile, { width: tileW, borderColor: t.line }]}>
                 <Plus size={22} color={t.ink2} />
-                <T v="callout" color={t.ink2} style={{ fontWeight: '600' }}>{L('新建 Agent', 'New agent')}</T>
+                <T v="callout" color={t.ink2} style={{ fontWeight: '600' }}>{L('新建 Agent', 'New Agent')}</T>
               </Pressable>
             </View>
           ) : groups.map((g) => {
@@ -130,7 +130,7 @@ export function GroupsScreen() {
                   <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
                     <T v="headline" numberOfLines={1} style={{ flexShrink: 1 }}>{g.name}</T>
                     {g.dashboard === 'fitness' || g.dashboard === 'diet' ? <Pill label={live?.week?.source || live?.diet?.source || L('数据源', 'Data source')} tone="good" /> : null}
-                    {pending ? <Pill label={L(`${pending} 个待审批`, `${pending} to approve`)} tone="gold" /> : null}
+                    {pending ? <Pill label={L(`${pending} 项待确认`, `${pending} to approve`)} tone="gold" /> : null}
                     <View style={{ flex: 1 }} />
                     <CountPill n={u?.n ?? 0} />
                   </View>
@@ -143,7 +143,7 @@ export function GroupsScreen() {
           {view === 'grid' ? null : <Pressable onPress={() => nav.navigate('NewGroup')} accessibilityRole="button"
             style={[styles.empty, { borderColor: t.line }]}>
             <Plus size={18} color={t.ink2} />
-            <T v="callout" color={t.ink2}>{L('新建一个 Agent，比如「睡眠」「申请季」「记账」', 'Add an agent, like "Sleep", "Applications" or "Expenses"')}</T>
+            <T v="callout" color={t.ink2}>{L('新建 Agent，例如「睡眠」「申请季」「记账」', 'Add an Agent, such as "Sleep", "Applications" or "Expenses"')}</T>
           </Pressable>}
         </View>
       </ScrollView>

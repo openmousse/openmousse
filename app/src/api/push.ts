@@ -77,10 +77,10 @@ export function registerCategories(): void {
   if (!N) return;
   N.setNotificationCategoryAsync('inbox', [
     { identifier: 'approve', buttonTitle: L('同意', 'Approve'), options: { opensAppToForeground: true, isAuthenticationRequired: true } },
-    { identifier: 'open', buttonTitle: L('看一下', 'View'), options: { opensAppToForeground: true } },
+    { identifier: 'open', buttonTitle: L('查看', 'View'), options: { opensAppToForeground: true } },
   ]).catch(() => {});
   N.setNotificationCategoryAsync('card', [
-    { identifier: 'open', buttonTitle: L('看卡片', 'View card'), options: { opensAppToForeground: true } },
+    { identifier: 'open', buttonTitle: L('查看卡片', 'View card'), options: { opensAppToForeground: true } },
   ]).catch(() => {});
 }
 

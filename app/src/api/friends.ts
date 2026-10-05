@@ -1,5 +1,6 @@
 // 朋友（server/friends.py，社交第二层）：邀请码加朋友、朋友聊天、分享发给朋友、对着分享追问（对方的名片 agent 代答）、我的名片 agent 的档位。
 // 协议见 ../../docs/social-protocol.zh-CN.md。服务器之间的事（签名、投递、重试）都在服务器上，app 只读写自己的服务器。
+import { L } from '../i18n';
 import { request } from './base';
 import type { Share } from './share';
 
@@ -161,6 +162,15 @@ export interface CardHealth {
 export const cardHealth = () => request<CardHealth>('/api/card/health');
 export const patchCard = (b: { tiers?: Partial<Record<AnyTier, Partial<Record<ScopeKey, string>>>>; status?: string; name?: string }) =>
   request<CardSettings>('/api/card', { method: 'PATCH', body: b });
+/** 设对外名字。老服务器不认 name（悄悄忽略、回来的名片里也没有 name）：报错，说清要升级服务器或在服务器上用命令设。 */
+export const setMyName = async (name: string) => {
+  const c = await patchCard({ name });
+  if (c.name === undefined) {
+    throw new Error(L(`服务器版本较旧，暂不支持在 app 中设置名字。请更新服务器，或在服务器上运行：python3 ~/.openmousse/repo/server/settings_ctl.py user-name "${name}"`,
+      `This server is too old to set the name from the app. Update the server, or run on it: python3 ~/.openmousse/repo/server/settings_ctl.py user-name "${name}"`));
+  }
+  return c;
+};
 
 /** 贴进来的文字里有没有邀请码（…/f/i/<令牌>/<公钥>，或 openmousse://friends/add?code=…）。 */
 export function findCode(text: string): string | null {

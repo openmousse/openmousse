@@ -16,9 +16,9 @@ import { L } from '../i18n';
 import { radius, space, type, useTheme } from '../theme';
 
 const STATUS = () => ({
-  done: [L('学完', 'Done'), 'good'], doing: [L('在学', 'In progress'), 'cyan'], todo: [L('没开始', 'Not started'), 'neutral'],
-  ready: [L('材料齐了', 'Ready'), 'cyan'], missing: [L('材料没齐', 'Missing'), 'warn'], later: [L('还没上', 'Not yet'), 'outline'],
-  empty: [L('还没有材料', 'Empty'), 'outline'], info: [L('课前准备', 'Prep'), 'good'],
+  done: [L('已学完', 'Done'), 'good'], doing: [L('学习中', 'In progress'), 'cyan'], todo: [L('未开始', 'Not started'), 'neutral'],
+  ready: [L('材料齐全', 'Ready'), 'cyan'], missing: [L('材料不全', 'Missing'), 'warn'], later: [L('尚未上课', 'Not yet'), 'outline'],
+  empty: [L('暂无材料', 'Empty'), 'outline'], info: [L('课前准备', 'Prep'), 'good'],
 } as Record<study.SessionStatus, [string, 'good' | 'cyan' | 'neutral' | 'warn' | 'outline']>);
 
 function StatusChip({ s }: { s: study.SessionStatus }) {
@@ -59,12 +59,12 @@ export function StudyHomeScreen() {
   return (
     <Screen>
       <NavHeader title={L('学习台', 'Study desk')} onBack={() => nav.goBack()} right={(
-        <Pressable onPress={() => nav.navigate('AddCourse', {})} hitSlop={8} accessibilityRole="button" accessibilityLabel={L('加一门课', 'Add a course')} style={styles.headBtn}>
+        <Pressable onPress={() => nav.navigate('AddCourse', {})} hitSlop={8} accessibilityRole="button" accessibilityLabel={L('添加课程', 'Add a course')} style={styles.headBtn}>
           <Plus size={22} color={t.gold} />
         </Pressable>
       )} />
       <ScrollView contentContainerStyle={{ padding: space.lg, paddingTop: 0, paddingBottom: space.xxl }} refreshControl={<PullRefresh onRefresh={() => Promise.all([reload(), loadOutline()])} />}>
-        {!h ? <Card style={{ marginTop: space.md }}><T v="callout" color={error ? t.bad : t.ink2}>{error || L('正在读…', 'Loading…')}</T></Card> : null}
+        {!h ? <Card style={{ marginTop: space.md }}><T v="callout" color={error ? t.bad : t.ink2}>{error || L('正在加载…', 'Loading…')}</T></Card> : null}
         {h && (rv || nx || d) ? (
           <>
             <SectionLabel>{L('今天', 'Today')}</SectionLabel>
@@ -91,9 +91,9 @@ export function StudyHomeScreen() {
         ) : null}
         {h && !h.courses.length ? (
           <Card style={{ marginTop: space.md, gap: space.md }}>
-            <T v="headline">{L('学习台还是空的', 'The study desk is empty')}</T>
-            <T v="callout" color={t.ink2}>{L('加第一门课：大纲、课件或者课程网站，有什么用什么。', 'Add your first course with whatever you have: a syllabus, files or a course site.')}</T>
-            <Btn label={L('加一门课', 'Add a course')} onPress={() => nav.navigate('AddCourse', {})} />
+            <T v="headline">{L('学习台暂无课程', 'The study desk is empty')}</T>
+            <T v="callout" color={t.ink2}>{L('添加第一门课程：可使用大纲、课件或课程网站中的任意一项。', 'Add your first course with whatever you have: a syllabus, files or a course site.')}</T>
+            <Btn label={L('添加课程', 'Add a course')} onPress={() => nav.navigate('AddCourse', {})} />
           </Card>
         ) : null}
         {oErr ? <Card><T v="callout" color={t.bad}>{oErr}</T></Card> : null}
@@ -113,7 +113,7 @@ export function StudyHomeScreen() {
           </Card>
         ) : null}
         <T v="callout" color={t.ink3} style={{ marginTop: space.md, paddingHorizontal: space.lg, fontSize: 13, lineHeight: 19 }}>{L(
-          '手机上复习、刷卡、做题。课件和学习页并排看、写长答案，用电脑上的学习台。', 'Review, flashcards and quizzes on the phone. For slides and notes side by side, or long answers, use the study desk on a computer.')}</T>
+          '手机端用于复习、闪卡和小测。如需并排查看课件与学习页或撰写长答案，请使用电脑端学习台。', 'Review, flashcards and quizzes on the phone. For slides and notes side by side, or long answers, use the study desk on a computer.')}</T>
         <View style={{ marginTop: space.md, paddingHorizontal: space.lg }}><DeskLinkRow params={cur ? { course: cur } : undefined} /></View>
       </ScrollView>
     </Screen>
@@ -123,13 +123,13 @@ export function StudyHomeScreen() {
 function sessionSub(s: study.OutlineSession): string {
   const date = s.date ? (() => { const x = new Date(`${s.date}T12:00:00`); return L(`${x.getMonth() + 1}/${x.getDate()}`, `${x.getDate()}/${x.getMonth() + 1}`); })() : '';
   if (s.progress && s.progress.total) {
-    if (s.progress.done >= s.progress.total) return L('路线走完了', 'Path done');
-    return s.progress.done ? L(`第 ${s.progress.done + 1} / ${s.progress.total} 步`, `Step ${s.progress.done + 1} of ${s.progress.total}`) : L(`路线 ${s.progress.total} 步`, `${s.progress.total}-step path`);
+    if (s.progress.done >= s.progress.total) return L('路线已完成', 'Path done');
+    return s.progress.done ? L(`第 ${s.progress.done + 1} / ${s.progress.total} 步`, `Step ${s.progress.done + 1} of ${s.progress.total}`) : L(`路线共 ${s.progress.total} 步`, `${s.progress.total}-step path`);
   }
-  if (s.status === 'missing') return L(`缺 ${s.missing || 1} 样材料`, `${s.missing || 1} item(s) missing`) + (date ? ` · ${date}` : '');
-  if (s.status === 'ready') return L('材料齐了，可以生成', 'Materials in: ready to generate');
-  if (s.status === 'later') return date ? L(`${date} 上课`, `Class on ${date}`) : L('还没上课', 'Not taught yet');
-  if (s.page) return L('有学习页', 'Has notes');
+  if (s.status === 'missing') return L(`缺 ${s.missing || 1} 项材料`, `${s.missing || 1} item(s) missing`) + (date ? ` · ${date}` : '');
+  if (s.status === 'ready') return L('材料齐全，可生成', 'Materials in: ready to generate');
+  if (s.status === 'later') return date ? L(`${date} 上课`, `Class on ${date}`) : L('尚未上课', 'Not taught yet');
+  if (s.page) return L('已有学习页', 'Has notes');
   return date || '—';
 }
 
@@ -142,20 +142,20 @@ function SessionSheet({ course, s, close, onGenerated }: { course: string; s: st
     if (!s.id) return;
     setBusy(true);
     study.generateSessions(course, [s.id], { cards: true, quiz: true }).then((r) => {
-      setDone(r.ok === false ? L('材料还没齐。', 'Materials are still missing.') : L('排上了：写好会在学习 Agent 的对话里说一声（一节几分钟）。', "Queued: the study Agent's chat gets a line when it's done (a few minutes)."));
+      setDone(r.ok === false ? L('材料尚未齐全。', 'Materials are still missing.') : L('已加入队列：完成后会在学习 Agent 的对话中通知（每节约需几分钟）。', "Queued: the study Agent's chat gets a line when it's done (a few minutes)."));
       onGenerated();
-    }, (e) => showError(L('没开始生成', "Couldn't start"), e)).finally(() => setBusy(false));
+    }, (e) => showError(L('未能开始生成', "Couldn't start"), e)).finally(() => setBusy(false));
   };
-  const word = s.status === 'ready' ? L('材料齐了，可以生成学习页和学习路线。', 'Materials are in: ready to generate the notes and study path.')
-    : s.status === 'missing' ? L('还缺材料：在电脑上的学习台补上或者先跳过，也可以把文件发给学习 Agent。', 'Something is missing: add it or skip it on the study desk, or send the file to the study Agent.')
-      : s.status === 'later' ? L('还没上课。老师一般课前传课件，到了放进来就能生成。', 'Not taught yet. Slides usually arrive before class; add them and generate.')
-        : L('这一节还没有材料。', 'No materials for this session yet.');
+  const word = s.status === 'ready' ? L('材料齐全，可生成学习页和学习路线。', 'Materials are in: ready to generate the notes and study path.')
+    : s.status === 'missing' ? L('材料不全：请在电脑端学习台补充或跳过，也可将文件发送给学习 Agent。', 'Something is missing: add it or skip it on the study desk, or send the file to the study Agent.')
+      : s.status === 'later' ? L('尚未上课。课件通常在课前发布，添加后即可生成。', 'Not taught yet. Slides usually arrive before class; add them and generate.')
+        : L('这一节暂无材料。', 'No materials for this session yet.');
   return (
     <View style={{ gap: space.md, paddingBottom: space.lg }}>
       <T v="body" color={t.ink2}>{done || word}</T>
       {s.status === 'ready' && !done ? <Btn label={busy ? L('排队中…', 'Queuing…') : L('生成这一节', 'Generate this session')} onPress={gen} /> : null}
       <DeskLinkRow params={{ course }} />
-      <Btn kind="quiet" label={L('好', 'OK')} onPress={close} />
+      <Btn kind="quiet" label={L('完成', 'OK')} onPress={close} />
     </View>
   );
 }
@@ -180,14 +180,14 @@ export function StudySessionScreen() {
   return (
     <Screen>
       <NavHeader title={title} sub={course} onBack={() => nav.goBack()} right={(
-        <Pressable onPress={() => { copyDeskLink({ course, page }).catch((e) => showError(L('没拿到链接', "Couldn't get a link"), e)); }} hitSlop={8} accessibilityRole="button"
-          accessibilityLabel={L('在电脑上打开这一节（拷一个 10 分钟的链接）', 'Open this session on a computer (copies a 10-minute link)')} style={styles.headBtn}>
+        <Pressable onPress={() => { copyDeskLink({ course, page }).catch((e) => showError(L('获取链接失败', "Couldn't get a link"), e)); }} hitSlop={8} accessibilityRole="button"
+          accessibilityLabel={L('在电脑上打开这一节（复制 10 分钟内有效的链接）', 'Open this session on a computer (copies a 10-minute link)')} style={styles.headBtn}>
           <Monitor size={20} color={t.gold} />
         </Pressable>
       )} />
       <View style={{ paddingHorizontal: space.lg, paddingVertical: space.sm }}>
         <Segmented value={tab} onChange={setTab} options={[{ value: 'path', label: L('路线', 'Path') }, { value: 'self', label: L('自测', 'Self-test') }, { value: 'cards', label: L('闪卡', 'Cards') },
-          { value: 'quiz', label: L('小测', 'Quiz') }, { value: 'files', label: L('课件', 'Files') }, { value: 'ask', label: L('问', 'Ask') }]} />
+          { value: 'quiz', label: L('小测', 'Quiz') }, { value: 'files', label: L('课件', 'Files') }, { value: 'ask', label: L('提问', 'Ask') }]} />
       </View>
       {err ? <Card style={{ margin: space.lg }}><T v="callout" color={t.bad}>{err}</T></Card> : !u ? <ActivityIndicator style={{ marginTop: space.xl }} color={t.ink3} />
         : tab === 'path' ? <PathTab u={u} reload={load} onAsk={ask} onTab={setTab} />
@@ -207,7 +207,7 @@ function Reviews({ u, reload }: { u: study.StudyUnit; reload: () => void }) {
   if (!items.length) return null;
   const done = (r: study.ReviewItem) => {
     setGone((s) => new Set(s).add(r.id));
-    study.reviewDone(u.course, r.id).then(() => reload(), (e) => { setGone((s) => { const n = new Set(s); n.delete(r.id); return n; }); showError(L('没划掉', "Couldn't mark it"), e); });
+    study.reviewDone(u.course, r.id).then(() => reload(), (e) => { setGone((s) => { const n = new Set(s); n.delete(r.id); return n; }); showError(L('标记失败', "Couldn't mark it"), e); });
   };
   const from = items.find((r) => r.from?.title)?.from?.title || items[0].source;
   return (
@@ -217,7 +217,7 @@ function Reviews({ u, reload }: { u: study.StudyUnit; reload: () => void }) {
         <View key={r.id} style={{ flexDirection: 'row', alignItems: 'flex-start', gap: space.sm }}>
           <T v="body" style={{ flex: 1, fontSize: 15 }}>{r.text}</T>
           <Pressable onPress={() => done(r)} accessibilityRole="button" style={[styles.miniBtn, { borderColor: t.line, backgroundColor: t.surface }]}>
-            <T v="caption" style={{ fontSize: 13 }}>{L('复习过了', 'Reviewed')}</T>
+            <T v="caption" style={{ fontSize: 13 }}>{L('已复习', 'Reviewed')}</T>
           </Pressable>
         </View>
       ))}
@@ -249,7 +249,7 @@ function PathTab({ u, reload, onAsk, onTab }: { u: study.StudyUnit; reload: () =
   const toggle = (i: number) => {
     const want = !done.includes(i);
     setDone((d) => (want ? [...d, i] : d.filter((x) => x !== i)));
-    study.setStep(u.course, u.page, i, want).then((r) => setDone(r.done), (e) => { reload(); showError(L('没存上', "Couldn't save"), e); });
+    study.setStep(u.course, u.page, i, want).then((r) => setDone(r.done), (e) => { reload(); showError(L('保存失败', "Couldn't save"), e); });
     setOpen(null);
   };
   const openRef = (r: study.RouteRef) => {
@@ -265,7 +265,7 @@ function PathTab({ u, reload, onAsk, onTab }: { u: study.StudyUnit; reload: () =
       <Reviews u={u} reload={reload} />
       {!u.route ? (
         <Card style={{ gap: space.md }}>
-          <T v="callout" color={t.ink2}>{L('这一节还没有学习路线。在电脑上的学习台打开这一节就能生成。', "No study path yet. Open this session on the study desk to generate one.")}</T>
+          <T v="callout" color={t.ink2}>{L('这一节尚无学习路线。在电脑端学习台打开这一节即可生成。', "No study path yet. Open this session on the study desk to generate one.")}</T>
           <DeskLinkRow params={{ course: u.course, page: u.page }} />
         </Card>
       ) : (
@@ -273,7 +273,7 @@ function PathTab({ u, reload, onAsk, onTab }: { u: study.StudyUnit; reload: () =
           <View style={{ gap: 8 }}>
             <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'baseline' }}>
               <T v="headline" style={{ fontSize: 15 }}>{L(`学习路线 · ${done.length} / ${items.length} 步`, `Study path · ${done.length} / ${items.length}`)}</T>
-              <T v="caption" color={t.ink3}>{mins ? L(`还要约 ${mins} 分钟`, `~${mins} min left`) : L('走完了', 'All done')}</T>
+              <T v="caption" color={t.ink3}>{mins ? L(`还需约 ${mins} 分钟`, `~${mins} min left`) : L('已完成', 'All done')}</T>
             </View>
             <View style={[styles.bar, { backgroundColor: t.track }]}><View style={[styles.bar, { width: `${items.length ? (100 * done.length) / items.length : 0}%`, backgroundColor: t.cyan }]} /></View>
           </View>
@@ -284,7 +284,7 @@ function PathTab({ u, reload, onAsk, onTab }: { u: study.StudyUnit; reload: () =
               return (
                 <View key={i} style={[i > 0 && { borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: t.line }, expanded && { backgroundColor: t.bg }]}>
                   <Pressable onPress={() => setOpen(expanded ? -1 : i)} style={styles.stepRow} accessibilityRole="button">
-                    <Pressable onPress={() => toggle(i)} hitSlop={8} accessibilityRole="checkbox" accessibilityState={{ checked: on }} accessibilityLabel={(on ? L('取消打勾：', 'Untick: ') : L('打勾：', 'Tick: ')) + s.title}
+                    <Pressable onPress={() => toggle(i)} hitSlop={8} accessibilityRole="checkbox" accessibilityState={{ checked: on }} accessibilityLabel={(on ? L('取消勾选：', 'Untick: ') : L('勾选：', 'Tick: ')) + s.title}
                       style={[styles.check, { borderColor: on ? t.cyan : t.ink3, backgroundColor: on ? t.cyan : t.surface }]}>
                       {on ? <Check size={13} color="#fff" /> : null}
                     </Pressable>
@@ -305,10 +305,10 @@ function PathTab({ u, reload, onAsk, onTab }: { u: study.StudyUnit; reload: () =
                       ) : null}
                       <View style={{ flexDirection: 'row', gap: space.sm }}>
                         <Pressable onPress={() => toggle(i)} accessibilityRole="button" style={[styles.pillBtn, { backgroundColor: t.cyanSoft }]}>
-                          <T v="callout" color={t.cyan} style={{ fontWeight: '600', fontSize: 13 }}>{on ? L('还没做完', 'Not done') : L('做完了', 'Done')}</T>
+                          <T v="callout" color={t.cyan} style={{ fontWeight: '600', fontSize: 13 }}>{on ? L('标为未完成', 'Not done') : L('标为完成', 'Done')}</T>
                         </Pressable>
                         <Pressable onPress={() => onAsk(L(`第 ${i + 1} 步「${s.title}」：`, `Step ${i + 1} "${s.title}": `), { step: i })} accessibilityRole="button" style={[styles.pillBtn, { backgroundColor: t.surface2 }]}>
-                          <T v="callout" style={{ fontSize: 13 }}>{L('问这一步', 'Ask about this step')}</T>
+                          <T v="callout" style={{ fontSize: 13 }}>{L('就此步提问', 'Ask about this step')}</T>
                         </Pressable>
                       </View>
                     </View>
@@ -389,13 +389,13 @@ function SelfTab({ u, onAsk }: { u: study.StudyUnit; onAsk: (text: string, extra
   };
   const upd = (i: number, patch: study.SelfRec) => save({ ...st, v: { ...st.v, [i]: { ...(st.v[i] ?? {}), ...patch } } });
   if (!items) return <ActivityIndicator style={{ marginTop: space.xl }} color={t.ink3} />;
-  if (!items.length) return <Card style={{ margin: space.lg }}><T v="callout" color={t.ink2}>{L('这一节的学习页没有自测题。可以去「问」里让它出几道题考你。', 'These notes have no self-test. Ask for a few questions in Ask.')}</T></Card>;
+  if (!items.length) return <Card style={{ margin: space.lg }}><T v="callout" color={t.ink2}>{L('这一节的学习页暂无自测题。可在「提问」中请求出题。', 'These notes have no self-test. Ask for a few questions in Ask.')}</T></Card>;
   const seen = Object.values(st.v).filter((x) => x?.open).length;
   return (
     <ScrollView contentContainerStyle={{ padding: space.lg, paddingTop: space.xs, paddingBottom: space.xxl, gap: space.md }} keyboardShouldPersistTaps="handled" automaticallyAdjustKeyboardInsets>
       <View style={{ flexDirection: 'row', justifyContent: 'space-between' }}>
         <T v="headline" style={{ fontSize: 15 }}>{L(`自测 · ${seen} / ${items.length}`, `Self-test · ${seen} / ${items.length}`)}</T>
-        <T v="caption" color={t.ink3}>{L('先写再看，也可以直接看', 'Write first, or just look')}</T>
+        <T v="caption" color={t.ink3}>{L('可先作答，也可直接查看答案', 'Answer first, or view the answer')}</T>
       </View>
       {items.map((it, i) => <SelfCard key={i} it={it} i={i} rec={st.v[i] ?? {}} upd={(p) => upd(i, p)} u={u} onAsk={onAsk} />)}
     </ScrollView>
@@ -413,7 +413,7 @@ function SelfCard({ it, i, rec, upd, u, onAsk }: { it: SelfItem; i: number; rec:
   const addReview = () => {
     upd({ rv: 1 });
     study.reviewAdd(u.course, u.page, [{ text: it.q.replace(/\s+/g, ' ').slice(0, 400), kind: 'missed', source: L(`自测第 ${n} 题`, `Self-test Q${n}`) }])
-      .catch((e) => { upd({ rv: 0 }); showError(L('没加上', "Couldn't add it"), e); });
+      .catch((e) => { upd({ rv: 0 }); showError(L('添加失败', "Couldn't add it"), e); });
   };
   return (
     <Card style={{ gap: space.sm, borderWidth: 1.5, borderColor: border }}>
@@ -421,17 +421,17 @@ function SelfCard({ it, i, rec, upd, u, onAsk }: { it: SelfItem; i: number; rec:
         <T v="headline" color={t.gold} style={{ fontSize: 15 }}>{/^\d+$/.test(it.label) ? `${it.label}.` : it.label}</T>
         <View style={{ flex: 1 }}>{it.tag ? <T v="caption" color={t.ink3}>{it.tag}</T> : null}<Markdown text={it.q} /></View>
       </View>
-      <TextInput value={a} onChangeText={setA} onEndEditing={() => upd({ a })} onBlur={() => upd({ a })} multiline placeholder={L('先写你的答案（可以不写）', 'Your answer first (optional)')}
+      <TextInput value={a} onChangeText={setA} onEndEditing={() => upd({ a })} onBlur={() => upd({ a })} multiline placeholder={L('你的答案（可选）', 'Your answer (optional)')}
         placeholderTextColor={t.ink3} accessibilityLabel={L(`第 ${i + 1} 题你的答案`, `Your answer to question ${i + 1}`)}
         style={[type.body, styles.input, { backgroundColor: t.bg, color: t.ink, minHeight: 64 }]} />
       <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: space.sm }}>
         <Pressable onPress={() => upd({ a, open: !rec.open })} accessibilityRole="button" style={[styles.pillBtn, { backgroundColor: t.goldFill }]}>
-          <T v="callout" color={t.onGold} style={{ fontWeight: '600', fontSize: 13 }}>{rec.open ? L('盖上答案', 'Hide answer') : mine ? L('看答案，对照一下', 'Reveal and compare') : L('直接看答案', 'Just show the answer')}</T>
+          <T v="callout" color={t.onGold} style={{ fontWeight: '600', fontSize: 13 }}>{rec.open ? L('隐藏答案', 'Hide answer') : mine ? L('查看答案并对照', 'Reveal and compare') : L('查看答案', 'Show the answer')}</T>
         </Pressable>
         {mine ? (
           <Pressable onPress={() => onAsk(L(`我的答案：${mine}\n\n对照参考答案帮我看看：对在哪、漏了什么、哪里说错了。简短点。`, `My answer: ${mine}\n\nCompare it with the reference answer: what's right, missing or wrong. Keep it short.`),
             { quote: L(`自测第 ${n} 题\n题目：${it.q}\n\n参考答案：${it.a}`, `Self-test Q${n}\nQuestion: ${it.q}\n\nReference answer: ${it.a}`) })} accessibilityRole="button" style={[styles.pillBtn, { backgroundColor: t.surface2 }]}>
-            <T v="callout" style={{ fontSize: 13 }}>{L('让它看看', 'Check my answer')}</T>
+            <T v="callout" style={{ fontSize: 13 }}>{L('批改答案', 'Check my answer')}</T>
           </Pressable>
         ) : null}
       </View>
@@ -440,8 +440,8 @@ function SelfCard({ it, i, rec, upd, u, onAsk }: { it: SelfItem; i: number; rec:
           {mine ? <View style={[styles.cmp, { backgroundColor: t.goldSoft }]}><T v="caption" color={t.ink3}>{L('你的答案', 'Your answer')}</T><T v="callout">{mine}</T></View> : null}
           <View style={[styles.cmp, { backgroundColor: t.surface2 }]}><T v="caption" color={t.ink3}>{L('参考答案', 'Reference answer')}</T><Markdown text={it.a} small /></View>
           <View style={{ flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center', gap: 6 }}>
-            <T v="caption" color={t.ink3}>{L('自己判：', 'Mark it:')}</T>
-            {([['ok', L('对了', 'Right'), t.goodSoft, t.good], ['close', L('差一点', 'Close'), t.warnSoft, t.warn], ['miss', L('没答上', 'Missed'), t.badSoft, t.bad]] as const).map(([g, label, bg, fg]) => (
+            <T v="caption" color={t.ink3}>{L('自评：', 'Mark it:')}</T>
+            {([['ok', L('正确', 'Right'), t.goodSoft, t.good], ['close', L('接近', 'Close'), t.warnSoft, t.warn], ['miss', L('未答出', 'Missed'), t.badSoft, t.bad]] as const).map(([g, label, bg, fg]) => (
               <Pressable key={g} onPress={() => upd({ g: rec.g === g ? undefined : g })} accessibilityRole="button" accessibilityState={{ selected: rec.g === g }}
                 style={[styles.grade, { borderColor: rec.g === g ? fg : t.line, backgroundColor: rec.g === g ? bg : t.surface }]}>
                 <T v="caption" color={rec.g === g ? fg : t.ink2} style={{ fontWeight: '600', fontSize: 13 }}>{label}</T>
@@ -449,7 +449,7 @@ function SelfCard({ it, i, rec, upd, u, onAsk }: { it: SelfItem; i: number; rec:
             ))}
             {rec.g === 'miss' || rec.g === 'close' ? (
               <Pressable onPress={rec.rv ? undefined : addReview} disabled={!!rec.rv} accessibilityRole="button" style={[styles.grade, { borderColor: t.line, backgroundColor: t.surface }]}>
-                <T v="caption" color={rec.rv ? t.good : t.ink2} style={{ fontWeight: '600', fontSize: 13 }}>{rec.rv ? L('已加进复习 ✓', 'Added to review ✓') : L('加进复习', 'Add to review')}</T>
+                <T v="caption" color={rec.rv ? t.good : t.ink2} style={{ fontWeight: '600', fontSize: 13 }}>{rec.rv ? L('已加入复习 ✓', 'Added to review ✓') : L('加入复习', 'Add to review')}</T>
               </Pressable>
             ) : null}
           </View>
@@ -473,9 +473,9 @@ function useGenerated<T>(u: study.StudyUnit, kind: 'cards' | 'quiz') {
   const start = () => {
     setG((x) => (x ? { ...x, status: 'running' } : { status: 'running', data: null }));
     study.generate(u.course, u.page, kind).then((r) => {
-      if (r.ok === false && r.status === 'needs_materials') { showError(L('材料还没齐', 'Materials are missing'), (r.missing ?? []).map((m) => m.title).join('、')); load(); return; }
+      if (r.ok === false && r.status === 'needs_materials') { showError(L('材料尚未齐全', 'Materials are missing'), (r.missing ?? []).map((m) => m.title).join('、')); load(); return; }
       load();
-    }, (e) => { showError(L('没开始生成', "Couldn't start"), e); load(); });
+    }, (e) => { showError(L('未能开始生成', "Couldn't start"), e); load(); });
   };
   return { g, start };
 }
@@ -484,9 +484,9 @@ function GenEmpty({ running, kind, onStart }: { running: boolean; kind: 'cards' 
   const t = useTheme();
   return (
     <Card style={{ margin: space.lg, gap: space.md }}>
-      <T v="callout" color={t.ink2}>{running ? (kind === 'cards' ? L('正在出闪卡，一两分钟。', 'Making flashcards; a minute or two.') : L('正在出小测，一两分钟。', 'Making a quiz; a minute or two.'))
-        : kind === 'cards' ? L('这一节还没有闪卡：按学习页和课件出 12–20 张。', 'No flashcards yet: 12–20 from the notes and materials.') : L('这一节还没有小测：按学习页和课件出 8 道单选题。', 'No quiz yet: 8 multiple-choice questions from the notes and materials.')}</T>
-      {running ? <ActivityIndicator color={t.ink3} /> : <Btn label={kind === 'cards' ? L('出闪卡', 'Make flashcards') : L('出小测', 'Make a quiz')} onPress={onStart} />}
+      <T v="callout" color={t.ink2}>{running ? (kind === 'cards' ? L('正在生成闪卡，约需一两分钟。', 'Making flashcards; a minute or two.') : L('正在生成小测，约需一两分钟。', 'Making a quiz; a minute or two.'))
+        : kind === 'cards' ? L('这一节尚无闪卡：将根据学习页和课件生成 12–20 张。', 'No flashcards yet: 12–20 from the notes and materials.') : L('这一节尚无小测：将根据学习页和课件生成 8 道单选题。', 'No quiz yet: 8 multiple-choice questions from the notes and materials.')}</T>
+      {running ? <ActivityIndicator color={t.ink3} /> : <Btn label={kind === 'cards' ? L('生成闪卡', 'Make flashcards') : L('生成小测', 'Make a quiz')} onPress={onStart} />}
     </Card>
   );
 }
@@ -513,20 +513,20 @@ function CardsTab({ u }: { u: study.StudyUnit }) {
     <ScrollView contentContainerStyle={{ padding: space.lg, paddingTop: space.xs, gap: space.md }}>
       <View style={{ flexDirection: 'row', justifyContent: 'space-between' }}>
         <T v="headline" style={{ fontSize: 15 }}>{L(`闪卡 · ${(i % cards.length) + 1} / ${cards.length}`, `Card ${(i % cards.length) + 1} of ${cards.length}`)}</T>
-        {again ? <T v="caption" color={t.warn}>{L(`复习里加了 ${again} 张`, `${again} added to review`)}</T> : null}
+        {again ? <T v="caption" color={t.warn}>{L(`已加入复习 ${again} 张`, `${again} added to review`)}</T> : null}
       </View>
       <Pressable onPress={() => setFlip((f) => !f)} accessibilityRole="button" accessibilityLabel={L('翻面', 'Flip')}
         style={[styles.flash, { backgroundColor: t.surface, borderColor: flip ? t.cyan : t.goldFill }]}>
         <T v="caption" color={flip ? t.cyan : t.gold} style={{ fontWeight: '700' }}>{flip ? L('答案', 'Answer') : L('问题', 'Question')}</T>
         <View style={{ alignSelf: 'stretch' }}><Markdown text={flip ? c.a : c.q} /></View>
         {flip && c.ref ? <T v="caption" color={t.ink3}>{c.ref}</T> : null}
-        <T v="caption" color={t.ink3}>{flip ? L('点一下翻回去', 'Tap to flip back') : L('点一下看答案', 'Tap to see the answer')}</T>
+        <T v="caption" color={t.ink3}>{flip ? L('轻点翻回正面', 'Tap to flip back') : L('轻点查看答案', 'Tap to see the answer')}</T>
       </Pressable>
       <View style={{ flexDirection: 'row', gap: space.sm }}>
-        <Btn flex kind="quiet" label={L('没记住', "Didn't know")} onPress={() => next(true)} />
-        <Btn flex label={L('记住了', 'Knew it')} onPress={() => next(false)} />
+        <Btn flex kind="quiet" label={L('未记住', "Didn't know")} onPress={() => next(true)} />
+        <Btn flex label={L('已记住', 'Knew it')} onPress={() => next(false)} />
       </View>
-      <T v="caption" color={t.ink3} style={{ textAlign: 'center' }}>{L('没记住的加进这一节的复习。卡片按这一节的学习页和课件出。', "Cards you didn't know go into this session's review.")}</T>
+      <T v="caption" color={t.ink3} style={{ textAlign: 'center' }}>{L('未记住的卡片会加入这一节的复习。卡片根据这一节的学习页和课件生成。', "Cards you didn't know go into this session's review.")}</T>
     </ScrollView>
   );
 }
@@ -546,8 +546,8 @@ function QuizTab({ u }: { u: study.StudyUnit }) {
     return (
       <Card style={{ margin: space.lg, gap: space.md }}>
         <T v="title">{L(`答对 ${right} / ${qs.length}`, `${right} / ${qs.length} correct`)}</T>
-        <T v="callout" color={t.ink2}>{L('答错的已经加进这一节的复习。', "Wrong answers were added to this session's review.")}</T>
-        <Btn label={L('再做一遍', 'Again')} onPress={() => { setI(0); setPicked(null); setRight(0); }} />
+        <T v="callout" color={t.ink2}>{L('答错的题目已加入这一节的复习。', "Wrong answers were added to this session's review.")}</T>
+        <Btn label={L('重做', 'Again')} onPress={() => { setI(0); setPicked(null); setRight(0); }} />
       </Card>
     );
   }
@@ -570,16 +570,16 @@ function QuizTab({ u }: { u: study.StudyUnit }) {
             style={[styles.opt, { backgroundColor: ok ? t.goodSoft : bad ? t.badSoft : t.surface, borderColor: ok ? t.good : bad ? t.bad : t.line }]}>
             <T v="headline" color={ok ? t.good : bad ? t.bad : t.ink2} style={{ fontSize: 14, width: 18 }}>{'ABCDEFG'[k]}</T>
             <View style={{ flex: 1, marginBottom: -8 }}><Markdown text={String(o)} small /></View>
-            {ok ? <T v="caption" color={t.good} style={{ fontWeight: '700' }}>{L('正确', 'Right')}</T> : bad ? <T v="caption" color={t.bad} style={{ fontWeight: '700' }}>{L('你选的', 'Yours')}</T> : null}
+            {ok ? <T v="caption" color={t.good} style={{ fontWeight: '700' }}>{L('正确', 'Right')}</T> : bad ? <T v="caption" color={t.bad} style={{ fontWeight: '700' }}>{L('你的选择', 'Yours')}</T> : null}
           </Pressable>
         );
       })}
       {picked != null ? (
         <Card style={{ gap: space.sm, backgroundColor: t.surface2 }}>
-          <T v="headline" color={picked === q.answer ? t.good : t.bad} style={{ fontSize: 15 }}>{picked === q.answer ? L('答对了', 'Correct') : L('答错了，这题进复习', 'Wrong: added to review')}</T>
+          <T v="headline" color={picked === q.answer ? t.good : t.bad} style={{ fontSize: 15 }}>{picked === q.answer ? L('回答正确', 'Correct') : L('回答错误，已加入复习', 'Wrong: added to review')}</T>
           {q.explain ? <Markdown text={q.explain} small /> : null}
           {q.ref ? <T v="caption" color={t.ink3}>{q.ref}</T> : null}
-          <Btn label={i + 1 < qs.length ? L('下一题', 'Next') : L('看结果', 'See the score')} onPress={() => { setI((x) => x + 1); setPicked(null); }} />
+          <Btn label={i + 1 < qs.length ? L('下一题', 'Next') : L('查看结果', 'See the score')} onPress={() => { setI((x) => x + 1); setPicked(null); }} />
         </Card>
       ) : null}
     </ScrollView>
@@ -610,13 +610,13 @@ function FilesTab({ u }: { u: study.StudyUnit }) {
         {row('page', <View style={[styles.ext, { backgroundColor: t.goldSoft }]}><NotebookText size={16} color={t.gold} /></View>, L('学习页', 'Study notes'), String(u.meta.title ?? u.title), () => nav.navigate('StudyPage', { course: u.course, page: u.page }), true)}
         {u.files.map((f) => row(f.path, badge(ext(f.name)), f.name.replace(/\.[^.]+$/, ''), L('课件', 'Material'), () => openFile(nav, u.course, f.path)))}
         {readings.map((r) => row(`r-${r.file}`, badge(ext(r.file as string)), r.title, r.required ? L('必读', 'Required reading') : L('选读', 'Optional reading'), () => openFile(nav, u.course, r.file as string)))}
-        {u.videos.map((v) => row(`v-${v.path}`, <View style={[styles.ext, { backgroundColor: t.cyanSoft }]}><Film size={16} color={t.cyan} /></View>, v.name, L('讲解视频（浏览器里看）', 'Explainer video (opens in the browser)'),
+        {u.videos.map((v) => row(`v-${v.path}`, <View style={[styles.ext, { backgroundColor: t.cyanSoft }]}><Film size={16} color={t.cyan} /></View>, v.name, L('讲解视频（在浏览器中打开）', 'Explainer video (opens in the browser)'),
           () => { Linking.openURL(study.fileLink(u.course, v.path, 'pages')).catch(() => {}); }))}
         {u.recordings.filter((r) => r.viewer_url).map((r) => row(`rec-${r.id}`, <View style={[styles.ext, { backgroundColor: t.surface2 }]}><Mic size={16} color={t.ink2} /></View>, r.title,
-          L('录播（浏览器里开）', 'Lecture recording (opens in the browser)'), () => { Linking.openURL(r.viewer_url as string).catch(() => {}); }))}
+          L('录播（在浏览器中打开）', 'Lecture recording (opens in the browser)'), () => { Linking.openURL(r.viewer_url as string).catch(() => {}); }))}
       </Card>
-      {u.missing.length ? <T v="callout" color={t.warn}>{L(`还缺：${u.missing.map((m) => m.title).join('；')}`, `Missing: ${u.missing.map((m) => m.title).join('; ')}`)}</T> : null}
-      <T v="caption" color={t.ink3}>{L('PDF 在 app 里看，和对话附件是同一个预览；录播和视频在浏览器里开。', 'PDFs open in the same preview as chat attachments; recordings and videos open in the browser.')}</T>
+      {u.missing.length ? <T v="callout" color={t.warn}>{L(`缺少：${u.missing.map((m) => m.title).join('；')}`, `Missing: ${u.missing.map((m) => m.title).join('; ')}`)}</T> : null}
+      <T v="caption" color={t.ink3}>{L('PDF 在 app 内预览，与对话附件相同；录播和视频在浏览器中打开。', 'PDFs open in the same preview as chat attachments; recordings and videos open in the browser.')}</T>
     </ScrollView>
   );
 }
@@ -657,7 +657,7 @@ function AskTab({ u, seed }: { u: study.StudyUnit; seed: { text: string; quote?:
   return (
     <Reanimated.View ref={root} onLayout={bottom.onLayout} style={[{ flex: 1 }, bottom.style]}>
       <ScrollView ref={scroll} onContentSizeChange={() => scroll.current?.scrollToEnd({ animated: true })} contentContainerStyle={{ padding: space.lg, paddingTop: space.xs, gap: space.md }} keyboardShouldPersistTaps="handled">
-        <T v="caption" color={t.ink3}>{L('只按这一节的学习页、课件和阅读回答，写出处。', "Answers come from this session's notes, materials and readings, with sources.")}</T>
+        <T v="caption" color={t.ink3}>{L('仅依据这一节的学习页、课件和阅读材料回答，并注明出处。', "Answers come from this session's notes, materials and readings, with sources.")}</T>
         {msgs === null ? <ActivityIndicator color={t.ink3} /> : null}
         {msgs?.map((m, i) => m.role === 'user' ? (
           <View key={i} style={[styles.userBub, { backgroundColor: t.goldSoft }]}><T v="body" style={{ fontSize: 15 }}>{m.text}</T></View>
@@ -681,8 +681,8 @@ function AskTab({ u, seed }: { u: study.StudyUnit; seed: { text: string; quote?:
         </View>
       ) : null}
       <View style={[styles.askBar, { borderTopColor: t.line, backgroundColor: t.bg }]}>
-        <TextInput value={text} onChangeText={setText} placeholder={L('就这一节问…', 'Ask about this session…')} placeholderTextColor={t.ink3} multiline
-          style={[type.body, styles.askInput, { backgroundColor: t.surface, color: t.ink }]} accessibilityLabel={L('就这一节问', 'Ask about this session')} />
+        <TextInput value={text} onChangeText={setText} placeholder={L('就这一节提问…', 'Ask about this session…')} placeholderTextColor={t.ink3} multiline
+          style={[type.body, styles.askInput, { backgroundColor: t.surface, color: t.ink }]} accessibilityLabel={L('就这一节提问', 'Ask about this session')} />
         <Pressable onPress={() => send()} disabled={busy || !text.trim()} accessibilityRole="button" accessibilityLabel={L('发送', 'Send')}
           style={[styles.sendBtn, { backgroundColor: t.goldFill, opacity: busy || !text.trim() ? 0.5 : 1 }]}>
           {busy ? <ActivityIndicator color={t.onGold} size="small" /> : <Send size={18} color={t.onGold} />}

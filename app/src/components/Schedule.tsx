@@ -76,7 +76,7 @@ function WhoPill({ e }: { e: ScheduleEntry }) {
   if (e.origin === 'own' || e.origin === 'apply') {
     const g = groups.find((x) => x.id === e.by);
     const tint = e.by === 'main' ? { soft: t.goldSoft, fg: t.gold } : agentTint(t, g?.color);
-    return <Pill label={e.origin === 'own' ? L(`${e.badge}排的`, `by ${e.badge}`) : e.badge} colors={[tint.soft, tint.fg]} />;
+    return <Pill label={e.origin === 'own' ? L(`${e.badge}安排`, `by ${e.badge}`) : e.badge} colors={[tint.soft, tint.fg]} />;
   }
   if (e.origin === 'canvas') return <Pill label={e.badge} tone="cyan" />;
   return <Pill label={e.badge} />;
@@ -129,7 +129,7 @@ export function ScheduleCard({ events, day, today, editable, empty, onChanged }:
   const tick = async (e: ScheduleEntry) => {
     const on = !(ticked[e.id] ?? e.done);
     setTicked((m) => ({ ...m, [e.id]: on }));
-    try { await sched.tick(e, on); onChanged(); } catch (err) { setTicked((m) => { const n = { ...m }; delete n[e.id]; return n; }); showError(L('没勾上', "Couldn't tick it"), err); }
+    try { await sched.tick(e, on); onChanged(); } catch (err) { setTicked((m) => { const n = { ...m }; delete n[e.id]; return n; }); showError(L('标记失败', "Couldn't tick off"), err); }
   };
   return (
     <View style={[styles.card, { backgroundColor: t.surface }]}>
@@ -151,7 +151,7 @@ function EntryRow({ e, first, past, editable, onTick, onChanged }: {
   const openEditor = () => {
     if (!editable) return;
     if (e.kind === 'class') sheet.open({ title: e.title, content: (close) => <ClassEditor e={e} past={past} close={close} onChanged={onChanged} /> });
-    else if (e.origin === 'own') sheet.open({ title: L('改一条日程', 'Edit'), content: (close) => <ItemEditor e={e} day={e.date ?? ''} past={past} close={close} onChanged={onChanged} /> });
+    else if (e.origin === 'own') sheet.open({ title: L('编辑日程', 'Edit'), content: (close) => <ItemEditor e={e} day={e.date ?? ''} past={past} close={close} onChanged={onChanged} /> });
     else setOpen((v) => !v);
   };
   const attend = async (yes: boolean) => {
@@ -159,19 +159,19 @@ function EntryRow({ e, first, past, editable, onTick, onChanged }: {
       if (e.origin === 'own') await sched.patchItem(e.id, { attended: yes });
       else await sched.mark({ ref: e.id, attended: yes });
       onChanged();
-    } catch (err) { showError(L('没记上', "Couldn't save"), err); }
+    } catch (err) { showError(L('保存失败', "Couldn't save"), err); }
   };
   const deadline = isDeadline(e);
   const timeTop = e.allDay || !e.start ? L('全天', 'All day') : e.start;
   const timeSub = deadline && e.start ? L('截止', 'due') : e.end;
   const sub: string[] = [];
   if (tickable(e) && e.badge && e.origin !== 'own' && e.badge !== e.project?.title) sub.push(e.badge);
-  if (e.kind === 'class' && e.skip) sub.push(e.series ? L('每周这节都不去', 'Skipping every week') : L('你标了不去', 'Skipping this one'));
+  if (e.kind === 'class' && e.skip) sub.push(e.series ? L('每周均不出席', 'Skipping every week') : L('已标记不出席', 'Skipping this one'));
   else if (e.location) sub.push(e.location);
   // 已经过去的（翻到过去的日子，或者今天已经结束的）：有实际时间就写实际的
   const done = past || e.past;
   const showActual = done && e.actualStart && (e.kind === 'event' || e.kind === 'class');
-  const attendLabel = e.kind === 'class' ? [L('去了', 'Went'), L('没去', "Didn't go")] : [L('做了', 'Done'), L('没做', "Didn't")];
+  const attendLabel = e.kind === 'class' ? [L('已出席', 'Attended'), L('未出席', 'Missed')] : [L('已完成', 'Done'), L('未完成', 'Not done')];
   const trainingDone = e.actualFrom === 'workouts';
   const top = showActual ? e.actualStart : timeTop;
   // 钟点只占一行（字号调大时宁可缩一点字，也不折成「11:0」「0」）；「全天」「All day」照常可以折
@@ -198,10 +198,10 @@ function EntryRow({ e, first, past, editable, onTick, onChanged }: {
           {showActual ? <T v="caption" color={t.ink3} style={{ fontSize: 13 }}>{L(`原定 ${e.start}${e.end ? `–${e.end}` : ''}${trainingDone ? ' · 实际时间来自训练记录' : ''}`, `Planned ${e.start}${e.end ? `–${e.end}` : ''}`)}</T> : null}
           {e.note ? <T v="caption" color={t.ink2} numberOfLines={2} style={{ fontSize: 13 }}>{e.note}</T> : null}
           {e.project ? <ProjectTag p={e.project} /> : null}
-          {e.clash.length && !dim ? <T v="caption" color={t.warn} numberOfLines={1} style={{ fontSize: 13, fontWeight: '600' }}>{L(`和 ${e.clash[0]} 撞了`, `Clashes with ${e.clash[0]}`)}</T> : null}
+          {e.clash.length && !dim ? <T v="caption" color={t.warn} numberOfLines={1} style={{ fontSize: 13, fontWeight: '600' }}>{L(`与 ${e.clash[0]} 冲突`, `Clashes with ${e.clash[0]}`)}</T> : null}
           {past && editable && (e.kind === 'class' || e.kind === 'event') && e.attended === null && !e.skip ? (
             <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, marginTop: 4 }}>
-              <T v="callout" color={t.ink2}>{e.kind === 'class' ? L('去了吗？', 'Did you go?') : L('做了吗？', 'Did it happen?')}</T>
+              <T v="callout" color={t.ink2}>{e.kind === 'class' ? L('是否出席？', 'Did you attend?') : L('是否完成？', 'Did it happen?')}</T>
               <SmallBtn label={attendLabel[0]} onPress={() => attend(true)} />
               <SmallBtn label={attendLabel[1]} onPress={() => attend(false)} />
             </View>
@@ -209,11 +209,11 @@ function EntryRow({ e, first, past, editable, onTick, onChanged }: {
           {open ? <Detail e={e} /> : null}
         </View>
       </Pressable>
-      {tickable(e) ? <Tick on={e.done} onPress={onTick} disabled={!editable} label={L(`勾掉：${e.title}`, `Tick off: ${e.title}`)} />
+      {tickable(e) ? <Tick on={e.done} onPress={onTick} disabled={!editable} label={L(`标记完成：${e.title}`, `Tick off: ${e.title}`)} />
         : done && (e.attended !== null || (past && e.skip)) ? (
-          <Chip label={e.attended === true ? (trainingDone ? L('练了', 'Done') : attendLabel[0]) : attendLabel[1]} tone={e.attended === true ? 'good' : 'neutral'}
-            onPress={editable && !e.skip ? () => attend(!e.attended) : undefined} a11y={L('改成另一个', 'Switch')} />
-        ) : e.skip ? <Pill label={L('不去', 'Skipping')} />
+          <Chip label={e.attended === true ? (trainingDone ? L('已训练', 'Done') : attendLabel[0]) : attendLabel[1]} tone={e.attended === true ? 'good' : 'neutral'}
+            onPress={editable && !e.skip ? () => attend(!e.attended) : undefined} a11y={L('切换状态', 'Toggle')} />
+        ) : e.skip ? <Pill label={L('不出席', 'Skipping')} />
           : e.origin === 'own' && !e.project ? <WhoPill e={e} /> : null}
     </View>
   );
@@ -226,25 +226,25 @@ function Detail({ e }: { e: ScheduleEntry }) {
   return (
     <View style={[styles.detail, { backgroundColor: t.bg }]}>
       {e.detail ? <T v="callout" color={t.ink2}>{e.detail}</T> : null}
-      {e.clash.length ? <T v="callout" color={t.warn}>{L(`和 ${e.clash.join('、')} 撞了`, `Clashes with ${e.clash.join(', ')}`)}</T> : null}
+      {e.clash.length ? <T v="callout" color={t.warn}>{L(`与 ${e.clash.join('、')} 冲突`, `Clashes with ${e.clash.join(', ')}`)}</T> : null}
       <View style={{ flexDirection: 'row', gap: space.lg, flexWrap: 'wrap' }}>
         {e.link ? (
-          <Pressable onPress={() => { Linking.openURL(e.link as string).catch((err) => showError(L('打不开', "Couldn't open it"), err)); }} accessibilityRole="link" hitSlop={6}>
-            <T v="callout" color={t.gold} style={{ fontWeight: '600' }}>{e.origin === 'mail' ? L('看原文', 'Open the email') : L('看原文', 'Open the original')}</T>
+          <Pressable onPress={() => { Linking.openURL(e.link as string).catch((err) => showError(L('无法打开', "Couldn't open"), err)); }} accessibilityRole="link" hitSlop={6}>
+            <T v="callout" color={t.gold} style={{ fontWeight: '600' }}>{e.origin === 'mail' ? L('查看原文', 'Open the email') : L('查看原文', 'Open the original')}</T>
           </Pressable>
         ) : null}
         {e.study?.course ? (
           <Pressable onPress={() => openTarget({ type: 'study', course: e.study?.course as string, session: e.study?.session ?? null })} accessibilityRole="button" hitSlop={6}>
-            <T v="callout" color={t.gold} style={{ fontWeight: '600' }}>{L('去学习台', 'Open the study desk')}</T>
+            <T v="callout" color={t.gold} style={{ fontWeight: '600' }}>{L('打开学习台', 'Open the study desk')}</T>
           </Pressable>
         ) : null}
         {e.origin === 'mail' || e.origin === 'own' ? (
           <Pressable onPress={talk} accessibilityRole="button" hitSlop={6}>
-            <T v="callout" color={t.gold} style={{ fontWeight: '600' }}>{L(`不对？跟 ${agentName()} 说`, `Wrong? Tell ${agentName()}`)}</T>
+            <T v="callout" color={t.gold} style={{ fontWeight: '600' }}>{L(`信息有误？告诉 ${agentName()}`, `Incorrect? Tell ${agentName()}`)}</T>
           </Pressable>
         ) : null}
       </View>
-      {!e.link && e.origin === 'mail' ? <T v="caption" color={t.ink3}>{L('手动加的邮件条目，没有原文链接', 'Added by hand, no link to the email')}</T> : null}
+      {!e.link && e.origin === 'mail' ? <T v="caption" color={t.ink3}>{L('手动添加的邮件条目，无原文链接', 'Added manually; no link to the email')}</T> : null}
     </View>
   );
 }
@@ -253,8 +253,8 @@ function Detail({ e }: { e: ScheduleEntry }) {
 
 const FOLDED: RememberGroup[] = ['later', 'nodate', 'news'];
 const groupName = (g: RememberGroup) => ({
-  security: L('可疑的安全提醒', 'Security alerts'), overdue: L('过了的', 'Overdue'), tomorrow: L('明天', 'Tomorrow'), week: L('一周内', 'This week'),
-  later: L('以后', 'Later'), nodate: L('没定日子的', 'No date yet'), news: L('邮件动态', 'Email updates'),
+  security: L('可疑安全提醒', 'Security alerts'), overdue: L('已过期', 'Overdue'), tomorrow: L('明天', 'Tomorrow'), week: L('一周内', 'This week'),
+  later: L('一周后', 'Later'), nodate: L('未定日期', 'No date yet'), news: L('邮件动态', 'Email updates'),
 })[g];
 
 /** 一行的时间：组名已经是「明天」就只写几点；截止写「截止」。 */
@@ -277,7 +277,7 @@ export function RememberCard({ items, errors, today }: { items: ScheduleEntry[];
     if (log !== undefined) {  // 勾过了：再点一下 = 撤销
       if (!log) return;
       setTicked((m) => { const n = { ...m }; delete n[e.id]; return n; });
-      try { await sched.undo(log); } catch (err) { setTicked((m) => ({ ...m, [e.id]: log })); showError(L('没撤销成', "Couldn't undo"), err); }
+      try { await sched.undo(log); } catch (err) { setTicked((m) => ({ ...m, [e.id]: log })); showError(L('撤销失败', "Couldn't undo"), err); }
       return;
     }
     setTicked((m) => ({ ...m, [e.id]: 0 }));
@@ -286,14 +286,14 @@ export function RememberCard({ items, errors, today }: { items: ScheduleEntry[];
       setTicked((m) => ({ ...m, [e.id]: sched.cardOf(r)?.logId ?? -1 }));
     } catch (err) {
       setTicked((m) => { const n = { ...m }; delete n[e.id]; return n; });
-      showError(L('没勾上', "Couldn't tick it"), err);
+      showError(L('标记失败', "Couldn't tick off"), err);
     }
   };
   const groups: RememberGroup[] = ['security', 'overdue', 'tomorrow', 'week', 'later', 'nodate', 'news'];
   const by = (g: RememberGroup) => items.filter((e) => e.group === g);
   const canvasErr = errors.canvas;
   if (!items.length && !canvasErr) {
-    return <View style={[styles.card, { backgroundColor: t.surface }]}><View style={styles.row}><T v="callout" color={t.ink2}>{L('没有要记得的。作业、邮件里的事、求职和申请的截止会出现在这里。', 'Nothing to remember. Coursework, things from email and application deadlines show up here.')}</T></View></View>;
+    return <View style={[styles.card, { backgroundColor: t.surface }]}><View style={styles.row}><T v="callout" color={t.ink2}>{L('暂无事项。作业、邮件中的事项以及求职和申请的截止日期将显示在此处。', 'Nothing to remember. Coursework, email items and application deadlines appear here.')}</T></View></View>;
   }
   const line = { borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: t.line };
   // 先排出要显示的几块，再按顺序画：第一块上面不画线
@@ -302,7 +302,7 @@ export function RememberCard({ items, errors, today }: { items: ScheduleEntry[];
     blocks.push({ key: 'canvas', draw: (top) => (
       <View style={[styles.row, top, { alignItems: 'center' }]}>
         <CircleAlert size={18} color={t.warn} />
-        <T v="callout" color={t.warn} style={{ flex: 1 }}>{/登录|log ?in/i.test(canvasErr) ? L('课程平台登录失效了，作业的截止暂时读不到。', 'The course site login expired, so coursework deadlines are missing.') : L(`作业的截止读不到：${canvasErr}`, `Couldn't read coursework deadlines: ${canvasErr}`)}</T>
+        <T v="callout" color={t.warn} style={{ flex: 1 }}>{/登录|log ?in/i.test(canvasErr) ? L('课程平台登录已失效，暂时无法加载作业截止日期。', 'The course site login has expired, so coursework deadlines are unavailable.') : L(`无法加载作业截止日期：${canvasErr}`, `Couldn't load coursework deadlines: ${canvasErr}`)}</T>
       </View>
     ) });
   }
@@ -312,8 +312,8 @@ export function RememberCard({ items, errors, today }: { items: ScheduleEntry[];
     if (FOLDED.includes(g)) {
       const folded = !folds[g];
       const money = rows.filter((e) => e.kind === 'money').length;
-      const meta = g === 'news' ? L(`${rows.length} 条 · 钱 ${money} · 状态 ${rows.length - money}`, `${rows.length} · money ${money} · status ${rows.length - money}`)
-        : g === 'later' && rows[0].date ? L(`${rows.length} 件 · 最近的 ${dayWord(rows[0].date, today)}`, `${rows.length} · next ${dayWord(rows[0].date, today)}`)
+      const meta = g === 'news' ? L(`${rows.length} 条 · 财务 ${money} · 状态 ${rows.length - money}`, `${rows.length} · money ${money} · status ${rows.length - money}`)
+        : g === 'later' && rows[0].date ? L(`${rows.length} 件 · 最近 ${dayWord(rows[0].date, today)}`, `${rows.length} · next ${dayWord(rows[0].date, today)}`)
           : L(`${rows.length} 件`, `${rows.length}`);
       blocks.push({ key: g, draw: (top) => (
         <View style={top}>
@@ -327,7 +327,7 @@ export function RememberCard({ items, errors, today }: { items: ScheduleEntry[];
             <RememberRow key={e.id} e={e} today={today} open={open === e.id} compact onToggle={() => setOpen((x) => (x === e.id ? null : e.id))}
               ticked={ticked[e.id]} onTick={() => tick(e)} />
           ))}
-          {!folded && g === 'news' ? <T v="caption" color={t.ink3} style={{ paddingBottom: space.md }}>{L('勾掉 = 看过了', 'Tick = seen')}</T> : null}
+          {!folded && g === 'news' ? <T v="caption" color={t.ink3} style={{ paddingBottom: space.md }}>{L('勾选即标为已读', 'Tick to mark as read')}</T> : null}
         </View>
       ) });
       continue;
@@ -358,19 +358,19 @@ function RememberRow({ e, today, open, first, compact, onToggle, ticked, onTick 
   const warn = e.group === 'overdue' || e.group === 'security';
   return (
     <View style={[styles.rem, compact ? { paddingVertical: 9 } : null, !first && !compact && { borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: t.line }]}>
-      <Tick on={done} onPress={onTick} disabled={ticked === 0} label={done ? L(`撤销：${e.title}`, `Undo: ${e.title}`) : L(`勾掉：${e.title}`, `Tick off: ${e.title}`)} />
+      <Tick on={done} onPress={onTick} disabled={ticked === 0} label={done ? L(`撤销：${e.title}`, `Undo: ${e.title}`) : L(`标记完成：${e.title}`, `Tick off: ${e.title}`)} />
       <View style={{ flex: 1, minWidth: 0 }}>
         <Pressable onPress={onToggle} accessibilityRole="button" accessibilityState={{ expanded: open }} style={({ pressed }) => ({ opacity: pressed ? 0.6 : 1, gap: 2 })}>
           <T v="body" numberOfLines={open ? 3 : 1} color={done ? t.ink3 : t.ink} style={[compact && { fontSize: 15 }, done && { textDecorationLine: 'line-through' }]}>{e.title}</T>
           {when || (e.clash.length && !done) ? (
             <View style={{ flexDirection: 'row', gap: 6, flexWrap: 'wrap' }}>
-              {when ? <T v="caption" color={warn ? t.warn : t.ink3} style={[{ fontSize: 13 }, styles.tnum]}>{e.group === 'overdue' ? L(`${when} · 过了`, `${when} · past`) : when}</T> : null}
-              {e.clash.length && !done ? <T v="caption" color={t.warn} style={{ fontSize: 13, fontWeight: '600' }}>{L(`和 ${short(e.clash[0])} 撞了`, `clashes with ${short(e.clash[0])}`)}</T> : null}
+              {when ? <T v="caption" color={warn ? t.warn : t.ink3} style={[{ fontSize: 13 }, styles.tnum]}>{e.group === 'overdue' ? L(`${when} · 已过期`, `${when} · overdue`) : when}</T> : null}
+              {e.clash.length && !done ? <T v="caption" color={t.warn} style={{ fontSize: 13, fontWeight: '600' }}>{L(`与 ${short(e.clash[0])} 冲突`, `clashes with ${short(e.clash[0])}`)}</T> : null}
             </View>
           ) : null}
         </Pressable>
         {e.project && !done ? <View style={{ marginTop: 3 }}><ProjectTag p={e.project} /></View> : null}
-        {done ? <T v="caption" color={t.ink3} style={{ fontSize: 13, marginTop: 3 }}>{L('勾掉了，推送和起床报告里也不提了。再点一下勾就撤销。', 'Ticked off. No more reminders about it. Tap the tick again to undo.')}</T> : null}
+        {done ? <T v="caption" color={t.ink3} style={{ fontSize: 13, marginTop: 3 }}>{L('已勾选，推送和起床报告中将不再提及。再次点按勾选框即可撤销。', 'Ticked off. No more reminders about it. Tap the tick again to undo.')}</T> : null}
         {open && !done ? <Detail e={e} /> : null}
       </View>
       {e.badge && e.origin !== 'own' ? <WhoPill e={e} /> : null}
@@ -414,40 +414,40 @@ function ClassEditor({ e, past, close, onChanged }: { e: ScheduleEntry; past: bo
       if (Object.keys(body).length > 1) await sched.mark(body);
       close();
       onChanged();
-    } catch (err) { showError(L('没改成', "Couldn't save"), err); } finally { setBusy(false); }
+    } catch (err) { showError(L('保存失败', "Couldn't save"), err); } finally { setBusy(false); }
   };
   return (
     <View style={{ gap: space.md }}>
       <T v="callout" color={t.ink2}>{e.date ? `${longDay(e.date)} · ${e.allDay ? L('全天', 'All day') : `${e.start}–${e.end}`}` : ''}</T>
       <View style={{ flexDirection: 'row', gap: 8, alignItems: 'flex-start' }}>
         <Pill label={e.badge || L('课表', 'Calendar')} />
-        <T v="caption" color={t.ink3} style={{ flex: 1, fontSize: 13, lineHeight: 18 }}>{L('课表本身改不了。这里改的只记在这一层，Agent 排时间和 iPhone 日历都按这一层来。', "The timetable itself can't change. What you set here lives in this layer; Agents and your iPhone calendar follow it.")}</T>
+        <T v="caption" color={t.ink3} style={{ flex: 1, fontSize: 13, lineHeight: 18 }}>{L('课表本身无法修改。此处的修改仅保存在本层，Agent 安排时间和 iPhone 日历均以本层为准。', "The timetable itself can't change. What you set here lives in this layer; Agents and your iPhone calendar follow it.")}</T>
       </View>
       {past ? (
         <Segmented value={attended || 'none'} onChange={(v) => setAttended(v === 'none' ? '' : v)}
-          options={[{ value: 'yes', label: L('去了', 'Went') }, { value: 'no', label: L('没去', "Didn't go") }, { value: 'none', label: L('不记', 'Not set') }]} />
+          options={[{ value: 'yes', label: L('已出席', 'Attended') }, { value: 'no', label: L('未出席', 'Missed') }, { value: 'none', label: L('不记录', 'Not set') }]} />
       ) : (
         <Segmented value={skip ? 'skip' : 'go'} onChange={(v) => setSkip(v === 'skip')}
-          options={[{ value: 'go', label: L('去', 'Going') }, { value: 'skip', label: L('不去', 'Skipping') }]} />
+          options={[{ value: 'go', label: L('出席', 'Going') }, { value: 'skip', label: L('不出席', 'Skipping') }]} />
       )}
       {!past && skip ? (
         <View style={[styles.box, { backgroundColor: t.surface }]}>
-          <T v="callout" color={t.ink2}>{L('这节会变灰。Agent 排时间时当你这段有空，iPhone 日历里也不显示。', "This one turns grey. Agents treat the slot as free, and it's hidden from your iPhone calendar.")}</T>
+          <T v="callout" color={t.ink2}>{L('该课程将显示为灰色。Agent 安排时间时将此时段视为空闲，iPhone 日历中也不再显示。', "This class appears grey. Agents treat the slot as free, and it's hidden from your iPhone calendar.")}</T>
           {e.start && d ? (
             <View style={{ flexDirection: 'row', alignItems: 'center', gap: space.md }}>
-              <T v="body" style={{ flex: 1 }}>{L(`以后每周${WD_ZH[d.getDay()]}这节都不去`, `Skip this every ${WD_EN[d.getDay()]}`)}</T>
-              <Switch value={series} onValueChange={setSeries} accessibilityLabel={L('以后每周都不去', 'Skip every week')} trackColor={{ true: t.cyan, false: t.track }} thumbColor="#FFFFFF" />
+              <T v="body" style={{ flex: 1 }}>{L(`此后每周${WD_ZH[d.getDay()]}均不出席`, `Skip this every ${WD_EN[d.getDay()]}`)}</T>
+              <Switch value={series} onValueChange={setSeries} accessibilityLabel={L('此后每周均不出席', 'Skip every week')} trackColor={{ true: t.cyan, false: t.track }} thumbColor="#FFFFFF" />
             </View>
           ) : null}
         </View>
       ) : null}
       <View style={[styles.box, { backgroundColor: t.surface, paddingVertical: 0 }]}>
-        <Field label={L('地点', 'Place')} value={location} onChange={setLocation} placeholder={e.sourceLocation || L('课表里没写', 'Not in the timetable')} />
-        <Field label={L('备注', 'Note')} value={note} onChange={setNote} placeholder={L('加一句，比如「带电脑」', 'Add a note, e.g. "bring laptop"')} last />
+        <Field label={L('地点', 'Place')} value={location} onChange={setLocation} placeholder={e.sourceLocation || L('课表未注明', 'Not in the timetable')} />
+        <Field label={L('备注', 'Note')} value={note} onChange={setNote} placeholder={L('添加备注，例如「带电脑」', 'Add a note, e.g. "bring laptop"')} last />
       </View>
       <View style={{ flexDirection: 'row', gap: space.sm }}>
         <Btn label={L('取消', 'Cancel')} kind="quiet" onPress={close} />
-        <Btn label={busy ? L('正在存…', 'Saving…') : L('保存', 'Save')} onPress={() => { if (!busy) save(); }} flex />
+        <Btn label={busy ? L('正在保存…', 'Saving…') : L('保存', 'Save')} onPress={() => { if (!busy) save(); }} flex />
       </View>
     </View>
   );
@@ -492,12 +492,12 @@ export function ItemEditor({ e, day, past, close, onChanged }: { e?: ScheduleEnt
   };
   const save = async () => {
     const tt = title.trim();
-    if (!tt) { showError(L('写个标题', 'Add a title'), ''); return; }
+    if (!tt) { showError(L('请填写标题', 'Add a title'), ''); return; }
     const s = allDay ? null : normTime(start);
     const en = allDay || !end.trim() ? null : normTime(end);
-    if (!allDay && start.trim() && s == null) { showError(L('开始时间写成 17:30 这样', 'Start time looks like 17:30'), ''); return; }
-    if (!allDay && end.trim() && en == null) { showError(L('结束时间写成 18:30 这样', 'End time looks like 18:30'), ''); return; }
-    if (s && en && (toMin(en) as number) <= (toMin(s) as number)) { showError(L('结束要晚于开始', 'End must be after start'), ''); return; }
+    if (!allDay && start.trim() && s == null) { showError(L('开始时间格式应为 17:30', 'Use the format 17:30 for the start time'), ''); return; }
+    if (!allDay && end.trim() && en == null) { showError(L('结束时间格式应为 18:30', 'Use the format 18:30 for the end time'), ''); return; }
+    if (s && en && (toMin(en) as number) <= (toMin(s) as number)) { showError(L('结束时间须晚于开始时间', 'End must be after start'), ''); return; }
     setBusy(true);
     try {
       const fields = { title: tt, date, start: s, end: s ? en : null, location: location.trim(), note: note.trim(), kind: (deadline ? 'deadline' : 'event') as 'deadline' | 'event' };
@@ -522,26 +522,26 @@ export function ItemEditor({ e, day, past, close, onChanged }: { e?: ScheduleEnt
       }
       close();
       onChanged();
-    } catch (err) { showError(L('没存上', "Couldn't save"), err); } finally { setBusy(false); }
+    } catch (err) { showError(L('保存失败', "Couldn't save"), err); } finally { setBusy(false); }
   };
   const remove = async () => {
     if (!e) return;
     setBusy(true);
-    try { await sched.deleteItem(e.id); close(); onChanged(); } catch (err) { showError(L('没删掉', "Couldn't delete"), err); } finally { setBusy(false); }
+    try { await sched.deleteItem(e.id); close(); onChanged(); } catch (err) { showError(L('删除失败', "Couldn't delete"), err); } finally { setBusy(false); }
   };
   return (
     <View style={{ gap: space.md }}>
       {who ? (
         <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
           {e ? <WhoPill e={e} /> : null}
-          <T v="caption" color={t.ink3} style={{ flex: 1, fontSize: 13 }}>{L(`${who}会知道你改了什么。`, `${who} will see what you changed.`)}</T>
+          <T v="caption" color={t.ink3} style={{ flex: 1, fontSize: 13 }}>{L(`${who}将看到你所做的修改。`, `${who} will see what you changed.`)}</T>
         </View>
       ) : null}
-      <TextInput value={title} onChangeText={setTitle} placeholder={L('做什么，比如「自习 · 统计」', 'What, e.g. "Study · Stats"')} placeholderTextColor={t.ink3}
+      <TextInput value={title} onChangeText={setTitle} placeholder={L('事项，例如「自习 · 统计」', 'Title, e.g. "Study · Stats"')} placeholderTextColor={t.ink3}
         accessibilityLabel={L('标题', 'Title')} style={[type.title, { color: t.ink, paddingVertical: 4 }]} />
       <View style={[styles.box, { backgroundColor: t.surface, paddingVertical: 0 }]}>
         <View style={[styles.field, { borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: t.line }]}>
-          <T v="body" color={t.ink2} numberOfLines={1} style={{ width: 52, flexShrink: 0 }}>{L('日子', 'Day')}</T>
+          <T v="body" color={t.ink2} numberOfLines={1} style={{ width: 52, flexShrink: 0 }}>{L('日期', 'Day')}</T>
           <T v="body" style={{ flex: 1 }}>{longDay(date)}</T>
           <Pressable onPress={() => setDate((x) => addDays(x, -1))} hitSlop={8} accessibilityRole="button" accessibilityLabel={L('前一天', 'Day before')} style={[styles.step, { backgroundColor: t.surface2 }]}><ChevronLeft size={18} color={t.ink} /></Pressable>
           <Pressable onPress={() => setDate((x) => addDays(x, 1))} hitSlop={8} accessibilityRole="button" accessibilityLabel={L('后一天', 'Day after')} style={[styles.step, { backgroundColor: t.surface2 }]}><ChevronRight size={18} color={t.ink} /></Pressable>
@@ -553,23 +553,23 @@ export function ItemEditor({ e, day, past, close, onChanged }: { e?: ScheduleEnt
         {allDay ? null : (
           <>
             <TimeRow label={L('开始', 'Start')} value={start} onChange={setStart} onStep={(n) => step(start, setStart, n, '09:00')} placeholder="17:30" />
-            <TimeRow label={L('结束', 'End')} value={end} onChange={setEnd} onStep={(n) => step(end, setEnd, n, start || '10:00')} placeholder={L('可以不写', 'Optional')} />
+            <TimeRow label={L('结束', 'End')} value={end} onChange={setEnd} onStep={(n) => step(end, setEnd, n, start || '10:00')} placeholder={L('选填', 'Optional')} />
           </>
         )}
-        <Field label={L('地点', 'Place')} value={location} onChange={setLocation} placeholder={L('可以不写', 'Optional')} />
-        <Field label={L('备注', 'Note')} value={note} onChange={setNote} placeholder={L('可以不写', 'Optional')} last />
+        <Field label={L('地点', 'Place')} value={location} onChange={setLocation} placeholder={L('选填', 'Optional')} />
+        <Field label={L('备注', 'Note')} value={note} onChange={setNote} placeholder={L('选填', 'Optional')} last />
       </View>
       <View style={[styles.box, { backgroundColor: t.surface, flexDirection: 'row', alignItems: 'center' }]}>
         <View style={{ flex: 1, gap: 2 }}>
-          <T v="body">{L('这是个截止', "It's a deadline")}</T>
-          <T v="caption" color={t.ink3} style={{ fontSize: 13 }}>{L('之前进「要记得的」，到那天带勾', 'Shows in "To remember" until the day, then with a tick')}</T>
+          <T v="body">{L('设为截止事项', 'Mark as deadline')}</T>
+          <T v="caption" color={t.ink3} style={{ fontSize: 13 }}>{L('截止前显示在「要记得的」中，当天显示勾选框', 'Shows in "To remember" until the day, then with a tick')}</T>
         </View>
-        <Switch value={deadline} onValueChange={setDeadline} accessibilityLabel={L('这是个截止', "It's a deadline")} trackColor={{ true: t.cyan, false: t.track }} thumbColor="#FFFFFF" />
+        <Switch value={deadline} onValueChange={setDeadline} accessibilityLabel={L('设为截止事项', 'Mark as deadline')} trackColor={{ true: t.cyan, false: t.track }} thumbColor="#FFFFFF" />
       </View>
       {past && e ? (
         <View style={{ gap: space.sm }}>
           <Segmented value={attended || 'none'} onChange={(v) => setAttended(v === 'none' ? '' : v)}
-            options={[{ value: 'yes', label: L('做了', 'Done') }, { value: 'no', label: L('没做', "Didn't") }, { value: 'none', label: L('不记', 'Not set') }]} />
+            options={[{ value: 'yes', label: L('已完成', 'Done') }, { value: 'no', label: L('未完成', 'Not done') }, { value: 'none', label: L('不记录', 'Not set') }]} />
           {attended === 'yes' ? (
             <View style={[styles.box, { backgroundColor: t.surface, paddingVertical: 0 }]}>
               <TimeRow label={L('实际开始', 'Began')} value={aStart} onChange={setAStart} onStep={(n) => step(aStart, setAStart, n, start || '09:00')} wide />
@@ -580,7 +580,7 @@ export function ItemEditor({ e, day, past, close, onChanged }: { e?: ScheduleEnt
       ) : null}
       <View style={{ flexDirection: 'row', gap: space.sm }}>
         {e ? <Btn label={L('删除', 'Delete')} kind="danger" onPress={() => { if (!busy) remove(); }} /> : <Btn label={L('取消', 'Cancel')} kind="quiet" onPress={close} />}
-        <Btn label={busy ? L('正在存…', 'Saving…') : e ? L('保存', 'Save') : L('加上', 'Add')} icon={e ? undefined : <Plus size={18} color={t.onGold} />} onPress={() => { if (!busy) save(); }} flex />
+        <Btn label={busy ? L('正在保存…', 'Saving…') : e ? L('保存', 'Save') : L('添加', 'Add')} icon={e ? undefined : <Plus size={18} color={t.onGold} />} onPress={() => { if (!busy) save(); }} flex />
       </View>
     </View>
   );
@@ -608,10 +608,10 @@ export function AddScheduleButton({ day, past, onChanged }: { day: string; past:
   const t = useTheme();
   const sheet = useSheet();
   return (
-    <Pressable onPress={() => sheet.open({ title: L('加一条', 'Add to schedule'), content: (close) => <ItemEditor day={day} past={past} close={close} onChanged={onChanged} /> })}
-      accessibilityRole="button" accessibilityLabel={L('加一条日程', 'Add to schedule')} hitSlop={8} style={styles.add}>
+    <Pressable onPress={() => sheet.open({ title: L('添加日程', 'Add to schedule'), content: (close) => <ItemEditor day={day} past={past} close={close} onChanged={onChanged} /> })}
+      accessibilityRole="button" accessibilityLabel={L('添加日程', 'Add to schedule')} hitSlop={8} style={styles.add}>
       <Plus size={16} color={t.gold} />
-      <T v="callout" color={t.gold} style={{ fontWeight: '600' }}>{L('加一条', 'Add')}</T>
+      <T v="callout" color={t.gold} style={{ fontWeight: '600' }}>{L('添加', 'Add')}</T>
     </Pressable>
   );
 }

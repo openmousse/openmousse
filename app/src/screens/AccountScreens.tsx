@@ -70,7 +70,7 @@ export function LoginScreen() {
 
   const send = async () => {
     const v = email.trim();
-    if (!EMAIL.test(v)) { setMsg(L('邮箱格式不对', "That email address doesn't look right")); return; }
+    if (!EMAIL.test(v)) { setMsg(L('邮箱格式无效', 'Invalid email address')); return; }
     setBusy(true); setMsg(null); setOffline(false);
     try {
       await sendCode(v);
@@ -81,7 +81,7 @@ export function LoginScreen() {
 
   const verify = async (c = code) => {
     const v = c.replace(/\D/g, '');
-    if (v.length < 6) { setMsg(L('验证码是 6 位数字', 'The code is 6 digits')); return; }
+    if (v.length < 6) { setMsg(L('验证码为 6 位数字', 'The code is 6 digits')); return; }
     setBusy(true); setMsg(null); setOffline(false);
     try {
       await verifyCode(email, v);
@@ -106,7 +106,7 @@ export function LoginScreen() {
             <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center', gap: 12 }}>
               <Halo />
               <T v="largeTitle" style={{ marginTop: 8 }}>{Constants.expoConfig?.name ?? 'OpenMousse'}</T>
-              <T v="body" color={t.ink2} style={{ textAlign: 'center' }}>{L('你的 agent，住在你自己的机器上。', 'Your agent, living on your own machine.')}</T>
+              <T v="body" color={t.ink2} style={{ textAlign: 'center' }}>{L('你的 Agent，运行在你自己的机器上。', 'Your Agent, running on your own machine.')}</T>
             </View>
             <View style={{ gap: 12, paddingBottom: space.lg }}>
               <T v="callout" color={t.ink2} style={{ paddingLeft: 4 }}>{L('邮箱', 'Email')}</T>
@@ -116,23 +116,23 @@ export function LoginScreen() {
                 style={[type.body, styles.input, { backgroundColor: t.surface, color: t.ink, borderColor: t.line }]} />
               {msg ? <T v="callout" color={t.bad}>{msg}</T> : null}
               <Pressable onPress={busy ? undefined : send} accessibilityRole="button" style={({ pressed }) => [styles.primary, { backgroundColor: t.cyan, opacity: pressed || busy ? 0.7 : 1 }]}>
-                {busy ? <ActivityIndicator color="#FFFFFF" /> : <T v="headline" color="#FFFFFF" style={{ fontSize: 17 }}>{L('发验证码', 'Send code')}</T>}
+                {busy ? <ActivityIndicator color="#FFFFFF" /> : <T v="headline" color="#FFFFFF" style={{ fontSize: 17 }}>{L('发送验证码', 'Send code')}</T>}
               </Pressable>
-              {offline ? <Btn kind="quiet" label={L('先用着，下次再登录', 'Continue for now, sign in later')} onPress={() => { skipped = true; goOn(); }} /> : null}
+              {offline ? <Btn kind="quiet" label={L('暂时跳过，下次登录', 'Continue for now, sign in later')} onPress={() => { skipped = true; goOn(); }} /> : null}
             </View>
             <T v="caption" color={t.ink3} style={{ textAlign: 'center', lineHeight: 18, fontWeight: '400', paddingBottom: space.xl }}>
-              {L('不用密码：我们往你的邮箱发一个 6 位数。账号只用来认出你、记住你连了哪几台 claw，对话和记忆不上传。',
-                'No password: we email you a 6-digit code. Your account only recognises you and remembers which claws you use; chats and memory never leave your claw.')}
+              {L('无需密码：我们会向你的邮箱发送 6 位验证码。账号仅用于识别你的身份并记录你连接的 claw，对话和记忆不会上传。',
+                'No password needed: we email you a 6-digit code. Your account only identifies you and records which claws you use; chats and memory never leave your claw.')}
             </T>
           </View>
         ) : (
           <View style={{ flex: 1, paddingHorizontal: space.xl }}>
             <View style={{ paddingTop: 6 }}>
-              <RoundButton onPress={() => { setStep('email'); setMsg(null); }} label={L('换个邮箱', 'Use another email')}><ChevronLeft size={22} color={t.ink} /></RoundButton>
+              <RoundButton onPress={() => { setStep('email'); setMsg(null); }} label={L('更换邮箱', 'Use another email')}><ChevronLeft size={22} color={t.ink} /></RoundButton>
             </View>
             <View style={{ gap: 8, marginTop: space.xl }}>
-              <T v="largeTitle" style={{ fontSize: 28 }}>{L('看一眼邮箱', 'Check your email')}</T>
-              <T v="body" color={t.ink2}>{L(`6 位验证码发到了 ${email.trim()}。`, `We sent a 6-digit code to ${email.trim()}.`)}</T>
+              <T v="largeTitle" style={{ fontSize: 28 }}>{L('查看邮箱', 'Check your email')}</T>
+              <T v="body" color={t.ink2}>{L(`6 位验证码已发送至 ${email.trim()}。`, `We sent a 6-digit code to ${email.trim()}.`)}</T>
             </View>
             <TextInput ref={codeRef} value={code} onChangeText={onCode} placeholder="······" placeholderTextColor={t.ink3}
               keyboardType="number-pad" textContentType="oneTimeCode" autoComplete="one-time-code" maxLength={8}
@@ -140,7 +140,7 @@ export function LoginScreen() {
               style={[styles.code, { backgroundColor: t.surface, color: t.ink, borderColor: code ? t.cyan : t.line }]} />
             <View style={[styles.hint, { backgroundColor: t.surface }]}>
               <Mail size={20} color={t.cyan} />
-              <T v="callout" color={t.ink2} style={{ flex: 1 }}>{L('iPhone 会在键盘上方给出邮件里的验证码，点一下就填好。', 'Your iPhone shows the code from Mail above the keyboard; one tap fills it in.')}</T>
+              <T v="callout" color={t.ink2} style={{ flex: 1 }}>{L('iPhone 会在键盘上方显示邮件中的验证码，轻点即可填入。', 'Your iPhone shows the code from Mail above the keyboard; tap it to fill it in.')}</T>
             </View>
             {msg ? <T v="callout" color={t.bad} style={{ marginTop: space.md }}>{msg}</T> : null}
             <View style={{ flex: 1 }} />
@@ -149,9 +149,9 @@ export function LoginScreen() {
                 {busy ? <ActivityIndicator color="#FFFFFF" /> : <T v="headline" color="#FFFFFF" style={{ fontSize: 17 }}>{L('继续', 'Continue')}</T>}
               </Pressable>
               <Pressable onPress={wait > 0 || busy ? undefined : send} accessibilityRole="button" style={{ height: 44, alignItems: 'center', justifyContent: 'center' }}>
-                <T v="callout" color={wait > 0 ? t.ink3 : t.cyan}>{wait > 0 ? L(`没收到？${wait} 秒后可以重发`, `Didn't get it? Resend in ${wait}s`) : L('重发验证码', 'Resend the code')}</T>
+                <T v="callout" color={wait > 0 ? t.ink3 : t.cyan}>{wait > 0 ? L(`未收到？${wait} 秒后可重新发送`, `Didn't get it? Resend in ${wait}s`) : L('重新发送验证码', 'Resend code')}</T>
               </Pressable>
-              {offline ? <Btn kind="quiet" label={L('先用着，下次再登录', 'Continue for now, sign in later')} onPress={() => { skipped = true; goOn(); }} /> : null}
+              {offline ? <Btn kind="quiet" label={L('暂时跳过，下次登录', 'Continue for now, sign in later')} onPress={() => { skipped = true; goOn(); }} /> : null}
             </View>
           </View>
         )}
@@ -185,28 +185,28 @@ export function AccountScreen() {
       title: L('名字', 'Name'),
       content: (close) => (
         <View style={{ gap: space.md }}>
-          <TextInput defaultValue={draft} onChangeText={(v) => { draft = v; }} autoFocus placeholder={L('怎么称呼你', 'What should we call you')} placeholderTextColor={t.ink3}
+          <TextInput defaultValue={draft} onChangeText={(v) => { draft = v; }} autoFocus placeholder={L('你的称呼', 'Your name')} placeholderTextColor={t.ink3}
             style={[type.body, styles.input, { backgroundColor: t.surface2, color: t.ink, borderColor: t.line }]} accessibilityLabel={L('名字', 'Name')} />
-          <Btn label={L('存下', 'Save')} onPress={() => { setAccountName(draft).then(close).catch((e) => showError(L('没存上', "Couldn't save"), e)); }} />
+          <Btn label={L('保存', 'Save')} onPress={() => { setAccountName(draft).then(close).catch((e) => showError(L('保存失败', "Couldn't save"), e)); }} />
         </View>
       ),
     });
   };
 
   const out = () => {
-    Alert.alert(L('退出登录？', 'Sign out?'), L('只退出账号，这台设备连着的 claw 照常能用。', 'Only the account signs out; the claws on this device keep working.'), [
+    Alert.alert(L('退出登录？', 'Sign out?'), L('仅退出账号，此设备已连接的 claw 仍可正常使用。', 'This only signs out of your account; the claws on this device keep working.'), [
       { text: L('取消', 'Cancel'), style: 'cancel' },
-      { text: L('退出', 'Sign out'), style: 'destructive', onPress: () => { signOut().then(() => nav.reset({ index: 0, routes: [{ name: 'Login' }] })).catch((e) => showError(L('没退出成', "Couldn't sign out"), e)); } },
+      { text: L('退出', 'Sign out'), style: 'destructive', onPress: () => { signOut().then(() => nav.reset({ index: 0, routes: [{ name: 'Login' }] })).catch((e) => showError(L('退出失败', "Couldn't sign out"), e)); } },
     ]);
   };
 
   const remove = () => {
     Alert.alert(L('删除账号？', 'Delete your account?'),
-      L('账号和它记着的 claw 列表都会删掉，删了找不回来。你的 claw 上的对话、记忆、连接器一样都不动。', "Your account and the list of claws it remembers are deleted for good. Nothing on your claws changes: chats, memory and connectors stay."), [
+      L('账号及其记录的 claw 列表将被永久删除，无法恢复。你的 claw 上的对话、记忆和连接器不受影响。', "Your account and its list of claws will be permanently deleted. Nothing on your claws changes: chats, memory and connectors stay."), [
         { text: L('取消', 'Cancel'), style: 'cancel' },
         {
           text: L('删除', 'Delete'), style: 'destructive', onPress: () => {
-            deleteAccount().then(() => nav.reset({ index: 0, routes: [{ name: 'Login' }] })).catch((e) => showError(L('没删成', "Couldn't delete it"), e));
+            deleteAccount().then(() => nav.reset({ index: 0, routes: [{ name: 'Login' }] })).catch((e) => showError(L('删除失败', "Couldn't delete it"), e));
           },
         },
       ]);
@@ -225,32 +225,32 @@ export function AccountScreen() {
           <T v="callout" color={t.ink2}>{user.email}</T>
         </View>
         <Group>
-          <Row first title={L('名字', 'Name')} value={user.name || L('没填', 'Not set')} tone={user.name ? undefined : 'muted'} onPress={editName} />
+          <Row first title={L('名字', 'Name')} value={user.name || L('未设置', 'Not set')} tone={user.name ? undefined : 'muted'} onPress={editName} />
           <Row title={L('邮箱', 'Email')} value={user.email} />
           <Row title={L('登录方式', 'Sign-in')} value={L('邮箱验证码', 'Email code')} />
         </Group>
 
-        <GroupLabel>{L('账号里存了什么', "What's in your account")}</GroupLabel>
+        <GroupLabel>{L('账号存储的内容', 'What your account stores')}</GroupLabel>
         <Group style={{ padding: 18, gap: 8 }}>
-          <T v="body">{L('邮箱、名字，和你连过的 claw（名字、地址、种类，不含令牌）。', 'Your email, name and the claws you connect (name, address and kind; never tokens).')}</T>
-          <T v="callout" color={t.ink2}>{L('对话、记忆、连接器的令牌都不在账号里，只在你自己的 claw 上。', 'Chats, memory and connector tokens are never in your account; they stay on your own claw.')}</T>
+          <T v="body">{L('邮箱、名字，以及你连接过的 claw（名称、地址、类型，不含令牌）。', 'Your email, name and the claws you connect (name, address and kind; never tokens).')}</T>
+          <T v="callout" color={t.ink2}>{L('对话、记忆和连接器令牌均不存储在账号中，仅保存在你自己的 claw 上。', 'Chats, memory and connector tokens are never in your account; they stay on your own claw.')}</T>
         </Group>
         {claws && claws.length ? (
           <>
-            <GroupLabel>{L('你连过的 claw', 'Claws you connected')}</GroupLabel>
+            <GroupLabel>{L('已连接的 claw', 'Connected claws')}</GroupLabel>
             <Group>
               {claws.map((c, i) => (
                 <Row key={c.base} first={i === 0} title={c.name} sub={[c.claw_name, c.base.replace(/^https?:\/\//, '')].filter(Boolean).join(' · ')}
-                  value={c.base === here ? L('这台设备在用', 'On this device') : undefined} tone="accent" />
+                  value={c.base === here ? L('本设备使用中', 'On this device') : undefined} tone="accent" />
               ))}
             </Group>
-            <GroupNote>{L('在别的设备上连过的也在这里；那台要在这台设备上用，重新配对一次。', 'Claws you connected elsewhere show up too; to use one on this device, pair it once more.')}</GroupNote>
+            <GroupNote>{L('在其他设备上连接过的 claw 也会列在这里；如需在本设备上使用，请重新配对。', 'Claws you connected on other devices appear here too; to use one on this device, pair it again.')}</GroupNote>
           </>
         ) : null}
 
         <Group style={{ marginTop: 26 }}>
           <Row first title={L('退出登录', 'Sign out')} danger onPress={out} />
-          <Row title={L('删除账号', 'Delete account')} sub={L('claw 上的东西一样都不动', 'Nothing on your claws changes')} danger onPress={remove} />
+          <Row title={L('删除账号', 'Delete account')} sub={L('claw 上的数据不受影响', 'Nothing on your claws changes')} danger onPress={remove} />
         </Group>
       </ScrollView>
     </Screen>

@@ -25,7 +25,7 @@ export function SettingsHeader({ title, onBack, close, right }: { title: string;
     <View style={styles.header}>
       <View style={styles.side}>
         {onBack ? (
-          <RoundButton onPress={onBack} label={close ? L('关上', 'Close') : L('返回', 'Back')}>
+          <RoundButton onPress={onBack} label={close ? L('关闭', 'Close') : L('返回', 'Back')}>
             {close ? <X size={20} color={t.ink} /> : <ChevronLeft size={22} color={t.ink} />}
           </RoundButton>
         ) : null}

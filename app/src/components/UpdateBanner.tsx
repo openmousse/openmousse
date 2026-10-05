@@ -39,7 +39,7 @@ export function UpdateBanner() {
     <View pointerEvents="box-none" style={[styles.wrap, { top: insets.top + 6 }]}>
       <Pressable onPress={() => Updates.reloadAsync().catch(() => setReady(false))} accessibilityRole="button"
         style={({ pressed }) => [styles.pill, { backgroundColor: t.gold, opacity: pressed ? 0.8 : 1 }]}>
-        <T v="callout" color="#FFFFFF" style={{ fontWeight: '600' }}>{L('新版本已下载 · 点一下重载', 'New version downloaded · Tap to reload')}</T>
+        <T v="callout" color="#FFFFFF" style={{ fontWeight: '600' }}>{L('新版本已下载 · 轻点重新加载', 'New version downloaded · Tap to reload')}</T>
       </Pressable>
     </View>
   );

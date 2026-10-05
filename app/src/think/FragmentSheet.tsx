@@ -24,7 +24,7 @@ export function FragmentSheet({ id, initial, close, topicId, onRemoved }: { id: 
   const run = async (job: () => Promise<void>) => {
     if (busy) return;
     setBusy(true);
-    try { await job(); } catch (e) { showError(L('没做成', "Couldn't do that"), e); } finally { setBusy(false); }
+    try { await job(); } catch (e) { showError(L('操作失败', "Couldn't complete that"), e); } finally { setBusy(false); }
   };
   const save = () => run(async () => {
     const keywords = kw.split(/[\s,，、#]+/).map((x) => x.trim()).filter(Boolean);
@@ -44,16 +44,16 @@ export function FragmentSheet({ id, initial, close, topicId, onRemoved }: { id: 
       {editing ? (
         <View style={{ gap: space.sm }}>
           {f.kind !== 'keywords' ? (
-            <GrowInput value={text} onChangeText={setText} multiline autoFocus accessibilityLabel={L('这条想法', 'This thought')}
+            <GrowInput value={text} onChangeText={setText} multiline autoFocus accessibilityLabel={L('想法内容', 'Thought text')}
               style={[type.body, styles.input, { minHeight: 100, maxHeight: 280, backgroundColor: t.surface, color: t.ink }]} />
           ) : null}
-          <TextInput value={kw} onChangeText={setKw} placeholder={L('关键词，空格分开', 'Keywords, space between')} placeholderTextColor={t.ink3}
+          <TextInput value={kw} onChangeText={setKw} placeholder={L('关键词，以空格分隔', 'Keywords, separated by spaces')} placeholderTextColor={t.ink3}
             accessibilityLabel={L('关键词', 'Keywords')} style={[type.body, styles.input, { backgroundColor: t.surface, color: t.ink }]} />
           <View style={{ flexDirection: 'row', gap: space.sm }}>
-            <Btn label={L('算了', 'Cancel')} kind="quiet" flex onPress={() => { setEditing(false); setText(f.text); setKw(f.keywords.join(' ')); }} />
-            <Btn label={busy ? L('正在存…', 'Saving…') : L('存', 'Save')} flex onPress={save} />
+            <Btn label={L('取消', 'Cancel')} kind="quiet" flex onPress={() => { setEditing(false); setText(f.text); setKw(f.keywords.join(' ')); }} />
+            <Btn label={busy ? L('正在保存…', 'Saving…') : L('保存', 'Save')} flex onPress={save} />
           </View>
-          <T v="caption" color={t.ink3}>{L('改的是库里那篇笔记本身，Obsidian 里跟着变。', 'This edits the note in the vault; Obsidian follows.')}</T>
+          <T v="caption" color={t.ink3}>{L('修改将直接写入库中的笔记，Obsidian 中同步更新。', 'Edits apply to the note in the vault and sync to Obsidian.')}</T>
         </View>
       ) : (
         <>
@@ -62,26 +62,26 @@ export function FragmentSheet({ id, initial, close, topicId, onRemoved }: { id: 
             <Pressable key={tp.id} onPress={() => { close(); nav.navigate('ThinkTalk', { id: tp.id }); }} accessibilityRole="button"
               style={({ pressed }) => [styles.row, { backgroundColor: t.surface, opacity: pressed ? 0.7 : 1 }]}>
               <Lightbulb size={17} color={t.gold} />
-              <T v="callout" style={{ flex: 1 }} numberOfLines={1}>{L(`在主题「${tp.title}」里`, `In the topic "${tp.title}"`)}</T>
+              <T v="callout" style={{ flex: 1 }} numberOfLines={1}>{L(`所属主题「${tp.title}」`, `In the topic "${tp.title}"`)}</T>
             </Pressable>
           ))}
           <View style={{ flexDirection: 'row', gap: space.sm }}>
-            <Btn label={L('改一下', 'Edit')} kind="quiet" flex icon={<Pencil size={15} color={t.ink} />} onPress={() => setEditing(true)} />
-            <Btn label={L('单独聊聊', 'Talk about it')} kind="quiet" flex icon={<MessageCircle size={15} color={t.ink} />} onPress={talkAlone} />
+            <Btn label={L('编辑', 'Edit')} kind="quiet" flex icon={<Pencil size={15} color={t.ink} />} onPress={() => setEditing(true)} />
+            <Btn label={L('单独讨论', 'Discuss alone')} kind="quiet" flex icon={<MessageCircle size={15} color={t.ink} />} onPress={talkAlone} />
           </View>
           {topicId ? <>
-            <Btn label={busy ? L('正在处理…', 'Working…') : L('移出这个主题', 'Remove from this topic')} kind="quiet" onPress={() => run(async () => {
+            <Btn label={busy ? L('正在处理…', 'Processing…') : L('移出此主题', 'Remove from this topic')} kind="quiet" onPress={() => run(async () => {
               await thinkApi.patchTopic(topicId, { remove: [id] });
               onRemoved?.();
               await refresh();
               close();
             })} />
-            <T v="caption" color={t.ink3}>{L('只移出当前主题，碎片仍在碎片流和库里。', 'Only removes it from this topic; the thought stays in the stream and vault.')}</T>
+            <T v="caption" color={t.ink3}>{L('仅从当前主题移出，该想法仍保留在碎片流和库中。', 'Removes it from this topic only; the thought stays in the stream and the vault.')}</T>
           </> : null}
           {confirm
-            ? <Btn label={L('确认删掉（挪进库的回收站）', 'Confirm: move to the vault trash')} kind="danger" icon={<Trash2 size={15} color={t.bad} />} onPress={() => run(async () => { await removeFragment(id); close(); })} />
-            : <Btn label={L('删掉', 'Delete')} kind="danger" icon={<Trash2 size={15} color={t.bad} />} onPress={() => setConfirm(true)} />}
-          <T v="caption" color={t.ink3}>{f.bad ? L('这篇笔记的属性格式坏了，要在 Obsidian 里修好才能改。', "This note's properties are malformed; fix it in Obsidian before editing here.") : L(`在库里：${f.path}`, `In the vault: ${f.path}`)}</T>
+            ? <Btn label={L('确认删除（移至库的回收站）', 'Confirm: move to the vault trash')} kind="danger" icon={<Trash2 size={15} color={t.bad} />} onPress={() => run(async () => { await removeFragment(id); close(); })} />
+            : <Btn label={L('删除', 'Delete')} kind="danger" icon={<Trash2 size={15} color={t.bad} />} onPress={() => setConfirm(true)} />}
+          <T v="caption" color={t.ink3}>{f.bad ? L('此笔记的属性格式有误，需在 Obsidian 中修复后才能编辑。', "This note's properties are malformed. Fix them in Obsidian before editing here.") : L(`库中路径：${f.path}`, `In the vault: ${f.path}`)}</T>
         </>
       )}
     </View>

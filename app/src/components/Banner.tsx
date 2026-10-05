@@ -170,7 +170,7 @@ export function BannerHost() {
   const names = [...new Set(sorted.map((e) => nameOf(e.source)))].join(' · ');
   const single = n === 1;
   const cta = !single ? (expanded ? '' : L('展开', 'Show all'))
-    : !newest.target ? '' : newest.target.type === 'card' ? L('看卡片', 'View card') : newest.target.type === 'thread' ? L('看回复', 'View reply') : newest.target.type === 'inbox' ? L('看一下', 'View') : L('看看', 'Open');
+    : !newest.target ? '' : newest.target.type === 'card' ? L('查看卡片', 'View card') : newest.target.type === 'thread' ? L('查看回复', 'View reply') : newest.target.type === 'inbox' ? L('查看', 'View') : L('打开', 'Open');
   const opacity = y.interpolate({ inputRange: [hiddenY, -60, 0], outputRange: [0, 1, 1], extrapolate: 'clamp' });
   const label = single
     ? [nameOf(newest.source), newest.subtitle, newest.title, newest.body].filter(Boolean).join(L('，', ', '))
@@ -179,7 +179,7 @@ export function BannerHost() {
     <View pointerEvents="box-none" style={[styles.wrap, { top: insets.top + 8 }]}>
       <Animated.View {...gestures} style={[styles.slot, { opacity, transform: [{ translateY: y }] }]}
         accessible={!expanded} accessibilityRole="button" accessibilityLabel={label}
-        accessibilityHint={single ? L('点一下打开，往上划收起', 'Tap to open, swipe up to dismiss') : L('点一下展开，往上划全部收起', 'Tap to show all, swipe up to dismiss')}
+        accessibilityHint={single ? L('轻点打开，上滑关闭', 'Tap to open, swipe up to dismiss') : L('轻点展开，上滑全部关闭', 'Tap to show all, swipe up to dismiss')}
         accessibilityActions={[{ name: 'activate' }, { name: 'escape' }]}
         onAccessibilityAction={(e) => (e.nativeEvent.actionName === 'escape' ? hide() : tap())}>
         {!single && !expanded ? <View style={[styles.peek, { backgroundColor: t.surface, borderColor: t.line }]} /> : null}
@@ -209,7 +209,7 @@ export function BannerHost() {
           {!single && expanded ? (
             <View style={[styles.list, { borderTopColor: t.line }]}>
               {sorted.slice(0, MAX_ROWS).map((e) => <Row key={e.key} e={e} onPress={() => go(e)} />)}
-              {n > MAX_ROWS ? <Text style={[styles.small, { color: t.ink3, paddingLeft: 34 }]}>{L(`还有 ${n - MAX_ROWS} 条`, `${n - MAX_ROWS} more`)}</Text> : null}
+              {n > MAX_ROWS ? <Text style={[styles.small, { color: t.ink3, paddingLeft: 34 }]}>{L(`另有 ${n - MAX_ROWS} 条`, `${n - MAX_ROWS} more`)}</Text> : null}
             </View>
           ) : null}
           <View style={styles.foot}>

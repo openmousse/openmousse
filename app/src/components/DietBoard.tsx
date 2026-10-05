@@ -79,14 +79,14 @@ function TodayCard({ diet, energy, energyError }: { diet: LiveDiet; energy: Live
     { label: L('脂肪', 'Fat'), v: totals.fat, target: targets?.fat },
   ];
   const left = targets ? targets.kcal - totals.kcal : null;
-  const burned = today?.partial && hm ? L(`手表算到 ${hm} 消耗 ${kcal(today?.burned)}`, `watch: ${kcal(today?.burned)} burned by ${hm}`) : L(`手表算的消耗 ${kcal(today?.burned)}`, `watch: ${kcal(today?.burned)} burned`);
+  const burned = today?.partial && hm ? L(`截至 ${hm} 手表记录消耗 ${kcal(today?.burned)}`, `watch: ${kcal(today?.burned)} burned by ${hm}`) : L(`手表记录消耗 ${kcal(today?.burned)}`, `watch: ${kcal(today?.burned)} burned`);
   return (
     <Card style={{ gap: space.md }}>
       <View style={[styles.rowC, { alignItems: 'baseline', gap: 6 }]}>
         <T v="largeTitle" style={styles.big}>{kcal(totals.kcal)}</T>
         <T v="callout" color={t.ink2} style={{ fontSize: 15 }}>{targets ? `/ ${kcal(targets.kcal)} kcal` : 'kcal'}</T>
         <View style={{ flex: 1 }} />
-        {left != null ? <T v="caption" color={left >= 0 ? t.ink3 : t.warn} style={{ fontWeight: left >= 0 ? '400' : '600' }}>{left >= 0 ? L(`还剩 ${kcal(left)}`, `${kcal(left)} left`) : L(`超了 ${kcal(-left)}`, `${kcal(-left)} over`)}</T> : null}
+        {left != null ? <T v="caption" color={left >= 0 ? t.ink3 : t.warn} style={{ fontWeight: left >= 0 ? '400' : '600' }}>{left >= 0 ? L(`剩余 ${kcal(left)}`, `${kcal(left)} left`) : L(`超出 ${kcal(-left)}`, `${kcal(-left)} over`)}</T> : null}
       </View>
       {targets ? <Bar value={totals.kcal} target={targets.kcal} height={10} /> : null}
       {targets ? (
@@ -118,13 +118,13 @@ function TodayCard({ diet, energy, energyError }: { diet: LiveDiet; energy: Live
               <T v="callout" color={today.deficit >= 0 ? t.good : t.warn} style={{ fontWeight: '700', fontVariant: ['tabular-nums'] }}>{today.deficit >= 0 ? MINUS : '+'}{kcal(Math.abs(today.deficit))}</T>
               {` kcal · ${burned}`}
             </>
-          ) : today?.burned != null ? `${burned} kcal${L('，还算不了缺口', ", can't work out the deficit yet")}`
-            : energyError ? L(`消耗数据没读到：${energyError}`, `Couldn't read calories burned: ${energyError}`)
-              : L('Apple 健康还没同步，算不了消耗。在 iPhone 上打开健身看板同步一次。', "Apple Health hasn't synced yet, so calories burned can't be worked out. Open the fitness dashboard on your iPhone once to sync.")}
+          ) : today?.burned != null ? `${burned} kcal${L('，暂无法计算缺口', ', deficit not available yet')}`
+            : energyError ? L(`无法加载消耗数据：${energyError}`, `Couldn't load calories burned: ${energyError}`)
+              : L('Apple 健康尚未同步，无法计算消耗。请在 iPhone 上打开健身看板完成同步。', "Apple Health hasn't synced yet, so calories burned can't be calculated. Open the fitness dashboard on your iPhone to sync.")}
         </T>
       </View>
-      {targets?.kcal_derived ? <T v="caption" color={t.ink3} style={{ fontWeight: '400' }}>{L(`热量目标是按三大营养素目标换算的（${diet.source || '饮食记录'}不存热量目标）。`, `The calorie target is worked out from the macro targets (${diet.source || 'the meal log'} doesn't store one).`)}</T> : null}
-      {!targets ? <T v="caption" color={t.ink3} style={{ fontWeight: '400' }}>{L(`还没设每日目标，所以只显示摄入量。告诉 ${agentName()} 你的热量和三大营养素目标，这里就会变成进度条。`, `No daily targets yet, so only intake is shown. Tell ${agentName()} your calorie and macro targets and this turns into progress bars.`)}</T> : null}
+      {targets?.kcal_derived ? <T v="caption" color={t.ink3} style={{ fontWeight: '400' }}>{L(`热量目标由三大营养素目标换算得出（${diet.source || '饮食记录'}未存储热量目标）。`, `The calorie target is derived from the macro targets (${diet.source || 'the meal log'} doesn't store one).`)}</T> : null}
+      {!targets ? <T v="caption" color={t.ink3} style={{ fontWeight: '400' }}>{L(`尚未设置每日目标，仅显示摄入量。告诉 ${agentName()} 你的热量和三大营养素目标后，此处将显示进度条。`, `No daily targets set, so only intake is shown. Tell ${agentName()} your calorie and macro targets to see progress bars here.`)}</T> : null}
     </Card>
   );
 }
@@ -147,12 +147,12 @@ function NextMeal({ meal, later, plan, busy, onSwap, onAte }: { meal: MealPlanMe
       ) : null}
       {notes.map((x, i) => <T key={`${i}-${x}`} v="callout" color={t.ink2}>{x}</T>)}
       <View style={[styles.rowC, { marginTop: 2 }]}>
-        <ActionBtn kind="quiet" label={L('换一个', 'Swap it')} disabled={busy} onPress={onSwap} />
-        <ActionBtn kind="primary" grow label={busy ? L(`${agentName()} 正在回…`, `${agentName()} is replying…`) : L('吃了，记上', 'Ate it, log it')} icon={<Check size={18} color={t.onGold} />} disabled={busy} busy={busy} onPress={onAte} />
+        <ActionBtn kind="quiet" label={L('更换', 'Swap')} disabled={busy} onPress={onSwap} />
+        <ActionBtn kind="primary" grow label={busy ? L(`${agentName()} 正在回复…`, `${agentName()} is replying…`) : L('记为已吃', 'Log as eaten')} icon={<Check size={18} color={t.onGold} />} disabled={busy} busy={busy} onPress={onAte} />
       </View>
       {later.length ? (
         <View style={{ marginTop: 4 }}>
-          <T v="caption" color={t.ink3} style={{ fontWeight: '600', marginBottom: 2 }}>{L('之后', 'Later')}</T>
+          <T v="caption" color={t.ink3} style={{ fontWeight: '600', marginBottom: 2 }}>{L('后续', 'Later')}</T>
           {later.map((m, i) => (
             <MealRow key={`${m.label}-${i}`} first={i === 0} label={m.label} time={m.time} kcalN={n0(m.kcal)} protein={n0(m.protein)}
               items={m.items.map((it) => ({ name: it.name, amount: amountOf(it.amount, it.unit), kcal: n0(it.kcal) }))} />
@@ -188,13 +188,13 @@ export function DietBoard({ diet, energy, energyError, groupId, onAsk }: { diet:
     <SectionedBoard els={{
       'diet.today': (
         <View>
-          <SectionLabel right={<Caption>{`${source} · ${live?.loadedAt ?? ''}`}</Caption>}>{L('今天到哪了', 'Today so far')}</SectionLabel>
+          <SectionLabel right={<Caption>{`${source} · ${live?.loadedAt ?? ''}`}</Caption>}>{L('今日进度', 'Today so far')}</SectionLabel>
           <TodayCard diet={diet} energy={energy} energyError={energyError} />
         </View>
       ),
       'diet.next': (
         <View>
-          <SectionLabel right={card ? <Caption>{L(`${card.createdAt?.slice(11, 16) ?? ''} 排的`, `Planned ${card.createdAt?.slice(11, 16) ?? ''}`)}</Caption> : undefined}>{L('下一餐', 'Next meal')}</SectionLabel>
+          <SectionLabel right={card ? <Caption>{L(`${card.createdAt?.slice(11, 16) ?? ''} 生成`, `Planned ${card.createdAt?.slice(11, 16) ?? ''}`)}</Caption> : undefined}>{L('下一餐', 'Next meal')}</SectionLabel>
           {plan && upcoming.length ? (
             <NextMeal meal={upcoming[0]} later={upcoming.slice(1)} plan={plan} busy={busy}
               onSwap={() => say(L(`换一个${mealLabel(upcoming[0].label)}方案`, `Suggest a different ${mealLabel(upcoming[0].label).toLowerCase()}`))}
@@ -202,9 +202,9 @@ export function DietBoard({ diet, energy, energyError, groupId, onAsk }: { diet:
           ) : (
             <Card style={{ gap: space.sm }}>
               <T v="callout" color={t.ink2}>{plan
-                ? L('今天建议的几餐都吃过了。', "You've had all the meals in today's plan.")
-                : L(`今天还没有三餐建议。${agentName()} 会按你的固定早餐、常买清单、今天练不练和还差的热量来配。`, `No meal plan for today yet. ${agentName()} builds it from your usual breakfast, your regular shopping list, whether you train today and the calories you still need.`)}</T>
-              <Btn label={busy ? L(`${agentName()} 正在出…`, `${agentName()} is on it…`) : plan ? L('再出一份', 'Make a new one') : L(`让 ${agentName()} 出今天的建议`, `Ask ${agentName()} for today's plan`)}
+                ? L('今日建议的餐食均已完成。', "All meals in today's plan are done.")
+                : L(`今日尚无三餐建议。${agentName()} 将根据你的固定早餐、常购清单、今日训练安排和剩余热量制定。`, `No meal plan for today yet. ${agentName()} builds it from your usual breakfast, your regular shopping list, today's training and the calories you still need.`)}</T>
+              <Btn label={busy ? L(`${agentName()} 正在生成…`, `${agentName()} is generating…`) : plan ? L('重新生成', 'Regenerate') : L(`请 ${agentName()} 生成今日建议`, `Ask ${agentName()} for today's plan`)}
                 kind={plan ? 'quiet' : 'primary'} onPress={ask} icon={<Sparkles size={14} color={plan ? t.ink : t.onGold} />} />
             </Card>
           )}
@@ -212,34 +212,34 @@ export function DietBoard({ diet, energy, energyError, groupId, onAsk }: { diet:
       ),
       'diet.eaten': (
         <View>
-          <SectionLabel right={diet.meals.length ? <Caption>{L(`${diet.meals.length} 餐`, `${diet.meals.length} meal${diet.meals.length === 1 ? '' : 's'}`)}</Caption> : undefined}>{L('今天吃了', 'Eaten today')}</SectionLabel>
+          <SectionLabel right={diet.meals.length ? <Caption>{L(`${diet.meals.length} 餐`, `${diet.meals.length} meal${diet.meals.length === 1 ? '' : 's'}`)}</Caption> : undefined}>{L('今日饮食', 'Eaten today')}</SectionLabel>
           {diet.meals.length ? (
             <Card style={{ paddingVertical: space.xs }}>
               {diet.meals.map((m, i) => <MealRow key={`${m.label}-${i}`} first={i === 0} label={m.label} kcalN={m.kcal} protein={m.protein} items={eatenMealItems(m)} />)}
             </Card>
-          ) : <Card><T v="callout" color={t.ink2}>{L('今天还没有饮食记录。', 'No meals logged today.')}</T></Card>}
+          ) : <Card><T v="callout" color={t.ink2}>{L('今日尚无饮食记录。', 'No meals logged today.')}</T></Card>}
         </View>
       ),
       'diet.week': (
         <View>
-          <SectionLabel right={<Caption>{`${L('Apple 健康', 'Apple Health')} + ${source}`}</Caption>}>{L('这周', 'This week')}</SectionLabel>
+          <SectionLabel right={<Caption>{`${L('Apple 健康', 'Apple Health')} + ${source}`}</Caption>}>{L('本周', 'This week')}</SectionLabel>
           {energy && s ? (
             <Card style={{ gap: space.md }}>
               <DeficitBars days={energy.days} />
               <T v="callout" color={t.ink2}>{s.days_counted
-                ? L(`记了 ${s.days_counted} 天：平均每天${(s.avg_deficit ?? 0) >= 0 ? '缺口' : '超出'} ${kcal(Math.abs(s.avg_deficit ?? 0))} kcal${s.est_fat_kg != null ? `，约 ${s.est_fat_kg >= 0 ? MINUS : '+'}${Math.abs(s.est_fat_kg).toFixed(2)} kg 脂肪` : ''}。没记的日子不算。`,
-                  `${s.days_counted} day${s.days_counted === 1 ? '' : 's'} logged: an average ${(s.avg_deficit ?? 0) >= 0 ? 'deficit' : 'surplus'} of ${kcal(Math.abs(s.avg_deficit ?? 0))} kcal a day${s.est_fat_kg != null ? `, about ${s.est_fat_kg >= 0 ? MINUS : '+'}${Math.abs(s.est_fat_kg).toFixed(2)} kg of fat` : ''}. Days without a log don't count.`)
-                : L('近 7 天还没有完整的饮食记录，算不了缺口。', "No complete meal logs in the last 7 days, so the deficit can't be worked out.")}</T>
-              {energy.intake_error ? <T v="caption" color={t.bad} style={{ fontWeight: '400' }}>{L(`摄入数据读取失败：${energy.intake_error}`, `Couldn't read intake data: ${energy.intake_error}`)}</T> : null}
+                ? L(`已记录 ${s.days_counted} 天：日均${(s.avg_deficit ?? 0) >= 0 ? '缺口' : '超出'} ${kcal(Math.abs(s.avg_deficit ?? 0))} kcal${s.est_fat_kg != null ? `，约 ${s.est_fat_kg >= 0 ? MINUS : '+'}${Math.abs(s.est_fat_kg).toFixed(2)} kg 脂肪` : ''}。未记录的日期不计入。`,
+                  `${s.days_counted} day${s.days_counted === 1 ? '' : 's'} logged: an average ${(s.avg_deficit ?? 0) >= 0 ? 'deficit' : 'surplus'} of ${kcal(Math.abs(s.avg_deficit ?? 0))} kcal a day${s.est_fat_kg != null ? `, about ${s.est_fat_kg >= 0 ? MINUS : '+'}${Math.abs(s.est_fat_kg).toFixed(2)} kg of fat` : ''}. Days without a log are excluded.`)
+                : L('近 7 天尚无完整的饮食记录，无法计算缺口。', "No complete meal logs in the last 7 days, so the deficit can't be calculated.")}</T>
+              {energy.intake_error ? <T v="caption" color={t.bad} style={{ fontWeight: '400' }}>{L(`无法加载摄入数据：${energy.intake_error}`, `Couldn't load intake data: ${energy.intake_error}`)}</T> : null}
             </Card>
           ) : (
-            <Card><T v="callout" color={t.ink2}>{energyError ? L(`消耗数据没读到：${energyError}`, `Couldn't read calories burned: ${energyError}`) : L('Apple 健康还没同步，算不了消耗。在 iPhone 上打开健身看板同步一次。', "Apple Health hasn't synced yet, so calories burned can't be worked out. Open the fitness dashboard on your iPhone once to sync.")}</T></Card>
+            <Card><T v="callout" color={t.ink2}>{energyError ? L(`无法加载消耗数据：${energyError}`, `Couldn't load calories burned: ${energyError}`) : L('Apple 健康尚未同步，无法计算消耗。请在 iPhone 上打开健身看板完成同步。', "Apple Health hasn't synced yet, so calories burned can't be calculated. Open the fitness dashboard on your iPhone to sync.")}</T></Card>
           )}
         </View>
       ),
       'diet.shopping': shopping.length ? (
         <View>
-          <SectionLabel>{L('要买', 'To buy')}</SectionLabel>
+          <SectionLabel>{L('采购清单', 'Shopping list')}</SectionLabel>
           <View style={styles.chips}>
             {shopping.map((x, i) => (
               <View key={`${i}-${x}`} style={[styles.chip, { backgroundColor: t.surface, borderColor: t.line }]}>

@@ -69,8 +69,8 @@ function PlainList({ ids, value, onPick }: { ids: string[]; value: string; onPic
           {id === value ? <Check size={20} color={t.gold} /> : null}
         </Pressable>
       ))}
-      <T v="callout" color={t.ink3} style={{ marginTop: space.xs }}>{L('切换只影响当前对话。能选哪些模型在服务器的 server.json（claw 段）里配。',
-        "Switching only affects this chat. The models to choose from are set on the server, in server.json's claw section.")}</T>
+      <T v="callout" color={t.ink3} style={{ marginTop: space.xs }}>{L('切换仅影响当前对话。可选模型在服务器 server.json 的 claw 段中配置。',
+        "Switching only affects this chat. The available models are set on the server, in server.json's claw section.")}</T>
     </View>
   );
 }
@@ -92,7 +92,7 @@ function ModelList({ value, onPick }: { value: string; onPick: (id: string) => v
         </Pressable>
       ) : null}
       <T v="callout" color={t.ink3} style={{ marginTop: space.xs }}>
-        {L('切换只影响当前对话，记忆和历史不变。订阅额度用尽时会按回退链自动换下一个，回复上标的是实际回答的模型。', 'Switching only affects this chat; memory and history stay the same. When subscription quota runs out, the fallback chain moves to the next model, and each reply shows the model that actually answered.')}
+        {L('切换仅影响当前对话，记忆和历史不变。订阅额度用尽时将按回退链自动切换到下一个模型，每条回复标注实际作答的模型。', 'Switching only affects this chat; memory and history stay the same. When subscription quota runs out, the fallback chain moves to the next model, and each reply shows the model that actually answered.')}
       </T>
     </View>
   );
@@ -114,7 +114,7 @@ export function ModelSwitch({ value, onChange }: { value: string; onChange: (id:
   }
   return (
     <Pressable accessibilityRole="button" accessibilityLabel={L(`当前模型 ${m?.name}，点击切换`, `Current model ${m?.name}, tap to switch`)}
-      onPress={() => sheet.open({ title: L('这段对话用哪个模型', 'Model for this chat'), content: (close) => <ModelList value={value} onPick={(id) => { onChange(id); close(); }} /> })}
+      onPress={() => sheet.open({ title: L('当前对话的模型', 'Model for this chat'), content: (close) => <ModelList value={value} onPick={(id) => { onChange(id); close(); }} /> })}
       style={({ pressed }) => [styles.switch, { backgroundColor: t.surface, opacity: pressed ? 0.7 : 1 }]}>
       <View style={{ width: 7, height: 7, borderRadius: 4, backgroundColor: m?.billing === '订阅' ? t.goldFill : t.chartA }} />
       <T v="caption" style={{ fontSize: 13 }} numberOfLines={1}>{other ? value : m?.short ?? (value ? plainModel(value).short : L('模型', 'Model'))}</T>
@@ -139,7 +139,7 @@ export function ModelField({ value, onChange }: { value: string; onChange: (id: 
   }
   return (
     <Pressable accessibilityRole="button"
-      onPress={() => sheet.open({ title: L('这个 Agent 默认用哪个模型', 'Default model for this agent'), content: (close) => <ModelList value={value} onPick={(id) => { onChange(id); close(); }} /> })}
+      onPress={() => sheet.open({ title: L('此 Agent 的默认模型', 'Default model for this Agent'), content: (close) => <ModelList value={value} onPick={(id) => { onChange(id); close(); }} /> })}
       style={[styles.field, { backgroundColor: t.surface }]}>
       <T v="body">{other ? value : m?.name}</T>
       <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>

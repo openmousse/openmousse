@@ -20,10 +20,10 @@ import { AlertPreview, BoardPreview } from './blocks/BoardPreview';
 // —— 文字（都是函数：L() 要在用的时候按当前语言取） ——
 
 export const kindLabel = (k: InboxKind | string): string => ({
-  exec: L('执行命令', 'Run command'), task: L('派活', 'Task'), write: L('写入', 'Write'), send: L('发送', 'Send'), spend: L('花钱', 'Spend'),
-  schedule: L('定时任务', 'Schedule'), push: L('推送', 'Notification'), skill: L('新 skill', 'New skill'), agent: L('新 Agent', 'New agent'),
+  exec: L('执行命令', 'Run command'), task: L('后台任务', 'Task'), write: L('写入', 'Write'), send: L('发送', 'Send'), spend: L('支出', 'Spend'),
+  schedule: L('定时任务', 'Schedule'), push: L('推送', 'Notification'), skill: L('新 skill', 'New skill'), agent: L('新 Agent', 'New Agent'),
   block: L('看板功能块', 'Board block'), project: L('项目', 'Project'), code: L('代码改动', 'Code change'), calendar: L('日程', 'Calendar'),
-  social: L('朋友', 'Friends'), egress: L('代办', 'Errand'), app: L('连接器', 'Connector'), other: L('其他', 'Other'),
+  social: L('好友', 'Friends'), egress: L('代办', 'Errand'), app: L('连接器', 'Connector'), other: L('其他', 'Other'),
 } as Record<string, string>)[k] ?? L('其他', 'Other');
 
 /** 动到外面的（写、发、花钱、日程、派活）用警示色；提案类用金色（助手自己想做的）；执行命令中性。 */
@@ -64,40 +64,40 @@ export function receiptText(item: InboxItem, name: string): { head: string; sub:
   if (item.kind === 'social' && item.social?.ask === 'review') {
     // Doorman 扣下的一句（server/cardagent.py 的 release）：点了就已经送到对方那里
     const peer = item.social.peer;
-    if (item.status === 'rejected') return { head: L(`没发 · ${title}`, `Not sent · ${title}`), sub: L(`告诉了 ${peer}「这个答不了」`, `Told ${peer} it can't be answered`) };
+    if (item.status === 'rejected') return { head: L(`未发送 · ${title}`, `Not sent · ${title}`), sub: L(`已告知 ${peer}「无法回答」`, `Told ${peer} it can't be answered`) };
     if (item.status === 'done' || item.status === 'approved') {
-      return { head: L(`${item.note ? '发了你改的' : '照发了'} · ${title}`, `${item.note ? 'Sent your words' : 'Sent as is'} · ${title}`), sub: item.result || '' };
+      return { head: L(`${item.note ? '已发送修改版' : '已原样发送'} · ${title}`, `${item.note ? 'Sent your words' : 'Sent as is'} · ${title}`), sub: item.result || '' };
     }
-    if (item.status === 'failed') return { head: L(`没送到 · ${title}`, `Not delivered · ${title}`), sub: item.result || '' };
+    if (item.status === 'failed') return { head: L(`未送达 · ${title}`, `Not delivered · ${title}`), sub: item.result || '' };
   }
   if (item.kind === 'social') {
     // 名片 agent 的卡：点了就已经告诉对方了（server/cardagent.py 的 decide）
-    if (item.status === 'revising') return { head: L(`换个时间 · ${title}`, `Another time · ${title}`), sub: L('已经告诉对方，等对方再提', 'Told them; waiting for another suggestion') };
-    if (item.status === 'rejected') return { head: L(`不去 · ${title}`, `Not going · ${title}`), sub: item.result || L('已经告诉对方，没说原因', 'Told them, no reason given') };
+    if (item.status === 'revising') return { head: L(`另约时间 · ${title}`, `Another time · ${title}`), sub: L('已告知对方，等待对方重新提议', 'Told them; waiting for another suggestion') };
+    if (item.status === 'rejected') return { head: L(`不参加 · ${title}`, `Not going · ${title}`), sub: item.result || L('已告知对方，未说明原因', 'Told them, no reason given') };
   }
   switch (item.status) {
     case 'approved':
       return exec
-        ? { head: L(`这一次同意 · ${title}`, `Allowed once · ${title}`), sub: L(zh(name, '接着往下做了'), `${name} is carrying on`) }
+        ? { head: L(`已允许一次 · ${title}`, `Allowed once · ${title}`), sub: L(zh(name, '已继续执行'), `${name} is carrying on`) }
         : item.followedAt
-          ? { head: L(`跟进了 · ${title}`, `Followed up · ${title}`), sub: L(zh(name, '在接着做，做完这里会变成结果'), `${name} is back on it. The result will show up here.`) }
-          : { head: L(`已同意 · ${title}`, `Approved · ${title}`), sub: L(zh(name, '在做，做完这里会变成结果'), `${name} is on it. The result will show up here.`) };
+          ? { head: L(`已跟进 · ${title}`, `Followed up · ${title}`), sub: L(zh(name, '正在继续处理，完成后此处显示结果'), `${name} is back on it. The result will show up here.`) }
+          : { head: L(`已同意 · ${title}`, `Approved · ${title}`), sub: L(zh(name, '正在处理，完成后此处显示结果'), `${name} is on it. The result will show up here.`) };
     case 'done':
-      return { head: L(`做完了 · ${title}`, `Done · ${title}`), sub: item.result || L(zh(name, '做完了'), `${name} finished it`) };
+      return { head: L(`已完成 · ${title}`, `Done · ${title}`), sub: item.result || L(zh(name, '已完成'), `${name} finished it`) };
     case 'failed':
-      return { head: L(`没做成 · ${title}`, `Didn't work · ${title}`), sub: item.result || L(zh(name, '没做成'), `${name} couldn't do it`) };
+      return { head: L(`失败 · ${title}`, `Failed · ${title}`), sub: item.result || L(zh(name, '未能完成'), `${name} couldn't complete it`) };
     case 'rejected':
       return exec
-        ? { head: L(`已拒绝 · ${title}`, `Denied · ${title}`), sub: L(zh(name, '会换个办法，或者直接问你'), `${name} will try another way or ask you`) }
-        : { head: L(`没要 · ${title}`, `Declined · ${title}`), sub: L('记下了，同样的事不会再提', "Noted. It won't come up again.") };
+        ? { head: L(`已拒绝 · ${title}`, `Denied · ${title}`), sub: L(zh(name, '将换一种方式，或直接询问你'), `${name} will try another way or ask you`) }
+        : { head: L(`已拒绝 · ${title}`, `Declined · ${title}`), sub: L('已记录，不会再提出同类事项', "Noted. It won't come up again.") };
     case 'revising':
-      return { head: L(`改一下 · ${title}`, `Changes asked · ${title}`), sub: L(zh(name, '改好会再交回来'), `${name} will bring it back once it's changed`) };
+      return { head: L(`待修改 · ${title}`, `Changes requested · ${title}`), sub: L(zh(name, '修改后会重新提交'), `${name} will resubmit it once it's changed`) };
     case 'withdrawn':
-      return { head: L(`撤回了 · ${title}`, `Withdrawn · ${title}`), sub: L(zh(name, '不需要了'), `${name} no longer needs it`) };
+      return { head: L(`已撤回 · ${title}`, `Withdrawn · ${title}`), sub: L(zh(name, '已不再需要'), `${name} no longer needs it`) };
     case 'expired':
-      return { head: L(`过期了 · ${title}`, `Expired · ${title}`), sub: L('等太久没处理，作废了', 'It waited too long and lapsed') };
+      return { head: L(`已过期 · ${title}`, `Expired · ${title}`), sub: L('长时间未处理，已失效', 'It waited too long and lapsed') };
     default:
-      return { head: title, sub: L('等你点头', 'Waiting for your OK') };
+      return { head: title, sub: L('等待你确认', 'Waiting for your approval') };
   }
 }
 
@@ -108,15 +108,15 @@ export function handledText(item: InboxItem, name: string): string {
   const extra = (s: string) => (s ? `${sep}${s}` : '');
   switch (item.status) {
     case 'done': return `${name} · ${L('完成', 'Done')}${extra(item.result)}`;
-    case 'failed': return `${name} · ${L('没做成', 'Failed')}${extra(item.result)}`;
-    case 'approved': return exec ? `${name} · ${L('这一次同意', 'Allowed once')}${extra(item.result)}`
-      : item.followedAt ? `${name} · ${L('你跟进了，在接着做', 'Followed up, in progress')}${extra(item.followNote ?? '')}`
+    case 'failed': return `${name} · ${L('失败', 'Failed')}${extra(item.result)}`;
+    case 'approved': return exec ? `${name} · ${L('已允许一次', 'Allowed once')}${extra(item.result)}`
+      : item.followedAt ? `${name} · ${L('已跟进，处理中', 'Followed up, in progress')}${extra(item.followNote ?? '')}`
         : `${name} · ${L('进行中', 'In progress')}${extra(item.result)}`;
-    case 'revising': return `${name} · ${L('你让它改', 'You asked for changes')}${extra(item.note)}${L('。改好会再交回来', '. It will come back once changed')}`;
-    case 'rejected': return `${name} · ${exec ? L('已拒绝', 'Denied') : L('没要，不会再提', "Declined, won't come up again")}${extra(item.result)}`;
-    case 'withdrawn': return `${name} · ${L('撤回了', 'Withdrawn')}${extra(item.result)}`;
-    case 'expired': return `${name} · ${L('过期了', 'Expired')}${extra(item.result)}`;
-    default: return `${name} · ${L('等你点头', 'Waiting for your OK')}`;
+    case 'revising': return `${name} · ${L('已要求修改', 'You asked for changes')}${extra(item.note)}${L('。修改后会重新提交', '. It will be resubmitted once changed')}`;
+    case 'rejected': return `${name} · ${exec ? L('已拒绝', 'Denied') : L('已拒绝，不会再提出', "Declined, won't come up again")}${extra(item.result)}`;
+    case 'withdrawn': return `${name} · ${L('已撤回', 'Withdrawn')}${extra(item.result)}`;
+    case 'expired': return `${name} · ${L('已过期', 'Expired')}${extra(item.result)}`;
+    default: return `${name} · ${L('等待你确认', 'Waiting for your approval')}`;
   }
 }
 
@@ -178,7 +178,7 @@ function PendingCard({ item, chat }: { item: InboxItem; chat: boolean }) {
     if (busy) return;
     setBusy(action);
     // 成功后 store 把这张卡换成回执（「今天」和对话里同时）
-    decide(item.id, action, note).catch((e) => showError(L('没做成', "Didn't go through"), e)).finally(() => setBusy(null));
+    decide(item.id, action, note).catch((e) => showError(L('操作失败', "Couldn't complete the action"), e)).finally(() => setBusy(null));
   };
   // 有要改的：回到提这件事的对话，输入框上面带着「回复：标题」，直接说
   const talk = () => openThread(item.thread, groups.some((g) => g.id === item.thread), { inboxId: item.id, title: item.title });
@@ -211,7 +211,7 @@ function PendingCard({ item, chat }: { item: InboxItem; chat: boolean }) {
       ) : null}
       {item.changes.length ? (
         <View style={[styles.box, { backgroundColor: t.bg, borderColor: t.line }]}>
-          <T v="caption" color={t.ink3} style={{ fontWeight: '600' }}>{L('会改什么', 'What changes')}</T>
+          <T v="caption" color={t.ink3} style={{ fontWeight: '600' }}>{L('变更内容', 'Changes')}</T>
           {item.changes.map((c, i) => (
             <View key={`${i}-${c}`} style={styles.li}>
               <View style={[styles.dot, { backgroundColor: t.ink3 }]} />
@@ -232,7 +232,7 @@ function PendingCard({ item, chat }: { item: InboxItem; chat: boolean }) {
       ) : null}
       {!exec && !chat && item.thread ? (
         <Pressable onPress={talk} disabled={!!busy} hitSlop={6} accessibilityRole="button" style={({ pressed }) => [styles.link, { opacity: pressed ? 0.6 : 1 }]}>
-          <T v="callout" color={t.gold} style={{ fontWeight: '600' }}>{L('有要改的？去对话里说', 'Want changes? Say it in chat')}</T>
+          <T v="callout" color={t.gold} style={{ fontWeight: '600' }}>{L('需要修改？在对话中说明', 'Need changes? Explain in chat')}</T>
           <ChevronRight size={16} color={t.gold} />
         </Pressable>
       ) : null}
@@ -240,58 +240,58 @@ function PendingCard({ item, chat }: { item: InboxItem; chat: boolean }) {
         {exec ? (
           <>
             <CardBtn kind="quiet" label={L('拒绝', 'Deny')} busy={busy === 'reject'} disabled={!!busy} onPress={() => act('reject')} />
-            <CardBtn kind="primary" label={L('这一次同意', 'Allow once')} busy={busy === 'approve'} disabled={!!busy} onPress={() => act('approve')} />
+            <CardBtn kind="primary" label={L('允许一次', 'Allow once')} busy={busy === 'approve'} disabled={!!busy} onPress={() => act('approve')} />
           </>
         ) : review && rewrite != null ? (
           // Doorman 扣下的那句，「改一下」：写你要发的话，发出去替它那句（算你说的）
           <View style={{ flex: 1, gap: space.sm }}>
             <TextInput value={rewrite} onChangeText={setRewrite} multiline maxLength={400} autoFocus
-              placeholder={L(`写你想让 ${item.social?.peer ?? ''} 看到的那句`, `What ${item.social?.peer ?? 'they'} should see`)} placeholderTextColor={t.ink3}
-              accessibilityLabel={L('你要发的话', 'What to send')}
+              placeholder={L(`输入要发送给 ${item.social?.peer ?? ''} 的内容`, `What ${item.social?.peer ?? 'they'} should see`)} placeholderTextColor={t.ink3}
+              accessibilityLabel={L('待发送内容', 'What to send')}
               style={[type.body, styles.rewrite, { color: t.ink, borderColor: t.line, backgroundColor: t.bg }]} />
             <View style={styles.actions}>
-              <CardBtn kind="quiet" label={L('算了', 'Back')} disabled={!!busy} onPress={() => setRewrite(null)} />
-              <CardBtn kind="primary" label={L('发这句', 'Send this')} icon={Check} busy={busy === 'revise'} disabled={!!busy || !rewrite.trim()}
+              <CardBtn kind="quiet" label={L('取消', 'Cancel')} disabled={!!busy} onPress={() => setRewrite(null)} />
+              <CardBtn kind="primary" label={L('发送', 'Send')} icon={Check} busy={busy === 'revise'} disabled={!!busy || !rewrite.trim()}
                 onPress={() => act('revise', rewrite.trim())} />
             </View>
           </View>
         ) : review ? (
           // Doorman 扣下的那句：不发（告诉对方答不了）/ 改一下 / 照发
           <>
-            <CardBtn kind="quiet" label={L('不发', "Don't send")} busy={busy === 'reject'} disabled={!!busy} onPress={() => act('reject')} />
-            <CardBtn kind="quiet" label={L('改一下', 'Rewrite')} disabled={!!busy} onPress={() => setRewrite(item.social?.original ?? '')} />
-            <CardBtn kind="primary" label={item.approveLabel || L('照发', 'Send as is')} icon={Check} busy={busy === 'approve'} disabled={!!busy} onPress={() => act('approve')} />
+            <CardBtn kind="quiet" label={L('不发送', "Don't send")} busy={busy === 'reject'} disabled={!!busy} onPress={() => act('reject')} />
+            <CardBtn kind="quiet" label={L('改写', 'Rewrite')} disabled={!!busy} onPress={() => setRewrite(item.social?.original ?? '')} />
+            <CardBtn kind="primary" label={item.approveLabel || L('原样发送', 'Send as is')} icon={Check} busy={busy === 'approve'} disabled={!!busy} onPress={() => act('approve')} />
           </>
         ) : item.kind === 'egress' && rewrite != null ? (
           // Doorman 出口扣下的代办请求，「改一下」：写上怎么改，代办那边收到 403 和你的话，照着重新来
           <View style={{ flex: 1, gap: space.sm }}>
             <TextInput value={rewrite} onChangeText={setRewrite} multiline maxLength={400} autoFocus
-              placeholder={L('告诉代办要怎么改（比如：主题改成 Hi）', 'Tell the errand what to change (e.g. make the subject "Hi")')} placeholderTextColor={t.ink3}
-              accessibilityLabel={L('要怎么改', 'What to change')}
+              placeholder={L('说明代办需要如何修改（例如：主题改为 Hi）', 'Tell the errand what to change (e.g. make the subject "Hi")')} placeholderTextColor={t.ink3}
+              accessibilityLabel={L('修改说明', 'What to change')}
               style={[type.body, styles.rewrite, { color: t.ink, borderColor: t.line, backgroundColor: t.bg }]} />
             <View style={styles.actions}>
-              <CardBtn kind="quiet" label={L('算了', 'Back')} disabled={!!busy} onPress={() => setRewrite(null)} />
-              <CardBtn kind="primary" label={L('让它改', 'Send back')} icon={Check} busy={busy === 'revise'} disabled={!!busy || !rewrite.trim()}
+              <CardBtn kind="quiet" label={L('取消', 'Cancel')} disabled={!!busy} onPress={() => setRewrite(null)} />
+              <CardBtn kind="primary" label={L('退回修改', 'Send back')} icon={Check} busy={busy === 'revise'} disabled={!!busy || !rewrite.trim()}
                 onPress={() => act('revise', rewrite.trim())} />
             </View>
           </View>
         ) : item.kind === 'egress' ? (
           // 代办要提交 / 发送 / 用你的凭证：不要 / 改一下 / 放行这一次（只放这一个请求）
           <>
-            <CardBtn kind="quiet" label={L('不要', 'No')} busy={busy === 'reject'} disabled={!!busy} onPress={() => act('reject')} />
-            <CardBtn kind="quiet" label={L('改一下', 'Revise')} disabled={!!busy} onPress={() => setRewrite('')} />
-            <CardBtn kind="primary" label={item.approveLabel || L('放行这一次', 'Let it through')} icon={Check} busy={busy === 'approve'} disabled={!!busy} onPress={() => act('approve')} />
+            <CardBtn kind="quiet" label={L('拒绝', 'Deny')} busy={busy === 'reject'} disabled={!!busy} onPress={() => act('reject')} />
+            <CardBtn kind="quiet" label={L('修改', 'Revise')} disabled={!!busy} onPress={() => setRewrite('')} />
+            <CardBtn kind="primary" label={item.approveLabel || L('放行一次', 'Let it through')} icon={Check} busy={busy === 'approve'} disabled={!!busy} onPress={() => act('approve')} />
           </>
         ) : item.kind === 'social' && item.social?.counter ? (
           // 名片 agent 替你约的：不去 / 换个时间（按你空着的晚上提一个）/ 同意（设计稿 SocAgents）
           <>
-            <CardBtn kind="quiet" label={L('不去', "Can't")} busy={busy === 'reject'} disabled={!!busy} onPress={() => act('reject')} />
-            <CardBtn kind="quiet" label={L('换个时间', 'Another time')} busy={busy === 'revise'} disabled={!!busy} onPress={() => act('revise')} />
+            <CardBtn kind="quiet" label={L('不参加', 'Decline')} busy={busy === 'reject'} disabled={!!busy} onPress={() => act('reject')} />
+            <CardBtn kind="quiet" label={L('另约时间', 'Another time')} busy={busy === 'revise'} disabled={!!busy} onPress={() => act('revise')} />
             <CardBtn kind="primary" label={item.approveLabel || L('同意', 'Approve')} icon={Check} busy={busy === 'approve'} disabled={!!busy} onPress={() => act('approve')} />
           </>
         ) : (
           <>
-            <CardBtn kind="quiet" label={L('不要', 'No')} busy={busy === 'reject'} disabled={!!busy} onPress={() => act('reject')} />
+            <CardBtn kind="quiet" label={L('拒绝', 'Decline')} busy={busy === 'reject'} disabled={!!busy} onPress={() => act('reject')} />
             <CardBtn kind="primary" label={item.approveLabel || L('同意', 'Approve')} icon={Check} busy={busy === 'approve'} disabled={!!busy} onPress={() => act('approve')} />
           </>
         )}
@@ -309,7 +309,7 @@ function InboxReceipt({ item, chat }: { item: InboxItem; chat: boolean }) {
   const r = receiptText(item, name);
   const project = item.kind === 'project' && item.project?.action === 'open' && item.status === 'done' ? item.project.project : undefined;
   return (
-    <Pressable onPress={() => openDetail(item)} accessible={!project} accessibilityRole="button" accessibilityLabel={`${r.head}${L('，', ', ')}${r.sub}`} accessibilityHint={L('看详情', 'Shows the details')}
+    <Pressable onPress={() => openDetail(item)} accessible={!project} accessibilityRole="button" accessibilityLabel={`${r.head}${L('，', ', ')}${r.sub}`} accessibilityHint={L('查看详情', 'Shows the details')}
       style={({ pressed }) => [styles.rcpt, chat && styles.chatRcpt, { backgroundColor: t.surface, borderColor: t.line, opacity: pressed ? 0.7 : 1 }]}>
       <StatusCircle status={item.status} exec={item.kind === 'exec'} />
       <View style={{ flex: 1, gap: 2 }}>
@@ -317,9 +317,9 @@ function InboxReceipt({ item, chat }: { item: InboxItem; chat: boolean }) {
         {r.sub ? <T v="callout" color={t.ink2} numberOfLines={chat ? 3 : 2} style={{ fontSize: 13, lineHeight: 18 }}>{r.sub}</T> : null}
       </View>
       {project ? (
-        <Pressable onPress={() => openThread(project.id, false)} hitSlop={8} accessibilityRole="button" accessibilityLabel={L(`去看看：${project.title}`, `Open ${project.title}`)}
+        <Pressable onPress={() => openThread(project.id, false)} hitSlop={8} accessibilityRole="button" accessibilityLabel={L(`查看：${project.title}`, `Open ${project.title}`)}
           style={({ pressed }) => [{ flexDirection: 'row', alignItems: 'center', gap: 2, opacity: pressed ? 0.6 : 1 }]}>
-          <T v="callout" color={t.gold} style={{ fontWeight: '600' }}>{L('去看看', 'Open')}</T>
+          <T v="callout" color={t.gold} style={{ fontWeight: '600' }}>{L('查看', 'Open')}</T>
           <ChevronRight size={15} color={t.gold} />
         </Pressable>
       ) : (
@@ -355,14 +355,14 @@ function statusWord(item: InboxItem): string {
   const exec = item.kind === 'exec';
   switch (item.status) {
     case 'approved':
-      return exec ? L('这一次同意了', 'Allowed once') : item.followedAt ? L('你跟进了，在接着做', 'Followed up, back in progress') : L('同意了，在做', 'Approved, in progress');
-    case 'done': return L('做完了', 'Done');
-    case 'failed': return L('没做成', "Didn't work");
-    case 'rejected': return exec ? L('已拒绝', 'Denied') : L('没要', 'Declined');
-    case 'revising': return L('你让它改，等它交回来', 'Changes asked, waiting for it');
-    case 'withdrawn': return L('撤回了', 'Withdrawn');
-    case 'expired': return L('过期作废了', 'Expired');
-    default: return L('等你点头', 'Waiting for your OK');
+      return exec ? L('已允许一次', 'Allowed once') : item.followedAt ? L('已跟进，处理中', 'Followed up, back in progress') : L('已同意，处理中', 'Approved, in progress');
+    case 'done': return L('已完成', 'Done');
+    case 'failed': return L('失败', 'Failed');
+    case 'rejected': return exec ? L('已拒绝', 'Denied') : L('已拒绝', 'Declined');
+    case 'revising': return L('已要求修改，等待重新提交', 'Changes requested, waiting for resubmission');
+    case 'withdrawn': return L('已撤回', 'Withdrawn');
+    case 'expired': return L('已过期', 'Expired');
+    default: return L('等待你确认', 'Waiting for your approval');
   }
 }
 
@@ -370,16 +370,16 @@ function statusWord(item: InboxItem): string {
 function followHint(item: InboxItem, name: string): string {
   switch (item.status) {
     case 'approved':
-      return L(zh(name, '还没报结果。跟进：带着这件事去对话里问问进展。'), `${name} hasn't reported back yet. Follow up to ask how it's going, with this item attached.`);
+      return L(zh(name, '尚未报告结果。跟进：在对话中附上此事项，询问进展。'), `${name} hasn't reported back yet. Follow up to ask for progress, with this item attached.`);
     case 'done':
     case 'failed':
-      return L(`${item.status === 'done' ? '还差点什么？' : '想再试，或者换个办法？'}跟进会把它改回「在做」，你说的话连同这件事一起交给${lead(name)}。`,
-        `${item.status === 'done' ? 'Something still missing?' : 'Try again, or another way?'} Following up puts it back in progress and hands ${name} what you say along with this item.`);
+      return L(`${item.status === 'done' ? '仍有遗漏？' : '需要重试或换一种方式？'}跟进会将其恢复为「处理中」，并将你的说明连同此事项一并交给${lead(name)}。`,
+        `${item.status === 'done' ? 'Something still missing?' : 'Try again or take another approach?'} Following up puts it back in progress and hands ${name} what you say along with this item.`);
     case 'revising':
-      return L('跟进：带着这件事去对话里接着说要怎么改。', 'Follow up to keep talking about the changes, with this item attached.');
+      return L('跟进：在对话中附上此事项，继续说明修改要求。', 'Follow up to keep discussing the changes, with this item attached.');
     default:
-      return L(`改主意了？跟进：带着这件事去对话里跟${zh(lead(name), '说')}，要做的话它会重新提一条等你点头。`,
-        `Changed your mind? Follow up to tell ${name}; if it should happen after all, it will ask for your OK again.`);
+      return L(`改变主意？跟进：在对话中附上此事项跟${zh(lead(name), '说')}明；如需执行，将重新提交并等待你确认。`,
+        `Changed your mind? Follow up to tell ${name}; if it should happen after all, it will ask for your approval again.`);
   }
 }
 
@@ -406,11 +406,11 @@ function InboxDetail({ item, close }: { item: InboxItem; close: () => void }) {
   const fields = item.fields ?? [];
   const keyW = Math.min(96, Math.max(28, ...fields.map((f) => [...f.k].reduce((w, ch) => w + (/[　-鿿]/.test(ch) ? 13 : 8), 0))));
   const times: [string, string][] = [[L('提出', 'Raised'), stamp(item.createdAt)]];
-  if (item.decidedAt) times.push([item.status === 'rejected' ? L('你没要', 'You declined') : item.status === 'revising' ? L('你让它改', 'You asked for changes') : L('你同意', 'You approved'), stamp(item.decidedAt)]);
+  if (item.decidedAt) times.push([item.status === 'rejected' ? L('你拒绝', 'You declined') : item.status === 'revising' ? L('你要求修改', 'You asked for changes') : L('你同意', 'You approved'), stamp(item.decidedAt)]);
   if (item.followedAt) times.push([L('你跟进', 'You followed up'), stamp(item.followedAt)]);
   const last = Math.max(Date.parse(item.decidedAt ?? '') || 0, Date.parse(item.followedAt ?? '') || 0, Date.parse(item.createdAt) || 0);
   if (item.updatedAt && (Date.parse(item.updatedAt) || 0) - last > 60_000) {
-    times.push([item.status === 'done' ? L('做完', 'Finished') : item.status === 'failed' ? L('报没做成', 'Reported failed') : L('最后更新', 'Last update'), stamp(item.updatedAt)]);
+    times.push([item.status === 'done' ? L('完成', 'Finished') : item.status === 'failed' ? L('报告失败', 'Reported failed') : L('最后更新', 'Last update'), stamp(item.updatedAt)]);
   }
   return (
     <View style={{ gap: space.md, paddingBottom: space.sm }}>
@@ -427,19 +427,19 @@ function InboxDetail({ item, close }: { item: InboxItem; close: () => void }) {
       </View>
       {item.result ? (
         <View style={[styles.box, { backgroundColor: item.status === 'failed' ? t.badSoft : t.surface, borderColor: t.line }]}>
-          <T v="caption" color={t.ink3} style={{ fontWeight: '600' }}>{item.status === 'failed' ? L('没做成的原因', "Why it didn't work") : L('结果', 'Result')}</T>
-          <T v="callout" selectable style={{ lineHeight: 21 }}>{item.result.length > 4000 ? `${item.result.slice(0, 4000)}\n…${L(`（后面还有 ${item.result.length - 4000} 字）`, ` (${item.result.length - 4000} more characters)`)}` : item.result}</T>
+          <T v="caption" color={t.ink3} style={{ fontWeight: '600' }}>{item.status === 'failed' ? L('失败原因', 'Why it failed') : L('结果', 'Result')}</T>
+          <T v="callout" selectable style={{ lineHeight: 21 }}>{item.result.length > 4000 ? `${item.result.slice(0, 4000)}\n…${L(`（其余 ${item.result.length - 4000} 字未显示）`, ` (${item.result.length - 4000} more characters)`)}` : item.result}</T>
         </View>
       ) : null}
       {item.followedAt && item.followNote ? (
         <View style={[styles.box, { backgroundColor: t.goldSoft, borderColor: t.line }]}>
-          <T v="caption" color={t.ink3} style={{ fontWeight: '600' }}>{L(`你跟进时说 · ${stamp(item.followedAt)}`, `You said when following up · ${stamp(item.followedAt)}`)}</T>
+          <T v="caption" color={t.ink3} style={{ fontWeight: '600' }}>{L(`跟进说明 · ${stamp(item.followedAt)}`, `Follow-up note · ${stamp(item.followedAt)}`)}</T>
           <T v="callout" selectable style={{ lineHeight: 21 }}>{item.followNote}</T>
         </View>
       ) : null}
       {item.note && (item.status === 'revising' || item.status === 'rejected') ? (
         <View style={[styles.box, { backgroundColor: t.surface, borderColor: t.line }]}>
-          <T v="caption" color={t.ink3} style={{ fontWeight: '600' }}>{item.status === 'revising' ? L('你让它这样改', 'Your changes') : L('你说的理由', 'Your reason')}</T>
+          <T v="caption" color={t.ink3} style={{ fontWeight: '600' }}>{item.status === 'revising' ? L('修改要求', 'Your changes') : L('你的理由', 'Your reason')}</T>
           <T v="callout" selectable style={{ lineHeight: 21 }}>{item.note}</T>
         </View>
       ) : null}
@@ -447,19 +447,19 @@ function InboxDetail({ item, close }: { item: InboxItem; close: () => void }) {
       {canFollow ? <T v="callout" color={t.ink2} style={{ lineHeight: 20 }}>{followHint(item, name)}</T> : null}
       {canFollow || original ? (
         <View style={styles.actions}>
-          {original ? <CardBtn kind="quiet" label={L('看原对话', 'See the chat')} icon={MessageCircle} onPress={original} /> : null}
+          {original ? <CardBtn kind="quiet" label={L('查看原对话', 'See the chat')} icon={MessageCircle} onPress={original} /> : null}
           {canFollow ? <CardBtn kind="primary" label={L('跟进', 'Follow up')} icon={ChevronRight} onPress={follow} /> : null}
         </View>
       ) : null}
       {item.why ? (
         <View style={{ gap: 4 }}>
-          <T v="caption" color={t.ink3} style={{ fontWeight: '600' }}>{L('为什么', 'Why')}</T>
+          <T v="caption" color={t.ink3} style={{ fontWeight: '600' }}>{L('原因', 'Why')}</T>
           <T v="callout" color={t.ink2} selectable style={{ lineHeight: 21 }}>{item.why}</T>
         </View>
       ) : null}
       {item.changes.length ? (
         <View style={[styles.box, { backgroundColor: t.surface, borderColor: t.line }]}>
-          <T v="caption" color={t.ink3} style={{ fontWeight: '600' }}>{L('会改什么', 'What changes')}</T>
+          <T v="caption" color={t.ink3} style={{ fontWeight: '600' }}>{L('变更内容', 'Changes')}</T>
           {item.changes.map((c, i) => (
             <View key={`${i}-${c}`} style={styles.li}>
               <View style={[styles.dot, { backgroundColor: t.ink3 }]} />
@@ -472,7 +472,7 @@ function InboxDetail({ item, close }: { item: InboxItem; close: () => void }) {
       {item.kind === 'project' && item.project?.action === 'open' ? <ProjectPreview info={item.project} /> : null}
       {item.detail && !(item.kind === 'project' && item.project?.action === 'open') ? (
         <View style={[styles.box, { backgroundColor: t.surface, borderColor: t.line }]}>
-          <T v="caption" color={t.ink3} style={{ fontWeight: '600' }}>{L('细节', 'Details')}</T>
+          <T v="caption" color={t.ink3} style={{ fontWeight: '600' }}>{L('详情', 'Details')}</T>
           <Markdown text={item.detail} color={t.ink2} compact />
         </View>
       ) : null}
@@ -509,7 +509,7 @@ function ProposalPreview({ info, kind }: { info: InboxProposalInfo; kind: InboxK
     <>
       {quotes.length ? (
         <View style={[styles.box, { backgroundColor: t.bg, borderColor: t.line }]}>
-          <T v="caption" color={t.ink3} style={{ fontWeight: '600' }}>{L('这几次你是这么说的', 'What you said')}</T>
+          <T v="caption" color={t.ink3} style={{ fontWeight: '600' }}>{L('你的原话', 'What you said')}</T>
           {quotes.map((e, i) => (
             <View key={`${i}-${e.quote}`} style={styles.quote}>
               <T v="callout" style={{ lineHeight: 20 }}>{L(`「${e.quote}」`, `"${e.quote}"`)}</T>
@@ -518,7 +518,7 @@ function ProposalPreview({ info, kind }: { info: InboxProposalInfo; kind: InboxK
           ))}
           {more > 0 ? (
             <Pressable onPress={() => setAllQuotes((v) => !v)} hitSlop={8} accessibilityRole="button" accessibilityState={{ expanded: allQuotes }} style={{ alignSelf: 'flex-start' }}>
-              <T v="caption" color={t.gold} style={{ fontWeight: '600', fontSize: 13 }}>{allQuotes ? L('收起', 'Show less') : L(`还有 ${more} 次`, `${more} more`)}</T>
+              <T v="caption" color={t.gold} style={{ fontWeight: '600', fontSize: 13 }}>{allQuotes ? L('收起', 'Show less') : L(`另有 ${more} 条`, `${more} more`)}</T>
             </Pressable>
           ) : null}
         </View>
@@ -531,7 +531,7 @@ function ProposalPreview({ info, kind }: { info: InboxProposalInfo; kind: InboxK
             </View>
           ) : null}
           <Pressable onPress={() => setFull((v) => !v)} hitSlop={8} accessibilityRole="button" accessibilityState={{ expanded: full }} style={{ alignSelf: 'flex-start' }}>
-            <T v="caption" color={t.gold} style={{ fontWeight: '600', fontSize: 13 }}>{full ? L('收起', 'Show less') : L('看这套做法的全文', 'Read the full steps')}</T>
+            <T v="caption" color={t.gold} style={{ fontWeight: '600', fontSize: 13 }}>{full ? L('收起', 'Show less') : L('查看完整步骤', 'Read the full steps')}</T>
           </Pressable>
         </>
       ) : null}

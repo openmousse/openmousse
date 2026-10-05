@@ -123,11 +123,11 @@ export async function testServer(b: string, tok: string): Promise<{ ok: true; ap
   try {
     const r = await fetch(url, { signal: ctl.signal, headers: { Accept: 'application/json', 'Accept-Language': acceptLanguage(), ...(tok.trim() ? { Authorization: `Bearer ${tok.trim()}` } : {}) } });
     const j = await r.json().catch(() => ({}));
-    if (r.status === 401) return { ok: false, reason: 'auth', message: tok.trim() ? L('令牌不对，服务器不认。', 'Wrong token. The server rejected it.') : L('这个服务器要令牌。', 'This server needs an access token.') };
+    if (r.status === 401) return { ok: false, reason: 'auth', message: tok.trim() ? L('令牌无效，服务器已拒绝。', 'Invalid token. The server rejected it.') : L('此服务器需要令牌。', 'This server requires an access token.') };
     if (!r.ok || !j.ok) return { ok: false, reason: 'down', message: j.error || j.detail || `HTTP ${r.status}` };
     return { ok: true, appName: j.app_name || 'OpenMousse' };
   } catch (e) {
-    return { ok: false, reason: 'down', message: e instanceof Error && e.name === 'AbortError' ? L('连接超时', 'Connection timed out.') : L('地址不通，连不上。', "Can't reach this address.") };
+    return { ok: false, reason: 'down', message: e instanceof Error && e.name === 'AbortError' ? L('连接超时', 'Connection timed out.') : L('无法连接此地址。', "Can't reach this address.") };
   } finally {
     clearTimeout(timer);
   }
@@ -170,8 +170,8 @@ export async function pairWithCode(b: string, code: string, device: string): Pro
     return {
       ok: false,
       message: e instanceof Error && e.name === 'AbortError'
-        ? L('连接超时：手机连上 Tailscale 了吗？', 'Timed out. Is the phone on Tailscale?')
-        : L('连不上服务器：手机要先连上 Tailscale（和服务器同一个账号）。', "Can't reach the server. The phone needs Tailscale first (the same account as the server)."),
+        ? L('连接超时：请确认手机已连接 Tailscale。', 'Timed out. Check that the phone is connected to Tailscale.')
+        : L('无法连接服务器：手机需先连接 Tailscale（与服务器使用同一账号）。', "Can't reach the server. Connect the phone to Tailscale first, using the same account as the server."),
     };
   } finally {
     clearTimeout(timer);
@@ -190,7 +190,7 @@ export async function request<T>(path: string, init?: { method?: string; body?: 
       body: init?.body !== undefined ? JSON.stringify(init.body) : undefined,
     });
     const j = await r.json().catch(() => ({}));
-    if (r.status === 401) throw new AuthError(j.error || L('接入令牌不对', 'Wrong access token'));
+    if (r.status === 401) throw new AuthError(j.error || L('接入令牌无效', 'Invalid access token'));
     if (!r.ok || j.ok === false) throw new HttpError((typeof j.detail === 'string' && j.detail) || j.error || `HTTP ${r.status}`, r.status, j);
     return j as T;
   } finally {

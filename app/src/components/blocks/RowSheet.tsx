@@ -50,7 +50,7 @@ export function openForm(sheet: SheetApi, ctx: BoardCtx, collection: string, tit
   sheet.open({
     title,
     content: (close) => (
-      <FieldForm fields={fields} init={init} saveLabel={L('记上', 'Save')} onCancel={close}
+      <FieldForm fields={fields} init={init} saveLabel={L('保存', 'Save')} onCancel={close}
         onSave={async (vals) => {
           const row = Object.fromEntries(fields.map((f) => [f.key, fromInput(f, vals[f.key])]).filter(([, v]) => v !== null && v !== ''));
           await boardsApi.addRow(ctx.agent, collection, row);
@@ -70,7 +70,7 @@ function RowView({ ctx, block, row, close }: { ctx: BoardCtx; block: Block; row:
   const run = (key: string, fn: () => Promise<unknown>) => {
     if (busy) return;
     setBusy(key);
-    fn().then(() => { close(); return ctx.reload(); }).catch((e) => showError(L('没做成', "Didn't go through"), e)).finally(() => setBusy(null));
+    fn().then(() => { close(); return ctx.reload(); }).catch((e) => showError(L('操作失败', "Couldn't complete the action"), e)).finally(() => setBusy(null));
   };
   if (mode === 'edit') {
     const init: Values = Object.fromEntries(fields.map((f) => [f.key, toInput(f, row.data[f.key])]));
@@ -102,14 +102,14 @@ function RowView({ ctx, block, row, close }: { ctx: BoardCtx; block: Block; row:
         <SheetBtn key={a.label} kind="primary" label={a.label} busy={busy === a.label} onPress={() => run(a.label, () => boardsApi.patchRow(row.id, a.set))} />
       ))}
       <View style={{ flexDirection: 'row', gap: space.sm }}>
-        {block.edit !== false && fields.length ? <SheetBtn kind="quiet" label={L('改', 'Edit')} icon={<Pencil size={16} color={t.ink} />} onPress={() => setMode('edit')} grow /> : null}
-        <SheetBtn kind="quiet" label={L('问它', 'Ask')} icon={<MessageCircle size={16} color={t.ink} />} onPress={ask} grow />
+        {block.edit !== false && fields.length ? <SheetBtn kind="quiet" label={L('编辑', 'Edit')} icon={<Pencil size={16} color={t.ink} />} onPress={() => setMode('edit')} grow /> : null}
+        <SheetBtn kind="quiet" label={L('提问', 'Ask')} icon={<MessageCircle size={16} color={t.ink} />} onPress={ask} grow />
         {block.edit !== false ? (
-          <SheetBtn kind="danger" label={sure ? L('确定删掉', 'Delete it') : L('删', 'Delete')} icon={<Trash2 size={16} color={t.bad} />} busy={busy === 'del'}
+          <SheetBtn kind="danger" label={sure ? L('确认删除', 'Confirm delete') : L('删除', 'Delete')} icon={<Trash2 size={16} color={t.bad} />} busy={busy === 'del'}
             onPress={() => (sure ? run('del', () => boardsApi.deleteRow(row.id)) : setSure(true))} />
         ) : null}
       </View>
-      {sure ? <T v="caption" color={t.ink3} style={{ fontWeight: '400' }}>{L('删掉的 30 天内能找回。', 'Deleted rows can be restored for 30 days.')}</T> : null}
+      {sure ? <T v="caption" color={t.ink3} style={{ fontWeight: '400' }}>{L('删除后 30 天内可恢复。', 'Deleted rows can be restored for 30 days.')}</T> : null}
     </View>
   );
 }
@@ -124,9 +124,9 @@ function FieldForm({ fields, init, saveLabel, onSave, onCancel }: {
   const save = () => {
     if (busy) return;
     const missing = fields.filter((f) => f.required && (vals[f.key] === '' || vals[f.key] == null)).map((f) => f.label);
-    if (missing.length) { showError(L(`还要填：${missing.join('、')}`, `Still needed: ${missing.join(', ')}`), ''); return; }
+    if (missing.length) { showError(L(`请填写：${missing.join('、')}`, `Required: ${missing.join(', ')}`), ''); return; }
     setBusy(true);
-    onSave(vals).catch((e) => showError(L('没存上', "Couldn't save"), e)).finally(() => setBusy(false));
+    onSave(vals).catch((e) => showError(L('保存失败', "Couldn't save"), e)).finally(() => setBusy(false));
   };
   const input = [type.body, styles.input, { backgroundColor: t.surface, color: t.ink }];
   return (

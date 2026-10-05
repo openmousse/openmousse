@@ -131,7 +131,7 @@ export function BoardProvider({ agent, board, error, reload, onChat, readOnly = 
     if (!board || readOnly) return;
     const save = (blocks: Block[] | null, note: string) => {
       if (!blocks) return;
-      boardsApi.put(agent, blocks, note).then(() => reload()).catch((e) => showError(L('没改成', "Couldn't change the board"), e));
+      boardsApi.put(agent, blocks, note).then(() => reload()).catch((e) => showError(L('修改失败', "Couldn't update the board"), e));
     };
     const name = block.title || block.actions?.map((a) => a.label).join(' / ') || block.id;
     sheet.open({
@@ -145,7 +145,7 @@ export function BoardProvider({ agent, board, error, reload, onChat, readOnly = 
     const name = sectionTitle(board, id);
     const save = (secs: BoardSection[] | null, note: string) => {
       if (!secs) return;
-      boardsApi.put(agent, board.blocks, note, secs).then(() => reload()).catch((e) => showError(L('没改成', "Couldn't change the board"), e));
+      boardsApi.put(agent, board.blocks, note, secs).then(() => reload()).catch((e) => showError(L('修改失败', "Couldn't update the board"), e));
     };
     sheet.open({
       title: name,
@@ -166,14 +166,14 @@ function BlockMenu({ board, block, close, onSave, onAsk }: { board: Board; block
   const Row = MenuRow;
   return (
     <View style={{ gap: space.sm }}>
-      <Row icon={<ArrowUp size={20} color={t.ink2} />} label={L('挪到上面', 'Move up')} disabled={!up} onPress={() => onSave(up, L(`把「${name}」往上挪了`, `Moved "${name}" up`))} />
-      <Row icon={<View style={{ transform: [{ rotate: '180deg' }] }}><ArrowUp size={20} color={t.ink2} /></View>} label={L('挪到下面', 'Move down')} disabled={!down}
+      <Row icon={<ArrowUp size={20} color={t.ink2} />} label={L('上移', 'Move up')} disabled={!up} onPress={() => onSave(up, L(`把「${name}」往上挪了`, `Moved "${name}" up`))} />
+      <Row icon={<View style={{ transform: [{ rotate: '180deg' }] }}><ArrowUp size={20} color={t.ink2} /></View>} label={L('下移', 'Move down')} disabled={!down}
         onPress={() => onSave(down, L(`把「${name}」往下挪了`, `Moved "${name}" down`))} />
-      <Row icon={<EyeOff size={20} color={t.ink2} />} label={L('先藏起来', 'Hide for now')} sub={L('看板最底下「藏起来的」里能放回来', 'Bring it back from "Hidden" at the bottom of the board')}
+      <Row icon={<EyeOff size={20} color={t.ink2} />} label={L('隐藏', 'Hide')} sub={L('可在看板底部「已隐藏」中恢复', 'Restore it from "Hidden" at the bottom of the board')}
         onPress={() => onSave(board.blocks.map((b) => (b.id === block.id ? { ...b, hidden: true } : b)), L(`藏起了「${name}」`, `Hid "${name}"`))} />
-      <Row icon={<MessageCircle size={20} color={t.gold} />} label={L('让它改这一块', 'Ask it to change this')} sub={L('比如「只看 2 天内到期的」', 'e.g. "only show what expires within 2 days"')} onPress={onAsk} />
-      <Row icon={<Trash2 size={20} color={t.bad} />} color={t.bad} label={sure ? L('确定删掉这一块', 'Delete this block') : L('删掉这一块', 'Delete this block')}
-        sub={L('只删这一块，数据还在；改动记录里能回到删之前', 'Only the block goes; the data stays, and the board history can bring it back')}
+      <Row icon={<MessageCircle size={20} color={t.gold} />} label={L('请 Agent 修改', 'Ask the Agent to change this')} sub={L('例如「只显示 2 天内到期的」', 'e.g. "only show what expires within 2 days"')} onPress={onAsk} />
+      <Row icon={<Trash2 size={20} color={t.bad} />} color={t.bad} label={sure ? L('确认删除此区块', 'Confirm delete') : L('删除此区块', 'Delete this block')}
+        sub={L('仅删除区块，数据保留；可在看板改动记录中恢复', 'Only the block is removed; the data stays, and board history can restore it')}
         onPress={() => (sure ? onSave(board.blocks.filter((b) => b.id !== block.id), L(`删了「${name}」`, `Deleted "${name}"`)) : setSure(true))} />
       <Pressable onPress={close} accessibilityRole="button" style={({ pressed }) => [styles.menuRow, { justifyContent: 'center', opacity: pressed ? 0.6 : 1 }]}>
         <T v="headline" color={t.ink2}>{L('取消', 'Cancel')}</T>
@@ -189,10 +189,10 @@ function SectionMenu({ board, id, name, close, onSave }: { board: Board; id: str
   const down = movedSection(board, id, 1);
   return (
     <View style={{ gap: space.sm }}>
-      <MenuRow icon={<ArrowUp size={20} color={t.ink2} />} label={L('挪到上面', 'Move up')} disabled={!up} onPress={() => onSave(up, L(`把「${name}」往上挪了`, `Moved "${name}" up`))} />
-      <MenuRow icon={<View style={{ transform: [{ rotate: '180deg' }] }}><ArrowUp size={20} color={t.ink2} /></View>} label={L('挪到下面', 'Move down')} disabled={!down}
+      <MenuRow icon={<ArrowUp size={20} color={t.ink2} />} label={L('上移', 'Move up')} disabled={!up} onPress={() => onSave(up, L(`把「${name}」往上挪了`, `Moved "${name}" up`))} />
+      <MenuRow icon={<View style={{ transform: [{ rotate: '180deg' }] }}><ArrowUp size={20} color={t.ink2} /></View>} label={L('下移', 'Move down')} disabled={!down}
         onPress={() => onSave(down, L(`把「${name}」往下挪了`, `Moved "${name}" down`))} />
-      <MenuRow icon={<EyeOff size={20} color={t.ink2} />} label={L('先藏起来', 'Hide for now')} sub={L('看板最底下「藏起来的」里能放回来', 'Bring it back from "Hidden" at the bottom of the board')}
+      <MenuRow icon={<EyeOff size={20} color={t.ink2} />} label={L('隐藏', 'Hide')} sub={L('可在看板底部「已隐藏」中恢复', 'Restore it from "Hidden" at the bottom of the board')}
         onPress={() => onSave(sectionsOf(board).map((x) => (x.id === id ? { ...x, hidden: true } : x)), L(`藏起了「${name}」`, `Hid "${name}"`))} />
       <Pressable onPress={close} accessibilityRole="button" style={({ pressed }) => [styles.menuRow, { justifyContent: 'center', opacity: pressed ? 0.6 : 1 }]}>
         <T v="headline" color={t.ink2}>{L('取消', 'Cancel')}</T>
@@ -239,7 +239,7 @@ export function BoardFooter({ onHistory }: { onHistory: () => void }) {
   const fit = (packs ?? []).filter((p) => p.installedOn.includes(agent) || board.dashboard === 'none' || p.for.includes(board.dashboard) || p.for.includes(agent));
   const hasAny = board.blocks.length > 0 || board.version > 0 || alerts.length > 0 || fit.length > 0;
   if (!hasAny) return null;
-  const fail = (e: unknown) => showError(L('没改成', "Couldn't change the board"), e);
+  const fail = (e: unknown) => showError(L('修改失败', "Couldn't update the board"), e);
   const restore = (id: string, close: () => void) => {
     close();
     boardsApi.put(agent, board.blocks.map((b) => (b.id === id ? { ...b, hidden: false } : b)), L('放回了一块', 'Brought a block back')).then(() => reload()).catch(fail);
@@ -259,13 +259,13 @@ export function BoardFooter({ onHistory }: { onHistory: () => void }) {
       <View style={{ gap: space.sm }}>
         <View style={[styles.note, { backgroundColor: t.surface }]}>
           <T v="callout" color={t.ink2}>{`${a.when} · ${a.levelText}`}</T>
-          <T v="callout" color={a.preview ? t.ink : t.ink3}>{a.preview ? L(`按现在的数据会推：${a.preview}`, `With today's data: ${a.preview}`) : L('按现在的数据查出来是空的，到点不会推。', "Nothing matches today, so it won't send anything.")}</T>
-          {a.lastSent ? <T v="caption" color={t.ink3} style={{ fontWeight: '400' }}>{L(`上次推：${a.lastSent.slice(5, 16).replace('T', ' ')}`, `Last sent ${a.lastSent.slice(5, 16).replace('T', ' ')}`)}</T> : null}
+          <T v="callout" color={a.preview ? t.ink : t.ink3}>{a.preview ? L(`按当前数据将推送：${a.preview}`, `With current data: ${a.preview}`) : L('当前数据无匹配内容，到时不会推送。', 'No data matches at present, so nothing will be sent.')}</T>
+          {a.lastSent ? <T v="caption" color={t.ink3} style={{ fontWeight: '400' }}>{L(`上次推送：${a.lastSent.slice(5, 16).replace('T', ' ')}`, `Last sent ${a.lastSent.slice(5, 16).replace('T', ' ')}`)}</T> : null}
         </View>
         {a.status === 'paused'
           ? <MenuRow icon={<Bell size={20} color={t.gold} />} label={L('恢复', 'Resume')} onPress={() => setAlert(a, 'live', close)} />
-          : <MenuRow icon={<BellOff size={20} color={t.ink2} />} label={L('先暂停', 'Pause')} sub={L('不推了，规则留着，随时恢复', 'Stops sending; the rule stays and can be resumed')} onPress={() => setAlert(a, 'paused', close)} />}
-        <MenuRow icon={<Trash2 size={20} color={t.bad} />} color={t.bad} label={L('删掉这个提醒', 'Delete this reminder')} sub={L('要再开得让它重新提、你再点头', 'To bring it back it has to ask again')}
+          : <MenuRow icon={<BellOff size={20} color={t.ink2} />} label={L('暂停', 'Pause')} sub={L('停止推送，保留规则，可随时恢复', 'Stops sending; the rule stays and can be resumed')} onPress={() => setAlert(a, 'paused', close)} />}
+        <MenuRow icon={<Trash2 size={20} color={t.bad} />} color={t.bad} label={L('删除此提醒', 'Delete this reminder')} sub={L('如需重新开启，需由 Agent 再次提议并经你确认', 'To turn it back on, the Agent must propose it again for your approval')}
           onPress={() => setAlert(a, 'deleted', close)} />
         <Pressable onPress={close} accessibilityRole="button" style={({ pressed }) => [styles.menuRow, { justifyContent: 'center', opacity: pressed ? 0.6 : 1 }]}>
           <T v="headline" color={t.ink2}>{L('取消', 'Cancel')}</T>
@@ -295,26 +295,26 @@ export function BoardFooter({ onHistory }: { onHistory: () => void }) {
       ) : null}
       {nHidden ? (
         <Pressable accessibilityRole="button" onPress={() => sheet.open({
-          title: L('藏起来的', 'Hidden'),
+          title: L('已隐藏', 'Hidden'),
           content: (close) => (
             <View style={{ gap: space.sm }}>
               {hiddenSecs.map((x) => (
                 <Pressable key={x.id} onPress={() => restoreSection(x.id, close)} accessibilityRole="button" style={({ pressed }) => [styles.menuRow, { backgroundColor: t.surface, opacity: pressed ? 0.7 : 1 }]}>
                   <View style={{ flex: 1 }}><T v="headline">{x.title || x.id}</T></View>
-                  <T v="callout" color={t.gold} style={{ fontWeight: '700' }}>{L('放回来', 'Show again')}</T>
+                  <T v="callout" color={t.gold} style={{ fontWeight: '700' }}>{L('恢复显示', 'Show again')}</T>
                 </Pressable>
               ))}
               {hidden.map((b) => (
                 <Pressable key={b.id} onPress={() => restore(b.id, close)} accessibilityRole="button" style={({ pressed }) => [styles.menuRow, { backgroundColor: t.surface, opacity: pressed ? 0.7 : 1 }]}>
                   <View style={{ flex: 1 }}><T v="headline">{b.title || b.id}</T></View>
-                  <T v="callout" color={t.gold} style={{ fontWeight: '700' }}>{L('放回来', 'Show again')}</T>
+                  <T v="callout" color={t.gold} style={{ fontWeight: '700' }}>{L('恢复显示', 'Show again')}</T>
                 </Pressable>
               ))}
             </View>
           ),
         })} style={({ pressed }) => [styles.footRow, { backgroundColor: t.surface, opacity: pressed ? 0.7 : 1 }]}>
           <Eye size={18} color={t.ink2} />
-          <T v="callout" style={{ flex: 1 }}>{L(`藏起来的 ${nHidden} 块`, `${nHidden} hidden block${nHidden === 1 ? '' : 's'}`)}</T>
+          <T v="callout" style={{ flex: 1 }}>{L(`已隐藏 ${nHidden} 个区块`, `${nHidden} hidden block${nHidden === 1 ? '' : 's'}`)}</T>
           <ChevronRight size={16} color={t.ink3} />
         </Pressable>
       ) : null}
@@ -331,7 +331,7 @@ export function BoardFooter({ onHistory }: { onHistory: () => void }) {
         <T v="callout" style={{ flex: 1 }}>{L('看板改动记录', 'Board history')}</T>
         <ChevronRight size={16} color={t.ink3} />
       </Pressable>
-      <T v="caption" color={t.ink3} style={{ fontWeight: '400', textAlign: 'center', marginTop: 2 }}>{L('长按任意一块：挪位置、藏起来、让它改、删掉', 'Long-press a block to move, hide, change or delete it')}</T>
+      <T v="caption" color={t.ink3} style={{ fontWeight: '400', textAlign: 'center', marginTop: 2 }}>{L('长按任意区块：移动、隐藏、修改或删除', 'Long-press a block to move, hide, change or delete it')}</T>
     </View>
   );
 }
@@ -348,12 +348,12 @@ function PackList({ packs, agent, close, onDone }: { packs: Pack[]; agent: strin
       const lines = [...r.changes];
       setDone({ name: p.title, lines });
       onDone();
-    }).catch((e) => showError(L('没装上', "Couldn't install it"), e)).finally(() => setBusy(null));
+    }).catch((e) => showError(L('安装失败', "Couldn't install"), e)).finally(() => setBusy(null));
   };
   if (done) {
     return (
       <View style={{ gap: space.md }}>
-        <T v="headline">{L(`装好了「${done.name}」`, `Installed "${done.name}"`)}</T>
+        <T v="headline">{L(`已安装「${done.name}」`, `Installed "${done.name}"`)}</T>
         {done.lines.map((x, i) => <T key={`${i}-${x}`} v="callout" color={t.ink2}>{`· ${x}`}</T>)}
         <Pressable onPress={close} accessibilityRole="button" style={({ pressed }) => [styles.menuRow, { justifyContent: 'center', backgroundColor: t.surface, opacity: pressed ? 0.6 : 1 }]}>
           <T v="headline" color={t.gold}>{L('好', 'OK')}</T>
@@ -369,16 +369,16 @@ function PackList({ packs, agent, close, onDone }: { packs: Pack[]; agent: strin
           <View key={p.name} style={[styles.note, { backgroundColor: t.surface }]}>
             <View style={{ flexDirection: 'row', alignItems: 'center', gap: space.sm }}>
               <T v="headline" style={{ flex: 1 }}>{p.title}</T>
-              {on ? <T v="caption" color={t.ink3}>{L('已装', 'Installed')}</T> : (
+              {on ? <T v="caption" color={t.ink3}>{L('已安装', 'Installed')}</T> : (
                 <Pressable onPress={() => install(p)} disabled={!!busy} accessibilityRole="button" hitSlop={8} style={({ pressed }) => ({ opacity: busy ? 0.5 : pressed ? 0.6 : 1 })}>
-                  {busy === p.name ? <ActivityIndicator size="small" color={t.gold} /> : <T v="callout" color={t.gold} style={{ fontWeight: '700' }}>{L('装上', 'Install')}</T>}
+                  {busy === p.name ? <ActivityIndicator size="small" color={t.gold} /> : <T v="callout" color={t.gold} style={{ fontWeight: '700' }}>{L('安装', 'Install')}</T>}
                 </Pressable>
               )}
             </View>
             {p.summary ? <T v="callout" color={t.ink2}>{p.summary}</T> : null}
             <T v="caption" color={t.ink3} style={{ fontWeight: '400' }}>{[
               p.blocks.map((b) => b.title).filter(Boolean).join(L('、', ', ')),
-              p.alerts.length ? L(`${p.alerts.length} 个提醒（装了以后另外问你）`, `${p.alerts.length} reminder${p.alerts.length === 1 ? '' : 's'} (asked separately)`) : '',
+              p.alerts.length ? L(`${p.alerts.length} 个提醒（安装后另行确认）`, `${p.alerts.length} reminder${p.alerts.length === 1 ? '' : 's'} (asked separately)`) : '',
             ].filter(Boolean).join(' · ')}</T>
           </View>
         );
@@ -417,31 +417,31 @@ export function UndoStrip() {
   const run = (fn: () => Promise<unknown>, after?: () => void) => {
     if (busy) return;
     setBusy(true);
-    fn().then(() => { after?.(); return reload(); }).catch((e) => showError(L('没做成', "Didn't go through"), e)).finally(() => setBusy(false));
+    fn().then(() => { after?.(); return reload(); }).catch((e) => showError(L('操作失败', "Couldn't complete the action"), e)).finally(() => setBusy(false));
   };
   if (undone) {
     return (
       <View style={[styles.strip, { backgroundColor: t.surface2 }]}>
-        <T v="callout" color={t.ink2} style={{ flex: 1 }}>{L('撤回了，看板回到加之前的样子。记下的数据都还在。', 'Undone: the board is back to how it was. The data you recorded is still there.')}</T>
+        <T v="callout" color={t.ink2} style={{ flex: 1 }}>{L('已撤回，看板已恢复到添加前的状态。已记录的数据仍保留。', 'Undone: the board is back to how it was. The data you recorded is still there.')}</T>
         <StripBtn label={L('恢复', 'Redo')} color={t.gold} disabled={busy} onPress={() => run(() => boardsApi.revert(agent, undone.version), () => setUndone(null))} />
       </View>
     );
   }
   if (!strip) return null;
   const titles = board?.blocks.filter((b) => strip.added.includes(b.id)).map((b) => b.title || b.actions?.map((a) => a.label).join(' / ') || b.id) ?? [];
-  const head = strip.note || (titles.length ? L(`加了 ${titles.length} 块`, `Added ${titles.length} block${titles.length === 1 ? '' : 's'}`) : L('看板改了', 'The board changed'));
+  const head = strip.note || (titles.length ? L(`新增 ${titles.length} 个区块`, `Added ${titles.length} block${titles.length === 1 ? '' : 's'}`) : L('看板已更新', 'The board was updated'));
   return (
     <View style={[styles.strip, { backgroundColor: t.goldSoft, flexDirection: 'column', alignItems: 'stretch', gap: 6 }]}>
       <View style={{ flexDirection: 'row', gap: 10, alignItems: 'flex-start' }}>
         <View style={{ marginTop: 2 }}><Sparkles size={18} color={t.gold} /></View>
         <View style={{ flex: 1, gap: 2 }}>
           <T v="headline" style={{ fontSize: 15 }}>{head}</T>
-          {titles.length ? <T v="callout" color={t.ink2} style={{ fontSize: 13 }}>{L('标「新」的就是。', 'The ones marked New.')}</T> : null}
+          {titles.length ? <T v="callout" color={t.ink2} style={{ fontSize: 13 }}>{L('即标有「新」的区块。', 'The ones marked New.')}</T> : null}
         </View>
       </View>
       <View style={{ flexDirection: 'row', justifyContent: 'flex-end', gap: 14 }}>
         <StripBtn label={L('撤回', 'Undo')} color={t.gold} disabled={busy} onPress={() => run(() => boardsApi.revert(agent, strip.undoTo), () => setUndone({ version: strip.version }))} />
-        <StripBtn label={L('知道了', 'Got it')} color={t.ink2} disabled={busy} onPress={() => run(() => boardsApi.ack(agent))} />
+        <StripBtn label={L('关闭', 'Dismiss')} color={t.ink2} disabled={busy} onPress={() => run(() => boardsApi.ack(agent))} />
       </View>
     </View>
   );

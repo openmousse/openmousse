@@ -48,7 +48,7 @@ function PickerSheet({ icon, color, onIcon, onColor, close }: { icon: GroupIcon 
     <View>
       <View style={{ alignItems: 'center' }}><GroupBadge icon={i} color={c} size={64} /></View>
       <IconColorPicker icon={i} color={c} onIcon={(v) => { setI(v); onIcon(v); }} onColor={(v) => { setC(v); onColor(v); }} />
-      <View style={{ marginTop: space.xl }}><Btn label={L('好了', 'Done')} onPress={close} /></View>
+      <View style={{ marginTop: space.xl }}><Btn label={L('完成', 'Done')} onPress={close} /></View>
     </View>
   );
 }
@@ -66,12 +66,12 @@ function DeleteSheet({ g, close, onDeleted }: { g: Group; close: () => void; onD
   };
   return (
     <View style={{ gap: space.md }}>
-      <T v="callout" color={t.ink2}>{!claw.caps.agentWorkspaces ? L(`它从 Agents 里拿掉，${claw.name} 那边什么都不动。这里的对话记录、日志和卡片留着当历史。`,
-        `It's removed from Agents; nothing changes on ${claw.name}'s side. Its chat history, journal and cards here stay as history.`) : L('它在服务器上的 OpenClaw agent 会去掉，工作区和记忆归档到 archive/（不删）。这里的对话记录、日志和卡片留着当历史。', 'Its OpenClaw agent on the server is removed, and its workspace and memory are moved to archive/ (not deleted). Its chats, journal and cards here are kept as history.')}</T>
-      {err ? <T v="callout" color={t.bad}>{L(`删不了：${err}`, `Couldn't delete it: ${err}`)}</T> : null}
+      <T v="callout" color={t.ink2}>{!claw.caps.agentWorkspaces ? L(`此 Agent 将从 Agents 中移除，${claw.name} 端不受影响。此处的对话记录、日志和卡片将保留为历史。`,
+        `It's removed from Agents; nothing changes on ${claw.name}'s side. Its chat history, journal and cards here are kept as history.`) : L('服务器上对应的 OpenClaw agent 将被移除，工作区和记忆归档到 archive/（不会删除）。此处的对话记录、日志和卡片将保留为历史。', 'Its OpenClaw agent on the server is removed, and its workspace and memory are moved to archive/ (not deleted). Its chats, journal and cards here are kept as history.')}</T>
+      {err ? <T v="callout" color={t.bad}>{L(`删除失败：${err}`, `Couldn't delete it: ${err}`)}</T> : null}
       <View style={{ flexDirection: 'row', gap: space.sm }}>
-        <Btn flex kind="quiet" label={L('留着', 'Keep')} onPress={close} />
-        <Btn flex kind="danger" label={busy ? L('正在删…', 'Deleting…') : L('删除', 'Delete')} onPress={remove} />
+        <Btn flex kind="quiet" label={L('保留', 'Keep')} onPress={close} />
+        <Btn flex kind="danger" label={busy ? L('正在删除…', 'Deleting…') : L('删除', 'Delete')} onPress={remove} />
       </View>
     </View>
   );
@@ -91,7 +91,7 @@ function EditGroupForm() {
     return (
       <Screen>
         <Header onCancel={() => nav.goBack()} />
-        <T v="callout" color={t.ink2} style={{ padding: space.lg }}>{booting || loading.groups ? L('正在读…', 'Loading…') : L('找不到这个 Agent，可能已经删了。', "Can't find this agent. It may have been deleted.")}</T>
+        <T v="callout" color={t.ink2} style={{ padding: space.lg }}>{booting || loading.groups ? L('正在加载…', 'Loading…') : L('未找到此 Agent，可能已被删除。', "Can't find this Agent. It may have been deleted.")}</T>
       </Screen>
     );
   }
@@ -129,19 +129,19 @@ function EditGroupBody({ g }: { g: Group }) {
 
   const save = () => {
     if (busy) return;
-    if (!name.trim()) { setErr(L('名字不能空着', "The name can't be empty")); return; }
+    if (!name.trim()) { setErr(L('名称不能为空', "The name can't be empty")); return; }
     if (!dirty) { nav.goBack(); return; }
-    if (!connected) { setErr(L('没连上服务器，存不了', "Not connected to the server, can't save")); return; }
+    if (!connected) { setErr(L('未连接服务器，无法保存', "Not connected to the server, can't save")); return; }
     setBusy(true);
     setErr('');
     updateGroup(g.id, patch).then(() => nav.goBack()).catch((e) => {
       // 405：服务器还是老版本，没有 PATCH /api/groups/{id}
-      setErr(httpStatus(e) === 405 ? L('服务器还不支持改 Agent，先更新服务器。', "This server can't edit agents yet. Update the server first.") : errText(e));
+      setErr(httpStatus(e) === 405 ? L('服务器暂不支持编辑 Agent，请先更新服务器。', "This server can't edit Agents yet. Update the server first.") : errText(e));
       setBusy(false);
     });
   };
   const openPicker = () => sheet.open({
-    title: L('换图标和颜色', 'Icon and color'),
+    title: L('图标和颜色', 'Icon and color'),
     content: (close) => <PickerSheet icon={icon} color={color} onIcon={setIcon} onColor={setColor} close={close} />,
   });
   const confirmDelete = () => sheet.open({
@@ -155,34 +155,34 @@ function EditGroupBody({ g }: { g: Group }) {
       <Header onCancel={() => nav.goBack()} onSave={save} canSave={dirty && !busy && !!name.trim()} busy={busy} />
       <ScrollView contentContainerStyle={{ padding: space.lg, paddingTop: 22, paddingBottom: space.xxl + insets.bottom }} keyboardShouldPersistTaps="handled" automaticallyAdjustKeyboardInsets keyboardDismissMode="interactive">
         <View style={{ alignItems: 'center', gap: 10 }}>
-          <Pressable onPress={openPicker} accessibilityRole="button" accessibilityLabel={L('换图标和颜色', 'Change icon and color')}>
+          <Pressable onPress={openPicker} accessibilityRole="button" accessibilityLabel={L('更换图标和颜色', 'Change icon and color')}>
             <GroupBadge icon={icon ?? g.icon} color={color} size={76} />
           </Pressable>
           <Pressable onPress={openPicker} hitSlop={8} accessibilityRole="button">
-            <T v="callout" color={t.gold} style={{ fontWeight: '600' }}>{L('换图标和颜色', 'Change icon and color')}</T>
+            <T v="callout" color={t.gold} style={{ fontWeight: '600' }}>{L('更换图标和颜色', 'Change icon and color')}</T>
           </Pressable>
         </View>
 
-        <SectionLabel>{L('名字', 'Name')}</SectionLabel>
-        <TextInput value={name} onChangeText={(v) => { setName(v); setErr(''); }} placeholderTextColor={t.ink3} placeholder={L('比如：睡眠', 'e.g. Sleep')}
-          accessibilityLabel={L('Agent 名字', 'Agent name')} style={[type.body, styles.input, { backgroundColor: t.surface, color: t.ink }]} />
+        <SectionLabel>{L('名称', 'Name')}</SectionLabel>
+        <TextInput value={name} onChangeText={(v) => { setName(v); setErr(''); }} placeholderTextColor={t.ink3} placeholder={L('例如：睡眠', 'e.g. Sleep')}
+          accessibilityLabel={L('Agent 名称', 'Agent name')} style={[type.body, styles.input, { backgroundColor: t.surface, color: t.ink }]} />
 
-        <SectionLabel>{L('它负责什么', 'What it does')}</SectionLabel>
+        <SectionLabel>{L('职责', 'What it does')}</SectionLabel>
         <TextInput value={purpose} onChangeText={setPurpose} multiline placeholderTextColor={t.ink3}
-          placeholder={L('一两句话说清职责。', 'Its job in a sentence or two.')} accessibilityLabel={L('Agent 职责', 'Agent purpose')}
+          placeholder={L('用一两句话描述职责。', 'Its job in a sentence or two.')} accessibilityLabel={L('Agent 职责', 'Agent purpose')}
           style={[type.body, styles.input, { backgroundColor: t.surface, color: t.ink, minHeight: 96, textAlignVertical: 'top' }]} />
-        <T v="callout" color={t.ink2} style={styles.help}>{L('改了这里，它自己的说明也会跟着改，下一条消息开始按新的来。', 'Change this and its own instructions change too, starting from the next message.')}</T>
+        <T v="callout" color={t.ink2} style={styles.help}>{L('修改后，Agent 自身的说明会同步更新，从下一条消息起生效。', 'Changing this also updates its own instructions, starting from the next message.')}</T>
 
         <SectionLabel>{L('默认模型', 'Default model')}</SectionLabel>
         <ModelField value={modelId} onChange={setModelId} />
 
         {chips.length ? (
           <>
-            <SectionLabel>{L('用到的数据', 'Data it uses')}</SectionLabel>
+            <SectionLabel>{L('使用的数据', 'Data it uses')}</SectionLabel>
             <View style={styles.chips}>
               {chips.map((c) => (
                 <View key={c.label} style={[styles.chip, { backgroundColor: c.on ? t.goodSoft : t.surface2 }]}>
-                  <T v="caption" color={c.on ? t.good : t.ink2} style={{ fontSize: 13, fontWeight: '600' }}>{c.on ? c.label : L(`${c.label}（没接）`, `${c.label} (not connected)`)}</T>
+                  <T v="caption" color={c.on ? t.good : t.ink2} style={{ fontSize: 13, fontWeight: '600' }}>{c.on ? c.label : L(`${c.label}（未连接）`, `${c.label} (not connected)`)}</T>
                 </View>
               ))}
             </View>
@@ -193,9 +193,9 @@ function EditGroupBody({ g }: { g: Group }) {
 
         <View style={[styles.danger, { backgroundColor: t.surface }]}>
           <Pressable onPress={confirmDelete} hitSlop={8} accessibilityRole="button" style={({ pressed }) => ({ alignSelf: 'flex-start', opacity: pressed ? 0.6 : 1 })}>
-            <T v="headline" color={t.bad}>{L('删除这个 Agent', 'Delete this agent')}</T>
+            <T v="headline" color={t.bad}>{L('删除此 Agent', 'Delete this Agent')}</T>
           </Pressable>
-          <T v="callout" color={t.ink2} style={{ fontSize: 13, lineHeight: 19 }}>{L('它的工作区和记忆移到 archive/，不会删；对话记录、日志和卡片都留着。', 'Its workspace and memory move to archive/ and are not deleted; its chats, journal and cards all stay.')}</T>
+          <T v="callout" color={t.ink2} style={{ fontSize: 13, lineHeight: 19 }}>{L('其工作区和记忆将移至 archive/，不会删除；对话记录、日志和卡片均会保留。', 'Its workspace and memory move to archive/ and are not deleted; its chats, journal and cards all stay.')}</T>
         </View>
       </ScrollView>
     </Screen>
@@ -210,11 +210,11 @@ function Header({ onCancel, onSave, canSave, busy }: { onCancel: () => void; onS
       <Pressable onPress={onCancel} hitSlop={10} accessibilityRole="button" style={styles.side}>
         <T v="headline" color={t.ink2} style={{ fontWeight: '400' }}>{L('取消', 'Cancel')}</T>
       </Pressable>
-      <T v="headline" numberOfLines={1} style={{ flex: 1, textAlign: 'center' }}>{L('编辑 Agent', 'Edit agent')}</T>
+      <T v="headline" numberOfLines={1} style={{ flex: 1, textAlign: 'center' }}>{L('编辑 Agent', 'Edit Agent')}</T>
       <View style={[styles.side, { alignItems: 'flex-end' }]}>
         {onSave ? (
           <Pressable onPress={onSave} disabled={!canSave} hitSlop={10} accessibilityRole="button" accessibilityState={{ disabled: !canSave, busy: !!busy }}>
-            <T v="headline" color={canSave ? t.gold : t.ink3} style={{ fontWeight: '700' }}>{busy ? L('保存中…', 'Saving…') : L('保存', 'Save')}</T>
+            <T v="headline" color={canSave ? t.gold : t.ink3} style={{ fontWeight: '700' }}>{busy ? L('正在保存…', 'Saving…') : L('保存', 'Save')}</T>
           </Pressable>
         ) : null}
       </View>

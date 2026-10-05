@@ -34,11 +34,11 @@ export function dueText(due: string): string {
 export function daysLeft(due: string): string {
   const d = new Date(`${due.slice(0, 10)}T${due.length > 10 ? due.slice(11, 16) : '23:59'}:00`);
   const ms = d.getTime() - Date.now();
-  if (ms < 0) return L('过了', 'overdue');
+  if (ms < 0) return L('已逾期', 'overdue');
   const h = Math.floor(ms / 3600000);
-  if (h < 24) return L(`还有 ${h} 小时`, `${h}h left`);
+  if (h < 24) return L(`剩余 ${h} 小时`, `${h}h left`);
   const n = Math.ceil(h / 24);
-  return L(`还有 ${n} 天`, `${n} day${n > 1 ? 's' : ''} left`);
+  return L(`剩余 ${n} 天`, `${n} day${n > 1 ? 's' : ''} left`);
 }
 
 /** 电脑上打开学习台：一次性链接（10 分钟、只能用一次），拷到剪贴板；网页版直接开一个新标签。 */
@@ -58,17 +58,17 @@ export function DeskLinkRow({ params, compact }: { params?: { course?: string; p
   const [state, setState] = useState<'' | 'busy' | 'copied' | 'opened'>('');
   const press = () => {
     setState('busy');
-    copyDeskLink(params).then(setState, (e) => { setState(''); showError(L('没拿到链接', "Couldn't get a link"), e); });
+    copyDeskLink(params).then(setState, (e) => { setState(''); showError(L('获取链接失败', "Couldn't get a link"), e); });
   };
   return (
     <View style={styles.deskRow}>
       <Monitor size={16} color={t.ink2} />
       <T v="callout" color={t.ink2} style={{ flex: 1, fontSize: 13 }}>
-        {state === 'copied' ? L('链接拷好了：10 分钟内在电脑浏览器里打开，只能用一次。', 'Link copied: open it in a browser on your computer within 10 minutes; it works once.')
-          : compact ? L('电脑上打开', 'Open on a computer') : L('电脑上打开：课件和学习页并排看', 'Open on a computer: slides and notes side by side')}
+        {state === 'copied' ? L('已复制链接：请在 10 分钟内用电脑浏览器打开，仅可使用一次。', 'Link copied: open it in a browser on your computer within 10 minutes; it works once.')
+          : compact ? L('在电脑上打开', 'Open on a computer') : L('在电脑上打开：并排查看课件和学习页', 'Open on a computer: slides and notes side by side')}
       </T>
       <Pressable onPress={press} disabled={state === 'busy'} accessibilityRole="button" style={({ pressed }) => [styles.smallBtn, { borderColor: t.line, backgroundColor: t.surface, opacity: pressed || state === 'busy' ? 0.6 : 1 }]}>
-        <T v="callout" style={{ fontSize: 13 }}>{Platform.OS === 'web' ? L('打开', 'Open') : state === 'copied' ? L('再拷一次', 'Copy again') : L('复制链接', 'Copy link')}</T>
+        <T v="callout" style={{ fontSize: 13 }}>{Platform.OS === 'web' ? L('打开', 'Open') : state === 'copied' ? L('再次复制', 'Copy again') : L('复制链接', 'Copy link')}</T>
       </Pressable>
     </View>
   );
@@ -104,8 +104,8 @@ export function nextLine(h: study.StudyHome) {
   const n = h.next;
   if (!n) return null;
   return {
-    title: L(`接着学 ${n.code} ${n.n != null ? `S${n.n} ` : ''}${n.title}`, `Continue ${n.code} ${n.n != null ? `S${n.n} ` : ''}${n.title}`),
-    sub: n.step ? [L(`第 ${n.step} / ${n.steps} 步`, `Step ${n.step} of ${n.steps}`), n.stepTitle, n.minutes ? L(`${n.minutes} 分钟`, `${n.minutes} min`) : ''].filter(Boolean).join(' · ') : L('还没开始', 'Not started'),
+    title: L(`继续学习 ${n.code} ${n.n != null ? `S${n.n} ` : ''}${n.title}`, `Continue ${n.code} ${n.n != null ? `S${n.n} ` : ''}${n.title}`),
+    sub: n.step ? [L(`第 ${n.step} / ${n.steps} 步`, `Step ${n.step} of ${n.steps}`), n.stepTitle, n.minutes ? L(`${n.minutes} 分钟`, `${n.minutes} min`) : ''].filter(Boolean).join(' · ') : L('尚未开始', 'Not started'),
   };
 }
 
@@ -134,7 +134,7 @@ function DeskCard({ h }: { h: study.StudyHome }) {
             onPress={d.courseId ? () => nav.navigate('StudyHome', { course: d.courseId }) : undefined} /> : null}
         </View>
       ) : null}
-      <Btn label={L('开始学', 'Start studying')} onPress={() => nav.navigate('StudyHome', {})} />
+      <Btn label={L('开始学习', 'Start studying')} onPress={() => nav.navigate('StudyHome', {})} />
       <DeskLinkRow />
     </Card>
   );
@@ -154,8 +154,8 @@ function CoursesCard({ h }: { h: study.StudyHome }) {
               <View style={{ flexDirection: 'row', alignItems: 'baseline', justifyContent: 'space-between', gap: 8 }}>
                 <T v="headline" numberOfLines={1} style={{ fontSize: 15, flexShrink: 1 }}>{c.title}</T>
                 <T v="callout" color={t.ink2} style={{ fontSize: 13 }}>{c.profile
-                  ? L(`学完 ${c.done} · 已上 ${c.taught}`, `${c.done} done · ${c.taught} taught`)
-                  : L(`学完 ${c.done} · 学习页 ${c.taught}`, `${c.done} done · ${c.taught} pages`)}</T>
+                  ? L(`已学完 ${c.done} · 已上课 ${c.taught}`, `${c.done} done · ${c.taught} taught`)
+                  : L(`已学完 ${c.done} · 学习页 ${c.taught}`, `${c.done} done · ${c.taught} pages`)}</T>
               </View>
               <View style={[styles.bar, { backgroundColor: t.track }]}>
                 <View style={[styles.bar, { width: `${c.total ? Math.round((100 * c.done) / c.total) : 0}%`, backgroundColor: t.cyan }]} />
@@ -165,7 +165,7 @@ function CoursesCard({ h }: { h: study.StudyHome }) {
         ))}
         <Pressable onPress={() => nav.navigate('AddCourse', {})} accessibilityRole="button" style={({ pressed }) => [styles.addRow, { opacity: pressed ? 0.6 : 1 }]}>
           <Plus size={18} color={t.cyan} />
-          <T v="headline" color={t.cyan} style={{ fontSize: 15 }}>{L('加一门课', 'Add a course')}</T>
+          <T v="headline" color={t.cyan} style={{ fontSize: 15 }}>{L('添加课程', 'Add a course')}</T>
         </Pressable>
       </Card>
     </View>
@@ -180,17 +180,17 @@ export function StudyEmpty({ onChat }: { onChat: () => void }) {
     <View style={{ gap: space.md, marginTop: space.sm }}>
       <Card style={{ alignItems: 'center', gap: 14, paddingVertical: 30 }}>
         <View style={[styles.hero, { backgroundColor: t.cyanSoft }]}><BookOpen size={36} color={t.cyan} /></View>
-        <T v="title" style={{ fontWeight: '700' }}>{L('学习台还是空的', 'The study desk is empty')}</T>
-        <T v="body" color={t.ink2} style={{ textAlign: 'center', fontSize: 15, lineHeight: 22 }}>{L('加第一门课。说说你手上有什么：大纲、课件，或者课程网站，它告诉你去哪拿、拿什么。',
-          'Add your first course. Say what you have (a syllabus, files or a course site) and it tells you where to find them and what to get.')}</T>
-        <View style={{ alignSelf: 'stretch', marginTop: 6 }}><Btn label={L('加一门课', 'Add a course')} onPress={() => nav.navigate('AddCourse', {})} /></View>
+        <T v="title" style={{ fontWeight: '700' }}>{L('学习台暂无课程', 'The study desk is empty')}</T>
+        <T v="body" color={t.ink2} style={{ textAlign: 'center', fontSize: 15, lineHeight: 22 }}>{L('添加第一门课程。选择你已有的材料（大纲、课件或课程网站），即可查看获取位置和所需内容。',
+          'Add your first course. Choose what you have (a syllabus, files or a course site) to see where to find them and what to get.')}</T>
+        <View style={{ alignSelf: 'stretch', marginTop: 6 }}><Btn label={L('添加课程', 'Add a course')} onPress={() => nav.navigate('AddCourse', {})} /></View>
       </Card>
       <Card style={{ gap: 10 }}>
-        <T v="callout" color={t.ink2} style={{ fontWeight: '600' }}>{L('也可以在对话里说', 'Or just say it in the chat')}</T>
+        <T v="callout" color={t.ink2} style={{ fontWeight: '600' }}>{L('也可以在对话中添加', 'Or add it in the chat')}</T>
         <Pressable onPress={onChat} accessibilityRole="button" style={[styles.bubble, { backgroundColor: t.goldSoft }]}>
           <T v="body" style={{ fontSize: 15 }}>{L('这学期有一门行为经济学，大纲在附件里', 'I have a behavioural economics course this term; the syllabus is attached')}</T>
         </Pressable>
-        <T v="callout" color={t.ink3} style={{ fontSize: 13 }}>{L('它会照同样的几步带你加，缺什么就问你。', "It walks you through the same steps and asks for anything missing.")}</T>
+        <T v="callout" color={t.ink3} style={{ fontSize: 13 }}>{L('学习 Agent 会按相同步骤引导添加，缺少材料时会向你确认。', "The study Agent follows the same steps and asks for anything missing.")}</T>
       </Card>
       <View style={{ paddingHorizontal: space.lg }}><DeskLinkRow compact /></View>
     </View>
@@ -202,7 +202,7 @@ export function StudyBoard({ onChat }: { onChat: () => void }) {
   const t = useTheme();
   const { data, error } = useStudyHome();
   if (!data) {
-    return <Card style={{ marginTop: space.md }}><T v="callout" color={error ? t.bad : t.ink2}>{error ? L(`学习台没读到：${error}`, `Couldn't load the study desk: ${error}`) : L('正在读…', 'Loading…')}</T></Card>;
+    return <Card style={{ marginTop: space.md }}><T v="callout" color={error ? t.bad : t.ink2}>{error ? L(`无法加载学习台：${error}`, `Couldn't load the study desk: ${error}`) : L('正在加载…', 'Loading…')}</T></Card>;
   }
   if (!data.courses.length) return <SectionedBoard els={{ 'study.desk': <StudyEmpty onChat={onChat} />, 'study.courses': null }} />;
   return <SectionedBoard els={{ 'study.desk': <DeskCard h={data} />, 'study.courses': <CoursesCard h={data} /> }} />;
@@ -227,7 +227,7 @@ export function StudyTodayRow() {
 
 /** 打开课件：PDF 这类在 app 里用对话附件的预览页看，别的（视频、网页）用浏览器。 */
 export function openStudyLink(url: string) {
-  Linking.openURL(url).catch((e) => showError(L('打不开', "Couldn't open it"), e));
+  Linking.openURL(url).catch((e) => showError(L('无法打开', "Couldn't open it"), e));
 }
 
 const styles = StyleSheet.create({

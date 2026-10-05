@@ -39,7 +39,7 @@ const leafTitle = (text: string) => { const t = memoryTitle(text); return t.ends
 /** 展开一根枝时上面那行小字：它管什么，再加上哪个 Agent 记下的默认挂在这里。 */
 function branchNote(b: TreeBranch): string {
   const who = b.agents.map((a) => a.name);
-  const agents = who.length ? L(`Agent「${who.join('」「')}」记下的默认挂在这里。`, `What the ${who.join(', ')} agent saves lands here.`) : '';
+  const agents = who.length ? L(`Agent「${who.join('」「')}」记录的内容默认挂在这里。`, `What the ${who.join(', ')} Agent saves goes here by default.`) : '';
   if (!b.about) return agents;
   const about = lang() === 'zh' && !/[。！？.!?]$/.test(b.about) ? `${b.about}。` : b.about;
   return [about, agents].filter(Boolean).join(lang() === 'zh' ? '' : ' ');
@@ -69,7 +69,7 @@ function LeafRow({ leaf, where, first }: { leaf: TreeLeaf; where?: string; first
   const t = useTheme();
   const open = useLeafSheet();
   return (
-    <Pressable onPress={() => open(leaf)} accessibilityRole="button" accessibilityHint={L('看全文和操作', 'Shows the full text and actions')}
+    <Pressable onPress={() => open(leaf)} accessibilityRole="button" accessibilityHint={L('查看全文和操作', 'Shows the full text and actions')}
       style={({ pressed }) => [styles.leaf, { opacity: pressed ? 0.6 : 1 }, !first && { borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: t.line }]}>
       <T v="body" numberOfLines={2} style={styles.leafText}>{leafTitle(leaf.text)}</T>
       <View style={styles.leafMeta}>
@@ -103,7 +103,7 @@ function LeafSheet({ leaf, close }: { leaf: TreeLeaf; close: () => void }) {
   const meta = [leaf.originName, longDate(leaf.observedAt)].filter(Boolean).join(' · ');
   const confirm = () => {
     setBusy(true);
-    treeAction(leaf.id, 'confirm').then(close).catch((e) => { showError(L('没确认上', "Couldn't confirm it"), e); setBusy(false); });
+    treeAction(leaf.id, 'confirm').then(close).catch((e) => { showError(L('确认失败', "Couldn't confirm it"), e); setBusy(false); });
   };
   return (
     <View style={{ gap: space.md }}>
@@ -112,20 +112,20 @@ function LeafSheet({ leaf, close }: { leaf: TreeLeaf; close: () => void }) {
       </View>
       <View style={{ gap: 4 }}>
         <T v="callout" color={t.ink2}>{meta}</T>
-        {leaf.source === 'prune' && leaf.origin !== 'prune' ? <T v="caption" color={t.ink3} style={{ fontWeight: '400' }}>{L('每周修剪时改写过', 'Rewritten during the weekly pruning')}</T> : null}
+        {leaf.source === 'prune' && leaf.origin !== 'prune' ? <T v="caption" color={t.ink3} style={{ fontWeight: '400' }}>{L('已在每周修剪时改写', 'Rewritten during the weekly pruning')}</T> : null}
         {leaf.tags.length ? <T v="caption" color={t.ink3} style={{ fontWeight: '400' }}>{leaf.tags.map((x) => `#${x}`).join(' ')}</T> : null}
       </View>
       {leaf.status === 'pending' ? (
         <>
-          <T v="caption" color={t.warn} style={{ fontWeight: '400' }}>{L(`${spaced(leaf.originName)}记下的，还等你确认。确认前各平台读到它都会标着「待确认」。`, `${leaf.originName} saved this and it's waiting for you. Until you confirm, every app sees it marked as unconfirmed.`)}</T>
+          <T v="caption" color={t.warn} style={{ fontWeight: '400' }}>{L(`${spaced(leaf.originName)}记录的内容，等待你确认。确认前，各平台读取时均会标注「待确认」。`, `${leaf.originName} saved this and it's waiting for you. Until you confirm, every app sees it marked as unconfirmed.`)}</T>
           <Btn label={busy ? L('正在确认…', 'Confirming…') : L('确认', 'Confirm')} icon={<Check size={16} color={t.onGold} />} onPress={() => { if (!busy) confirm(); }} />
         </>
       ) : null}
       <View style={{ flexDirection: 'row', gap: space.sm }}>
-        {branchable ? <Btn flex kind="quiet" label={L('挪到别的枝', 'Move')} icon={<GitBranch size={16} color={t.ink} />}
-          onPress={() => sheet.open({ title: L('挪到哪根枝？', 'Move it to which branch?'), content: (c) => <MoveSheet leaf={leaf} close={c} /> })} /> : null}
+        {branchable ? <Btn flex kind="quiet" label={L('移到其他枝', 'Move')} icon={<GitBranch size={16} color={t.ink} />}
+          onPress={() => sheet.open({ title: L('移到哪根枝？', 'Move it to which branch?'), content: (c) => <MoveSheet leaf={leaf} close={c} /> })} /> : null}
         <Btn flex kind="danger" label={L('忘记', 'Forget')} icon={<Trash2 size={16} color={t.bad} />}
-          onPress={() => sheet.open({ title: L('忘记这一条？', 'Forget this?'), content: (c) => <ForgetSheet leaf={leaf} close={c} /> })} />
+          onPress={() => sheet.open({ title: L('忘记此条？', 'Forget this?'), content: (c) => <ForgetSheet leaf={leaf} close={c} /> })} />
       </View>
     </View>
   );
@@ -140,18 +140,18 @@ function ForgetSheet({ leaf, close }: { leaf: TreeLeaf; close: () => void }) {
     <View style={{ gap: space.md }}>
       <T v="body" color={t.ink2}>{L(`「${leaf.text}」`, `"${leaf.text}"`)}</T>
       <T v="callout" color={t.ink3}>{notes ? L(
-        '内容会从笔记里删掉，只在归档里留一个空壳，哪个平台都不会再读到它。笔记文件夹要是有同步（Obsidian Sync、iCloud、git），它们的版本历史里可能还留着旧版。',
+        '内容将从笔记中删除，仅在归档中保留空壳，任何平台都将无法再读取。若笔记文件夹启用了同步（Obsidian Sync、iCloud、git），其版本历史中可能仍保留旧版本。',
         "The text is deleted from the note, leaving only an empty shell in the archive, and no app will read it again. If the folder is synced (Obsidian Sync, iCloud, git), their version history may still hold the old copy.",
       ) : L(
-        '内容会删掉，只留一个没有正文的空壳（记着哪天忘的），哪个平台都不会再读到它。',
+        '内容将被删除，仅保留一个无正文的空壳（记录遗忘日期），任何平台都将无法再读取。',
         'The text is deleted, leaving only an empty shell that records when it was forgotten, and no app will read it again.',
       )}</T>
       <View style={{ flexDirection: 'row', gap: space.sm }}>
-        <Btn flex kind="quiet" label={L('留着', 'Keep')} onPress={close} />
-        <Btn flex kind="danger" label={busy ? L('正在忘…', 'Forgetting…') : L('忘记', 'Forget')} onPress={() => {
+        <Btn flex kind="quiet" label={L('保留', 'Keep')} onPress={close} />
+        <Btn flex kind="danger" label={busy ? L('正在忘记…', 'Forgetting…') : L('忘记', 'Forget')} onPress={() => {
           if (busy) return;
           setBusy(true);
-          treeAction(leaf.id, 'forget').then(close).catch((e) => { showError(L('没忘掉', "Couldn't forget it"), e); setBusy(false); });
+          treeAction(leaf.id, 'forget').then(close).catch((e) => { showError(L('忘记失败', "Couldn't forget it"), e); setBusy(false); });
         }} />
       </View>
     </View>
@@ -168,7 +168,7 @@ function MoveSheet({ leaf, close }: { leaf: TreeLeaf; close: () => void }) {
   const move = (name: string) => {
     if (busy || name === leaf.branch) return;
     setBusy(name);
-    treeAction(leaf.id, 'move', name).then(close).catch((e) => { showError(L('没挪成', "Couldn't move it"), e); setBusy(null); });
+    treeAction(leaf.id, 'move', name).then(close).catch((e) => { showError(L('移动失败', "Couldn't move it"), e); setBusy(null); });
   };
   const groups: { name: string; label: string; big: boolean }[][] = [[{ name: trunk.name, label: L(`直接挂在主干上（${trunk.name}）`, `Straight on the trunk (${trunk.name})`), big: false }]];
   for (const b of branches) {
@@ -181,15 +181,15 @@ function MoveSheet({ leaf, close }: { leaf: TreeLeaf; close: () => void }) {
       <Pressable key={c.name} onPress={() => move(c.name)} disabled={here || !!busy} accessibilityRole="button" accessibilityState={{ selected: here, disabled: here || !!busy }}
         style={({ pressed }) => [styles.chip, { backgroundColor: here ? t.cyanSoft : c.big ? t.surface2 : t.surface, borderColor: here ? t.cyan : t.line, opacity: pressed || (busy && busy !== c.name) ? 0.6 : 1 }]}>
         {here ? <Check size={14} color={t.cyan} strokeWidth={3} /> : null}
-        <T v="callout" color={here ? t.cyan : t.ink} style={c.big ? { fontWeight: '700' } : undefined}>{busy === c.name ? L('正在挪…', 'Moving…') : c.label}</T>
+        <T v="callout" color={here ? t.cyan : t.ink} style={c.big ? { fontWeight: '700' } : undefined}>{busy === c.name ? L('正在移动…', 'Moving…') : c.label}</T>
       </Pressable>
     );
   };
   return (
     <View style={{ gap: space.md }}>
       <T v="callout" color={t.ink2}>{leaf.branch === trunk.name
-        ? L('现在直接挂在主干上。点一根枝就挪过去（每行第一个是大枝）。', 'It hangs straight on the trunk now. Tap a branch to move it (each row starts with a big branch).')
-        : L(`现在挂在「${leaf.branch}」。点别的枝就挪过去（每行第一个是大枝）。`, `It hangs on "${leaf.branch}" now. Tap another branch to move it (each row starts with a big branch).`)}</T>
+        ? L('当前直接挂在主干上。点击一根枝即可移动（每行第一个为大枝）。', 'It hangs straight on the trunk now. Tap a branch to move it (each row starts with a big branch).')
+        : L(`当前挂在「${leaf.branch}」。点击其他枝即可移动（每行第一个为大枝）。`, `It hangs on "${leaf.branch}" now. Tap another branch to move it (each row starts with a big branch).`)}</T>
       {groups.map((g) => <View key={g[0]?.name ?? 'trunk'} style={styles.chips}>{g.map(chip)}</View>)}
     </View>
   );
@@ -205,15 +205,15 @@ function PendingCard({ leaves }: { leaves: TreeLeaf[] }) {
   const [busy, setBusy] = useState<string | null>(null);
   const confirm = (leaf: TreeLeaf) => {
     setBusy(leaf.id);
-    treeAction(leaf.id, 'confirm').catch((e) => showError(L('没确认上', "Couldn't confirm it"), e)).finally(() => setBusy(null));
+    treeAction(leaf.id, 'confirm').catch((e) => showError(L('确认失败', "Couldn't confirm it"), e)).finally(() => setBusy(null));
   };
   return (
     <>
-      <SectionLabel>{L(`等你确认 · ${leaves.length}`, `Waiting for you · ${leaves.length}`)}</SectionLabel>
+      <SectionLabel>{L(`待确认 · ${leaves.length}`, `To confirm · ${leaves.length}`)}</SectionLabel>
       <Card style={{ paddingVertical: space.xs }}>
         {leaves.map((leaf, i) => (
           <View key={leaf.id} style={[styles.pending, i > 0 && { borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: t.line }]}>
-            <Pressable onPress={() => open(leaf)} accessibilityRole="button" accessibilityHint={L('看全文', 'Shows the full text')} style={({ pressed }) => ({ opacity: pressed ? 0.6 : 1 })}>
+            <Pressable onPress={() => open(leaf)} accessibilityRole="button" accessibilityHint={L('查看全文', 'Shows the full text')} style={({ pressed }) => ({ opacity: pressed ? 0.6 : 1 })}>
               <T v="body" numberOfLines={2}>{leafTitle(leaf.text)}</T>
             </Pressable>
             <View style={styles.pendingFoot}>
@@ -221,8 +221,8 @@ function PendingCard({ leaves }: { leaves: TreeLeaf[] }) {
                 <OriginPill leaf={leaf} />
                 <T v="caption" color={t.ink3}>{shortDate(leaf.observedAt)}</T>
               </View>
-              <SmallBtn primary label={busy === leaf.id ? L('确认中…', 'Confirming…') : L('确认', 'Confirm')} disabled={!!busy} onPress={() => confirm(leaf)} />
-              <SmallBtn label={L('忘记', 'Forget')} disabled={!!busy} onPress={() => sheet.open({ title: L('忘记这一条？', 'Forget this?'), content: (c) => <ForgetSheet leaf={leaf} close={c} /> })} />
+              <SmallBtn primary label={busy === leaf.id ? L('正在确认…', 'Confirming…') : L('确认', 'Confirm')} disabled={!!busy} onPress={() => confirm(leaf)} />
+              <SmallBtn label={L('忘记', 'Forget')} disabled={!!busy} onPress={() => sheet.open({ title: L('忘记此条？', 'Forget this?'), content: (c) => <ForgetSheet leaf={leaf} close={c} /> })} />
             </View>
           </View>
         ))}
@@ -298,7 +298,7 @@ function ByBranch({ data }: { data: TreeInfo }) {
         <View style={sep}>
           <Pressable onPress={() => toggle('#bare')} accessibilityRole="button" accessibilityState={{ expanded: !!open['#bare'] }}
             style={({ pressed }) => [styles.branch, { opacity: pressed ? 0.6 : 1 }]}>
-            <T v="body" color={t.ink2} style={{ flex: 1 }}>{L('还没长叶子的枝', 'Branches with no leaves yet')}</T>
+            <T v="body" color={t.ink2} style={{ flex: 1 }}>{L('尚无叶子的枝', 'Branches with no leaves yet')}</T>
             <T v="callout" color={t.ink3} style={styles.count}>{bare.length}</T>
             <View style={{ width: 18, alignItems: 'flex-end' }}><Disclosure open={!!open['#bare']} /></View>
           </Pressable>
@@ -345,10 +345,10 @@ function BySource({ data }: { data: TreeInfo }) {
 
 /** 真身放在哪：一句话。 */
 function storageLine(s: TreeStorage): string {
-  if (s.kind === 'sqlite') return L('真身存在你服务器上的一个数据库文件里（tree.db）。', ' The real copy is a database file on your server (tree.db).');
+  if (s.kind === 'sqlite') return L('原始数据存储在你服务器上的数据库文件中（tree.db）。', ' The real copy is a database file on your server (tree.db).');
   if (s.kind === 'markdown') {
     const folder = s.path.split('/').filter(Boolean).pop() || s.path;
-    return L(`真身是「${folder}」文件夹里的笔记，一条一篇，直接改笔记也行。`, ` The real copy is the notes in the "${folder}" folder, one per memory; you can edit them directly.`);
+    return L(`原始数据为「${folder}」文件夹中的笔记，每条一篇，也可直接编辑笔记。`, ` The real copy is the notes in the "${folder}" folder, one per memory; you can edit them directly.`);
   }
   return '';
 }
@@ -388,25 +388,25 @@ export function TreeScreen() {
   const pending = data?.leaves.filter((l) => l.status === 'pending') ?? [];
   let state: React.ReactNode = null;
   if (!data) {
-    if (booting) state = <Note>{L('正在连服务器…', 'Connecting to the server…')}</Note>;
-    else if (!connected) state = <Note>{L('没连上服务器。检查「我 → 服务器」后下拉刷新。', 'Not connected to the server. Check Me → Server, then pull down to refresh.')}</Note>;
-    else if (dataErrors.tree) state = <Note tone="bad">{L(`读不到世界树：${dataErrors.tree}`, `Couldn't load the memory tree: ${dataErrors.tree}`)}</Note>;
+    if (booting) state = <Note>{L('正在连接服务器…', 'Connecting to the server…')}</Note>;
+    else if (!connected) state = <Note>{L('未连接服务器。请检查「我 → 服务器」后下拉刷新。', 'Not connected to the server. Check Me → Server, then pull down to refresh.')}</Note>;
+    else if (dataErrors.tree) state = <Note tone="bad">{L(`无法加载世界树：${dataErrors.tree}`, `Couldn't load the memory tree: ${dataErrors.tree}`)}</Note>;
     else if (tree?.kind === 'missing') {
       state = (
         <Note>
-          <T v="headline">{L('服务器上还没接世界树', "The memory tree isn't connected on the server")}</T>
-          <T v="callout" color={t.ink2}>{tree.hint || L('接上以后这里就有了。', 'Once it is, it shows up here.')}</T>
+          <T v="headline">{L('服务器尚未接入世界树', "The memory tree isn't connected on the server")}</T>
+          <T v="callout" color={t.ink2}>{tree.hint || L('接入后将显示在这里。', 'Once it is, it shows up here.')}</T>
         </Note>
       );
-    } else if (tree?.kind === 'unsupported') state = <Note>{L('服务器的版本还没有这一页，更新服务器以后再来看。', "The server's version doesn't have this page yet. Update the server and check back.")}</Note>;
-    else if (loading.tree || !tree) state = <Note>{L('正在读…', 'Loading…')}</Note>;
+    } else if (tree?.kind === 'unsupported') state = <Note>{L('当前服务器版本不支持此页面，请更新服务器后再查看。', "The server's version doesn't have this page yet. Update the server and check back.")}</Note>;
+    else if (loading.tree || !tree) state = <Note>{L('正在加载…', 'Loading…')}</Note>;
   }
   return (
     <Screen>
       <NavHeader title={L('世界树', 'Memory tree')} onBack={() => nav.goBack()} />
       <ScrollView contentContainerStyle={{ padding: space.lg, paddingBottom: space.xxl }} refreshControl={<PullRefresh onRefresh={() => Promise.all([reload('tree'), loadAi()])} />}>
         <T v="callout" color={t.ink2}>{L(
-          `你在各个 AI 和 ${agentName()} 里说过的关于你的事，都长在这棵树上。`,
+          `你在各个 AI 和 ${agentName()} 中提到的关于你的信息，都汇集在这棵树上。`,
           `What you've told your AI apps and ${agentName()} about yourself grows on this tree.`,
         )}{data ? storageLine(data.storage) : ''}</T>
         {state}
@@ -427,11 +427,11 @@ export function TreeScreen() {
                 <BySource data={data} />
               </>
             )}
-            {(view === 'source' || !data.branchable) && !data.leaves.length ? <Note>{L('还没有叶子。在哪个 AI 说起你自己的事，它记下来就会长在这里。', "No leaves yet. When an app saves something about you, it grows here.")}</Note> : null}
-            <T v="caption" color={t.ink3} style={styles.foot}>{L(`一共 ${data.counts.total} 片叶子。`, `${data.counts.total} leaves in all.`)}{data.storage.kind === 'markdown' ? L(
-              '直接改、加笔记也行，这里跟着变。',
+            {(view === 'source' || !data.branchable) && !data.leaves.length ? <Note>{L('暂无叶子。你在任何 AI 中提到的个人信息，被记录后都会出现在这里。', "No leaves yet. When an app saves something about you, it grows here.")}</Note> : null}
+            <T v="caption" color={t.ink3} style={styles.foot}>{L(`共 ${data.counts.total} 片叶子。`, `${data.counts.total} leaves in all.`)}{data.storage.kind === 'markdown' ? L(
+              '也可直接编辑或添加笔记，此页会同步更新。',
               ' You can also edit or add notes directly; this page follows.',
-            ) : ''}{data.issues ? L(` 有 ${data.issues} 篇笔记格式不对，先跳过了。`, ` ${data.issues} note(s) have a formatting problem and were skipped.`) : ''}</T>
+            ) : ''}{data.issues ? L(` 有 ${data.issues} 篇笔记格式有误，已跳过。`, ` ${data.issues} note(s) have a formatting problem and were skipped.`) : ''}</T>
           </>
         ) : null}
       </ScrollView>

@@ -21,16 +21,16 @@ export function RenameSheet({ topic, close, onDone }: Props) {
     if (!topic || !v.trim() || busy) return;
     setBusy(true);
     try { await thinkApi.patchTopic(topic.id, { title: v.trim() }); onDone(); close(); }
-    catch (e) { showError(L('没改成', "Couldn't rename"), e); }
+    catch (e) { showError(L('重命名失败', "Couldn't rename"), e); }
     finally { setBusy(false); }
   };
   if (!topic) return null;
   return (
     <View style={{ gap: space.md }}>
       <TextInput ref={input} value={v} onChangeText={setV} selectTextOnFocus returnKeyType="done" onSubmitEditing={save} blurOnSubmit={false}
-        maxLength={40} accessibilityLabel={L('主题名字', 'Topic name')}
+        maxLength={40} accessibilityLabel={L('主题名称', 'Topic name')}
         style={[type.body, { borderRadius: radius.md, paddingHorizontal: space.lg, paddingVertical: 12, backgroundColor: t.surface, color: t.ink }]} />
-      <Btn label={busy ? L('正在改…', 'Renaming…') : L('改', 'Rename')} onPress={save} />
+      <Btn label={busy ? L('正在重命名…', 'Renaming…') : L('重命名', 'Rename')} onPress={save} />
     </View>
   );
 }
@@ -47,21 +47,21 @@ export function TopicActionsSheet({ topic, close, onDone }: Props) {
       else await thinkApi.deleteTopic(topic.id);
       onDone();
       if (undo) close(); else setMode('deleted');
-    } catch (e) { showError(undo ? L('没恢复', "Couldn't restore") : L('没删掉', "Couldn't delete"), e); }
+    } catch (e) { showError(undo ? L('恢复失败', "Couldn't restore") : L('删除失败', "Couldn't delete"), e); }
     finally { setBusy(false); }
   };
   if (mode === 'rename') return <RenameSheet topic={topic} close={close} onDone={onDone} />;
   return (
     <View style={{ gap: space.md }}>
       {mode === 'actions' ? <>
-        <Btn label={L('改名', 'Rename')} kind="quiet" onPress={() => setMode('rename')} />
+        <Btn label={L('重命名', 'Rename')} kind="quiet" onPress={() => setMode('rename')} />
         <Btn label={L('删除', 'Delete')} kind="danger" onPress={() => setMode('confirm')} />
       </> : mode === 'confirm' ? <>
-        <T v="body">{L('删除这个主题？碎片会回到碎片流，不会被删；对话记录也会保留。', 'Delete this topic? Its thoughts return to the stream, not the trash. The conversation is also kept.')}</T>
+        <T v="body">{L('删除此主题？其中的碎片将回到碎片流，不会被删除；对话记录也会保留。', 'Delete this topic? Its thoughts return to the stream, not the trash. The conversation is also kept.')}</T>
         <Btn label={busy ? L('正在删除…', 'Deleting…') : L('确认删除主题', 'Delete topic')} kind="danger" onPress={() => change(false)} />
-        <Btn label={L('算了', 'Cancel')} kind="quiet" onPress={close} />
+        <Btn label={L('取消', 'Cancel')} kind="quiet" onPress={close} />
       </> : <>
-        <T v="body" color={t.ink2}>{L('主题已删除，碎片和对话记录都还在。', 'Topic deleted. Thoughts and the conversation are kept.')}</T>
+        <T v="body" color={t.ink2}>{L('主题已删除，碎片和对话记录均已保留。', 'Topic deleted. Thoughts and the conversation are kept.')}</T>
         <Btn label={busy ? L('正在恢复…', 'Restoring…') : L('撤销', 'Undo')} onPress={() => change(true)} />
         <Btn label={L('完成', 'Done')} kind="quiet" onPress={close} />
       </>}

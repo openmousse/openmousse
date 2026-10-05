@@ -25,14 +25,14 @@ export function ReviseSheetContent({ task, close }: { task: Task; close: () => v
   const submit = () => {
     if (!note.trim() || busy) return;
     setBusy(true);
-    reviseTask(task.id, note.trim()).then(close).catch((e) => Alert.alert(L('没发出去', "Couldn't send"), e instanceof Error ? e.message : String(e))).finally(() => setBusy(false));
+    reviseTask(task.id, note.trim()).then(close).catch((e) => Alert.alert(L('发送失败', "Couldn't send"), e instanceof Error ? e.message : String(e))).finally(() => setBusy(false));
   };
   return (
     <View style={{ gap: space.md }}>
-      <T v="callout" color={t.ink2}>{L(`意见会发给做这件事的同一个子会话（${modelName(task.modelId)}），它记得前面做了什么，只改你说的部分。`, `Your notes go to the same sub-session that did this (${modelName(task.modelId)}). It remembers what it did and only changes what you point out.`)}</T>
-      <TextInput value={note} onChangeText={setNote} multiline autoFocus placeholder={L('哪里要改', 'What should change')} placeholderTextColor={t.ink3}
+      <T v="callout" color={t.ink2}>{L(`修改意见将发送给执行此任务的同一个子会话（${modelName(task.modelId)}）。子会话保留之前的上下文，只修改你指出的部分。`, `Your notes go to the same sub-session that did this (${modelName(task.modelId)}). It remembers what it did and only changes what you point out.`)}</T>
+      <TextInput value={note} onChangeText={setNote} multiline autoFocus placeholder={L('需要修改的地方', 'What should change')} placeholderTextColor={t.ink3}
         accessibilityLabel={L('修改意见', 'Revision notes')} style={[type.body, styles.input, { backgroundColor: t.surface, color: t.ink, minHeight: 88, textAlignVertical: 'top' }]} />
-      <Btn label={busy ? L('发送中…', 'Sending…') : L(`发给 ${modelName(task.modelId)}`, `Send to ${modelName(task.modelId)}`)} icon={<Send size={16} color={t.onGold} />} onPress={submit} />
+      <Btn label={busy ? L('正在发送…', 'Sending…') : L(`发送给 ${modelName(task.modelId)}`, `Send to ${modelName(task.modelId)}`)} icon={<Send size={16} color={t.onGold} />} onPress={submit} />
     </View>
   );
 }

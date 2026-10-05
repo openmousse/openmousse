@@ -48,13 +48,13 @@ const now = () => {
 /** 没连上服务器时用：什么都不假装，发消息直接报错。 */
 export class OfflineApi implements GravaApi {
   readonly connected = false;
-  async send(): Promise<Message> { throw new Error(L('没连上服务器：检查「我 → 服务器」里的地址和令牌，再下拉刷新', 'Not connected to the server. Check the address and token in Me → Server, then pull to refresh.')); }
-  async transcribe(): Promise<string> { throw new Error(L('没连上服务器', 'Not connected to the server')); }
+  async send(): Promise<Message> { throw new Error(L('未连接服务器：请检查「我 → 服务器」中的地址和令牌，然后下拉刷新', 'Not connected to the server. Check the address and token in Me → Server, then pull to refresh.')); }
+  async transcribe(): Promise<string> { throw new Error(L('未连接服务器', 'Not connected to the server')); }
   async history() { return null; }
   async attach() { return null; }
   async setModel() {}
-  async deleteMessage() { throw new Error(L('没连上服务器', 'Not connected to the server')); }
-  async rewind(): Promise<string> { throw new Error(L('没连上服务器', 'Not connected to the server')); }
+  async deleteMessage() { throw new Error(L('未连接服务器', 'Not connected to the server')); }
+  async rewind(): Promise<string> { throw new Error(L('未连接服务器', 'Not connected to the server')); }
   async stop() {}
 }
 
@@ -86,7 +86,7 @@ async function consume(thread: string, r: Response, onDelta?: (partial: string) 
     const j = await r.json().catch(() => ({}));
     throw new Error(j.detail ?? j.error ?? `HTTP ${r.status}`);
   }
-  if (!r.body) throw new Error(L('没有收到回复流', 'No reply stream received'));
+  if (!r.body) throw new Error(L('未收到回复流', 'No reply stream received'));
   let partial = '';
   let done: any = null;
   let queued = false;  // 排队的：start 带的是合成那一轮的 id，不是这条的
@@ -101,7 +101,7 @@ async function consume(thread: string, r: Response, onDelta?: (partial: string) 
     else if (event === 'progress' && data && Array.isArray(data.steps)) setReplyProgress(thread, data as ReplyProgress);
     else if (event === 'card' && data && (data.kind === 'handoff' || data.kind === 'task' || data.kind === 'schedule' || data.kind === 'project' || data.kind === 'course')) onCard?.(data as ChatCard);
   }).finally(() => setReplyProgress(thread, null));
-  if (!done) throw new Error(L('流中断', 'Reply stream cut off'));
+  if (!done) throw new Error(L('回复流中断', 'Reply stream cut off'));
   return { id: done.id, role: 'grava', time: done.time, modelId: done.modelId, fallbackFrom: done.fallbackFrom ?? undefined, body: { type: 'text', text: done.text }, error: done.status === 'error' ? done.error : undefined };
 }
 
@@ -124,9 +124,9 @@ export function xhrUpload(url: string, fd: FormData, timeoutMs = 10 * 60 * 1000)
       let j: any = {};
       try { j = JSON.parse(xhr.responseText || '{}'); } catch { /* 非 JSON */ }
       if (xhr.status >= 200 && xhr.status < 300) resolve(j);
-      else reject(new HttpError(j.detail ?? j.error ?? L(`上传失败 HTTP ${xhr.status}`, `Upload failed: HTTP ${xhr.status}`), xhr.status, j));  // 带状态码：补传分享时要分清「拒收」和「没连上」
+      else reject(new HttpError(j.detail ?? j.error ?? L(`上传失败：HTTP ${xhr.status}`, `Upload failed: HTTP ${xhr.status}`), xhr.status, j));  // 带状态码：补传分享时要分清「拒收」和「没连上」
     };
-    xhr.onerror = () => reject(new Error(L('上传失败：网络不通', 'Upload failed: network error')));
+    xhr.onerror = () => reject(new Error(L('上传失败：网络错误', 'Upload failed: network error')));
     xhr.ontimeout = () => reject(new Error(L('上传超时', 'Upload timed out')));
     xhr.send(fd);
   });
@@ -183,7 +183,7 @@ export class HttpApi implements GravaApi {
     const j = await r.json();
     const messages: Message[] = (j.messages as any[]).map((m) => ({
       id: m.id, role: m.role, time: m.time, modelId: m.modelId ?? undefined, fallbackFrom: m.fallbackFrom ?? undefined, body: { type: 'text', text: m.text, attachments: withBase(m) },
-      error: m.status === 'error' ? L('上次没拿到回复', 'No reply was received') : undefined,
+      error: m.status === 'error' ? L('未收到回复', 'No reply was received') : undefined,
       ...(m.status === 'queued' ? { queued: true } : {}), ...(m.status === 'steered' ? { steered: true } : {}), ...(m.replyTo?.id ? { replyTo: m.replyTo } : {}),
     }));
     return { messages, modelId: j.modelId as string, inFlight: j.inFlight ?? null };

@@ -151,10 +151,10 @@ def public_fix() -> str:
 def need_ready() -> None:
     why = not_ready()
     if why == "no_url":
-        raise bad(409, "先要有一个外面打得进来的地址（server.json 的 share.public_url）：朋友的服务器要能打回来。",
+        raise bad(409, "服务器尚未开启公网访问（server.json 的 share.public_url），好友的服务器无法把消息送回给你。",
                   "You need an address people can reach first (share.public_url in server.json): your friends' servers have to reach you.")
     if why == "no_name":
-        raise bad(409, "先设一个称呼（我 → 身份），朋友那边显示它。", "Set the name to call you first (Me → Identity); friends see it.")
+        raise bad(409, "请先设置对外名字（好友 → 我的名片 Agent），好友会看到这个名字。", "Set the name to call you first (Me → Identity); friends see it.")
 
 
 # —— 邀请码 ——
@@ -190,9 +190,9 @@ def parse_code(text: str) -> tuple[str, str, str]:
     m = CODE_RE.search(s)
     origin = social.origin_of(m.group(1)) if m else None
     if not m or not origin:
-        raise bad(400, "这不像邀请码：应该是一个 …/f/i/… 的链接。", "That doesn't look like an invite: it should be a …/f/i/… link.")
+        raise bad(400, "无法识别的邀请码：应为 …/f/i/… 格式的链接。", "That doesn't look like an invite: it should be a …/f/i/… link.")
     if not social.url_ok(origin):
-        raise bad(400, "邀请码里的地址不是 https，不收。", "The invite's address isn't https.")
+        raise bad(400, "邀请码中的地址不是 https，无法使用。", "The invite's address isn't https.")
     return origin, m.group(2), m.group(3)
 
 
@@ -204,7 +204,7 @@ def create_invite(note: str, tier: str, days: int) -> dict:
     with _lock, db() as conn:
         rows = conn.execute("SELECT * FROM friend_invites WHERE used_at IS NULL AND revoked_at IS NULL").fetchall()
         if sum(1 for r in rows if invite_state(r) == "open") >= INVITE_OPEN_MAX:
-            raise bad(409, f"已经有 {INVITE_OPEN_MAX} 张没用过的邀请码了，先收回几张。",
+            raise bad(409, f"未使用的邀请码已达 {INVITE_OPEN_MAX} 张，请先收回部分邀请码。",
                       f"You already have {INVITE_OPEN_MAX} unused invites; withdraw some first.")
         token = secrets.token_urlsafe(16)
         iid = f"iv-{uuid.uuid4().hex[:8]}"
@@ -266,14 +266,14 @@ def system_line(fid: str, text: str) -> None:
 
 
 def became_friends(f: dict, how: str) -> None:
-    system_line(f["id"], LS("你们成了朋友", "You're now friends"))
-    log_activity(LS(f"和 {f['name']} 成了朋友（{how}）", f"Became friends with {f['name']} ({how})"), "social")
+    system_line(f["id"], LS("你们已成为好友", "You're now friends"))
+    log_activity(LS(f"已与 {f['name']} 成为好友（{how}）", f"Became friends with {f['name']} ({how})"), "social")
 
 
 def friend_or_404(fid: str) -> dict:
     f = social.friend(fid) if FID_RE.match(fid or "") else None
     if not f:
-        raise bad(404, "找不到这个朋友", "Friend not found")
+        raise bad(404, "未找到该好友", "Friend not found")
     return f
 
 
@@ -366,7 +366,7 @@ def message_row(rid: int):
     with _lock, db() as conn:
         r = conn.execute("SELECT * FROM friend_messages WHERE id=?", (rid,)).fetchone()
     if not r:
-        raise bad(404, "找不到这条消息", "Message not found")
+        raise bad(404, "未找到该消息", "Message not found")
     return r
 
 
@@ -566,22 +566,22 @@ async def invite_page(token: str, x: str, request: Request):
         r = await asyncio.to_thread(find_invite, token) if re.fullmatch(r"[A-Za-z0-9_-]{22}", token) else None
         name = social.my_name()
         if not r or x != me["x"] or invite_state(r) != "open" or not social.my_url() or not name:
-            t = L("这个邀请码用过了或者过期了", "This invite has been used or has expired")
-            s = L("请对方再发一个新的。", "Ask for a new one.")
+            t = L("该邀请码已使用或已过期", "This invite has been used or has expired")
+            s = L("请对方重新发送邀请码。", "Ask for a new one.")
             return share.page(t, f'<div class="gone"><h1>{html.escape(t)}</h1><p>{html.escape(s)}</p></div>', status=404)
         code = code_of(token)
         deep = "openmousse://friends/add?code=" + quote(code, safe="")
-        title = L(f"{name} 邀请你加他为朋友", f"{name} invited you to be friends")
-        steps = L("<ol><li>打开 OpenMousse</li><li>对话 → 朋友 → 加朋友</li><li>粘贴下面这个链接</li></ol>",
+        title = L(f"{name} 邀请你成为好友", f"{name} invited you to be friends")
+        steps = L("<ol><li>打开 OpenMousse</li><li>对话 → 好友 → 添加好友</li><li>粘贴下方链接</li></ol>",
                   "<ol><li>Open OpenMousse</li><li>Chat → Friends → Add a friend</li><li>Paste the link below</li></ol>")
         fp = L("核对指纹", "Fingerprint")
-        scan = L("在电脑上看到的？用手机相机扫这个码，在手机上打开。", "On a computer? Scan this with your phone's camera to open it there.")
+        scan = L("在电脑上打开的？请用手机相机扫描二维码，在手机上继续。", "On a computer? Scan this with your phone's camera to open it there.")
         body = (f"<p class=by>{html.escape(settings.app_name)}</p><h1>{html.escape(title)}</h1>"
                 f'<a class="btn" href="{html.escape(deep)}">{html.escape(L("在 app 里打开", "Open in the app"))}</a>'
                 f"{steps}<p class=code>{html.escape(code)}</p>"
                 f'<div class="qr">{qr.svg(code, 200, L("邀请码二维码", "Invite QR code"))}<p>{html.escape(scan)}</p></div>'
                 f"<p>{html.escape(fp)}：<span class=fp>{html.escape(me['fingerprint'])}</span></p>"
-                f"<footer>{html.escape(L('这个链接只能用一次，用过就失效。', 'This link works once.'))}</footer>")
+                f"<footer>{html.escape(L('此链接仅可使用一次。', 'This link works once.'))}</footer>")
         return share.page(title, body, head=f"<style>{INVITE_CSS}</style>")
     finally:
         i18n.reset(lang)
@@ -622,8 +622,8 @@ async def hello(request: Request):
             with _lock, db() as conn:
                 conn.execute("UPDATE friend_invites SET used_at=?, used_by=? WHERE id=? AND used_at IS NULL", (now_iso(), info["kid"], inv["id"]))
         if fresh:
-            await asyncio.to_thread(became_friends, f, LS(f"{f['name']} 用了你的邀请码", f"{f['name']} used your invite"))
-            run_on_main(notify(f, "friend", LS(f"{f['name']} 用了你的邀请码，你们成了朋友", f"{f['name']} used your invite; you're now friends")))
+            await asyncio.to_thread(became_friends, f, LS(f"{f['name']} 使用了你的邀请码", f"{f['name']} used your invite"))
+            run_on_main(notify(f, "friend", LS(f"{f['name']} 使用了你的邀请码，你们已成为好友", f"{f['name']} used your invite; you're now friends")))
         # 试一下能不能连回对方（之后的消息都要从这边送过去）：连不上就告诉对方，多半是对方的 Funnel 没开（老版本对方不认这个字段）
         try:
             await asyncio.wait_for(social.fetch_card(info["url"], info["x"]), 6)
@@ -761,8 +761,8 @@ async def receive(request: Request):
                 return {"ok": True, "id": mid, "dup": True}
             with _lock, db() as conn:
                 conn.execute("UPDATE friends SET status='gone', updated_at=? WHERE id=?", (now_iso(), f["id"]))
-            system_line(f["id"], LS(f"{f['name']} 不再是朋友了", f"{f['name']} is no longer your friend"))
-            log_activity(LS(f"{f['name']} 把你从朋友里删了", f"{f['name']} removed you as a friend"), "social", actor=f["name"])
+            system_line(f["id"], LS(f"{f['name']} 已不是你的好友", f"{f['name']} is no longer your friend"))
+            log_activity(LS(f"{f['name']} 已将你从好友中删除", f"{f['name']} removed you as a friend"), "social", actor=f["name"])
             return {"ok": True, "id": mid, "dup": False}
         else:
             return social.err(400, "bad_request", why="unknown kind")
@@ -774,7 +774,7 @@ async def receive(request: Request):
         conn.execute("UPDATE friends SET seen_at=? WHERE id=?", (now_iso(), f["id"]))
     if kind in ("text", "share", "answer"):
         preview = {"text": m.get("text") or "", "share": LS("分享了：", "Shared: ") + ((m.get("share") or {}).get("title") or ""),
-                   "answer": LS("名片 agent 答了你：", "Their card agent answered: ") + (m.get("text") or "")}[kind]
+                   "answer": LS("名片 Agent 回复了你：", "Their card agent answered: ") + (m.get("text") or "")}[kind]
         run_on_main(notify(f, "message", preview))
     return {"ok": True, "id": mid, "dup": False}
 
@@ -838,10 +838,10 @@ async def answer_ask(fid: str, ask_id: int) -> None:
         can = live and snap.get("can_ask") is True and social.tier_scopes(f["tier"])["shares"] == "ask"
         if not can:
             me = social.my_name()
-            text = LS(f"这个得问{me}本人。", f"You'd have to ask {me} directly.")
+            text = LS(f"这个问题需要{me}本人回答。", f"This needs an answer from {me} directly.")
             insert_out(fid, "answer", text, data={"used": [], "defer": True, "template": True}, reply_to=ask["mid"], by="agent", review="ok")
-            log_activity(LS(f"名片 agent 回了 {f['name']}：{text}", f"Card agent replied to {f['name']}: {text}"), "social",
-                         actor=LS("名片 agent", "Card agent"))
+            log_activity(LS(f"名片 Agent 回复了 {f['name']}：{text}", f"Card agent replied to {f['name']}: {text}"), "social",
+                         actor=LS("名片 Agent", "Card agent"))
             return
         material = [{"id": f"share:{snap['sid']}", "kind": "share", "title": snap.get("title") or "", "text": snap.get("text") or ""}]
         res = ca.answer(f, ask["text"], channel="chat", material=material, history=history_of(fid, ask_id), ref=f"share:{snap['sid']}")
@@ -858,7 +858,7 @@ async def answer_ask(fid: str, ask_id: int) -> None:
                 **({"sentinel": res["sentinel"]} if isinstance(res.get("sentinel"), dict) else {}),
                 "limited": bool(res.get("limited")), **({"inbox_id": defer.get("inbox_id")} if defer and defer.get("inbox_id") else {})}
         insert_out(fid, "answer", text, data=data, reply_to=ask["mid"], by="agent", review="pending")
-        await notify(f, "answered", LS(f"{f['name']} 问了你的名片 agent，它答了", f"{f['name']} asked your card agent; it answered"))
+        await notify(f, "answered", LS(f"{f['name']} 向你的名片 Agent 提问，已自动回答", f"{f['name']} asked your card agent; it answered"))
     except Exception:  # noqa: BLE001 — 答不了就不答，用户在对话里看得到这条追问
         log.exception("friends answer_ask")
 
@@ -993,7 +993,7 @@ async def new_invite(body: InviteIn):
 @router.delete("/api/friends/invites/{iid}")
 async def withdraw_invite(iid: str):
     if not IID_RE.match(iid):
-        raise bad(404, "找不到这张邀请码", "Invite not found")
+        raise bad(404, "未找到该邀请码", "Invite not found")
     with _lock, db() as conn:
         conn.execute("UPDATE friend_invites SET revoked_at=? WHERE id=? AND used_at IS NULL AND revoked_at IS NULL", (now_iso(), iid))
     return {"ok": True}
@@ -1014,8 +1014,8 @@ async def preview(body: CodeIn):
         info = await social.fetch_card(origin, x)
     except HTTPException as e:
         if e.status_code == 400:
-            raise bad(400, "对方的名片和邀请码对不上，不加。", "Their card doesn't match the invite.") from e
-        raise bad(502, "连不上对方的服务器。可能是对方的公网访问（Tailscale Funnel）还没开，或者服务器没在运行；请对方检查后再试。",
+            raise bad(400, "对方的名片与邀请码不一致，未添加。", "Their card doesn't match the invite.") from e
+        raise bad(502, "无法连接对方的服务器。可能是对方尚未开启公网访问（Tailscale Funnel），或服务器未运行；请对方检查后重试。",
                   "Couldn't reach their server. Their public access (Tailscale Funnel) may not be on yet, or the server isn't running; ask them to check, then try again.") from e
     old = social.friend_by_kid(info["kid"])
     return {"ok": True, "name": info["name"], "fingerprint": social.fingerprint(info["x"]), "url": info["url"],
@@ -1042,22 +1042,23 @@ async def accept(body: AcceptIn):
     try:
         r = await social.signed_post(origin + "/f/hello", {"v": 1, "token": token, "card": mine}, to_kid=social.thumbprint(x))
     except (httpx.HTTPError, HTTPException, OSError) as e:
-        raise bad(502, "连不上对方的服务器，过会儿再试。", "Couldn't reach their server. Try again later.") from e
+        raise bad(502, "无法连接对方的服务器。可能是对方尚未开启公网访问（Tailscale Funnel），或服务器未运行；请稍后重试。",
+                  "Couldn't reach their server. Their public access (Tailscale Funnel) may not be on yet, or the server isn't running; try again later.") from e
     if r.status_code == 404:
-        raise bad(410, "这个邀请码用过了或者过期了，请对方再发一个。", "This invite has been used or has expired. Ask for a new one.")
+        raise bad(410, "该邀请码已使用或已过期，请对方重新发送。", "This invite has been used or has expired. Ask for a new one.")
     if r.status_code == 429:
-        raise bad(429, "对方那边现在太忙，过会儿再试。", "Their server is busy. Try again later.")
+        raise bad(429, "对方服务器繁忙，请稍后重试。", "Their server is busy. Try again later.")
     if r.status_code != 200:
-        raise bad(502, f"对方没接受（{r.status_code}）", f"They didn't accept it ({r.status_code})")
+        raise bad(502, f"对方未接受（{r.status_code}）", f"They didn't accept it ({r.status_code})")
     try:
         info = social.verify_card((r.json() or {}).get("card"), x)
         if info["url"] != origin:
             raise ValueError("url")
     except (ValueError, AttributeError) as e:
-        raise bad(502, "对方回来的名片和邀请码对不上，没加。", "Their reply doesn't match the invite; not added.") from e
+        raise bad(502, "对方返回的名片与邀请码不一致，未添加。", "Their reply doesn't match the invite; not added.") from e
     f, fresh = await asyncio.to_thread(upsert_friend, info, tier=body.tier, via="code", alias=body.alias)
     if fresh:
-        await asyncio.to_thread(became_friends, f, LS(f"你用了 {f['name']} 的邀请码", f"you used {f['name']}'s invite"))
+        await asyncio.to_thread(became_friends, f, LS(f"你使用了 {f['name']} 的邀请码", f"you used {f['name']}'s invite"))
     reach = (r.json() or {}).get("reach")  # 对方试着连回这边的结果（老版本没有 = 不知道）
     if isinstance(reach, bool):
         social.set_setting("reach", json.dumps({"ok": reach, "at": now_iso(), "by": f["name"]}, ensure_ascii=False))
@@ -1085,7 +1086,7 @@ async def patch_friend(fid: str, body: FriendPatch):
         with _lock, db() as conn:
             conn.execute(f"UPDATE friends SET {', '.join(f'{k}=?' for k in sets)} WHERE id=?", (*sets.values(), fid))  # noqa: S608
         if "tier" in sets and sets["tier"] != f["tier"]:
-            log_activity(L(f"把 {f['name']} 放进了「{tier_name(sets['tier'])}」", f"Moved {f['name']} to {tier_name(sets['tier'])}"), "social")
+            log_activity(L(f"已将 {f['name']} 移至「{tier_name(sets['tier'])}」", f"Moved {f['name']} to {tier_name(sets['tier'])}"), "social")
     return {"ok": True, "friend": friend_json(friend_or_404(fid))}
 
 
@@ -1097,7 +1098,7 @@ async def remove_friend(fid: str):
         with _lock, db() as conn:
             conn.execute("UPDATE friends SET status='removed', updated_at=? WHERE id=?", (now_iso(), fid))
         insert_out(fid, "bye")
-        log_activity(L(f"删了朋友 {f['name']}", f"Removed {f['name']} as a friend"), "social")
+        log_activity(L(f"删除了好友 {f['name']}", f"Removed {f['name']} as a friend"), "social")
     return {"ok": True}
 
 
@@ -1113,7 +1114,7 @@ async def block_friend(fid: str, body: BlockIn):
     if f["status"] in ("active", "blocked") and f["status"] != new:
         with _lock, db() as conn:
             conn.execute("UPDATE friends SET status=?, updated_at=? WHERE id=?", (new, now_iso(), fid))
-        log_activity(L(f"{'拉黑了' if body.blocked else '解开了'} {f['name']}", f"{'Blocked' if body.blocked else 'Unblocked'} {f['name']}"), "social")
+        log_activity(L(f"{'屏蔽了' if body.blocked else '取消屏蔽了'} {f['name']}", f"{'Blocked' if body.blocked else 'Unblocked'} {f['name']}"), "social")
     return {"ok": True, "friend": friend_json(friend_or_404(fid))}
 
 
@@ -1150,7 +1151,7 @@ class SendIn(BaseModel):
 
 def need_active(f: dict) -> None:
     if f["status"] != "active":
-        raise bad(409, "你们现在不是朋友，发不了。", "You aren't friends now; can't send.")
+        raise bad(409, "你们已不是好友，无法发送。", "You aren't friends now; can't send.")
 
 
 @router.post("/api/friends/{fid}/messages")
@@ -1159,9 +1160,9 @@ async def send_text(fid: str, body: SendIn):
     need_active(f)
     text = body.text.replace("\r\n", "\n").strip()
     if not text:
-        raise bad(400, "没有内容", "Nothing to send")
+        raise bad(400, "内容为空", "Nothing to send")
     if len(text) > TEXT_MAX:
-        raise bad(400, f"太长了（最多 {TEXT_MAX} 字）", f"Too long (max {TEXT_MAX} characters)")
+        raise bad(400, f"内容过长（最多 {TEXT_MAX} 字）", f"Too long (max {TEXT_MAX} characters)")
     reply = body.replyTo if body.replyTo and MID_RE.match(body.replyTo) else None
     rid = await asyncio.to_thread(insert_out, fid, "text", text, reply_to=reply)
     return {"ok": True, "message": msg_json(message_row(rid))}
@@ -1179,13 +1180,13 @@ async def ask(fid: str, body: AskIn):
     need_active(f)
     text = body.text.replace("\r\n", "\n").strip()
     if not text or len(text) > ASK_MAX:
-        raise bad(400, f"问题要在 1–{ASK_MAX} 字之间", f"A question is 1–{ASK_MAX} characters")
+        raise bad(400, f"问题长度需在 1–{ASK_MAX} 字之间", f"A question is 1–{ASK_MAX} characters")
     with _lock, db() as conn:
         sm = conn.execute("SELECT * FROM friend_messages WHERE friend=? AND dir='in' AND kind='share' AND mid=?", (fid, body.about)).fetchone()
     if not sm or sm["status"] == "revoked":
-        raise bad(404, "找不到这条分享（可能收回了）", "That share is gone (maybe withdrawn)")
+        raise bad(404, "未找到该分享（可能已收回）", "That share is gone (maybe withdrawn)")
     if not (row_data(sm).get("share") or {}).get("can_ask"):
-        raise bad(409, "这条分享不能追问", "This share doesn't take questions")
+        raise bad(409, "该分享不支持提问", "This share doesn't take questions")
     rid = await asyncio.to_thread(insert_out, fid, "ask", text, reply_to=body.about)
     return {"ok": True, "message": msg_json(message_row(rid))}
 
@@ -1225,9 +1226,9 @@ async def review(rid: int, body: ReviewIn):
     """名片 agent 替你答的那条：没问题 / 我来改（替换它那条，对方看到「改过」）/ 收回（对方那边清空）。"""
     r = message_row(rid)
     if r["dir"] != "out" or r["kind"] != "answer":
-        raise bad(400, "这条不是名片 agent 的代答", "That isn't a card agent answer")
+        raise bad(400, "该消息不是名片 Agent 的代答", "That isn't a card agent answer")
     if r["status"] == "revoked":
-        raise bad(409, "这条已经收回了", "Already withdrawn")
+        raise bad(409, "该消息已收回", "Already withdrawn")
     d = row_data(r)
     f = friend_or_404(r["friend"])
     if body.action == "ok":
@@ -1235,16 +1236,16 @@ async def review(rid: int, body: ReviewIn):
     elif body.action == "edit":
         text = (body.text or "").replace("\r\n", "\n").strip()
         if not text or len(text) > TEXT_MAX:
-            raise bad(400, f"改后的内容要在 1–{TEXT_MAX} 字之间", f"The new text must be 1–{TEXT_MAX} characters")
+            raise bad(400, f"修改后的内容需在 1–{TEXT_MAX} 字之间", f"The new text must be 1–{TEXT_MAX} characters")
         _set(rid, text=text, by="person", review="edited", edited_at=now_iso())
         insert_out(r["friend"], "edit", data={"target": r["mid"], "text": text, "by": "person"})
         retract(d, replaced=True)
-        log_activity(L(f"改了名片 agent 给 {f['name']} 的一条代答", f"Rewrote a card agent answer to {f['name']}"), "social")
+        log_activity(L(f"修改了名片 Agent 给 {f['name']} 的一条代答", f"Rewrote a card agent answer to {f['name']}"), "social")
     elif body.action == "revoke":
         _set(rid, status="revoked", review="revoked", edited_at=now_iso())
         insert_out(r["friend"], "revoke", data={"target": r["mid"]})
         retract(d, replaced=False)
-        log_activity(L(f"收回了名片 agent 给 {f['name']} 的一条代答", f"Withdrew a card agent answer to {f['name']}"), "social")
+        log_activity(L(f"收回了名片 Agent 给 {f['name']} 的一条代答", f"Withdrew a card agent answer to {f['name']}"), "social")
     else:
         raise bad(400, "action 只能是 ok / edit / revoke", "action must be ok, edit or revoke")
     return {"ok": True, "message": msg_json(message_row(rid))}
@@ -1255,7 +1256,7 @@ async def revoke_message(rid: int):
     """收回我发的一条（文字或分享）：对方那边清空，显示「收回了这条」。"""
     r = message_row(rid)
     if r["dir"] != "out" or r["kind"] not in ("text", "share"):
-        raise bad(400, "只能收回你自己发的话或分享", "You can only withdraw your own messages or shares")
+        raise bad(400, "只能收回自己发送的消息或分享", "You can only withdraw your own messages or shares")
     if r["status"] != "revoked":
         if r["status"] == "queued":  # 还没发出去：直接不发了
             _set(rid, status="revoked")
@@ -1274,7 +1275,7 @@ async def retry(rid: int):
         await asyncio.sleep(1.5)  # 多半一两秒就有结果：回去的就是这次试过的样子
         return {"ok": True, "message": msg_json(message_row(rid))}
     if r["dir"] != "out" or r["status"] != "failed":
-        raise bad(400, "这条不用重发", "Nothing to retry")
+        raise bad(400, "该消息无需重发", "Nothing to retry")
     _set(rid, status="queued", tries=0, next_try=None, error=None, ts=now_iso())
     kick()
     return {"ok": True, "message": msg_json(message_row(rid))}
@@ -1300,14 +1301,14 @@ def share_snapshot(r) -> dict:
 async def send_share(sid: str, body: ShareSendIn):
     r = share.row(sid)
     if r["status"] == "revoked":
-        raise bad(409, "这条已经收回了", "This share was withdrawn")
+        raise bad(409, "该消息已收回", "This share was withdrawn")
     targets = []
     for fid in dict.fromkeys(body.friends):
         f = friend_or_404(fid)
         need_active(f)
         targets.append(f)
     if not targets:
-        raise bad(400, "先选发给谁", "Pick who to send it to")
+        raise bad(400, "请先选择接收的好友", "Pick who to send it to")
     ts = now_iso()
     with _lock, share.sdb() as conn:
         if body.link and r["status"] in ("draft", "friends"):
@@ -1386,7 +1387,7 @@ def set_my_name(raw_name: str) -> None:
         raise bad(400, f"名字最多 {settings_ctl.MAX_NAME} 个字", f"A name is at most {settings_ctl.MAX_NAME} characters")
     data = settings_ctl.load()
     if data is None:
-        raise bad(500, "server.json 读不了（不是合法的 JSON？），没改。", "Can't read server.json (not valid JSON?); nothing changed.")
+        raise bad(500, "无法读取 server.json（可能不是合法的 JSON），未作修改。", "Can't read server.json (not valid JSON?); nothing changed.")
     if str(data.get("user_name") or "").strip() == name:
         return
     data["user_name"] = name
@@ -1404,7 +1405,7 @@ async def patch_card(body: CardPatch):
         await asyncio.to_thread(set_my_name, body.name)
     if body.tiers:
         await asyncio.to_thread(social.set_tier_scopes, body.tiers)
-        log_activity(L("改了名片 agent 的档位", "Changed the card agent's tiers"), "social")
+        log_activity(L("修改了名片 Agent 的档位", "Changed the card agent's tiers"), "social")
     if body.status is not None:
         text = body.status.replace("\r\n", "\n").strip()[:1000]
         await asyncio.to_thread(social.set_setting, "status", text or None)

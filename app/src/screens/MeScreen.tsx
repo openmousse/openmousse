@@ -95,15 +95,15 @@ export function MeScreen() {
   const web = Platform.OS === 'web';
 
   const switchTo = (c: Claw) => {
-    Alert.alert(L(`换到「${c.name}」？`, `Switch to ${c.name}?`), L('这台设备改连它，对话、记忆都换成它那边的。', "This device will use that claw: chats and memory switch to its own."), [
+    Alert.alert(L(`切换到「${c.name}」？`, `Switch to ${c.name}?`), L('此设备将改为连接该 claw，对话和记忆将切换为其上的数据。', "This device will use that claw: chats and memory switch to its own."), [
       { text: L('取消', 'Cancel'), style: 'cancel' },
       {
-        text: L('换过去', 'Switch'), onPress: async () => {
+        text: L('切换', 'Switch'), onPress: async () => {
           try {
             await switchToClaw(c.id);
             refreshLive();
             nav.reset({ index: 0, routes: [{ name: 'Tabs' }] });
-          } catch (e) { showError(L('没换成', "Couldn't switch"), e); }
+          } catch (e) { showError(L('切换失败', "Couldn't switch"), e); }
         },
       },
     ]);
@@ -131,22 +131,22 @@ export function MeScreen() {
     content: () => (
       <View style={{ gap: space.sm }}>
         <T v="body">{`${Constants.expoConfig?.name ?? 'OpenMousse'} ${version}`}</T>
-        <T v="callout" color={t.ink2}>{L('开源（AGPL-3.0）：github.com/openmousse/openmousse。你的对话、记忆和数据都在你自己的 claw 上。',
-          'Open source (AGPL-3.0): github.com/openmousse/openmousse. Your chats, memory and data live on your own claw.')}</T>
+        <T v="callout" color={t.ink2}>{L('开源（AGPL-3.0）：github.com/openmousse/openmousse。你的对话、记忆和数据均保存在你自己的 claw 上。',
+          'Open source (AGPL-3.0): github.com/openmousse/openmousse. Your chats, memory and data are stored on your own claw.')}</T>
       </View>
     ),
   });
 
   const logout = () => {
-    Alert.alert(L('退出登录？', 'Sign out?'), L('只退出账号，这台设备连着的 claw 照常能用。', 'Only the account signs out; the claws on this device keep working.'), [
+    Alert.alert(L('退出登录？', 'Sign out?'), L('仅退出账号，此设备已连接的 claw 仍可正常使用。', 'This only signs out of your account; the claws on this device keep working.'), [
       { text: L('取消', 'Cancel'), style: 'cancel' },
-      { text: L('退出', 'Sign out'), style: 'destructive', onPress: () => { signOut().then(() => nav.reset({ index: 0, routes: [{ name: 'Login' }] })).catch((e) => showError(L('没退出成', "Couldn't sign out"), e)); } },
+      { text: L('退出', 'Sign out'), style: 'destructive', onPress: () => { signOut().then(() => nav.reset({ index: 0, routes: [{ name: 'Login' }] })).catch((e) => showError(L('退出失败', "Couldn't sign out"), e)); } },
     ]);
   };
 
   const connectedApps = (apps ?? []).filter((a) => a.status !== 'error');
   const appsNeedAuth = (apps ?? []).filter((a) => a.status === 'needs_auth').length;
-  const clawStatus = connected ? L('在线', 'Online') : booting ? L('正在连…', 'Connecting…') : authFailed ? L('令牌不对', 'Wrong token') : L('连不上', 'Unreachable');
+  const clawStatus = connected ? L('在线', 'Online') : booting ? L('正在连接…', 'Connecting…') : authFailed ? L('令牌无效', 'Invalid token') : L('无法连接', 'Unreachable');
 
   return (
     <Screen>
@@ -171,7 +171,7 @@ export function MeScreen() {
                 </View>
               </Pressable>
             ) : (
-              <Row first icon={<User size={22} color={t.cyan} />} title={L(`登录${Constants.expoConfig?.name ?? ''}账号`, `Sign in to ${Constants.expoConfig?.name ?? 'your account'}`)} sub={L('用邮箱收一个验证码就行', 'Just a code sent to your email')}
+              <Row first icon={<User size={22} color={t.cyan} />} title={L(`登录${Constants.expoConfig?.name ?? ''}账号`, `Sign in to ${Constants.expoConfig?.name ?? 'your account'}`)} sub={L('通过邮箱验证码登录', 'Sign in with a code sent to your email')}
                 onPress={() => nav.navigate('Login', { from: 'settings' })} />
             )}
           </Group>
@@ -185,7 +185,7 @@ export function MeScreen() {
           ) : claws.map((c, i) => {
             const active = c.id === activeId;
             const st = active ? (connected ? 'good' : 'warn') : alive[c.id] === 'ok' ? 'good' : alive[c.id] ? 'warn' : 'off';
-            const line = active ? clawStatus : alive[c.id] === 'ok' ? L('在线', 'Online') : alive[c.id] === 'auth' ? L('令牌不对', 'Wrong token') : alive[c.id] === 'down' ? L('连不上', 'Unreachable') : '…';
+            const line = active ? clawStatus : alive[c.id] === 'ok' ? L('在线', 'Online') : alive[c.id] === 'auth' ? L('令牌无效', 'Invalid token') : alive[c.id] === 'down' ? L('无法连接', 'Unreachable') : '…';
             return (
               <Row key={c.id} first={i === 0}
                 icon={<Tile size={36} bg={active ? t.cyanSoft : t.surface2}><Server size={20} color={active ? t.cyan : t.ink3} /></Tile>}
@@ -193,7 +193,7 @@ export function MeScreen() {
                 right={active ? <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}><Dot tone={st} /><Check size={20} color={t.cyan} /></View> : <Dot tone={st} />}
                 chevron={active}
                 onPress={() => (active ? nav.navigate(connected ? 'Claw' : 'Connect') : switchTo(c))}
-                label={active ? L(`${c.name}，正在用，${line}`, `${c.name}, in use, ${line}`) : L(`${c.name}，${line}，点了换到这台`, `${c.name}, ${line}, tap to switch`)} />
+                label={active ? L(`${c.name}，使用中，${line}`, `${c.name}, in use, ${line}`) : L(`${c.name}，${line}，点击切换`, `${c.name}, ${line}, tap to switch`)} />
             );
           })}
           {web ? null : (
@@ -201,8 +201,8 @@ export function MeScreen() {
           )}
         </Group>
         <GroupNote>{acct.enabled
-          ? L('对话、记忆和连接器的令牌都存在 claw 上，账号里没有。', 'Chats, memory and connector tokens live on your claws, not in your account.')
-          : L('对话、记忆和连接器的令牌都存在 claw 上。', 'Chats, memory and connector tokens live on your claws.')}</GroupNote>
+          ? L('对话、记忆和连接器令牌均保存在 claw 上，不存储在账号中。', 'Chats, memory and connector tokens are stored on your claws, not in your account.')
+          : L('对话、记忆和连接器令牌均保存在 claw 上。', 'Chats, memory and connector tokens are stored on your claws.')}</GroupNote>
 
         <GroupLabel>{agentName()}</GroupLabel>
         <Group>
@@ -219,29 +219,29 @@ export function MeScreen() {
                 {connectedApps.length ? <T v="body" color={appsNeedAuth ? t.warn : t.ink2} style={{ fontSize: 16 }}>{String(connectedApps.length)}</T> : null}
               </View>
             ) : undefined}
-            value={apps ? (connectedApps.length ? undefined : L('去连一个', 'Connect one')) : conn ? L(`${conn.ok} 个在用`, `${conn.ok} working`) : undefined}
+            value={apps ? (connectedApps.length ? undefined : L('立即连接', 'Connect one')) : conn ? L(`${conn.ok} 个正常`, `${conn.ok} working`) : undefined}
             tone={apps && !connectedApps.length ? 'accent' : undefined} />
           <Row icon={<IdCard size={22} color={t.cyan} />} title={L('基础档案', 'Profile')} value={profile.length ? L(`${profile.length} 条`, `${profile.length}`) : undefined} onPress={() => nav.navigate('Identity')} />
           <Row icon={<TreeDeciduous size={22} color={t.cyan} />} title={L('世界树', 'Memory tree')}
-            value={leaves ? (leaves.pending ? L(`${leaves.pending} 条等你确认`, `${leaves.pending} waiting`) : L(`${leaves.total} 片叶子`, `${leaves.total} leaves`)) : undefined}
+            value={leaves ? (leaves.pending ? L(`${leaves.pending} 条待确认`, `${leaves.pending} waiting`) : L(`${leaves.total} 片叶子`, `${leaves.total} leaves`)) : undefined}
             tone={leaves?.pending ? 'accent' : undefined} onPress={() => nav.navigate('Tree')} />
           <Row icon={<Brain size={22} color={t.cyan} />} title={L('记忆', 'Memory')} value={memories.length ? L(`${memories.length} 条`, `${memories.length}`) : undefined} onPress={() => nav.navigate('Memory')} />
           <Row icon={<BookOpen size={22} color={t.cyan} />} title={L('日志', 'Journal')} value={journal.length ? L(`${journal.length} 条`, `${journal.length}`) : undefined} onPress={() => nav.navigate('Journal')} />
           {people ? <Row icon={<User size={22} color={t.cyan} />} title={L('朋友画像', 'Friend notes')} onPress={() => nav.navigate('People')} /> : null}
           <Row icon={<Palette size={22} color={t.cyan} />} title={L('形象', 'Look')} right={<LensAvatar size={24} config={avatar} />} onPress={() => nav.navigate('Avatar')} />
           <Row icon={<Cpu size={22} color={expired.length ? t.warn : t.cyan} />} title={L('模型与用量', 'Models & usage')}
-            value={expired.length ? L('订阅登录过期了', 'Sign-in expired') : claw.kind !== 'openclaw' ? claw.name : undefined} tone={expired.length ? 'warn' : undefined}
+            value={expired.length ? L('订阅登录已过期', 'Sign-in expired') : claw.kind !== 'openclaw' ? claw.name : undefined} tone={expired.length ? 'warn' : undefined}
             onPress={() => nav.navigate('Models')} />
         </Group>
 
         <GroupLabel>{L('活动与安全', 'Activity & safety')}</GroupLabel>
         <Group>
           <Row first icon={<Activity size={22} color={t.cyan} />} title={L('活动记录', 'Activity')} onPress={() => nav.navigate('Activity')} />
-          {claw.caps.tasks ? <Row icon={<ClipboardList size={22} color={t.cyan} />} title={L('任务', 'Tasks')} value={running ? L(`${running} 个在跑`, `${running} running`) : undefined} tone="accent" onPress={() => nav.navigate('Tasks')} /> : null}
+          {claw.caps.tasks ? <Row icon={<ClipboardList size={22} color={t.cyan} />} title={L('任务', 'Tasks')} value={running ? L(`${running} 个运行中`, `${running} running`) : undefined} tone="accent" onPress={() => nav.navigate('Tasks')} /> : null}
           <Row icon={<ShieldCheck size={22} color={warn.length ? t.warn : t.cyan} />} title={L('安全', 'Security')}
-            value={security ? (warn.length ? L(`${warn.length} 项要注意`, `${warn.length} to check`) : L('都正常', 'All good')) : undefined} tone={warn.length ? 'warn' : 'good'}
+            value={security ? (warn.length ? L(`${warn.length} 项需关注`, `${warn.length} to check`) : L('全部正常', 'All good')) : undefined} tone={warn.length ? 'warn' : 'good'}
             onPress={() => nav.navigate('Security')} />
-          <Row icon={<ShareIcon size={22} color={t.cyan} />} title={L('分享的链接', 'Shared links')} onPress={() => nav.navigate('Shares')} />
+          <Row icon={<ShareIcon size={22} color={t.cyan} />} title={L('已分享的链接', 'Shared links')} onPress={() => nav.navigate('Shares')} />
         </Group>
 
         <GroupLabel>{L('应用', 'App')}</GroupLabel>
@@ -264,7 +264,7 @@ export function MeScreen() {
         </T>
         {getBase() && !connected && !booting ? (
           <View style={{ marginTop: space.md, alignItems: 'center' }}>
-            <Pressable onPress={() => nav.navigate('Connect')} accessibilityRole="button"><T v="callout" color={t.cyan}>{L('连不上？检查地址和令牌 →', "Can't connect? Check the address and token →")}</T></Pressable>
+            <Pressable onPress={() => nav.navigate('Connect')} accessibilityRole="button"><T v="callout" color={t.cyan}>{L('无法连接？检查地址和令牌 →', "Can't connect? Check the address and token →")}</T></Pressable>
           </View>
         ) : null}
       </ScrollView>

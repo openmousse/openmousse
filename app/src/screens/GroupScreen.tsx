@@ -42,7 +42,7 @@ export function GroupScreen() {
   return (
     <Screen>
       {/* 点名字（旁边一支小笔）进编辑页：名字、图标和颜色、职责、默认模型、删除 */}
-      <NavHeader title={g.name} onBack={() => nav.goBack()} onTitlePress={() => nav.navigate('EditGroup', { id: g.id })} titleHint={L('编辑 Agent', 'Edit agent')} right={(
+      <NavHeader title={g.name} onBack={() => nav.goBack()} onTitlePress={() => nav.navigate('EditGroup', { id: g.id })} titleHint={L('编辑 Agent', 'Edit Agent')} right={(
         <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
           <Pressable onPress={() => nav.navigate('History', { thread: g.id })} hitSlop={8} accessibilityRole="button" accessibilityLabel={L('历史与搜索', 'History and search')} style={{ width: 32, height: 32, alignItems: 'center', justifyContent: 'center' }}>
             <CalendarDays size={20} color={t.ink2} />
@@ -53,7 +53,7 @@ export function GroupScreen() {
       <View style={{ paddingHorizontal: space.lg, paddingVertical: space.sm }}>
         <Segmented value={tab} onChange={setTab} options={[{ value: 'chat', label: L('对话', 'Chat') }, { value: 'board', label: L('看板', 'Dashboard') }, { value: 'memory', label: L('记忆', 'Memory') }]} />
       </View>
-      {tab === 'chat' ? <ChatView threadId={g.id} quote={quote} quoteAt={quote ? at ?? 0 : 0} focus={focus} focusAt={focus ? at ?? 0 : 0} placeholder={L(`在「${g.name}」里说`, `Message "${g.name}"`)} empty={g.purpose ? L(`这个 Agent 负责：${g.purpose}`, `This agent handles: ${g.purpose}`) : undefined} /> : (
+      {tab === 'chat' ? <ChatView threadId={g.id} quote={quote} quoteAt={quote ? at ?? 0 : 0} focus={focus} focusAt={focus ? at ?? 0 : 0} placeholder={L(`向「${g.name}」发送消息`, `Message "${g.name}"`)} empty={g.purpose ? L(`此 Agent 负责：${g.purpose}`, `This Agent handles: ${g.purpose}`) : undefined} /> : (
         <ScrollView contentContainerStyle={{ padding: space.lg, paddingTop: 0, paddingBottom: space.xxl }}
           refreshControl={<PullRefresh onRefresh={tab === 'board' ? () => Promise.all([refreshBoards(), blocks.reload()]) : () => reload('memories', 'journal')} />}>
           {tab === 'board' ? (
@@ -62,8 +62,8 @@ export function GroupScreen() {
               {g.dashboard === 'none' || !g.dashboard ? (
                 hasBlocks(blocks.board) ? <AllBlocks /> : (
                   <Card style={{ marginTop: space.md, gap: space.md }}>
-                    <T v="callout" color={t.ink2}>{L(`这个 Agent 还没有看板。让它按自己管的事提一个：记哪些数据、放哪几块，你在「等你点头」里看预览再定。`, "This agent has no dashboard yet. Ask it to propose one for what it looks after: what to keep track of and which blocks to show. You'll see a preview in Needs your OK before anything changes.")}</T>
-                    <Btn label={typing[g.id] ? L(`${g.name} 正在回…`, `${g.name} is replying…`) : L('让它提一个', 'Ask it to propose one')} kind="primary" icon={<Sparkles size={14} color={t.onGold} />}
+                    <T v="callout" color={t.ink2}>{L(`此 Agent 尚无看板。可请它根据所负责的事务提出方案：记录哪些数据、显示哪些模块；你可在「待你确认」中预览后再决定。`, "This Agent has no dashboard yet. Ask it to propose one for what it looks after: what to track and which blocks to show. You'll see a preview in Needs your OK before anything changes.")}</T>
+                    <Btn label={typing[g.id] ? L(`${g.name} 正在回复…`, `${g.name} is replying…`) : L('请求提案', 'Request a proposal')} kind="primary" icon={<Sparkles size={14} color={t.onGold} />}
                       onPress={() => { if (typing[g.id]) return; send(g.id, L('帮我设计一下你的看板：要记哪些数据、放哪几块。先交提案，我看了预览再定。', 'Design your dashboard: what data to keep and which blocks to show. Send it as a proposal so I can see the preview first.')); toChat(); }} />
                   </Card>
                 )
@@ -71,14 +71,14 @@ export function GroupScreen() {
                 <StudyBoard onChat={toChat} />
               ) : !live ? (
                 <>
-                  <Card style={{ marginTop: space.md }}><T v="callout" color={t.ink2}>{booting || liveLoading ? L('正在读…', 'Loading…') : !connected ? L('没连上服务器。检查「我 → 服务器」后回到这一页。', 'Not connected to the server. Check Me → Server, then come back here.') : L('看板数据没读到。', "Couldn't load the dashboard data.")}</T></Card>
+                  <Card style={{ marginTop: space.md }}><T v="callout" color={t.ink2}>{booting || liveLoading ? L('正在加载…', 'Loading…') : !connected ? L('未连接服务器。请检查「我 → 服务器」后返回此页。', 'Not connected to the server. Check Me → Server, then come back here.') : L('无法加载看板数据。', "Couldn't load the dashboard data.")}</T></Card>
                   <AllBlocks />
                 </>
               ) : g.dashboard === 'fitness' ? (
                 <FitnessBoard groupId={g.id} onAsk={toChat} />
               ) : g.dashboard === 'diet' ? (
                 live.diet ? <DietBoard diet={live.diet} energy={live.energy} energyError={liveErrors.energy} groupId={g.id} onAsk={toChat} />
-                  : <><View style={{ marginTop: space.md }}>{live.sources.meals === false ? <NoSourceCard kind={L('饮食', 'meal')} /> : <Card><T v="callout" color={t.bad}>{L(`饮食数据没读到${liveErrors.diet ? `：${liveErrors.diet}` : ''}`, `Couldn't load meal data${liveErrors.diet ? `: ${liveErrors.diet}` : ''}`)}</T></Card>}</View><AllBlocks /></>
+                  : <><View style={{ marginTop: space.md }}>{live.sources.meals === false ? <NoSourceCard kind={L('饮食', 'meal')} /> : <Card><T v="callout" color={t.bad}>{L(`无法加载饮食数据${liveErrors.diet ? `：${liveErrors.diet}` : ''}`, `Couldn't load meal data${liveErrors.diet ? `: ${liveErrors.diet}` : ''}`)}</T></Card>}</View><AllBlocks /></>
               ) : g.dashboard === 'health' ? (
                 <SectionedBoard els={{ 'health.sleep': <SleepReportSection groupId={g.id} onAsk={toChat} />, 'health.recovery': <LiveRecoveryCard /> }} />
               ) : g.dashboard === 'apply' || g.dashboard === 'masters' ? (
@@ -87,7 +87,7 @@ export function GroupScreen() {
                 }} />
               ) : <AllBlocks />}
               <BoardFooter onHistory={() => nav.navigate('BoardHistory', { id: g.id })} />
-              {blocks.error ? <Card style={{ marginTop: space.md }}><T v="callout" color={t.bad}>{L(`看板里的积木没读到：${blocks.error}`, `Couldn't load the dashboard blocks: ${blocks.error}`)}</T></Card> : null}
+              {blocks.error ? <Card style={{ marginTop: space.md }}><T v="callout" color={t.bad}>{L(`无法加载看板积木：${blocks.error}`, `Couldn't load the dashboard blocks: ${blocks.error}`)}</T></Card> : null}
             </BoardProvider>
           ) : <View style={{ paddingTop: space.sm }}><AgentMemory groupId={g.id} /></View>}
         </ScrollView>

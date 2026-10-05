@@ -86,4 +86,4 @@ export const setFeed = (b: { include?: Partial<ScheduleFeed['include']>; rotate?
 /** 这次改动的卡（有就返回第一张），给「撤销」用。 */
 export const cardOf = (r: Changed): ScheduleChangeCard | null => r.card ?? r.cards?.find((c): c is ScheduleChangeCard => !!c) ?? null;
 
-export const scheduleError = (e: unknown) => (e instanceof Error ? e.message : L('没改成', "Couldn't change it"));
+export const scheduleError = (e: unknown) => (e instanceof Error ? e.message : L('修改失败', "Couldn't update"));

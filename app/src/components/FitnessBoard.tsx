@@ -97,20 +97,20 @@ function ReviewCard({ f, week }: { f: FeedItem; week: LiveWeek | null }) {
   return (
     <Card style={{ gap: 10 }}>
       <View style={styles.rowC}>
-        <Pill label={L('练完了', 'Done')} tone="good" />
+        <Pill label={L('已完成', 'Done')} tone="good" />
         {meta ? <T v="caption" color={t.ink3} numberOfLines={1} style={{ flex: 1 }}>{meta}</T> : null}
       </View>
       <T v="headline" style={styles.big}>{r.headline}</T>
       {r.oneLine ? <T v="callout" color={t.ink2} numberOfLines={3}>{r.oneLine}</T> : null}
       {r.nextLines.length ? (
         <View style={[styles.box, { backgroundColor: t.bg, borderColor: t.line }]}>
-          <T v="caption" color={t.ink3} style={{ fontWeight: '600' }}>{L('接下来', 'Next')}</T>
+          <T v="caption" color={t.ink3} style={{ fontWeight: '600' }}>{L('下一步', 'Next')}</T>
           {r.nextLines.map((x, i) => <T key={`${i}-${x}`} v="callout" numberOfLines={2}>{x}</T>)}
         </View>
       ) : null}
-      <Pressable onPress={() => setOpen((v) => !v)} accessibilityRole="button" accessibilityState={{ expanded: open }} accessibilityHint={L('点开看练后卡全文', 'Shows the full post-workout card')}
+      <Pressable onPress={() => setOpen((v) => !v)} accessibilityRole="button" accessibilityState={{ expanded: open }} accessibilityHint={L('展开练后卡全文', 'Shows the full post-workout card')}
         style={({ pressed }) => [styles.rowC, { paddingTop: 2, opacity: pressed ? 0.6 : 1 }]}>
-        <T v="headline" numberOfLines={2} style={{ flex: 1, fontSize: 15 }}>{r.tomorrow ? `${L('明天', 'Tomorrow')} · ${r.tomorrow}` : L('看全文', 'Read it all')}</T>
+        <T v="headline" numberOfLines={2} style={{ flex: 1, fontSize: 15 }}>{r.tomorrow ? `${L('明天', 'Tomorrow')} · ${r.tomorrow}` : L('查看全文', 'Read more')}</T>
         <Disclosure open={open} />
       </Pressable>
       {open ? <View style={[styles.more, { borderTopColor: t.line }]}><Markdown text={f.body} color={t.ink2} compact /></View> : null}
@@ -165,7 +165,7 @@ function PlanCard({ plan, busy, onAsk }: { plan: TrainingPlan; busy: boolean; on
           </View>
         </Pressable>
       ) : null}
-      <Btn label={busy ? L(`${agentName()} 正在出…`, `${agentName()} is on it…`) : L('重新出一份', 'Make a new one')} kind="quiet" onPress={onAsk} icon={<Sparkles size={14} color={t.ink} />} />
+      <Btn label={busy ? L(`${agentName()} 正在生成…`, `${agentName()} is generating…`) : L('重新生成', 'Regenerate')} kind="quiet" onPress={onAsk} icon={<Sparkles size={14} color={t.ink} />} />
     </Card>
   );
 }
@@ -181,13 +181,13 @@ function NowSection({ groupId, onAsk }: { groupId: string; onAsk: () => void }) 
   const ask = () => { send(groupId, L('出今天的训练建议', "Plan today's workout")); onAsk(); };
   return (
     <View>
-      <SectionLabel right={card ? <Caption>{clock(card)}</Caption> : undefined}>{L('现在', 'Now')}</SectionLabel>
+      <SectionLabel right={card ? <Caption>{clock(card)}</Caption> : undefined}>{L('当前', 'Now')}</SectionLabel>
       {card?.kind === 'training_review' ? <ReviewCard f={card} week={live?.week ?? null} />
         : card && isTrainingPlan(card) ? <PlanCard plan={card.data} busy={busy} onAsk={ask} />
           : (
             <Card style={{ gap: space.sm }}>
-              <T v="callout" color={t.ink2}>{L(`今天还没有训练建议。${agentName()} 会按昨晚睡眠、恢复分、PPL 轮到哪个、今天的课和你最近的感受来配。`, `No workout plan for today yet. ${agentName()} plans it around last night's sleep, your recovery score, where you are in your PPL split, today's classes and how you've been feeling.`)}</T>
-              <Btn label={busy ? L(`${agentName()} 正在出…`, `${agentName()} is on it…`) : L(`让 ${agentName()} 出今天的建议`, `Ask ${agentName()} for today's plan`)} kind="primary" onPress={ask} icon={<Sparkles size={14} color={t.onGold} />} />
+              <T v="callout" color={t.ink2}>{L(`今日尚无训练建议。${agentName()} 将根据昨晚睡眠、恢复分、PPL 轮次、今日课程和你近期的状态制定。`, `No workout plan for today yet. ${agentName()} plans it around last night's sleep, your recovery score, your place in the PPL split, today's classes and how you've been feeling.`)}</T>
+              <Btn label={busy ? L(`${agentName()} 正在生成…`, `${agentName()} is generating…`) : L(`请 ${agentName()} 生成今日建议`, `Ask ${agentName()} for today's plan`)} kind="primary" onPress={ask} icon={<Sparkles size={14} color={t.onGold} />} />
             </Card>
           )}
     </View>
@@ -201,14 +201,14 @@ function BodySection() {
   const [open, setOpen] = useState(false);
   const scored = rec != null && rec.score != null;
   const summary = scored
-    ? (rec.notes.length ? rec.notes.join(' · ') : L('各项都在基线附近', 'Everything is near baseline'))
-    : last ? L(`睡了 ${hhmm(last.sleep_min)}${last.hrv_ms != null ? ` · HRV ${Math.round(last.hrv_ms)} ms` : ''}`, `Slept ${hhmm(last.sleep_min)}${last.hrv_ms != null ? ` · HRV ${Math.round(last.hrv_ms)} ms` : ''}`) : '';
+    ? (rec.notes.length ? rec.notes.join(' · ') : L('各项指标接近基线', 'All metrics are near baseline'))
+    : last ? L(`睡眠 ${hhmm(last.sleep_min)}${last.hrv_ms != null ? ` · HRV ${Math.round(last.hrv_ms)} ms` : ''}`, `Slept ${hhmm(last.sleep_min)}${last.hrv_ms != null ? ` · HRV ${Math.round(last.hrv_ms)} ms` : ''}`) : '';
   return (
     <View>
       <SectionLabel right={<HealthCaption />}>{L('身体状态', 'Body')}</SectionLabel>
       {!last ? <NoRecoveryCard /> : (
         <Card style={{ gap: space.md }}>
-          <Pressable onPress={() => setOpen((v) => !v)} accessibilityRole="button" accessibilityState={{ expanded: open }} accessibilityHint={L('点开看睡眠和心率的细节', 'Shows sleep and heart rate details')}
+          <Pressable onPress={() => setOpen((v) => !v)} accessibilityRole="button" accessibilityState={{ expanded: open }} accessibilityHint={L('展开睡眠与心率详情', 'Shows sleep and heart rate details')}
             style={({ pressed }) => [styles.rowC, { gap: 14, opacity: pressed ? 0.7 : 1 }]}>
             {scored ? (
               <Ring size={64} stroke={7} value={rec.score ?? 0} target={100} color={bandColor(t, rec.band)}>
@@ -258,7 +258,7 @@ function WorkoutRow({ day, tr }: { day: string; tr: LiveTrain }) {
       </Pressable>
       {open ? (
         <View style={{ marginTop: 6 }}>
-          <T v="caption" color={t.ink3} style={{ fontWeight: '400', marginBottom: 2 }}>{L(`${tr.start} 开始${tr.kcal ? ` · ${tr.kcal} kcal` : ''} · 做完 ${tr.sets_done} 组`, `Started ${tr.start}${tr.kcal ? ` · ${tr.kcal} kcal` : ''} · ${tr.sets_done} sets done`)}</T>
+          <T v="caption" color={t.ink3} style={{ fontWeight: '400', marginBottom: 2 }}>{L(`${tr.start} 开始${tr.kcal ? ` · ${tr.kcal} kcal` : ''} · 完成 ${tr.sets_done} 组`, `Started ${tr.start}${tr.kcal ? ` · ${tr.kcal} kcal` : ''} · ${tr.sets_done} sets done`)}</T>
           {tr.movements.map((m, k) => (
             <View key={`${m.name}-${k}`} style={[styles.move, k > 0 && { borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: t.line }]}>
               <T v="callout" style={{ flex: 1 }} numberOfLines={1}>{m.name}</T>
@@ -278,7 +278,7 @@ function WeekSection({ week, loadedAt }: { week: LiveWeek; loadedAt: string }) {
   const rows = week.days.flatMap((d, i) => d.trains.map((tr, k) => ({ key: `${d.date}-${k}`, day: i === week.today_index ? L('今天', 'Today') : weekdayName(d.d), tr })));
   return (
     <View>
-      <SectionLabel right={<Caption>{`${week.source || L('训练记录', 'Workout log')} · ${loadedAt}`}</Caption>}>{L('这周', 'This week')}</SectionLabel>
+      <SectionLabel right={<Caption>{`${week.source || L('训练记录', 'Workout log')} · ${loadedAt}`}</Caption>}>{L('本周', 'This week')}</SectionLabel>
       <Card style={{ gap: space.md }}>
         <View style={{ flexDirection: 'row', gap: space.sm }}>
           <Num value={week.sessions} label={L('次训练', week.sessions === 1 ? 'workout' : 'workouts')} />
@@ -287,7 +287,7 @@ function WeekSection({ week, loadedAt }: { week: LiveWeek; loadedAt: string }) {
         </View>
         <DayBars days={week.days} todayIndex={week.today_index} unit={L('分钟', 'min')} />
         {rows.length ? <View>{rows.map((r) => <WorkoutRow key={r.key} day={r.day} tr={r.tr} />)}</View>
-          : <T v="callout" color={t.ink2}>{L('这周还没有训练记录。', 'No workouts logged this week.')}</T>}
+          : <T v="callout" color={t.ink2}>{L('本周尚无训练记录。', 'No workouts logged this week.')}</T>}
       </Card>
     </View>
   );
@@ -319,15 +319,15 @@ function TrendSection({ trend }: { trend: LiveTrend }) {
     const d = s.last7 - s.window;
     const flat = s.window !== 0 && Math.abs(d) / Math.abs(s.window) < 0.05;
     const better = higherIsBetter ? d > 0 : d < 0;
-    return { value: fmt(s.last7), delta: L(`比平均 ${signed(Math.round(d))}`, `${signed(Math.round(d))} vs avg`), color: flat ? t.ink3 : better ? t.good : t.bad };
+    return { value: fmt(s.last7), delta: L(`较平均 ${signed(Math.round(d))}`, `${signed(Math.round(d))} vs avg`), color: flat ? t.ink3 : better ? t.good : t.bad };
   };
   const int = (n: number) => Math.round(n).toLocaleString('en-GB');
   const rhr = vsAvg(trend.resting_hr, false, int);
   const walk = vsAvg(trend.walking_hr, false, int);
   const steps = vsAvg(trend.steps, true, int);
   const vo2Delta = v.change == null
-    ? { text: v.latest ? L('这段时间只有一次', 'Only one reading so far') : L('户外走跑后才有', 'Shows up after an outdoor walk or run'), color: t.ink3 }
-    : { text: first ? L(`比 ${md(first.date)} ${signed(v.change, 1)}`, `${signed(v.change, 1)} since ${md(first.date)}`) : signed(v.change, 1), color: Math.abs(v.change) < 0.5 ? t.ink3 : v.change > 0 ? t.good : t.bad };
+    ? { text: v.latest ? L('期间仅有一次读数', 'Only one reading so far') : L('户外步行或跑步后显示', 'Appears after an outdoor walk or run'), color: t.ink3 }
+    : { text: first ? L(`较 ${md(first.date)} ${signed(v.change, 1)}`, `${signed(v.change, 1)} since ${md(first.date)}`) : signed(v.change, 1), color: Math.abs(v.change) < 0.5 ? t.ink3 : v.change > 0 ? t.good : t.bad };
   return (
     <View>
       <SectionLabel right={<Caption>{L('Apple 健康', 'Apple Health')}</Caption>}>{L(`长期 · ${trend.days} 天`, `Long term · ${trend.days} days`)}</SectionLabel>
@@ -353,9 +353,9 @@ export function FitnessBoard({ groupId, onAsk }: { groupId: string; onAsk: () =>
       'fitness.body': <BodySection />,
       'fitness.week': live.week ? <WeekSection week={live.week} loadedAt={live.loadedAt} /> : (
         <View>
-          <SectionLabel>{L('这周', 'This week')}</SectionLabel>
+          <SectionLabel>{L('本周', 'This week')}</SectionLabel>
           {live.sources.workouts === false ? <NoSourceCard kind={L('训练', 'workout')} />
-            : <Card><T v="callout" color={t.bad}>{L(`训练数据没读到${liveErrors.week ? `：${liveErrors.week}` : ''}`, `Couldn't load workout data${liveErrors.week ? `: ${liveErrors.week}` : ''}`)}</T></Card>}
+            : <Card><T v="callout" color={t.bad}>{L(`无法加载训练数据${liveErrors.week ? `：${liveErrors.week}` : ''}`, `Couldn't load workout data${liveErrors.week ? `: ${liveErrors.week}` : ''}`)}</T></Card>}
         </View>
       ),
       'fitness.long': live.trend ? <TrendSection trend={live.trend} /> : null,

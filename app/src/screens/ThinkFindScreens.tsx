@@ -51,13 +51,13 @@ export function ThinkSearchScreen() {
     if (!s) return undefined;
     let live = true;
     const h = setTimeout(() => {
-      thinkApi.search(s, scope).then((r) => { if (live) setRes(r); }).catch((e) => showError(L('没搜成', "Search failed"), e));
+      thinkApi.search(s, scope).then((r) => { if (live) setRes(r); }).catch((e) => showError(L('搜索失败', "Search failed"), e));
     }, 250);
     return () => { live = false; clearTimeout(h); };
   }, [q, scope]);
   const shown = q.trim() && res?.q === q.trim() ? res : null;
   const remember = () => { if (q.trim()) { pushRecent(q.trim()); setRecent(readRecent()); } };
-  const openIdea = (f: Fragment) => { remember(); sheet.open({ title: f.title || L('一条想法', 'A thought'), content: (close) => <FragmentSheet id={f.id} initial={f} close={close} /> }); };
+  const openIdea = (f: Fragment) => { remember(); sheet.open({ title: f.title || L('想法', 'Thought'), content: (close) => <FragmentSheet id={f.id} initial={f} close={close} /> }); };
   const vault = stream?.obsidianVault;
   const counts = shown?.counts;
   const scopes: [string, string, number | undefined][] = [['all', L('全部', 'All'), shown?.total], ['idea', L('想法', 'Thoughts'), counts?.ideas], ['save', L('收藏', 'Saved'), counts?.saves],
@@ -67,7 +67,7 @@ export function ThinkSearchScreen() {
       <View style={[styles.searchRow]}>
         <View style={[styles.field, { backgroundColor: t.surface, borderColor: t.goldFill }]}>
           <Search size={17} color={t.ink2} />
-          <TextInput value={q} onChangeText={setQ} autoFocus placeholder={L('搜想法、收藏和聊过的', 'Search thoughts, saved and talks')} placeholderTextColor={t.ink3}
+          <TextInput value={q} onChangeText={setQ} autoFocus placeholder={L('搜索想法、收藏和讨论', 'Search thoughts, saved items and talks')} placeholderTextColor={t.ink3}
             onSubmitEditing={remember} returnKeyType="search" accessibilityLabel={L('搜索', 'Search')} style={[type.body, { flex: 1, color: t.ink, paddingVertical: 8 }]} />
           {q ? <Pressable onPress={() => setQ('')} hitSlop={8} accessibilityRole="button" accessibilityLabel={L('清空', 'Clear')} style={[styles.clear, { backgroundColor: t.ink3 }]}><X size={12} color={t.surface} strokeWidth={3} /></Pressable> : null}
         </View>
@@ -77,7 +77,7 @@ export function ThinkSearchScreen() {
         {!q.trim() ? (
           <>
             <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'baseline' }}>
-              <T v="label" color={t.ink3} style={{ textTransform: 'uppercase' }}>{L('关键词 · 用得多的在前', 'Keywords · most used first')}</T>
+              <T v="label" color={t.ink3} style={{ textTransform: 'uppercase' }}>{L('关键词 · 按使用频率排序', 'Keywords · most used first')}</T>
               <T v="caption" color={t.ink3}>{L(`共 ${keywords.length} 个`, `${keywords.length} total`)}</T>
             </View>
             <View style={styles.wrap}>
@@ -87,12 +87,12 @@ export function ThinkSearchScreen() {
                   <Text style={[type.caption, { color: t.ink3 }]}>{k.n}</Text>
                 </Pressable>
               ))}
-              {!keywords.length ? <T v="callout" color={t.ink3}>{L('还没有关键词。输入栏的 # 键、或者句子里写 #护城河，就有了。', 'No keywords yet. Use the # key in the input bar, or write #word in a sentence.')}</T> : null}
+              {!keywords.length ? <T v="callout" color={t.ink3}>{L('暂无关键词。可使用输入栏的 # 键，或在句子中写入 #护城河 来添加。', 'No keywords yet. Use the # key in the input bar, or write #word in a sentence.')}</T> : null}
             </View>
             {recent.length ? (
               <View>
                 <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingTop: space.sm }}>
-                  <T v="label" color={t.ink3} style={{ textTransform: 'uppercase' }}>{L('最近搜过', 'Recent')}</T>
+                  <T v="label" color={t.ink3} style={{ textTransform: 'uppercase' }}>{L('最近搜索', 'Recent')}</T>
                   <Pressable onPress={() => { saveDraft(RECENT, ''); setRecent([]); }} hitSlop={8} accessibilityRole="button"><T v="caption" color={t.gold} style={{ fontWeight: '600' }}>{L('清空', 'Clear')}</T></Pressable>
                 </View>
                 {recent.map((r, i) => (
@@ -105,12 +105,12 @@ export function ThinkSearchScreen() {
             <Pressable onPress={() => nav.navigate('ThinkHistory')} accessibilityRole="button" style={({ pressed }) => [styles.cal, { backgroundColor: t.surface, opacity: pressed ? 0.8 : 1 }]}>
               <View style={[styles.tile, { backgroundColor: t.goldSoft }]}><CalendarDays size={19} color={t.gold} /></View>
               <View style={{ flex: 1 }}>
-                <T v="headline" style={{ fontSize: 15 }}>{L('按日期翻', 'Browse by date')}</T>
-                <T v="caption" color={t.ink3}>{L('想法和收藏都在', 'Thoughts and saved items together')}</T>
+                <T v="headline" style={{ fontSize: 15 }}>{L('按日期浏览', 'Browse by date')}</T>
+                <T v="caption" color={t.ink3}>{L('包含想法和收藏', 'Thoughts and saved items together')}</T>
               </View>
               <ChevronRight size={16} color={t.ink3} />
             </Pressable>
-            <T v="caption" color={t.ink3} style={{ textAlign: 'center', lineHeight: 18 }}>{L('在服务器上直接搜，不调模型。语音转的字、文件和长文里的字都算，已想完的也在。', "Searched on your server, no model involved. Transcripts, file text and long pieces count, finished thoughts too.")}</T>
+            <T v="caption" color={t.ink3} style={{ textAlign: 'center', lineHeight: 18 }}>{L('直接在服务器上搜索，不调用模型。范围包括语音转写、文件和长文中的文字，以及已完成思考的想法。', "Searched on your server, no model involved. Covers transcripts, file text, long pieces and finished thoughts.")}</T>
           </>
         ) : (
           <>
@@ -122,13 +122,13 @@ export function ThinkSearchScreen() {
                 </Pressable>
               ))}
             </ScrollView>
-            {!shown ? <T v="callout" color={t.ink3}>{L('在找…', 'Searching…')}</T> : null}
+            {!shown ? <T v="callout" color={t.ink3}>{L('正在搜索…', 'Searching…')}</T> : null}
             {shown?.keywords.map((k) => (
               <Pressable key={k.k} onPress={() => { remember(); nav.navigate('ThinkKeyword', { k: k.k }); }} accessibilityRole="button" style={[styles.kwRow, { backgroundColor: t.tints.cyan.soft }]}>
                 <View style={[styles.tile, { backgroundColor: t.surface }]}><Hash size={18} color={t.tints.cyan.fg} /></View>
                 <View style={{ flex: 1 }}>
                   <T v="headline" color={t.tints.cyan.fg}>#{k.k}</T>
-                  <T v="caption" color={t.ink2}>{L(`关键词 · ${k.ideas} 条想法、${k.saves} 条收藏都在一页`, `Keyword · ${k.ideas} thoughts, ${k.saves} saved on one page`)}</T>
+                  <T v="caption" color={t.ink2}>{L(`关键词 · ${k.ideas} 条想法、${k.saves} 条收藏汇总于一页`, `Keyword · ${k.ideas} thoughts, ${k.saves} saved on one page`)}</T>
                 </View>
                 <ChevronRight size={16} color={t.tints.cyan.fg} />
               </Pressable>
@@ -140,7 +140,7 @@ export function ThinkSearchScreen() {
                     <TypeTile kind={f.kind} size={24} />
                     <View style={{ flex: 1, gap: 3 }}>
                       <Highlight parts={f.parts} v="callout" color={t.ink} />
-                      <T v="caption" color={t.ink3}>{`${dayLabel(f.day).split(' · ')[0]} ${f.time}`}{f.status === 'done' ? L(' · 已想完', ' · finished') : ''}{f.kind === 'voice' ? L(' · 语音里的一句', ' · from a voice note') : ''}</T>
+                      <T v="caption" color={t.ink3}>{`${dayLabel(f.day).split(' · ')[0]} ${f.time}`}{f.status === 'done' ? L(' · 已完成', ' · finished') : ''}{f.kind === 'voice' ? L(' · 来自语音', ' · from a voice note') : ''}</T>
                     </View>
                   </Pressable>
                 ))}
@@ -165,7 +165,7 @@ export function ThinkSearchScreen() {
               </Group>
             ) : null}
             {shown?.notes.length ? (
-              <Group label={L(`库里的笔记 · ${shown.notes.length}`, `Notes in the vault · ${shown.notes.length}`)}>
+              <Group label={L(`库中的笔记 · ${shown.notes.length}`, `Notes in the vault · ${shown.notes.length}`)}>
                 {shown.notes.map((n) => (
                   <Pressable key={n.path} disabled={!vault} onPress={() => vault && Linking.openURL(`obsidian://open?vault=${encodeURIComponent(vault)}&file=${encodeURIComponent(n.path.replace(/\.md$/, ''))}`).catch(() => {})}
                     accessibilityRole="button" style={[styles.hit, { borderTopColor: t.line }]}>
@@ -179,8 +179,8 @@ export function ThinkSearchScreen() {
                 ))}
               </Group>
             ) : null}
-            {shown && !shown.total && !shown.keywords.length ? <T v="callout" color={t.ink3}>{L('字面上没找到。去「聊聊」里问它「我以前想过类似的吗」，它会按意思翻库。', 'Nothing matches literally. Ask in a talk: "have I thought about something like this before?" It searches by meaning.')}</T> : null}
-            {shown?.total ? <T v="caption" color={t.ink3} style={{ textAlign: 'center' }}>{L('字面搜不到的，去「聊聊」里问它「我以前想过类似的吗」', 'For things worded differently, ask in a talk: "have I thought about something like this?"')}</T> : null}
+            {shown && !shown.total && !shown.keywords.length ? <T v="callout" color={t.ink3}>{L('未找到字面匹配的内容。可在「讨论」中提问「我以前想过类似的吗」，Agent 会按语义检索库。', 'Nothing matches literally. Ask in a talk: "have I thought about something like this before?" The Agent searches by meaning.')}</T> : null}
+            {shown?.total ? <T v="caption" color={t.ink3} style={{ textAlign: 'center' }}>{L('措辞不同的内容，可在「讨论」中提问「我以前想过类似的吗」', 'For things worded differently, ask in a talk: "have I thought about something like this?"')}</T> : null}
           </>
         )}
       </ScrollView>
@@ -212,7 +212,7 @@ export function ThinkKeywordScreen() {
   const [busy, setBusy] = useState(false);
   const root = React.useRef<View>(null);
   const bottom = useBottomInset(root);
-  const load = useCallback(() => thinkApi.keyword(k).then(setPage).catch((e) => showError(L('读不到', "Couldn't load"), e)), [k]);
+  const load = useCallback(() => thinkApi.keyword(k).then(setPage).catch((e) => showError(L('无法加载', "Couldn't load"), e)), [k]);
   useFocusEffect(useCallback(() => { load(); }, [load]));
   const ideas = (page?.items ?? []).filter((x): x is Extract<DayItem, { type: 'idea' }> => x.type === 'idea').map((x) => x.idea);
   const months: [string, DayItem[]][] = [];
@@ -230,7 +230,7 @@ export function ThinkKeywordScreen() {
       if (then === 'talk') await thinkApi.talk(tp.id); else await thinkApi.done(tp.id);
       setSel([]);
       nav.navigate(then === 'talk' ? 'ThinkTalk' : 'ThinkDone', { id: tp.id });
-    } catch (e) { showError(L('没开成', "Couldn't start"), e); } finally { setBusy(false); }
+    } catch (e) { showError(L('无法开始', "Couldn't start"), e); } finally { setBusy(false); }
   };
   const since = page?.since ? `${Number(page.since.slice(5, 7))}/${Number(page.since.slice(8, 10))}` : '';
   const monthLabel = (m: string) => L(`${Number(m.slice(5, 7))} 月`, new Date(`${m}-15T12:00:00`).toLocaleString('en', { month: 'long' }));
@@ -244,7 +244,7 @@ export function ThinkKeywordScreen() {
           <ScrollView contentContainerStyle={{ padding: space.lg, gap: 10, paddingBottom: 90 }} keyboardShouldPersistTaps="handled" keyboardDismissMode={dismissMode} refreshControl={<PullRefresh onRefresh={load} />}>
             {page?.co.length ? (
               <>
-                <T v="label" color={t.ink3} style={{ textTransform: 'uppercase' }}>{L('常一起出现', 'Often together')}</T>
+                <T v="label" color={t.ink3} style={{ textTransform: 'uppercase' }}>{L('常同时出现', 'Often together')}</T>
                 <View style={styles.wrap}>
                   {page.co.map((c) => (
                     <Pressable key={c.k} onPress={() => nav.push('ThinkKeyword', { k: c.k })} accessibilityRole="button" style={[styles.kc, { backgroundColor: t.surface, borderColor: t.line, height: 30 }]}>
@@ -260,33 +260,33 @@ export function ThinkKeywordScreen() {
                 <SectionLabel>{monthLabel(m)}</SectionLabel>
                 {items.map((it) => (it.type === 'idea'
                   ? <FragmentCard key={it.idea.id} f={it.idea} withDay selected={sel.includes(it.idea.id)} onToggle={() => toggle(it.idea.id)}
-                      onPress={() => sheet.open({ title: it.idea.title || L('一条想法', 'A thought'), content: (close) => <FragmentSheet id={it.idea.id} initial={it.idea} close={close} /> })}
+                      onPress={() => sheet.open({ title: it.idea.title || L('想法', 'Thought'), content: (close) => <FragmentSheet id={it.idea.id} initial={it.idea} close={close} /> })}
                       onKeyword={(x) => (x === page?.k ? undefined : nav.push('ThinkKeyword', { k: x }))} />
                   : <SaveRow key={it.save.id} s={it.save} onPress={() => nav.navigate('Save', { id: it.save.id })} />))}
               </React.Fragment>
             ))}
-            {page && !page.items.length ? <T v="callout" color={t.ink3}>{L('还没有带这个关键词的。', 'Nothing with this keyword yet.')}</T> : null}
-            {page?.items.length ? <T v="caption" color={t.ink3} style={{ textAlign: 'center' }}>{L('跨多久都在这一页 · Obsidian 里按这个标签也找得到', 'Everything with it, however old · also a tag in Obsidian')}</T> : null}
+            {page && !page.items.length ? <T v="callout" color={t.ink3}>{L('暂无带此关键词的内容。', 'Nothing with this keyword yet.')}</T> : null}
+            {page?.items.length ? <T v="caption" color={t.ink3} style={{ textAlign: 'center' }}>{L('所有时间的内容均汇总于此页 · 也可在 Obsidian 中按此标签查找', 'Everything with it, however old · also a tag in Obsidian')}</T> : null}
           </ScrollView>
           {ideas.length ? (
             <Floater bottom={10}>
               {sel.length ? (
                 <>
-                  <Text style={[type.headline, { flex: 1, color: '#FFFFFF', fontSize: 15 }]}>{busy ? L('正在开…', 'Opening…') : L(`已选 ${sel.length} 条`, `${sel.length} picked`)}</Text>
-                  <FloatBtn label={L('聊聊', 'Talk')} onPress={() => go('talk')} />
-                  <FloatBtn label={L('想完了', 'Done')} primary onPress={() => go('done')} />
+                  <Text style={[type.headline, { flex: 1, color: '#FFFFFF', fontSize: 15 }]}>{busy ? L('正在打开…', 'Opening…') : L(`已选 ${sel.length} 条`, `${sel.length} selected`)}</Text>
+                  <FloatBtn label={L('讨论', 'Talk')} onPress={() => go('talk')} />
+                  <FloatBtn label={L('完成思考', 'Done')} primary onPress={() => go('done')} />
                   <FloatClose onPress={() => setSel([])} />
                 </>
               ) : (
                 <>
-                  <Text style={[type.headline, { flex: 1, color: '#FFFFFF', fontSize: 15 }]} numberOfLines={1}>{L(`这 ${ideas.length} 条想法都带 #${page?.k ?? k}`, `${ideas.length} thoughts with #${page?.k ?? k}`)}</Text>
+                  <Text style={[type.headline, { flex: 1, color: '#FFFFFF', fontSize: 15 }]} numberOfLines={1}>{L(`${ideas.length} 条想法带有 #${page?.k ?? k}`, `${ideas.length} thoughts with #${page?.k ?? k}`)}</Text>
                   <FloatBtn label={L('全选', 'Select all')} primary onPress={() => setSel(ideas.map((f) => f.id))} />
                 </>
               )}
             </Floater>
           ) : null}
         </View>
-        <CaptureBar keyword={page?.k ?? k} placeholder={L(`记一条 #${page?.k ?? k}`, `Note it #${page?.k ?? k}`)} onSaved={load} />
+        <CaptureBar keyword={page?.k ?? k} placeholder={L(`记录 #${page?.k ?? k}`, `Note with #${page?.k ?? k}`)} onSaved={load} />
       </Reanimated.View>
     </Screen>
   );
@@ -329,7 +329,7 @@ export function ThinkHistoryScreen() {
   const wd = [L('一', 'M'), L('二', 'T'), L('三', 'W'), L('四', 'T'), L('五', 'F'), L('六', 'S'), L('日', 'S')];
   return (
     <Screen>
-      <BackBar title={L('历史', 'History')} sub={L('想法和收藏，按天看', 'Thoughts and saved items by day')} onBack={() => nav.goBack()}
+      <BackBar title={L('历史', 'History')} sub={L('按日期查看想法和收藏', 'Thoughts and saved items by day')} onBack={() => nav.goBack()}
         icon={<View style={[styles.round, { backgroundColor: t.goldSoft }]}><CalendarDays size={18} color={t.gold} /></View>} />
       <ScrollView contentContainerStyle={{ padding: space.lg, gap: space.md, paddingBottom: space.xxl }}>
         <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
@@ -359,14 +359,14 @@ export function ThinkHistoryScreen() {
             </View>
           ))}
         </View>
-        <T v="caption" color={t.ink3} style={{ textAlign: 'center' }}>{L(`这个月记了 ${recorded} 天 · 点越深记得越多 · 金圈是今天`, `${recorded} days with entries · darker dot = more · gold ring = today`)}</T>
+        <T v="caption" color={t.ink3} style={{ textAlign: 'center' }}>{L(`本月有记录 ${recorded} 天 · 圆点越深记录越多 · 金色圆圈为今天`, `${recorded} days with entries · darker dot = more · gold ring = today`)}</T>
         <View style={{ flexDirection: 'row', alignItems: 'baseline', justifyContent: 'space-between', paddingTop: 4 }}>
           <T v="title" style={{ fontSize: 17, fontWeight: '800' }}>{dayLabel(day)}</T>
           {items?.length ? <T v="caption" color={t.ink3}>{L(`${ideaN} 条想法 · ${items.length - ideaN} 条收藏`, `${ideaN} thoughts · ${items.length - ideaN} saved`)}</T> : null}
         </View>
-        {items && !items.length ? <T v="callout" color={t.ink3}>{L('这天没记东西。', 'Nothing that day.')}</T> : null}
+        {items && !items.length ? <T v="callout" color={t.ink3}>{L('当天无记录。', 'Nothing that day.')}</T> : null}
         {(items ?? []).map((it) => (it.type === 'idea'
-          ? <FragmentCard key={it.idea.id} f={it.idea} onPress={() => sheet.open({ title: it.idea.title || L('一条想法', 'A thought'), content: (close) => <FragmentSheet id={it.idea.id} initial={it.idea} close={close} /> })}
+          ? <FragmentCard key={it.idea.id} f={it.idea} onPress={() => sheet.open({ title: it.idea.title || L('想法', 'Thought'), content: (close) => <FragmentSheet id={it.idea.id} initial={it.idea} close={close} /> })}
               onKeyword={(k) => nav.navigate('ThinkKeyword', { k })} />
           : <SaveRow key={it.save.id} s={it.save} onPress={() => nav.navigate('Save', { id: it.save.id })} />))}
       </ScrollView>

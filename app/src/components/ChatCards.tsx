@@ -85,15 +85,15 @@ export function HandoffChip({ card }: { card: HandoffCard }) {
   const elapsed = running && now && !Number.isNaN(started) ? Math.max(0, Math.round((now - started) / 1000)) : null;
   const name = groups.find((g) => g.id === card.to)?.name ?? card.toName;
   const head = {
-    running: L(`正在问 ${name}`, `Asking ${name}`),
-    done: L(`转给了 ${name}`, `Asked ${name}`),
-    error: L(`问 ${name} 没问成`, `Couldn't reach ${name}`),
-    busy: L(zh(name, '正忙，没转过去'), `${name} was busy`),
-    lost: L(`没等到 ${name} 的回答`, `No answer from ${name} here`),
+    running: L(`正在询问 ${name}`, `Asking ${name}`),
+    done: L(`已转交 ${name}`, `Asked ${name}`),
+    error: L(`询问 ${name} 失败`, `Couldn't reach ${name}`),
+    busy: L(zh(name, '正忙，未能转交'), `${name} was busy`),
+    lost: L(`未收到 ${name} 的回答`, `No answer from ${name} here`),
   }[card.status];
   const meta = running ? (elapsed != null ? secs(elapsed) : '')
-    : card.status === 'done' && card.seconds != null ? L(`${secs(card.seconds)}答完`, `answered in ${secs(card.seconds)}`)
-      : card.status === 'lost' ? L('回答在它那边', 'see its chat') : '';
+    : card.status === 'done' && card.seconds != null ? L(`用时 ${secs(card.seconds)}`, `answered in ${secs(card.seconds)}`)
+      : card.status === 'lost' ? L('回答见该 Agent 的对话', "see the Agent's chat") : '';
   const canOpen = card.status !== 'busy';
   const open = () => openThread(card.to, groups.some((g) => g.id === card.to), undefined, card.relayId ?? undefined);
   return (
@@ -122,14 +122,14 @@ export function HandoffFrom({ question, time, card, highlight }: { question: str
   const fromName = from === 'main' ? L('主对话', 'Main chat') : groups.find((g) => g.id === from)?.name ?? sideChats.find((c) => c.id === from)?.title ?? card?.fromName ?? from;
   const back = () => openThread(from, groups.some((g) => g.id === from), undefined, card?.messageId != null ? `db${card.messageId}` : undefined);
   return (
-    <Pressable onPress={back} accessibilityRole="button" accessibilityLabel={L(`${fromName}转来：${question}`, `From ${fromName}: ${question}`)} accessibilityHint={L(`回到${fromName}`, `Back to ${fromName}`)}
+    <Pressable onPress={back} accessibilityRole="button" accessibilityLabel={L(`来自${fromName}：${question}`, `From ${fromName}: ${question}`)} accessibilityHint={L(`返回${fromName}`, `Back to ${fromName}`)}
       style={({ pressed }) => [styles.from, { backgroundColor: t.surface, borderColor: highlight ? t.goldFill : t.goldSoft, opacity: pressed ? 0.7 : 1 }, highlight && { borderWidth: 2 }]}>
       <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
         <CornerDownLeft size={14} color={t.gold} />
-        <T v="caption" color={t.gold} style={{ fontSize: 13, fontWeight: '700' }}>{L(`${fromName}转来`, `From ${fromName}`)}</T>
+        <T v="caption" color={t.gold} style={{ fontSize: 13, fontWeight: '700' }}>{L(`来自${fromName}`, `From ${fromName}`)}</T>
         <T v="caption" color={t.ink3}>{time}</T>
         <View style={{ flex: 1 }} />
-        <T v="caption" color={t.gold} style={{ fontSize: 13, fontWeight: '600' }}>{L(`回${fromName}`, 'Back')}</T>
+        <T v="caption" color={t.gold} style={{ fontSize: 13, fontWeight: '600' }}>{L(`返回${fromName}`, 'Back')}</T>
         <ChevronRight size={14} color={t.gold} />
       </View>
       <T v="callout" style={{ fontSize: 15, lineHeight: 21 }}>{question}</T>
@@ -188,11 +188,11 @@ export function TaskCardView({ card, onRevise }: { card: TaskCardInfo; onRevise:
 
   if (card.status === '已取消' && !revising) {
     return (
-      <View style={[styles.rcpt, { backgroundColor: t.surface, borderColor: t.line }]} accessible accessibilityLabel={L(`已停掉：${card.title}`, `Stopped: ${card.title}`)}>
+      <View style={[styles.rcpt, { backgroundColor: t.surface, borderColor: t.line }]} accessible accessibilityLabel={L(`已停止：${card.title}`, `Stopped: ${card.title}`)}>
         <View style={[styles.circle, { backgroundColor: t.surface2 }]}><X size={15} color={t.ink2} /></View>
         <View style={{ flex: 1, gap: 2 }}>
-          <T v="headline" numberOfLines={1} style={{ fontSize: 15 }}>{L(`已停掉 · ${card.title}`, `Stopped · ${card.title}`)}</T>
-          <T v="callout" color={t.ink2} style={{ fontSize: 13, lineHeight: 18 }}>{L(`做了 ${card.minutes} 分钟`, `Ran for ${card.minutes} min`)}</T>
+          <T v="headline" numberOfLines={1} style={{ fontSize: 15 }}>{L(`已停止 · ${card.title}`, `Stopped · ${card.title}`)}</T>
+          <T v="callout" color={t.ink2} style={{ fontSize: 13, lineHeight: 18 }}>{L(`已运行 ${card.minutes} 分钟`, `Ran for ${card.minutes} min`)}</T>
         </View>
       </View>
     );
@@ -203,8 +203,8 @@ export function TaskCardView({ card, onRevise }: { card: TaskCardInfo; onRevise:
   const timedOut = failed && card.timedOut && !failedRound;
   const [statusText, statusColor, StatusIcon] = running
     ? [card.round > 1 ? L(`第 ${card.round} 轮 · 进行中`, `Round ${card.round} · running`) : L('进行中', 'Running'), t.cyan, null]
-    : timedOut ? [L('到点停了', 'Hit its time limit'), t.warn, Clock]
-      : failed ? [failedRound ? L(`第 ${card.round} 轮没做成`, `Round ${card.round} failed`) : L('没做成', 'Failed'), t.bad, CircleAlert]
+    : timedOut ? [L('已达时限', 'Time limit reached'), t.warn, Clock]
+      : failed ? [failedRound ? L(`第 ${card.round} 轮失败`, `Round ${card.round} failed`) : L('失败', 'Failed'), t.bad, CircleAlert]
         : [card.round > 1 ? L(`第 ${card.round} 轮 · 完成`, `Round ${card.round} · done`) : L('完成', 'Done'), t.good, Check];
   // 右上角的用时和用量是第一轮的：改过之后标题那一行留给「第 N 轮」
   const metaBits = card.round > 1 ? [] : [
@@ -216,11 +216,11 @@ export function TaskCardView({ card, onRevise }: { card: TaskCardInfo; onRevise:
   const preview = !running && result ? head(result) : null;
   const seq = card.seq ? L(`今天第 ${card.seq}${card.dailyLimit ? `/${card.dailyLimit}` : ''} 个`, `#${card.seq}${card.dailyLimit ? ` of ${card.dailyLimit}` : ''} today`) : '';
   const stop = () => {
-    const go = () => { setStopping(true); cancelTask(card.id).catch((e) => showError(L('没停掉', "Couldn't stop it"), e)).finally(() => setStopping(false)); };
+    const go = () => { setStopping(true); cancelTask(card.id).catch((e) => showError(L('停止失败', "Couldn't stop the task"), e)).finally(() => setStopping(false)); };
     if (!native) { go(); return; }
-    Alert.alert(L('停掉这个任务？', 'Stop this task?'), L('做到一半的不会保留结果。', "Anything half-done won't be kept."), [
-      { text: L('接着做', 'Keep going'), style: 'cancel' },
-      { text: L('停掉', 'Stop'), style: 'destructive', onPress: go },
+    Alert.alert(L('停止此任务？', 'Stop this task?'), L('中途停止不会保留结果。', "Unfinished work won't be kept."), [
+      { text: L('继续运行', 'Keep running'), style: 'cancel' },
+      { text: L('停止', 'Stop'), style: 'destructive', onPress: go },
     ]);
   };
 
@@ -243,13 +243,13 @@ export function TaskCardView({ card, onRevise }: { card: TaskCardInfo; onRevise:
       {card.round > 1 && card.note ? (
         <View style={[styles.note, { backgroundColor: t.goldSoft }]}>
           <Pencil size={13} color={t.gold} style={{ marginTop: 3 }} />
-          <T v="callout" style={{ flex: 1 }}>{L(`你的意见：${card.note}`, `Your notes: ${card.note}`)}</T>
+          <T v="callout" style={{ flex: 1 }}>{L(`修改意见：${card.note}`, `Your notes: ${card.note}`)}</T>
         </View>
       ) : null}
 
       {running && card.round === 1 && card.deliverable.length ? (
         <View style={[styles.box, { backgroundColor: t.bg, borderColor: t.line }]}>
-          <T v="caption" color={t.ink3} style={{ fontWeight: '600' }}>{L('要交', 'Deliverable')}</T>
+          <T v="caption" color={t.ink3} style={{ fontWeight: '600' }}>{L('交付内容', 'Deliverable')}</T>
           {card.deliverable.map((d, i) => (
             <View key={`${i}-${d}`} style={styles.li}>
               <View style={[styles.dot, { backgroundColor: t.ink3 }]} />
@@ -260,34 +260,34 @@ export function TaskCardView({ card, onRevise }: { card: TaskCardInfo; onRevise:
       ) : null}
 
       {running ? (
-        <Pressable onPress={openDetail} accessibilityRole="button" accessibilityHint={L('看每一步', 'Shows every step')} style={({ pressed }) => [styles.row, { opacity: pressed ? 0.7 : 1 }]}>
+        <Pressable onPress={openDetail} accessibilityRole="button" accessibilityHint={L('查看每一步', 'Shows every step')} style={({ pressed }) => [styles.row, { opacity: pressed ? 0.7 : 1 }]}>
           <View style={[styles.circle, { backgroundColor: t.cyanSoft }]}><FileText size={14} color={t.cyan} /></View>
           <View style={{ flex: 1, minWidth: 0, gap: 1 }}>
             <T v="callout" numberOfLines={1} style={{ fontWeight: '600' }}>
-              {revising ? L('在按你的意见改', 'Working on your notes') : card.step || L('在想', 'Thinking')}
+              {revising ? L('正在按修改意见调整', 'Working on your notes') : card.step || L('正在思考', 'Thinking')}
             </T>
             <T v="caption" color={t.ink3}>
-              {revising ? L('它记得上一轮做了什么，只改你说的', 'It remembers the last round and only changes what you asked')
+              {revising ? L('保留上一轮的进展，仅修改你指出的部分', 'Keeps the last round and changes only what you asked')
                 : card.tools ? L(`第 ${card.tools} 步${card.startedAt ? ` · ${card.startedAt} 开始` : ''}`, `Step ${card.tools}${card.startedAt ? ` · started ${card.startedAt}` : ''}`)
                   : card.startedAt ? L(`${card.startedAt} 开始`, `Started ${card.startedAt}`) : ''}
             </T>
           </View>
-          <T v="caption" color={t.gold} style={{ fontSize: 13, fontWeight: '600' }}>{L('看过程', 'Steps')}</T>
+          <T v="caption" color={t.gold} style={{ fontSize: 13, fontWeight: '600' }}>{L('查看过程', 'Steps')}</T>
           <ChevronRight size={14} color={t.gold} />
         </Pressable>
       ) : null}
 
       {failed ? (
         <T v="callout" color={timedOut ? t.ink2 : t.bad}>
-          {timedOut ? L(`做了 ${card.minutes} 分钟，到${card.limitMinutes ? ` ${card.limitMinutes} 分钟的` : ''}上限停了，没做完。`, `Stopped after ${card.minutes} min at the${card.limitMinutes ? ` ${card.limitMinutes}-minute` : ''} limit, unfinished.`)
-            : card.error || L('子会话出错了。', 'The sub-session hit an error.')}
+          {timedOut ? L(`运行 ${card.minutes} 分钟后达到${card.limitMinutes ? ` ${card.limitMinutes} 分钟的` : ''}时长上限，任务未完成。`, `Stopped after ${card.minutes} min at the${card.limitMinutes ? ` ${card.limitMinutes}-minute` : ''} limit, unfinished.`)
+            : card.error || L('子会话出错。', 'The sub-session hit an error.')}
         </T>
       ) : null}
 
       {preview && preview.shown ? (
         <View style={[styles.result, { backgroundColor: t.bg, borderColor: t.line }]}>
           <Markdown text={preview.shown} compact small />
-          {preview.more ? <T v="caption" color={t.ink3}>{L(`还有 ${preview.more} 行`, `${preview.more} more line${preview.more === 1 ? '' : 's'}`)}</T> : null}
+          {preview.more ? <T v="caption" color={t.ink3}>{L(`另有 ${preview.more} 行`, `${preview.more} more line${preview.more === 1 ? '' : 's'}`)}</T> : null}
         </View>
       ) : null}
 
@@ -298,19 +298,19 @@ export function TaskCardView({ card, onRevise }: { card: TaskCardInfo; onRevise:
             <ModelChip id={card.modelId} />
             {seq ? <T v="caption" color={t.ink3} numberOfLines={1} style={{ flexShrink: 1 }}>{seq}</T> : null}
             <View style={{ flex: 1 }} />
-            {!revising ? <SmallBtn label={L('停掉', 'Stop')} icon={Square} busy={stopping} onPress={stop} /> : null}
+            {!revising ? <SmallBtn label={L('停止', 'Stop')} icon={Square} busy={stopping} onPress={stop} /> : null}
           </View>
         </>
       ) : (
         <>
           <View style={styles.row}>
-            <SmallBtn label={timedOut ? L('接着做', 'Keep going') : L('改一下', 'Revise')} icon={Pencil} onPress={() => onRevise(card)} />
-            <SmallBtn label={failed && !preview ? L('看过程', 'See steps') : L('看全文', 'Read it all')} icon={FileText} primary onPress={openDetail} />
+            <SmallBtn label={timedOut ? L('继续', 'Continue') : L('修改', 'Revise')} icon={Pencil} onPress={() => onRevise(card)} />
+            <SmallBtn label={failed && !preview ? L('查看过程', 'See steps') : L('查看全文', 'Full text')} icon={FileText} primary onPress={openDetail} />
           </View>
           <View style={styles.row}>
             <ModelChip id={card.modelId} />
             <T v="caption" color={t.ink3} numberOfLines={1} style={{ flexShrink: 1 }}>
-              {[card.finishedAt && card.round === 1 ? L(`${card.finishedAt} 做完`, `finished ${card.finishedAt}`) : '', seq].filter(Boolean).join(' · ')}
+              {[card.finishedAt && card.round === 1 ? L(`${card.finishedAt} 完成`, `finished ${card.finishedAt}`) : '', seq].filter(Boolean).join(' · ')}
             </T>
           </View>
         </>
@@ -331,7 +331,7 @@ export function ScheduleChip({ card }: { card: ScheduleChangeCard }) {
   const Icon = remember ? ListChecks : CalendarDays;
   const press = () => {
     setBusy(true);
-    undoScheduleCard(card).catch((e) => showError(undone ? L('没恢复成', "Couldn't redo") : L('没撤销成', "Couldn't undo"), e)).finally(() => setBusy(false));
+    undoScheduleCard(card).catch((e) => showError(undone ? L('恢复失败', "Couldn't redo") : L('撤销失败', "Couldn't undo"), e)).finally(() => setBusy(false));
   };
   const what = remember ? L('要记得的', 'To remember') : L('日程', 'Schedule');
   return (
@@ -366,7 +366,7 @@ export function CourseChip({ card }: { card: CourseChangeCard }) {
   const undone = status === 'undone';
   const press = () => {
     setBusy(true);
-    studyApi.undoChange(card.course, card.changeId, undone).then((r) => setStatus(r.card.status), (e) => showError(undone ? L('没恢复成', "Couldn't redo") : L('没撤销成', "Couldn't undo"), e)).finally(() => setBusy(false));
+    studyApi.undoChange(card.course, card.changeId, undone).then((r) => setStatus(r.card.status), (e) => showError(undone ? L('恢复失败', "Couldn't redo") : L('撤销失败', "Couldn't undo"), e)).finally(() => setBusy(false));
   };
   const open = card.session ? () => openTarget({ type: 'study', course: card.course, page: card.session?.page ?? null, session: card.session?.session ?? null }) : undefined;
   return (
@@ -375,14 +375,14 @@ export function CourseChip({ card }: { card: CourseChangeCard }) {
         <BookOpen size={16} color={t.cyan} />
       </View>
       <View style={{ flex: 1, minWidth: 0, gap: 3 }}>
-        <T v="headline" numberOfLines={1} style={{ fontSize: 14, fontWeight: '700' }}>{undone ? L(`撤销了 · ${card.courseTitle}`, `Undone · ${card.courseTitle}`) : L(`改了「${card.courseTitle}」的课程结构`, `Changed ${card.courseTitle}`)}</T>
+        <T v="headline" numberOfLines={1} style={{ fontSize: 14, fontWeight: '700' }}>{undone ? L(`已撤销 · ${card.courseTitle}`, `Undone · ${card.courseTitle}`) : L(`已修改「${card.courseTitle}」的课程结构`, `Changed ${card.courseTitle}`)}</T>
         {(card.lines.length ? card.lines : [card.summary]).slice(0, 5).map((l, i) => (
           <T key={i} v="callout" color={t.ink2} numberOfLines={2} style={{ fontSize: 13, lineHeight: 18, textDecorationLine: undone ? 'line-through' : 'none' }}>{`· ${l}`}</T>
         ))}
-        <T v="caption" color={t.ink3}>{undone ? L('今天页的日程和学习台也改回去了。', 'Today and the study desk are back as they were.') : L('今天页的日程、学习台和截止表跟着改了。', 'Today, the study desk and the deadline table follow.')}</T>
+        <T v="caption" color={t.ink3}>{undone ? L('今天页的日程和学习台已同步恢复。', 'Today and the study desk are restored too.') : L('今天页的日程、学习台和截止表已同步更新。', 'Today, the study desk and the deadline table are updated too.')}</T>
         {open ? (
           <Pressable onPress={open} accessibilityRole="button" hitSlop={6}>
-            <T v="callout" color={t.gold} style={{ fontSize: 13, fontWeight: '600' }}>{L('打开这一节', 'Open this session')}</T>
+            <T v="callout" color={t.gold} style={{ fontSize: 13, fontWeight: '600' }}>{L('打开本节', 'Open this session')}</T>
           </Pressable>
         ) : null}
       </View>
@@ -408,10 +408,10 @@ export function ProjectChip({ card, here }: { card: ProjectChangeCard; here: str
   const press = () => {
     if (card.action === 'create' || !card.undoable) { go(); return; }
     setBusy(true);
-    undoProjectCard(card).catch((e) => showError(undone ? L('没恢复成', "Couldn't redo") : L('没撤销成', "Couldn't undo"), e)).finally(() => setBusy(false));
+    undoProjectCard(card).catch((e) => showError(undone ? L('恢复失败', "Couldn't redo") : L('撤销失败', "Couldn't undo"), e)).finally(() => setBusy(false));
   };
   const what = away && card.projectTitle ? card.projectTitle : L('项目卡', 'Project card');
-  const btn = card.action === 'create' || !card.undoable ? L('去看看', 'Open') : undone ? L('恢复', 'Redo') : L('撤销', 'Undo');
+  const btn = card.action === 'create' || !card.undoable ? L('查看', 'Open') : undone ? L('恢复', 'Redo') : L('撤销', 'Undo');
   return (
     <Pressable onPress={away ? go : undefined} disabled={!away} accessibilityRole={away ? 'button' : undefined} accessibilityLabel={away ? L(`打开项目：${card.projectTitle}`, `Open project: ${card.projectTitle}`) : undefined}
       style={({ pressed }) => [styles.chip, { backgroundColor: t.surface, borderColor: t.line, opacity: undone ? 0.65 : pressed ? 0.8 : 1 }]}>

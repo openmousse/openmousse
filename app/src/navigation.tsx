@@ -176,7 +176,7 @@ async function finishOAuth(cb: NonNullable<ReturnType<typeof parseOAuthCallback>
     const r = await appsApi.callback(cb);
     navigationRef.navigate('AppDetail', { id: r.app.id, fresh: true, at: Date.now() });
   } catch (e) {
-    showError(L('没连上', "Couldn't connect"), e);
+    showError(L('连接失败', "Couldn't connect"), e);
   }
 }
 

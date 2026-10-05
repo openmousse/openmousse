@@ -17,13 +17,13 @@ export function ForgetSheet({ m, close }: { m: MemoryItem; close: () => void }) 
   return (
     <View style={{ gap: space.md }}>
       <T v="body" color={t.ink2}>{L(`「${m.text}」`, `"${m.text}"`)}</T>
-      <T v="callout" color={t.ink3}>{L('会从 MEMORY.md 里删掉这一条，检索索引自动更新。忘记后不能恢复；活动记录里只留「遗忘了 1 条」，不保留内容。', "This removes the item from MEMORY.md and the search index updates on its own. It can't be undone; the activity log only notes that 1 item was forgotten, not what it said.")}</T>
+      <T v="callout" color={t.ink3}>{L('此条将从 MEMORY.md 中删除，检索索引自动更新。忘记后无法恢复；活动记录仅保留「遗忘了 1 条」，不保留内容。', "This removes the item from MEMORY.md and updates the search index automatically. It can't be undone; the activity log only notes that 1 item was forgotten, not its content.")}</T>
       <View style={{ flexDirection: 'row', gap: space.sm }}>
-        <Btn flex kind="quiet" label={L('留着', 'Keep')} onPress={close} />
-        <Btn flex kind="danger" label={busy ? L('正在忘…', 'Forgetting…') : L('忘记', 'Forget')} onPress={() => {
+        <Btn flex kind="quiet" label={L('保留', 'Keep')} onPress={close} />
+        <Btn flex kind="danger" label={busy ? L('正在忘记…', 'Forgetting…') : L('忘记', 'Forget')} onPress={() => {
           if (busy) return;
           setBusy(true);
-          forget(m.id).then(close).catch((e) => Alert.alert(L('没忘掉', "Couldn't forget it"), e instanceof Error ? e.message : String(e))).finally(() => setBusy(false));
+          forget(m.id).then(close).catch((e) => Alert.alert(L('忘记失败', "Couldn't forget it"), e instanceof Error ? e.message : String(e))).finally(() => setBusy(false));
         }} />
       </View>
     </View>
@@ -36,8 +36,8 @@ export function MemoryList({ scope }: { scope: string }) {
   const sheet = useSheet();
   const { memories, loading, dataErrors, connected } = useStore();
   const list = memories.filter((m) => m.scope === scope);
-  if (dataErrors.memories) return <Card><T v="callout" color={t.bad}>{L(`读不到记忆：${dataErrors.memories}`, `Couldn't read memory: ${dataErrors.memories}`)}</T></Card>;
-  if (!list.length) return <Card><T v="callout" color={t.ink2}>{!connected ? L('没连上服务器。', 'Not connected to the server.') : loading.memories ? L('正在读…', 'Loading…') : L('这里还没有记忆。', 'No memories here yet.')}</T></Card>;
+  if (dataErrors.memories) return <Card><T v="callout" color={t.bad}>{L(`无法加载记忆：${dataErrors.memories}`, `Couldn't load memory: ${dataErrors.memories}`)}</T></Card>;
+  if (!list.length) return <Card><T v="callout" color={t.ink2}>{!connected ? L('未连接服务器。', 'Not connected to the server.') : loading.memories ? L('正在加载…', 'Loading…') : L('暂无记忆。', 'No memories yet.')}</T></Card>;
   const sections = [...new Set(list.map((m) => m.section))];
   return (
     <View>

@@ -70,9 +70,9 @@ function progressOf(g: Goal): number {
 /** 离目标还差多少：在区间里 / 比目标高 5.4 kg / 比目标低 2 kg。 */
 function gapText(g: Goal): string {
   if (g.current == null || g.state == null) return '';
-  if (g.state === 'in') return L('在目标里', 'On target');
+  if (g.state === 'in') return L('已达标', 'On target');
   const d = g.state === 'above' ? g.current - (g.targetHigh ?? g.current) : (g.targetLow ?? g.current) - g.current;
-  return g.state === 'above' ? L(`比目标高 ${withUnit(d, g.unit)}`, `${withUnit(d, g.unit)} above target`) : L(`比目标低 ${withUnit(d, g.unit)}`, `${withUnit(d, g.unit)} below target`);
+  return g.state === 'above' ? L(`高于目标 ${withUnit(d, g.unit)}`, `${withUnit(d, g.unit)} above target`) : L(`低于目标 ${withUnit(d, g.unit)}`, `${withUnit(d, g.unit)} below target`);
 }
 
 // —— 目标卡 ——————————————————————————————————————————————————————————
@@ -99,8 +99,8 @@ function NumericHead({ g }: { g: Goal }) {
   const gap = gapText(g);
   const now = g.current != null ? withUnit(g.current, g.unit) : null;
   const line = now
-    ? [L(`现在 ${now}`, `Now ${now}`), target ? L(`目标 ${target}`, `Target ${target}`) : null].filter(Boolean).join(' · ')
-    : target ? L(`目标 ${target} · 还没有读数`, `Target ${target} · no reading yet`) : L('还没有读数', 'No reading yet');
+    ? [L(`当前 ${now}`, `Current ${now}`), target ? L(`目标 ${target}`, `Target ${target}`) : null].filter(Boolean).join(' · ')
+    : target ? L(`目标 ${target} · 暂无读数`, `Target ${target} · no reading yet`) : L('暂无读数', 'No reading yet');
   const ring = g.stale || g.current == null ? t.ink3 : g.state === 'in' ? t.good : undefined;
   return (
     <View style={{ gap: space.sm }}>
@@ -117,8 +117,8 @@ function NumericHead({ g }: { g: Goal }) {
       <Meta g={g} />
       {g.stale ? (
         <T v="caption" color={t.warn} style={styles.note}>{L(
-          `最近一次是 ${g.currentDate}，太久没量了。量一次，记进${g.currentSource ?? '你的记录'}或 Apple 健康，这里会自动更新。`,
-          `The latest reading is from ${g.currentDate}, too old to track. Measure once and log it in ${g.currentSource ?? 'your app'} or Apple Health; this updates by itself.`,
+          `最近一次读数为 ${g.currentDate}，已过期。重新测量并记录到${g.currentSource ?? '你的记录'}或 Apple 健康后，此处将自动更新。`,
+          `The latest reading is from ${g.currentDate} and is out of date. Log a new measurement in ${g.currentSource ?? 'your app'} or Apple Health and this will update automatically.`,
         )}</T>
       ) : null}
     </View>
@@ -129,7 +129,7 @@ function NumericHead({ g }: { g: Goal }) {
 export function GoalCard({ g, trend, onPress }: { g: Goal; trend?: GoalTrend | null; onPress: () => void }) {
   const t = useTheme();
   return (
-    <Pressable onPress={onPress} accessibilityRole="button" accessibilityHint={L('点开看详情，改、标记完成、不做了', 'Opens details: edit, mark done, drop')}
+    <Pressable onPress={onPress} accessibilityRole="button" accessibilityHint={L('打开详情：编辑、标记完成、放弃', 'Opens details: edit, mark done, drop')}
       style={({ pressed }) => ({ opacity: pressed ? 0.8 : 1 })}>
       <Card style={{ gap: space.md }}>
         {isNumeric(g) ? <NumericHead g={g} /> : (
@@ -159,7 +159,7 @@ function WeightBody({ trend, band }: { trend: GoalTrend; band?: { targetLow: num
   const main = body.length ? body : health;   // 没接训练软件：Apple 健康就画成线
   const others = body.length ? health : [];
   const s = trend.summary;
-  if (!main.length || !s) return <T v="callout" color={t.ink3}>{L('这半年还没有读数。', 'No readings in the last six months.')}</T>;
+  if (!main.length || !s) return <T v="callout" color={t.ink3}>{L('近六个月暂无读数。', 'No readings in the last six months.')}</T>;
   const name = (k: 'body' | 'health') => trend.sources.find((x) => x.key === k)?.name ?? (k === 'body' ? L('训记', 'Xunji') : L('Apple 健康', 'Apple Health'));
   // 横轴从第一次读数前几天画到今天，至少两周：才记了十来天就别拿半年的宽度把线挤到右边
   const first = trend.series.reduce((a, p) => (p.date < a ? p.date : a), trend.to);
@@ -168,9 +168,9 @@ function WeightBody({ trend, band }: { trend: GoalTrend; band?: { targetLow: num
   if (dayNum(trend.to) - dayNum(from) < 14) from = addDays(trend.to, -14);
   const stats = [
     s.avg7 ? L(`近 7 天平均 ${withUnit(s.avg7.value, trend.unit)}`, `7-day avg ${withUnit(s.avg7.value, trend.unit)}`) : null,
-    s.change30 ? L(`比 ${shortDate(s.change30.since)} ${signed(s.change30.value, trend.unit)}`, `${signed(s.change30.value, trend.unit)} since ${shortDate(s.change30.since)}`) : null,
+    s.change30 ? L(`较 ${shortDate(s.change30.since)} ${signed(s.change30.value, trend.unit)}`, `${signed(s.change30.value, trend.unit)} since ${shortDate(s.change30.since)}`) : null,
   ].filter(Boolean) as string[];
-  const label = L(`${trend.label}：${shortDate(from)} 到今天 ${main.length} 次，最新 ${withUnit(s.latest.value, trend.unit)}`,
+  const label = L(`${trend.label}：${shortDate(from)} 至今 ${main.length} 次读数，最新 ${withUnit(s.latest.value, trend.unit)}`,
     `${trend.label}: ${main.length} readings since ${shortDate(from)}, latest ${withUnit(s.latest.value, trend.unit)}`);
   const hasBand = band && (band.targetLow != null || band.targetHigh != null);
   return (
@@ -193,8 +193,8 @@ function WeightBody({ trend, band }: { trend: GoalTrend; band?: { targetLow: num
       </View>
       {stats.length ? <T v="callout" color={t.ink2} style={styles.tnum}>{stats.join(' · ')}</T> : null}
       {s.check ? (
-        <T v="caption" color={t.warn} style={styles.note}>{L(`${s.check.sourceName}同一天是 ${withUnit(s.check.value, trend.unit)}，对不上`,
-          `${s.check.sourceName} says ${withUnit(s.check.value, trend.unit)} that day`)}</T>
+        <T v="caption" color={t.warn} style={styles.note}>{L(`${s.check.sourceName}同日读数为 ${withUnit(s.check.value, trend.unit)}，数据不一致`,
+          `${s.check.sourceName} reports ${withUnit(s.check.value, trend.unit)} for the same day`)}</T>
       ) : null}
     </View>
   );
@@ -237,23 +237,23 @@ export function GoalSheet({ g, close, onEdit }: { g: Goal; close: () => void; on
   const run = (fn: () => Promise<void>) => {
     if (busy) return;
     setBusy(true);
-    fn().then(close).catch((e) => showError(L('没改成', "Couldn't change it"), e)).finally(() => setBusy(false));
+    fn().then(close).catch((e) => showError(L('修改失败', "Couldn't update"), e)).finally(() => setBusy(false));
   };
   const target = targetText(g);
   const rows: { label: string; value: string; sub?: string; color?: string }[] = [];
   if (isNumeric(g)) {
-    if (g.current != null) rows.push({ label: L('现在', 'Now'), value: withUnit(g.current, g.unit), sub: [g.currentSource, g.currentDate ? shortDate(g.currentDate) : null].filter(Boolean).join(' · '), color: g.stale ? t.warn : undefined });
+    if (g.current != null) rows.push({ label: L('当前', 'Current'), value: withUnit(g.current, g.unit), sub: [g.currentSource, g.currentDate ? shortDate(g.currentDate) : null].filter(Boolean).join(' · '), color: g.stale ? t.warn : undefined });
     if (target) rows.push({ label: L('目标', 'Target'), value: target, sub: g.stale ? '' : gapText(g) });
     if (g.start != null && g.startDate && g.startDate !== g.currentDate) rows.push({ label: L('起点', 'Start'), value: withUnit(g.start, g.unit), sub: shortDate(g.startDate) });
   }
-  if (g.due) rows.push({ label: L('截止', 'Due'), value: dueText(g.due), sub: g.daysLeft != null && g.daysLeft >= 0 ? L(`还有 ${g.daysLeft} 天`, `${g.daysLeft} days left`) : '' });
+  if (g.due) rows.push({ label: L('截止', 'Due'), value: dueText(g.due), sub: g.daysLeft != null && g.daysLeft >= 0 ? L(`剩余 ${g.daysLeft} 天`, `${g.daysLeft} days left`) : '' });
   const active = g.status === 'active';
   return (
     <View style={{ gap: space.md }}>
       <View style={styles.meta}>
         <Pill label={categoryLabel(g.category)} />
         {group ? <SourcePill source={group.id} /> : null}
-        {!active ? <Pill label={g.status === 'done' ? L('做到了', 'Done') : L('不做了', 'Dropped')} tone={g.status === 'done' ? 'good' : 'neutral'} /> : null}
+        {!active ? <Pill label={g.status === 'done' ? L('已完成', 'Done') : L('已放弃', 'Dropped')} tone={g.status === 'done' ? 'good' : 'neutral'} /> : null}
       </View>
       {rows.length ? (
         <View style={[styles.box, { backgroundColor: t.surface }]}>
@@ -269,7 +269,7 @@ export function GoalSheet({ g, close, onEdit }: { g: Goal; close: () => void; on
       ) : null}
       {g.detail ? <T v="body" color={t.ink2}>{g.detail}</T> : null}
       {g.metric ? (
-        <T v="caption" color={t.ink3} style={styles.note}>{L('现在的数是自动读的，不用手动填。', 'The current number is read automatically; nothing to fill in.')}</T>
+        <T v="caption" color={t.ink3} style={styles.note}>{L('当前数值自动读取，无需手动填写。', 'The current value is read automatically; no manual entry needed.')}</T>
       ) : null}
       {goalsEditable ? (
         <View style={{ gap: space.sm }}>
@@ -280,20 +280,20 @@ export function GoalSheet({ g, close, onEdit }: { g: Goal; close: () => void; on
                 <Btn label={L('标记完成', 'Mark done')} icon={<Check size={17} color={t.onGold} />} onPress={() => run(() => setGoalStatus(g.id, 'done'))} flex />
               </View>
               <View style={styles.btns}>
-                <Btn label={L('不做了', 'Drop it')} kind="quiet" icon={<Ban size={16} color={t.ink} />} onPress={() => run(() => setGoalStatus(g.id, 'dropped'))} flex />
-                {group ? <Btn label={L('去看板', 'Go to board')} kind="quiet" icon={<LayoutDashboard size={16} color={t.ink} />}
+                <Btn label={L('放弃', 'Drop')} kind="quiet" icon={<Ban size={16} color={t.ink} />} onPress={() => run(() => setGoalStatus(g.id, 'dropped'))} flex />
+                {group ? <Btn label={L('打开看板', 'Open board')} kind="quiet" icon={<LayoutDashboard size={16} color={t.ink} />}
                   onPress={() => { close(); openTarget({ type: 'board', agent: group.id }); }} flex /> : null}
               </View>
             </>
           ) : (
             <View style={styles.btns}>
               <Btn label={L('编辑', 'Edit')} kind="quiet" icon={<Pencil size={16} color={t.ink} />} onPress={onEdit} flex />
-              <Btn label={L('放回进行中', 'Back to active')} icon={<ArchiveRestore size={16} color={t.onGold} />} onPress={() => run(() => setGoalStatus(g.id, 'active'))} flex />
+              <Btn label={L('设为进行中', 'Mark active')} icon={<ArchiveRestore size={16} color={t.onGold} />} onPress={() => run(() => setGoalStatus(g.id, 'active'))} flex />
             </View>
           )}
         </View>
       ) : group ? (
-        <Btn label={L('去看板', 'Go to board')} kind="quiet" icon={<LayoutDashboard size={16} color={t.ink} />} onPress={() => { close(); openTarget({ type: 'board', agent: group.id }); }} />
+        <Btn label={L('打开看板', 'Open board')} kind="quiet" icon={<LayoutDashboard size={16} color={t.ink} />} onPress={() => { close(); openTarget({ type: 'board', agent: group.id }); }} />
       ) : null}
     </View>
   );
@@ -348,11 +348,11 @@ export function GoalEditor({ g, close }: { g?: Goal; close: () => void }) {
 
   const save = async () => {
     const tt = title.trim();
-    if (!tt) { showError(L('写上目标是什么', 'Say what the goal is'), ''); return; }
+    if (!tt) { showError(L('请填写目标', 'Enter a goal'), ''); return; }
     const lo = numeric ? parseNum(low) : null;
     const hi = numeric ? parseNum(high) : null;
-    if (Number.isNaN(lo) || Number.isNaN(hi)) { showError(L('目标要写数字，比如 72', 'The target must be a number, like 72'), ''); return; }
-    if (lo != null && hi != null && lo > hi) { showError(L('左边的数要比右边小', 'The first number must be the smaller one'), ''); return; }
+    if (Number.isNaN(lo) || Number.isNaN(hi)) { showError(L('目标须为数字，例如 72', 'The target must be a number, e.g. 72'), ''); return; }
+    if (lo != null && hi != null && lo > hi) { showError(L('左侧数值须小于右侧', 'The first number must be the smaller one'), ''); return; }
     const want: Required<Pick<GoalFields, 'title' | 'category' | 'detail' | 'due' | 'unit' | 'targetLow' | 'targetHigh' | 'metric' | 'groupId'>> = {
       title: tt, category, detail: detail.trim() || null, due: due.trim() || null,
       unit: numeric ? (metric ? metricUnit || null : unit.trim() || null) : null,
@@ -368,51 +368,51 @@ export function GoalEditor({ g, close }: { g?: Goal; close: () => void }) {
       for (const k of Object.keys(want) as (keyof typeof want)[]) if (want[k] != null) (fields as Record<string, unknown>)[k] = want[k];
     }
     setBusy(true);
-    try { await saveGoal(g?.id ?? null, fields); close(); } catch (e) { showError(L('没存上', "Couldn't save"), e); } finally { setBusy(false); }
+    try { await saveGoal(g?.id ?? null, fields); close(); } catch (e) { showError(L('保存失败', "Couldn't save"), e); } finally { setBusy(false); }
   };
 
   return (
     <View style={{ gap: space.md }}>
-      <TextInput value={title} onChangeText={setTitle} placeholder={L('想做到什么', 'What do you want to achieve?')} placeholderTextColor={t.ink3}
+      <TextInput value={title} onChangeText={setTitle} placeholder={L('要达成的目标', 'What do you want to achieve?')} placeholderTextColor={t.ink3}
         maxLength={80} accessibilityLabel={L('目标', 'Goal')} style={[type.title, { color: t.ink, paddingVertical: 4 }]} />
       <Segmented value={category} onChange={setCategory} options={CATEGORIES.map((c) => ({ value: c, label: categoryLabel(c) }))} />
 
       <View style={[styles.box, { backgroundColor: t.surface }]}>
         <View style={styles.field}>
           <View style={{ flex: 1, gap: 2 }}>
-            <T v="body">{L('用数字追踪', 'Track a number')}</T>
-            <T v="caption" color={t.ink3} style={{ fontSize: 13, fontWeight: '400' }}>{L('比如体重 72–75 kg、存到 5,000', 'e.g. weight 72–75 kg, save 5,000')}</T>
+            <T v="body">{L('按数值追踪', 'Track a number')}</T>
+            <T v="caption" color={t.ink3} style={{ fontSize: 13, fontWeight: '400' }}>{L('例如体重 72–75 kg、存款 5,000', 'e.g. weight 72–75 kg, savings 5,000')}</T>
           </View>
-          <Switch value={numeric} onValueChange={setNumeric} accessibilityLabel={L('用数字追踪', 'Track a number')} trackColor={{ true: t.cyan, false: t.track }} thumbColor="#FFFFFF" />
+          <Switch value={numeric} onValueChange={setNumeric} accessibilityLabel={L('按数值追踪', 'Track a number')} trackColor={{ true: t.cyan, false: t.track }} thumbColor="#FFFFFF" />
         </View>
         {numeric ? (
           <>
             <View style={[styles.sub, { borderTopColor: t.line }]}>
-              <T v="caption" color={t.ink2} style={{ fontSize: 13 }}>{L('现在的数从哪来', 'Where the current number comes from')}</T>
+              <T v="caption" color={t.ink2} style={{ fontSize: 13 }}>{L('当前数值来源', 'Source of the current value')}</T>
               <Segmented value={metric || 'none'} onChange={(v) => setMetric(v === 'none' ? '' : v)}
-                options={[...goalMetrics.map((m) => ({ value: m.key, label: m.label })), { value: 'none', label: L('不自动读', 'Not tracked') }]} />
+                options={[...goalMetrics.map((m) => ({ value: m.key, label: m.label })), { value: 'none', label: L('不自动读取', 'Not tracked') }]} />
             </View>
             <View style={[styles.field, { borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: t.line }]}>
               <T v="body" color={t.ink2} style={{ width: 56, flexShrink: 0 }}>{L('目标', 'Target')}</T>
               <TextInput value={low} onChangeText={setLow} placeholder={L('从', 'From')} placeholderTextColor={t.ink3} keyboardType="decimal-pad" maxLength={9}
-                accessibilityLabel={L('目标的下限', 'Low end')} style={[type.body, styles.num, { color: t.ink, backgroundColor: t.bg }]} />
+                accessibilityLabel={L('目标下限', 'Low end')} style={[type.body, styles.num, { color: t.ink, backgroundColor: t.bg }]} />
               <T v="body" color={t.ink3}>–</T>
               <TextInput value={high} onChangeText={setHigh} placeholder={L('到', 'To')} placeholderTextColor={t.ink3} keyboardType="decimal-pad" maxLength={9}
-                accessibilityLabel={L('目标的上限', 'High end')} style={[type.body, styles.num, { color: t.ink, backgroundColor: t.bg }]} />
+                accessibilityLabel={L('目标上限', 'High end')} style={[type.body, styles.num, { color: t.ink, backgroundColor: t.bg }]} />
               {metric ? <T v="body" color={t.ink2} style={{ minWidth: 28 }}>{shownUnit}</T> : (
                 <TextInput value={unit} onChangeText={setUnit} placeholder={L('单位', 'Unit')} placeholderTextColor={t.ink3} maxLength={12}
                   accessibilityLabel={L('单位', 'Unit')} style={[type.body, styles.unit, { color: t.ink, backgroundColor: t.bg }]} />
               )}
             </View>
-            <T v="caption" color={t.ink3} style={[styles.note, { paddingBottom: space.sm }]}>{L('可以只写一头：只写右边 = 降到它以下，只写左边 = 到它以上。',
-              'One end is enough: only the right one = get below it, only the left one = get above it.')}</T>
+            <T v="caption" color={t.ink3} style={[styles.note, { paddingBottom: space.sm }]}>{L('可只填一侧：仅填右侧表示降至该值以下，仅填左侧表示达到该值以上。',
+              'You can fill in one side only: right only means below that value, left only means above it.')}</T>
           </>
         ) : null}
       </View>
 
       <View style={[styles.box, { backgroundColor: t.surface }]}>
         <Field label={L('截止', 'Due')}>
-          <TextInput value={due} onChangeText={setDue} placeholder={L('可以不写：2026-12-31 或「2027 秋」', 'Optional: 2026-12-31 or "fall 2027"')} placeholderTextColor={t.ink3}
+          <TextInput value={due} onChangeText={setDue} placeholder={L('选填：2026-12-31 或「2027 秋」', 'Optional: 2026-12-31 or "fall 2027"')} placeholderTextColor={t.ink3}
             maxLength={24} accessibilityLabel={L('截止', 'Due')} style={[type.body, { color: t.ink, paddingVertical: 12 }]} />
         </Field>
         <View style={[styles.quick, { borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: t.line }]}>
@@ -421,16 +421,16 @@ export function GoalEditor({ g, close }: { g?: Goal; close: () => void }) {
           {due ? <Choice label={L('不设', 'None')} on={false} onPress={() => setDue('')} /> : null}
         </View>
         <Field label={L('说明', 'Note')} last top>
-          <TextInput value={detail} onChangeText={setDetail} placeholder={L('可以不写：为什么、怎么算做到', 'Optional: why, and what counts as done')} placeholderTextColor={t.ink3}
+          <TextInput value={detail} onChangeText={setDetail} placeholder={L('选填：目标缘由与完成标准', 'Optional: why, and what counts as done')} placeholderTextColor={t.ink3}
             multiline maxLength={500} accessibilityLabel={L('说明', 'Note')} style={[type.body, { color: t.ink, paddingVertical: 12, minHeight: 48, textAlignVertical: 'top' }]} />
         </Field>
       </View>
 
       {groups.length ? (
         <View style={{ gap: space.sm }}>
-          <T v="caption" color={t.ink2} style={{ fontSize: 13, paddingHorizontal: space.xs }}>{L('交给哪个 Agent 盯着', 'Which agent keeps an eye on it')}</T>
+          <T v="caption" color={t.ink2} style={{ fontSize: 13, paddingHorizontal: space.xs }}>{L('负责跟进的 Agent', 'Assigned Agent')}</T>
           <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: space.sm, paddingHorizontal: 2 }} keyboardShouldPersistTaps="handled">
-            <Choice label={L('不交给谁', 'None')} on={groupId == null} onPress={() => setGroupId(null)} />
+            <Choice label={L('不指定', 'None')} on={groupId == null} onPress={() => setGroupId(null)} />
             {groups.map((x) => (
               <Choice key={x.id} label={x.name} on={groupId === x.id} onPress={() => setGroupId(x.id)} tint={agentTint(t, x.color)}
                 icon={<GroupBadge icon={x.icon} color={x.color} size={20} />} />
@@ -441,7 +441,7 @@ export function GoalEditor({ g, close }: { g?: Goal; close: () => void }) {
 
       <View style={styles.btns}>
         <Btn label={L('取消', 'Cancel')} kind="quiet" onPress={close} />
-        <Btn label={busy ? L('正在存…', 'Saving…') : g ? L('保存', 'Save') : L('加上', 'Add')} icon={g ? undefined : <Plus size={18} color={t.onGold} />}
+        <Btn label={busy ? L('正在保存…', 'Saving…') : g ? L('保存', 'Save') : L('添加', 'Add')} icon={g ? undefined : <Plus size={18} color={t.onGold} />}
           onPress={() => { if (!busy) save(); }} flex />
       </View>
     </View>
@@ -452,10 +452,10 @@ export function GoalEditor({ g, close }: { g?: Goal; close: () => void }) {
 export function AddGoalButton({ onPress }: { onPress: () => void }) {
   const t = useTheme();
   return (
-    <Pressable onPress={onPress} accessibilityRole="button" accessibilityLabel={L('加一个目标', 'Add a goal')} hitSlop={8}
+    <Pressable onPress={onPress} accessibilityRole="button" accessibilityLabel={L('添加目标', 'Add goal')} hitSlop={8}
       style={({ pressed }) => [styles.add, { opacity: pressed ? 0.6 : 1 }]}>
       <Plus size={17} color={t.gold} />
-      <T v="callout" color={t.gold} style={{ fontWeight: '600' }}>{L('加一个目标', 'Add a goal')}</T>
+      <T v="callout" color={t.gold} style={{ fontWeight: '600' }}>{L('添加目标', 'Add goal')}</T>
     </Pressable>
   );
 }
@@ -487,7 +487,7 @@ export function GoalChangesStrip() {
   const toggle = (c: GoalChange) => {
     if (busy != null) return;
     setBusy(c.logId);
-    undoGoalChange(c.logId, c.status === 'undone').catch((e) => showError(L('没撤成', "Couldn't undo it"), e)).finally(() => setBusy(null));
+    undoGoalChange(c.logId, c.status === 'undone').catch((e) => showError(L('撤销失败', "Couldn't undo"), e)).finally(() => setBusy(null));
   };
   return (
     <View style={[styles.strip, { backgroundColor: t.goldSoft }]}>
@@ -504,7 +504,7 @@ export function GoalChangesStrip() {
         </View>
       ))}
       <View style={{ alignItems: 'flex-end' }}>
-        <StripBtn label={L('知道了', 'Got it')} color={t.ink2} disabled={busy != null} onPress={() => { ackGoalChanges(goalChanges.map((c) => c.logId)).catch(() => {}); }} />
+        <StripBtn label={L('关闭', 'Dismiss')} color={t.ink2} disabled={busy != null} onPress={() => { ackGoalChanges(goalChanges.map((c) => c.logId)).catch(() => {}); }} />
       </View>
     </View>
   );
@@ -526,7 +526,7 @@ export function ClosedGoals({ onOpen }: { onOpen: (g: Goal) => void }) {
           <View key={status} style={gi > 0 ? { borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: t.line } : undefined}>
             <Pressable onPress={() => setOpen((m) => ({ ...m, [status]: !m[status] }))} accessibilityRole="button" accessibilityState={{ expanded: on }}
               style={({ pressed }) => [styles.fold, { opacity: pressed ? 0.6 : 1 }]}>
-              <T v="headline" style={{ fontSize: 15 }}>{status === 'done' ? L('完成了的', 'Done') : L('不做了的', 'Dropped')}</T>
+              <T v="headline" style={{ fontSize: 15 }}>{status === 'done' ? L('已完成', 'Done') : L('已放弃', 'Dropped')}</T>
               <T v="callout" color={t.ink3} style={{ flex: 1 }}>{rows.length}</T>
               <Disclosure open={on} />
             </Pressable>

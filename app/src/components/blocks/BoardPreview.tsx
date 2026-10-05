@@ -31,15 +31,15 @@ export function BoardPreview({ inboxId, plan = false }: { inboxId: string; plan?
   const removed = board.removed ?? [];
   if (!blocks.length && !removed.length) return null;
   const head = plan
-    ? (board.sample ? L('看板预览 · 按示例数据画的', 'Board preview · drawn from sample data') : L('看板预览 · 还没有数据，先是空的样子', 'Board preview · no data yet, so it starts empty'))
-    : L('预览 · 用你现在的数据画的', 'Preview · drawn with your current data');
+    ? (board.sample ? L('看板预览 · 示例数据', 'Board preview · sample data') : L('看板预览 · 暂无数据', 'Board preview · no data yet'))
+    : L('预览 · 基于当前数据', 'Preview · based on current data');
   return (
     <View style={[styles.box, { backgroundColor: t.bg }]}>
       <T v="caption" color={t.ink3} style={{ fontWeight: '600' }}>{head}</T>
       <BoardProvider agent={board.agent} board={{ ...board, blocks, strip: null }} reload={noop} onChat={() => {}} readOnly>
         {blocks.map((b) => <BlockView key={b.id} block={b} />)}
       </BoardProvider>
-      {removed.length ? <T v="caption" color={t.ink2} style={{ fontWeight: '400' }}>{L(`去掉 ${removed.length} 块`, `Removes ${removed.length} block${removed.length === 1 ? '' : 's'}`)}</T> : null}
+      {removed.length ? <T v="caption" color={t.ink2} style={{ fontWeight: '400' }}>{L(`移除 ${removed.length} 个区块`, `Removes ${removed.length} block${removed.length === 1 ? '' : 's'}`)}</T> : null}
     </View>
   );
 }
@@ -57,7 +57,7 @@ export function AlertPreview({ inboxId, source, onShown }: { inboxId: string; so
   if (failed || !a) return null;
   return (
     <View style={[styles.box, { backgroundColor: t.bg, gap: 6 }]}>
-      <T v="caption" color={t.ink3} style={{ fontWeight: '600' }}>{a.preview ? L('到点会推成这样 · 按现在的数据', 'What it would send · with today\'s data') : L('按现在的数据查出来是空的，到点不会推', "Nothing matches today, so it wouldn't send anything")}</T>
+      <T v="caption" color={t.ink3} style={{ fontWeight: '600' }}>{a.preview ? L('推送预览 · 基于当前数据', 'Notification preview · based on current data') : L('当前数据无匹配内容，到时不会推送', 'No data matches at present, so nothing will be sent')}</T>
       {a.preview ? (
         <View style={[styles.notif, { backgroundColor: t.surface, borderColor: t.line }]}>
           <View style={[styles.icon, { backgroundColor: t.goldSoft }]}><Bell size={16} color={t.gold} /></View>

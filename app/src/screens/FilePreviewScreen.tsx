@@ -40,7 +40,7 @@ const plainImage = (a: Attachment) => a.kind === 'image' && a.mime !== 'image/sv
 const NONE: Attachment[] = [];
 const errText = (e: unknown) => {
   const msg = e instanceof Error ? e.message : String(e);
-  return msg === 'Not Found' ? L('这台服务器还不支持在 app 里预览，更新服务器以后就能看。', "This server can't preview files in the app yet. Update the server.") : msg;
+  return msg === 'Not Found' ? L('当前服务器不支持在 app 内预览，请更新服务器。', "This server can't preview files in the app yet. Update the server.") : msg;
 };
 
 export function FilePreviewScreen() {
@@ -102,7 +102,7 @@ export function FilePreviewScreen() {
   if (!a) {
     return (
       <View style={[styles.center, { flex: 1, backgroundColor: t.bg }]}>
-        {ids && !byId ? <ActivityIndicator color={t.ink3} /> : <T v="callout" color={t.ink3}>{L('找不到这个文件。', "Couldn't find this file.")}</T>}
+        {ids && !byId ? <ActivityIndicator color={t.ink3} /> : <T v="callout" color={t.ink3}>{L('未找到此文件。', "Couldn't find this file.")}</T>}
       </View>
     );
   }
@@ -130,12 +130,12 @@ export function FilePreviewScreen() {
         </View>
         <View style={[styles.side, { justifyContent: 'flex-end' }]}>
           {copyText ? (
-            <Pressable onPress={copy} hitSlop={8} accessibilityRole="button" accessibilityLabel={copied ? L('复制好了', 'Copied') : L('复制文字', 'Copy text')} style={styles.icon}>
+            <Pressable onPress={copy} hitSlop={8} accessibilityRole="button" accessibilityLabel={copied ? L('已复制', 'Copied') : L('复制文本', 'Copy text')} style={styles.icon}>
               {copied ? <Check size={20} color={t.good} /> : <Copy size={19} color={t.ink2} />}
             </Pressable>
           ) : null}
           {isRemote(a.url) ? (
-            <Pressable onPress={() => openInBrowser(a)} hitSlop={8} accessibilityRole="button" accessibilityLabel={L('用浏览器打开', 'Open in the browser')} style={styles.icon}>
+            <Pressable onPress={() => openInBrowser(a)} hitSlop={8} accessibilityRole="button" accessibilityLabel={L('在浏览器中打开', 'Open in the browser')} style={styles.icon}>
               <ArrowUpRight size={21} color={t.ink2} />
             </Pressable>
           ) : null}
@@ -172,7 +172,7 @@ export function FilePreviewScreen() {
 function Page({ a, info, w, h, active, bottom }: { a: Attachment; info?: Loaded; w: number; h: number; active: boolean; bottom: number }) {
   const t = useTheme();
   if (plainImage(a)) return <ImagePage a={a} w={w} h={h} />;
-  if (!isRemote(a.url)) return <NonePage a={a} note={L('还在上传，传完再点开看。', 'Still uploading. Open it once it has finished.')} w={w} h={h} />;
+  if (!isRemote(a.url)) return <NonePage a={a} note={L('正在上传，完成后即可查看。', 'Still uploading. Open it once it has finished.')} w={w} h={h} />;
   if (!info) {
     return <View style={[styles.center, { width: w, height: h }]}><ActivityIndicator color={t.ink3} /></View>;
   }
@@ -202,7 +202,7 @@ function ImagePage({ a, w, h }: { a: Attachment; w: number; h: number }) {
       {state === 'loading' ? <View pointerEvents="none" style={[StyleSheet.absoluteFill, styles.center]}><ActivityIndicator color={t.ink3} /></View> : null}
       {state === 'error' ? (
         <View style={[StyleSheet.absoluteFill, styles.center, { padding: space.xl }]}>
-          <T v="callout" color={t.ink2} style={{ textAlign: 'center' }}>{L('大图没加载出来。', "Couldn't load the full image.")}</T>
+          <T v="callout" color={t.ink2} style={{ textAlign: 'center' }}>{L('无法加载原图。', "Couldn't load the full image.")}</T>
         </View>
       ) : null}
     </ScrollView>
@@ -258,7 +258,7 @@ function PagesPage({ a, p, w, h, bottom }: { a: Attachment; p: FilePreview; w: n
           </View>
         ))}
         {(p.pageCount ?? 0) > sizes.length ? (
-          <T v="caption" color={t.ink3} style={{ paddingVertical: space.md }}>{L(`只列了前 ${sizes.length} 页，全部 ${p.pageCount} 页请用浏览器打开。`, `Showing the first ${sizes.length} of ${p.pageCount} pages. Open it in the browser for the rest.`)}</T>
+          <T v="caption" color={t.ink3} style={{ paddingVertical: space.md }}>{L(`仅显示前 ${sizes.length} 页，全部 ${p.pageCount} 页请在浏览器中查看。`, `Showing the first ${sizes.length} of ${p.pageCount} pages. Open it in the browser for the rest.`)}</T>
         ) : null}
       </ScrollView>
       {sizes.length > 1 ? (
@@ -281,7 +281,7 @@ function DocPage({ p, w, h, bottom }: { p: FilePreview; w: number; h: number; bo
     <FlatList style={{ width: w, height: h }} data={blocks} keyExtractor={(_, i) => String(i)} initialNumToRender={3} windowSize={7}
       contentContainerStyle={{ paddingHorizontal: readingPad(w), paddingTop: space.lg, paddingBottom: bottom + space.xxl + 40 }}
       ItemSeparatorComponent={Gap}
-      ListEmptyComponent={<T v="callout" color={t.ink3}>{L('里面没有能显示的内容。', 'Nothing in it to show.')}</T>}
+      ListEmptyComponent={<T v="callout" color={t.ink3}>{L('无可显示的内容。', 'Nothing to show.')}</T>}
       ListFooterComponent={<Footnote p={p} />}
       renderItem={({ item }) => ('table' in item ? <TableBlock table={item.table} /> : <Markdown text={item.md} />)} />
   );
@@ -291,7 +291,7 @@ function Gap() { return <View style={{ height: space.sm }} />; }
 
 function Footnote({ p }: { p: FilePreview }) {
   const t = useTheme();
-  const text = [p.note, p.truncated ? L('太长了，这里只显示前面一部分；全文请用浏览器打开。', 'Too long to show in full here. Open it in the browser for the rest.') : ''].filter(Boolean).join(' ');
+  const text = [p.note, p.truncated ? L('内容过长，仅显示开头部分；全文请在浏览器中查看。', 'Too long to show in full here. Open it in the browser for the rest.') : ''].filter(Boolean).join(' ');
   return text ? <T v="caption" color={t.ink3} style={{ marginTop: space.md, lineHeight: 17 }}>{text}</T> : null;
 }
 
@@ -326,7 +326,7 @@ function TableBlock({ table }: { table: PreviewTable }) {
         </View>
       </ScrollView>
       {more ? (
-        <T v="caption" color={t.ink3}>{L(`共 ${table.rowsTotal ?? rows.length} 行 × ${table.colsTotal ?? ncol} 列，这里显示前 ${rows.length} 行 × ${ncol} 列。`, `${table.rowsTotal ?? rows.length} rows × ${table.colsTotal ?? ncol} columns; showing the first ${rows.length} × ${ncol}.`)}</T>
+        <T v="caption" color={t.ink3}>{L(`共 ${table.rowsTotal ?? rows.length} 行 × ${table.colsTotal ?? ncol} 列，此处显示前 ${rows.length} 行 × ${ncol} 列。`, `${table.rowsTotal ?? rows.length} rows × ${table.colsTotal ?? ncol} columns; showing the first ${rows.length} × ${ncol}.`)}</T>
       ) : null}
     </View>
   );
@@ -389,7 +389,7 @@ function AudioPage({ a, p, w, h, active }: { a: Attachment; p: FilePreview; w: n
               <View style={{ width: `${frac * 100}%`, height: 4, borderRadius: 2, backgroundColor: t.cyan }} />
             </View>
           </Pressable>
-          <T v="caption" color={t.ink3}>{loaded && st.duration ? `${clock(st.currentTime)} / ${clock(st.duration)}` : L('点一下开始放', 'Tap to play')}</T>
+          <T v="caption" color={t.ink3}>{loaded && st.duration ? `${clock(st.currentTime)} / ${clock(st.duration)}` : L('轻点播放', 'Tap to play')}</T>
         </View>
       </View>
       {p.transcript ? (
@@ -411,7 +411,7 @@ function VideoPage({ a, w, h }: { a: Attachment; w: number; h: number }) {
       </View>
     );
   }
-  return <NonePage a={a} note={L('这个版本的 app 还不能直接放视频，用浏览器打开就能看。', "This version of the app can't play videos yet. Open it in the browser to watch.")} w={w} h={h} />;
+  return <NonePage a={a} note={L('当前版本的 app 暂不支持播放视频，请在浏览器中打开。', "This version of the app can't play videos yet. Open it in the browser to watch.")} w={w} h={h} />;
 }
 
 /** 看不了的：文件信息 +「用浏览器打开」。 */
@@ -424,7 +424,7 @@ function NonePage({ a, note, label, w, h }: { a: Attachment; note: string; label
       <T v="headline" numberOfLines={2} style={{ textAlign: 'center' }}>{prettyName(a.name)}</T>
       <T v="caption" color={t.ink3}>{[label || kindLabel(a.kind), a.size ? human(a.size) : ''].filter(Boolean).join(' · ')}</T>
       {note ? <T v="callout" color={t.ink2} style={{ textAlign: 'center', maxWidth: 420 }}>{note}</T> : null}
-      {isRemote(a.url) ? <View style={{ marginTop: space.sm, minWidth: 200 }}><Btn label={L('用浏览器打开', 'Open in the browser')} kind="quiet" icon={<ArrowUpRight size={16} color={t.gold} />} onPress={() => openInBrowser(a)} /></View> : null}
+      {isRemote(a.url) ? <View style={{ marginTop: space.sm, minWidth: 200 }}><Btn label={L('在浏览器中打开', 'Open in the browser')} kind="quiet" icon={<ArrowUpRight size={16} color={t.gold} />} onPress={() => openInBrowser(a)} /></View> : null}
     </View>
   );
 }

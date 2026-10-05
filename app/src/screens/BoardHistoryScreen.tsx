@@ -17,7 +17,7 @@ const when = (iso: string) => {
   const hm = `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
   return lang() === 'zh' ? `${d.getMonth() + 1}/${d.getDate()} ${hm}` : `${d.getDate()} ${MONTHS_EN[d.getMonth()]} ${hm}`;
 };
-const byLabel = (by: string) => (by === 'proposal' ? L('你同意的提案', 'A proposal you approved') : by === 'user' ? L('你改的', 'Your change') : L('你在对话里让它改的', 'You asked for it in chat'));
+const byLabel = (by: string) => (by === 'proposal' ? L('你批准的提案', 'A proposal you approved') : by === 'user' ? L('你的修改', 'Your change') : L('在对话中请 Agent 修改', 'Requested in chat'));
 
 export function BoardHistoryScreen() {
   const t = useTheme();
@@ -39,14 +39,14 @@ export function BoardHistoryScreen() {
   const revert = (v: number) => {
     if (busy != null) return;
     setBusy(v);
-    boardsApi.revert(id, v).then(load).catch((e) => showError(L('没回去', "Couldn't go back"), e)).finally(() => setBusy(null));
+    boardsApi.revert(id, v).then(load).catch((e) => showError(L('恢复失败', "Couldn't restore"), e)).finally(() => setBusy(null));
   };
   const openTable = (c: Collection) => sheet.open({ title: c.title, content: () => <TableView agent={id} coll={c} /> });
   return (
     <Screen>
       <NavHeader title={L('看板改动记录', 'Board history')} sub={g?.name} onBack={() => nav.goBack()} />
       <ScrollView contentContainerStyle={{ padding: space.lg, paddingTop: 0, paddingBottom: space.xxl }} refreshControl={<PullRefresh onRefresh={load} />}>
-        {err ? <Card style={{ marginTop: space.md }}><T v="callout" color={t.bad}>{L(`没读到：${err}`, `Couldn't load: ${err}`)}</T></Card> : null}
+        {err ? <Card style={{ marginTop: space.md }}><T v="callout" color={t.bad}>{L(`无法加载：${err}`, `Couldn't load: ${err}`)}</T></Card> : null}
         {!versions && !err ? <View style={{ padding: space.xl }}><ActivityIndicator color={t.ink3} /></View> : null}
         {versions ? (
           <>
@@ -60,35 +60,35 @@ export function BoardHistoryScreen() {
                     <View style={{ flex: 1, gap: 3 }}>
                       <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
                         <T v="caption" color={t.ink3} style={{ fontWeight: '400' }}>{when(v.createdAt)}</T>
-                        {live ? <Pill label={L('现在', 'Now')} tone="cyan" /> : null}
+                        {live ? <Pill label={L('当前', 'Current')} tone="cyan" /> : null}
                       </View>
-                      <T v="body" style={{ fontSize: 15, fontWeight: '600' }}>{v.note || (v.blocks.length ? v.blocks.map((b) => b.title || b.id).join(L('、', ', ')) : L('没有积木', 'No blocks'))}</T>
-                      <T v="caption" color={t.ink3} style={{ fontWeight: '400', fontSize: 13 }}>{byLabel(v.by)}{v.hiddenSections?.length ? L(` · 藏着：${v.hiddenSections.join('、')}`, ` · hidden: ${v.hiddenSections.join(', ')}`) : ''}</T>
+                      <T v="body" style={{ fontSize: 15, fontWeight: '600' }}>{v.note || (v.blocks.length ? v.blocks.map((b) => b.title || b.id).join(L('、', ', ')) : L('无区块', 'No blocks'))}</T>
+                      <T v="caption" color={t.ink3} style={{ fontWeight: '400', fontSize: 13 }}>{byLabel(v.by)}{v.hiddenSections?.length ? L(` · 已隐藏：${v.hiddenSections.join('、')}`, ` · hidden: ${v.hiddenSections.join(', ')}`) : ''}</T>
                       {!live ? (
                         <Pressable onPress={() => revert(v.version)} disabled={busy != null} hitSlop={6} accessibilityRole="button" style={{ alignSelf: 'flex-start', paddingTop: 4 }}>
-                          <T v="callout" color={t.gold} style={{ fontWeight: '700' }}>{busy === v.version ? L('正在回去…', 'Going back…') : L('回到这一版', 'Go back to this')}</T>
+                          <T v="callout" color={t.gold} style={{ fontWeight: '700' }}>{busy === v.version ? L('正在恢复…', 'Restoring…') : L('恢复此版本', 'Restore this version')}</T>
                         </Pressable>
                       ) : null}
                     </View>
                   </View>
                 );
-              }) : <T v="callout" color={t.ink2} style={{ paddingVertical: space.md }}>{L('还没有改过。', 'No changes yet.')}</T>}
+              }) : <T v="callout" color={t.ink2} style={{ paddingVertical: space.md }}>{L('暂无改动。', 'No changes yet.')}</T>}
               {versions.length ? (
                 <View style={[styles.ver, { borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: t.line }]}>
                   <View style={[styles.dot, { backgroundColor: t.track }]} />
                   <View style={{ flex: 1, gap: 3 }}>
-                    <T v="body" style={{ fontSize: 15, fontWeight: '600' }}>{g?.dashboard && g.dashboard !== 'none' ? L('原来的看板（不带积木）', 'The original dashboard (no blocks)') : L('空看板', 'Empty board')}</T>
+                    <T v="body" style={{ fontSize: 15, fontWeight: '600' }}>{g?.dashboard && g.dashboard !== 'none' ? L('原始看板（无区块）', 'The original dashboard (no blocks)') : L('空看板', 'Empty board')}</T>
                     <Pressable onPress={() => revert(0)} disabled={busy != null} hitSlop={6} accessibilityRole="button" style={{ alignSelf: 'flex-start', paddingTop: 4 }}>
-                      <T v="callout" color={t.gold} style={{ fontWeight: '700' }}>{busy === 0 ? L('正在回去…', 'Going back…') : L('回到这一版', 'Go back to this')}</T>
+                      <T v="callout" color={t.gold} style={{ fontWeight: '700' }}>{busy === 0 ? L('正在恢复…', 'Restoring…') : L('恢复此版本', 'Restore this version')}</T>
                     </Pressable>
                   </View>
                 </View>
               ) : null}
             </Card>
-            <T v="caption" color={t.ink3} style={{ fontWeight: '400', marginTop: space.sm, paddingHorizontal: space.xs }}>{L('回到哪一版只改看板的样子，记下的数据不会删。', 'Going back only changes how the board looks; recorded data is never deleted.')}</T>
+            <T v="caption" color={t.ink3} style={{ fontWeight: '400', marginTop: space.sm, paddingHorizontal: space.xs }}>{L('恢复版本仅改变看板布局，已记录的数据不会删除。', 'Restoring a version only changes the board layout; recorded data is never deleted.')}</T>
             {colls.length ? (
               <>
-                <SectionLabel>{L('它在记的数据', 'Data it keeps')}</SectionLabel>
+                <SectionLabel>{L('已记录的数据', 'Recorded data')}</SectionLabel>
                 <Card style={{ paddingVertical: 2, gap: 0 }}>
                   {colls.map((c, i) => (
                     <Pressable key={c.name} onPress={() => openTable(c)} accessibilityRole="button"
@@ -119,12 +119,12 @@ function TableView({ agent, coll }: { agent: string; coll: Collection }) {
   const load = useCallback((m: 'rows' | 'deleted') => boardsApi.rows(agent, coll.name, m === 'deleted').then((r) => { setRows(r.rows); setTotal(r.total); }, () => setRows([])), [agent, coll.name]);
   useEffect(() => { load(mode); }, [load, mode]);
   const shown = coll.fields.slice(0, 3);
-  const restore = (rid: string) => boardsApi.restoreRow(rid).then(() => load(mode)).catch((e) => showError(L('没找回来', "Couldn't restore"), e));
+  const restore = (rid: string) => boardsApi.restoreRow(rid).then(() => load(mode)).catch((e) => showError(L('恢复失败', "Couldn't restore"), e));
   return (
     <View style={{ gap: space.md }}>
-      <Segmented value={mode} onChange={(m) => { setRows(null); setMode(m); }} options={[{ value: 'rows', label: L('现在的', 'Current') }, { value: 'deleted', label: L('删掉的', 'Deleted') }]} />
+      <Segmented value={mode} onChange={(m) => { setRows(null); setMode(m); }} options={[{ value: 'rows', label: L('当前', 'Current') }, { value: 'deleted', label: L('已删除', 'Deleted') }]} />
       {!rows ? <ActivityIndicator color={t.ink3} /> : !rows.length ? (
-        <T v="callout" color={t.ink2}>{mode === 'deleted' ? L('30 天内没有删掉的。', 'Nothing deleted in the last 30 days.') : L('表是空的。', 'The table is empty.')}</T>
+        <T v="callout" color={t.ink2}>{mode === 'deleted' ? L('近 30 天无删除记录。', 'Nothing deleted in the last 30 days.') : L('表格为空。', 'The table is empty.')}</T>
       ) : (
         <View style={{ backgroundColor: t.surface, borderRadius: radius.lg, paddingHorizontal: space.lg }}>
           {rows.map((r, i) => (
@@ -134,13 +134,13 @@ function TableView({ agent, coll }: { agent: string; coll: Collection }) {
                 <T v="caption" color={t.ink3} numberOfLines={1} style={{ fontWeight: '400', fontSize: 13 }}>{shown.slice(1).map((f) => r.display[f.key]).filter((x) => x && x !== '—').join(' · ')}</T>
               </View>
               {mode === 'deleted' ? (
-                <Pressable onPress={() => restore(r.id)} hitSlop={8} accessibilityRole="button"><T v="callout" color={t.gold} style={{ fontWeight: '700' }}>{L('找回', 'Restore')}</T></Pressable>
+                <Pressable onPress={() => restore(r.id)} hitSlop={8} accessibilityRole="button"><T v="callout" color={t.gold} style={{ fontWeight: '700' }}>{L('恢复', 'Restore')}</T></Pressable>
               ) : null}
             </View>
           ))}
         </View>
       )}
-      {rows && total > rows.length ? <T v="caption" color={t.ink3} style={{ fontWeight: '400' }}>{L(`只显示了最近 ${rows.length} 行，一共 ${total} 行`, `Showing the latest ${rows.length} of ${total}`)}</T> : null}
+      {rows && total > rows.length ? <T v="caption" color={t.ink3} style={{ fontWeight: '400' }}>{L(`仅显示最近 ${rows.length} 行，共 ${total} 行`, `Showing the latest ${rows.length} of ${total}`)}</T> : null}
     </View>
   );
 }

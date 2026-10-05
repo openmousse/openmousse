@@ -22,28 +22,28 @@ export function WakeCard() {
   if (!done && (wake.state !== 'maybe_awake' || !wake.woke)) return null;
   const back = wake.ref_from === 'sleep' && wake.night?.back_sleeps.length ? wake.night : null;
   const sub = back
-    ? L(`${back.first_wake} 醒过，又睡到 ${wake.woke}`, `Woke at ${back.first_wake}, slept again until ${wake.woke}`)
+    ? L(`${back.first_wake} 曾醒来，之后睡到 ${wake.woke}`, `Woke at ${back.first_wake}, slept again until ${wake.woke}`)
     : wake.ref_from === 'sleep'
-      ? L(`手表记到你 ${wake.woke} 醒`, `Your watch says you woke at ${wake.woke}`)
-      : L('还没有昨晚的睡眠数据', 'No sleep data from last night yet');
+      ? L(`手表记录的醒来时间：${wake.woke}`, `Your watch says you woke at ${wake.woke}`)
+      : L('尚无昨晚的睡眠数据', 'No sleep data from last night yet');
   const up = () => {
     if (busy) return;
     setBusy(true);
     imUp().then(() => setSent(wake.date))
-      .catch((e) => Alert.alert(L('没发出去', "Couldn't send"), e instanceof Error ? e.message : String(e)))
+      .catch((e) => Alert.alert(L('发送失败', "Couldn't send"), e instanceof Error ? e.message : String(e)))
       .finally(() => setBusy(false));
   };
   return (
     <Card style={styles.card}>
       <Sunrise size={20} color={t.gold} />
       <View style={{ flex: 1, gap: 2 }}>
-        <T v="headline" style={{ fontSize: 15 }}>{done ? L('好，这就出起床报告', 'OK, your morning report is on its way') : L('起床报告等你起来再发', 'Morning report waits until you’re up')}</T>
+        <T v="headline" style={{ fontSize: 15 }}>{done ? L('正在生成起床报告', 'Your morning report is on its way') : L('起床报告将在你起床后发送', 'Morning report waits until you’re up')}</T>
         {done ? null : <T v="caption" color={t.ink3}>{sub}</T>}
       </View>
       {done ? null : (
-        <Pressable onPress={up} disabled={busy} accessibilityRole="button" accessibilityLabel={L('我起来了', 'I’m up')} accessibilityState={{ busy }}
+        <Pressable onPress={up} disabled={busy} accessibilityRole="button" accessibilityLabel={L('我已起床', 'I’m up')} accessibilityState={{ busy }}
           style={({ pressed }) => [styles.btn, { backgroundColor: t.goldFill, opacity: pressed ? 0.75 : 1 }]}>
-          {busy ? <ActivityIndicator size="small" color={t.onGold} /> : <Text style={[type.headline, { fontSize: 15, color: t.onGold }]}>{L('我起来了', 'I’m up')}</Text>}
+          {busy ? <ActivityIndicator size="small" color={t.onGold} /> : <Text style={[type.headline, { fontSize: 15, color: t.onGold }]}>{L('我已起床', 'I’m up')}</Text>}
         </Pressable>
       )}
     </Card>

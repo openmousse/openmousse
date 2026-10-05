@@ -23,7 +23,7 @@ import { WakeCard } from '../components/WakeCard';
 function UpcomingRow({ u, last }: { u: UpcomingTask; last: boolean }) {
   const t = useTheme();
   const { toggleUpcoming } = useStore();
-  const meta = [u.enabled ? u.when : L('已停用', 'Disabled'), u.repeat, u.agent, u.modelId ? modelName(u.modelId) : null, u.last?.status && u.last.status !== 'ok' ? L(`上次 ${u.last.status}`, `Last run: ${u.last.status}`) : null].filter(Boolean).join(' · ');
+  const meta = [u.enabled ? u.when : L('已停用', 'Disabled'), u.repeat, u.agent, u.modelId ? modelName(u.modelId) : null, u.last?.status && u.last.status !== 'ok' ? L(`上次运行：${u.last.status}`, `Last run: ${u.last.status}`) : null].filter(Boolean).join(' · ');
   return (
     <View style={[styles.up, !last && { borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: t.line }]}>
       <View style={{ flex: 1, gap: 3 }}>
@@ -33,7 +33,7 @@ function UpcomingRow({ u, last }: { u: UpcomingTask; last: boolean }) {
       {u.toggleable ? (
         <Switch value={u.enabled} trackColor={{ true: t.goldFill, false: t.track }} thumbColor="#FFFFFF"
           accessibilityLabel={L(`${u.enabled ? '停用' : '启用'}：${u.title}`, `${u.enabled ? 'Disable' : 'Enable'}: ${u.title}`)}
-          onValueChange={(v) => toggleUpcoming(u.id, v).catch((e) => Alert.alert(L('没改成', "Couldn't update"), e instanceof Error ? e.message : String(e)))} />
+          onValueChange={(v) => toggleUpcoming(u.id, v).catch((e) => Alert.alert(L('修改失败', "Couldn't update"), e instanceof Error ? e.message : String(e)))} />
       ) : <Pill label={L('系统', 'System')} />}
     </View>
   );
@@ -79,7 +79,7 @@ function FeedCard({ f, onDismiss, isNew }: { f: FeedItem; onDismiss?: () => void
         <SourcePill source={f.groupId} />
         <T v="caption" color={t.ink3}>{onDismiss ? f.time : f.createdAt?.slice(11, 16) || f.time}</T>
         {isNew ? (
-          <View style={[styles.newPill, { backgroundColor: t.cyan }]} accessible accessibilityLabel={L('新的', 'New')}>
+          <View style={[styles.newPill, { backgroundColor: t.cyan }]} accessible accessibilityLabel={L('新内容', 'New')}>
             <Text style={[styles.newText, { color: t.surface }]}>{L('新', 'New')}</Text>
           </View>
         ) : null}
@@ -149,21 +149,21 @@ function DayView({ iso, offset, refreshKey }: { iso: string; offset: number; ref
   const changed = () => { setEdits((n) => n + 1); reload('schedule', 'remember').catch(() => {}); };
   const today = isoOf(0);
   const entries = journal.filter((e) => e.date === iso);
-  if (!connected) return <Card style={{ marginTop: space.md }}><T v="callout" color={t.ink2}>{L('没连上服务器，翻不了别的日子。', "Not connected to the server, so other days can't be loaded.")}</T></Card>;
-  if (!day) return <Card style={{ marginTop: space.md }}><T v="callout" color={t.ink2}>{L(`正在读${titleOf(offset)}的…`, 'Loading…')}</T></Card>;
+  if (!connected) return <Card style={{ marginTop: space.md }}><T v="callout" color={t.ink2}>{L('未连接服务器，无法加载其他日期。', "Not connected to the server, so other days can't be loaded.")}</T></Card>;
+  if (!day) return <Card style={{ marginTop: space.md }}><T v="callout" color={t.ink2}>{L(`正在加载${titleOf(offset)}的内容…`, 'Loading…')}</T></Card>;
   return (
     <>
       {day.errors.length ? <Card style={{ marginTop: space.md }}><T v="callout" color={t.bad}>{day.errors.join(L('；', '; '))}</T></Card> : null}
       <SectionLabel right={day.editable ? <AddScheduleButton day={iso} past={offset < 0} onChanged={changed} /> : <Pill label={L('日历', 'Calendar')} tone="good" />}>
-        {offset < 0 ? L('那天的日程', "That day's schedule") : L('日程', 'Schedule')}
+        {offset < 0 ? L('当日日程', "That day's schedule") : L('日程', 'Schedule')}
       </SectionLabel>
       <ScheduleCard events={day.events} day={iso} today={today} editable={day.editable} onChanged={changed}
-        empty={offset < 0 ? L('那天没有安排。', 'Nothing scheduled that day.') : L(`${titleOf(offset)}还没有安排。`, 'Nothing scheduled yet.')} />
-      {offset < 0 && day.editable ? <T v="caption" color={t.ink3} style={{ marginTop: space.sm, paddingHorizontal: space.xs }}>{L('过去的日子记实际发生的：去没去、做没做、几点。日结和复盘用这个。', 'Past days record what actually happened. The daily wrap-up and reviews use it.')}</T> : null}
+        empty={offset < 0 ? L('当日无安排。', 'Nothing scheduled that day.') : L(`${titleOf(offset)}暂无安排。`, 'Nothing scheduled yet.')} />
+      {offset < 0 && day.editable ? <T v="caption" color={t.ink3} style={{ marginTop: space.sm, paddingHorizontal: space.xs }}>{L('过去的日期记录实际情况：是否出席、是否完成及具体时间。日结与复盘以此为准。', 'Past days record what actually happened. The daily wrap-up and reviews use it.')}</T> : null}
 
       <SectionLabel>{L(`${agentName()} 的建议`, `Suggestions from ${agentName()}`)}</SectionLabel>
       {day.feed.length ? <View style={{ gap: space.md }}>{day.feed.map((f) => <FeedCard key={f.id} f={f} />)}</View>
-        : <Card><T v="callout" color={t.ink2}>{offset < 0 ? L('那天没有建议卡。', 'No suggestion cards that day.') : L('还没有。建议卡是当天才出的。', 'None yet. Suggestion cards only appear on the day.')}</T></Card>}
+        : <Card><T v="callout" color={t.ink2}>{offset < 0 ? L('当日无建议卡。', 'No suggestion cards that day.') : L('暂无。建议卡仅在当天生成。', 'None yet. Suggestion cards only appear on the day.')}</T></Card>}
 
       {entries.length ? (
         <>
@@ -312,13 +312,13 @@ export function TodayScreen() {
         <View style={{ paddingHorizontal: space.lg }} onLayout={(e) => { lay.current.pad = e.nativeEvent.layout.y; }}>
           {offset !== 0 ? (
             <Pressable onPress={() => setOffset(0)} accessibilityRole="button" style={{ alignSelf: 'flex-start', paddingVertical: 2, paddingHorizontal: space.xs }}>
-              <T v="callout" color={t.gold} style={{ fontWeight: '600' }}>{L('回到今天', 'Back to today')}</T>
+              <T v="callout" color={t.gold} style={{ fontWeight: '600' }}>{L('返回今天', 'Back to today')}</T>
             </Pressable>
           ) : null}
           {!connected ? (
             <Card style={{ marginTop: space.md }}><T v="callout" color={t.ink2}>{booting
-              ? L('正在连服务器…', 'Connecting to the server…')
-              : L('没连上服务器。检查「我 → 服务器」后下拉刷新。', 'Not connected to the server. Check Me → Server, then pull down to refresh.')}</T></Card>
+              ? L('正在连接服务器…', 'Connecting to the server…')
+              : L('未连接服务器。请检查「我 → 服务器」，然后下拉刷新。','Not connected to the server. Check Me → Server, then pull down to refresh.')}</T></Card>
           ) : null}
           {offset !== 0 ? <DayView iso={dayIso} offset={offset} refreshKey={dayRefresh} /> : (<>
 
@@ -328,7 +328,7 @@ export function TodayScreen() {
               <T v="callout" color={t.gold} style={{ fontWeight: '600' }}>{L('已处理', 'Handled')}</T>
               <ChevronRight size={16} color={t.gold} />
             </Pressable>
-          )}>{inbox.length ? L(`等你点头 · ${inbox.length}`, `Needs your OK · ${inbox.length}`) : L('等你点头', 'Needs your OK')}</SectionLabel>
+          )}>{inbox.length ? L(`待你确认 · ${inbox.length}`, `Needs your approval · ${inbox.length}`) : L('待你确认', 'Needs your approval')}</SectionLabel>
           {asks.length ? (
             <View style={{ gap: space.md }} onLayout={(e) => { lay.current.inbox = e.nativeEvent.layout.y; }}>
               {asks.map((it) => (
@@ -342,20 +342,20 @@ export function TodayScreen() {
             <Card>
               <T v="callout" color={dataErrors.inbox ? t.bad : t.ink2}>
                 {dataErrors.inbox
-                  ? L(`读不到收件箱：${dataErrors.inbox}`, `Couldn't load the inbox: ${dataErrors.inbox}`)
-                  : L('没有等你点头的事。需要你决定的事会出现在这里。', 'Nothing waiting for your OK. Anything that needs your decision will show up here.')}
+                  ? L(`无法加载收件箱：${dataErrors.inbox}`, `Couldn't load the inbox: ${dataErrors.inbox}`)
+                  : L('暂无待确认事项。需要你决定的事项将显示在此处。', 'Nothing awaiting your approval. Anything that needs your decision will appear here.')}
               </T>
             </Card>
           )}
 
           {bg.length ? (
             <>
-              <SectionLabel right={<Pressable onPress={() => nav.navigate('Tasks')} accessibilityRole="button"><T v="caption" color={t.gold}>{L('全部', 'All')}</T></Pressable>}>{L('后台在做的', 'Running in the background')}</SectionLabel>
+              <SectionLabel right={<Pressable onPress={() => nav.navigate('Tasks')} accessibilityRole="button"><T v="caption" color={t.gold}>{L('全部', 'All')}</T></Pressable>}>{L('后台任务', 'Background tasks')}</SectionLabel>
               <Card style={{ paddingVertical: space.xs }}>
                 {bg.map((x, i) => (
                   <ListRow key={x.id} title={x.title} last={i === bg.length - 1} onPress={() => nav.navigate('Task', { id: x.id })}
                     icon={<LoaderCircle size={18} color={t.cyan} />}
-                    sub={`${originName(x.origin, groups, sideChats)} → ${modelName(x.modelId)}${x.lastTool ? L(` · 正在用 ${x.lastTool}`, ` · using ${x.lastTool}`) : ''}`} />
+                    sub={`${originName(x.origin, groups, sideChats)} → ${modelName(x.modelId)}${x.lastTool ? L(` · 正在使用 ${x.lastTool}`, ` · using ${x.lastTool}`) : ''}`} />
                 ))}
               </Card>
             </>
@@ -364,22 +364,22 @@ export function TodayScreen() {
           {connected ? (
             <>
               <SectionLabel right={scheduleEditable ? <AddScheduleButton day={iso} past={false} onChanged={scheduleChanged} /> : <Pill label={L('日历', 'Calendar')} tone="good" />}>{L('日程', 'Schedule')}</SectionLabel>
-              {dataErrors.schedule ? <Card style={{ marginBottom: space.sm }}><T v="callout" color={t.bad}>{L(`读不到日程：${dataErrors.schedule}`, `Couldn't load the schedule: ${dataErrors.schedule}`)}</T></Card> : null}
+              {dataErrors.schedule ? <Card style={{ marginBottom: space.sm }}><T v="callout" color={t.bad}>{L(`无法加载日程：${dataErrors.schedule}`, `Couldn't load the schedule: ${dataErrors.schedule}`)}</T></Card> : null}
               <ScheduleCard events={schedule} day={iso} today={iso} editable={scheduleEditable} onChanged={scheduleChanged}
-                empty={loading.schedule && !schedule.length ? L('正在读…', 'Loading…') : L('今天还没有安排。', 'Nothing scheduled today.')} />
+                empty={loading.schedule && !schedule.length ? L('正在加载…', 'Loading…') : L('今日暂无安排。', 'Nothing scheduled today.')} />
               {tomorrows.length ? (
                 <Pressable onPress={() => setOffset(1)} accessibilityRole="button" style={{ marginTop: space.sm, paddingHorizontal: space.xs }}>
                   <T v="callout" color={t.ink3}>{L(
-                    `明天 ${tomorrows.length} 个日程，第一个 ${tomorrows[0].start}。`,
+                    `明天有 ${tomorrows.length} 个日程，首个 ${tomorrows[0].start} 开始。`,
                     `Tomorrow: ${tomorrows.length} event${tomorrows.length === 1 ? '' : 's'}, first at ${tomorrows[0].start}. `,
-                  )}<T v="callout" color={t.gold}>{L('看明天', 'See tomorrow')}</T></T>
+                  )}<T v="callout" color={t.gold}>{L('查看明天', 'See tomorrow')}</T></T>
                 </Pressable>
               ) : null}
 
               {scheduleEditable || remember.length ? (
                 <>
                   <SectionLabel>{L('要记得的', 'To remember')}</SectionLabel>
-                  {dataErrors.remember ? <Card style={{ marginBottom: space.sm }}><T v="callout" color={t.bad}>{L(`读不到：${dataErrors.remember}`, `Couldn't load: ${dataErrors.remember}`)}</T></Card> : null}
+                  {dataErrors.remember ? <Card style={{ marginBottom: space.sm }}><T v="callout" color={t.bad}>{L(`无法加载：${dataErrors.remember}`, `Couldn't load: ${dataErrors.remember}`)}</T></Card> : null}
                   <RememberCard items={remember} errors={rememberErrors} today={iso} />
                 </>
               ) : null}
@@ -398,15 +398,15 @@ export function TodayScreen() {
               ))}
             </View>
           ) : (
-            <Card><T v="callout" color={t.ink2}>{readHidden ? L('今天的建议都看过了。', "You've read all of today's suggestions.") : L('还没有建议。起床报告和主动提醒会出现在这里。', 'No suggestions yet. Morning reports and proactive reminders will show up here.')}</T></Card>
+            <Card><T v="callout" color={t.ink2}>{readHidden ? L('今日建议均已查看。', "You've read all of today's suggestions.") : L('暂无建议。起床报告和主动提醒将显示在此处。', 'No suggestions yet. Morning reports and proactive reminders will appear here.')}</T></Card>
           )}
           {readHidden ? (
             <Pressable onPress={() => setShowRead(true)} hitSlop={8} accessibilityRole="button" style={({ pressed }) => ({ paddingVertical: space.sm, opacity: pressed ? 0.6 : 1 })}>
-              <T v="caption" color={t.ink3}>{L(`看过的 ${readHidden} 张已收起 · 展开`, `${readHidden} read · Show`)}</T>
+              <T v="caption" color={t.ink3}>{L(`${readHidden} 张已读卡片已收起 · 展开`, `${readHidden} read · Show`)}</T>
             </Pressable>
           ) : null}
 
-          <SectionLabel>{L('接下来会自动做的事', 'Coming up automatically')}</SectionLabel>
+          <SectionLabel>{L('即将自动执行', 'Coming up automatically')}</SectionLabel>
           {upcoming.length ? (
             <>
               <Card style={{ paddingVertical: space.xs }}>
@@ -416,8 +416,8 @@ export function TodayScreen() {
                 <>
                   <Pressable onPress={() => setShowOff((v) => !v)} accessibilityRole="button" style={{ paddingVertical: space.sm, paddingHorizontal: space.xs }}>
                     <T v="caption" color={t.gold}>{showOff
-                      ? L('收起停用的', 'Hide disabled')
-                      : L(`还有 ${off.length} 个停用的定时任务`, `${off.length} more disabled scheduled job${off.length === 1 ? '' : 's'}`)}</T>
+                      ? L('收起已停用项', 'Hide disabled')
+                      : L(`另有 ${off.length} 个已停用的定时任务`, `${off.length} more disabled scheduled job${off.length === 1 ? '' : 's'}`)}</T>
                   </Pressable>
                   {showOff ? <Card style={{ paddingVertical: space.xs }}>{off.map((u, i) => <UpcomingRow key={u.id} u={u} last={i === off.length - 1} />)}</Card> : null}
                 </>
@@ -425,8 +425,8 @@ export function TodayScreen() {
             </>
           ) : (
             <Card><T v="callout" color={dataErrors.upcoming ? t.bad : t.ink2}>{dataErrors.upcoming
-              ? L(`读不到定时任务：${dataErrors.upcoming}`, `Couldn't load scheduled jobs: ${dataErrors.upcoming}`)
-              : loading.upcoming ? L('正在读…', 'Loading…') : connected ? L('没有定时任务。', 'No scheduled jobs.') : L('没连上服务器。', 'Not connected to the server.')}</T></Card>
+              ? L(`无法加载定时任务：${dataErrors.upcoming}`, `Couldn't load scheduled jobs: ${dataErrors.upcoming}`)
+              : loading.upcoming ? L('正在加载…', 'Loading…') : connected ? L('暂无定时任务。', 'No scheduled jobs.') : L('未连接服务器。', 'Not connected to the server.')}</T></Card>
           )}
           </>)}
         </View>

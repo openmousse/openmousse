@@ -41,10 +41,10 @@ function MemoryRow({ m, first }: { m: MemoryItem; first: boolean }) {
   const title = memoryTitle(m.text);
   const date = memoryDate(m.text);
   const who = memoryWho(m.text);
-  const meta = [date, who === 'decided' ? L('你定的', 'your call') : who === 'asked' ? L('你要求的', 'you asked') : null].filter(Boolean).join(' · ');
+  const meta = [date, who === 'decided' ? L('你的决定', 'your decision') : who === 'asked' ? L('应你要求', 'at your request') : null].filter(Boolean).join(' · ');
   return (
     <View style={[styles.mem, !first && { borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: t.line }]}>
-      <Pressable onPress={() => setOpen((v) => !v)} accessibilityRole="button" accessibilityState={{ expanded: open }} accessibilityHint={L('点开看全文', 'Shows the full text')}
+      <Pressable onPress={() => setOpen((v) => !v)} accessibilityRole="button" accessibilityState={{ expanded: open }} accessibilityHint={L('展开全文', 'Shows the full text')}
         style={({ pressed }) => [styles.row, { opacity: pressed ? 0.6 : 1 }]}>
         <View style={{ flex: 1, gap: 2 }}>
           <T v="body" style={styles.title}>{title}</T>
@@ -57,9 +57,9 @@ function MemoryRow({ m, first }: { m: MemoryItem; first: boolean }) {
           <View style={[styles.full, { backgroundColor: t.bg }]}>
             <T v="callout" color={t.ink2} selectable style={{ lineHeight: 22 }}>{m.text.replace(/`/g, '')}</T>
           </View>
-          <Pressable onPress={() => sheet.open({ title: L('让它忘记这条？', 'Make it forget this?'), content: (close) => <ForgetSheet m={m} close={close} /> })}
+          <Pressable onPress={() => sheet.open({ title: L('忘记这条记忆？', 'Forget this memory?'), content: (close) => <ForgetSheet m={m} close={close} /> })}
             hitSlop={8} accessibilityRole="button" style={{ alignSelf: 'flex-start', paddingVertical: 2 }}>
-            <T v="callout" color={t.bad} style={{ fontSize: 13, fontWeight: '600' }}>{L('让它忘记这条', 'Make it forget this')}</T>
+            <T v="callout" color={t.bad} style={{ fontSize: 13, fontWeight: '600' }}>{L('忘记这条记忆', 'Forget this memory')}</T>
           </Pressable>
         </View>
       ) : null}
@@ -75,11 +75,11 @@ function DeleteJournalSheet({ e, close }: { e: JournalEntry; close: () => void }
   return (
     <View style={{ gap: space.md }}>
       <T v="body" color={t.ink2}>{L(`「${e.text}」`, `"${e.text}"`)}</T>
-      <T v="callout" color={t.ink3}>{L(`只删正文，${agentName()} 也不会再引用它。`, `This erases the text, and ${agentName()} won't refer to it again.`)}</T>
+      <T v="callout" color={t.ink3}>{L(`仅删除正文，${agentName()} 将不再引用此条。`, `This deletes the text, and ${agentName()} will no longer refer to it.`)}</T>
       {err ? <T v="callout" color={t.bad}>{err}</T> : null}
       <View style={{ flexDirection: 'row', gap: space.sm }}>
-        <Btn flex kind="quiet" label={L('留着', 'Keep')} onPress={close} />
-        <Btn flex kind="danger" label={busy ? L('正在删…', 'Deleting…') : L('删除', 'Delete')} onPress={() => {
+        <Btn flex kind="quiet" label={L('保留', 'Keep')} onPress={close} />
+        <Btn flex kind="danger" label={busy ? L('正在删除…', 'Deleting…') : L('删除', 'Delete')} onPress={() => {
           if (busy) return;
           setBusy(true);
           deleteJournal(e.id).then(close).catch((x) => { setErr(x instanceof Error ? x.message : String(x)); setBusy(false); });
@@ -117,9 +117,9 @@ function JournalRow({ e }: { e: JournalEntry }) {
         <View style={styles.jmore}>
           {e.context ? <T v="caption" color={t.ink3} style={{ fontWeight: '400' }}>{e.context}</T> : null}
           {e.tags.length ? <T v="caption" color={t.ink3} style={{ fontWeight: '400' }}>{e.tags.map((x) => `#${x}`).join(' ')}</T> : null}
-          <Pressable onPress={() => sheet.open({ title: L('删掉这条日志？', 'Delete this journal entry?'), content: (close) => <DeleteJournalSheet e={e} close={close} /> })}
+          <Pressable onPress={() => sheet.open({ title: L('删除这条日志？', 'Delete this journal entry?'), content: (close) => <DeleteJournalSheet e={e} close={close} /> })}
             hitSlop={8} accessibilityRole="button" style={{ alignSelf: 'flex-start', paddingVertical: 2 }}>
-            <T v="callout" color={t.bad} style={{ fontSize: 13, fontWeight: '600' }}>{L('删掉这条', 'Delete this entry')}</T>
+            <T v="callout" color={t.bad} style={{ fontSize: 13, fontWeight: '600' }}>{L('删除此条', 'Delete this entry')}</T>
           </Pressable>
         </View>
       ) : null}
@@ -176,9 +176,9 @@ export function AgentMemory({ groupId }: { groupId: string }) {
   // 筛到的那一类后来空了（比如刚忘掉最后一条）：回到「全部」
   const active: Filter = filter !== 'all' && !chips.find((c) => c.key === filter)?.n ? 'all' : filter;
   const showMem = (b: Bucket) => active === 'all' || active === b;
-  const memNote = dataErrors.memories ? L(`读不到记忆：${dataErrors.memories}`, `Couldn't read memory: ${dataErrors.memories}`)
-    : !connected ? L('没连上服务器。', 'Not connected to the server.')
-      : loading.memories && !items.length ? L('正在读…', 'Loading…') : !items.length ? L('这里还没有长期记忆。', 'No long-term memories here yet.') : '';
+  const memNote = dataErrors.memories ? L(`无法加载记忆：${dataErrors.memories}`, `Couldn't load memory: ${dataErrors.memories}`)
+    : !connected ? L('未连接服务器。', 'Not connected to the server.')
+      : loading.memories && !items.length ? L('正在加载…', 'Loading…') : !items.length ? L('暂无长期记忆。', 'No long-term memories yet.') : '';
   return (
     <View>
       <View style={styles.chips} accessibilityRole="tablist">
@@ -203,11 +203,11 @@ export function AgentMemory({ groupId }: { groupId: string }) {
         <>
           <SectionLabel>{L('日志', 'Journal')}</SectionLabel>
           {entries.length ? <Timeline entries={entries} />
-            : <Card><T v="callout" color={t.ink2}>{L(`还没有记录。在对话里说感受、想法或决定，${agentName()} 会记在这里。`, `Nothing yet. Share feelings, thoughts or decisions in chat and ${agentName()} will log them here.`)}</T></Card>}
+            : <Card><T v="callout" color={t.ink2}>{L(`暂无记录。你在对话中提到的感受、想法和决定，${agentName()} 会记录在这里。`, `No entries yet. Feelings, thoughts and decisions you share in chat are logged here by ${agentName()}.`)}</T></Card>}
         </>
       ) : null}
 
-      <T v="caption" color={t.ink3} style={styles.foot}>{L('每天 04:00 前它写一次日结，结论会存进这里。点一条看全文，也可以让它忘记。', 'Before 04:00 each day it writes a daily digest and saves the conclusions here. Tap an item to read all of it, or to make it forget.')}</T>
+      <T v="caption" color={t.ink3} style={styles.foot}>{L('Agent 每天 04:00 前生成一次日结，结论保存在此处。点击条目可查看全文或将其忘记。', 'The Agent writes a daily digest before 04:00 each day and saves the conclusions here. Tap an item to read it in full or to forget it.')}</T>
     </View>
   );
 }

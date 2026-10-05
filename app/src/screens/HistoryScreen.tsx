@@ -89,7 +89,7 @@ export function HistoryScreen() {
       <View style={{ paddingHorizontal: space.lg, paddingTop: space.sm, gap: space.sm }}>
         <View style={[styles.search, { backgroundColor: t.surface2 }]}>
           <Search size={18} color={t.ink3} />
-          <TextInput value={q} onChangeText={changeQ} placeholder={L('搜对话、建议卡、日志', 'Search chats, suggestion cards, journal')} placeholderTextColor={t.ink3} autoCorrect={false} returnKeyType="search"
+          <TextInput value={q} onChangeText={changeQ} placeholder={L('搜索对话、建议卡和日志', 'Search chats, suggestion cards, journal')} placeholderTextColor={t.ink3} autoCorrect={false} returnKeyType="search"
             style={[styles.input, { color: t.ink }]} accessibilityLabel={L('关键词搜索', 'Search')} />
           {q ? <Pressable onPress={() => changeQ('')} hitSlop={8} accessibilityRole="button" accessibilityLabel={L('清空', 'Clear')}><X size={16} color={t.ink3} /></Pressable> : null}
         </View>
@@ -97,18 +97,18 @@ export function HistoryScreen() {
           <View style={{ flexDirection: 'row', gap: space.sm }}>
             {(['all', 'thread'] as const).map((s) => (
               <Pressable key={s} onPress={() => changeScope(s)} accessibilityRole="button" style={[styles.chip, { backgroundColor: scope === s ? t.goldSoft : t.surface2 }]}>
-                <T v="caption" color={scope === s ? t.gold : t.ink2} style={{ fontWeight: '600' }}>{s === 'all' ? L('全部线程', 'All threads') : L(`只看${name(thread)}`, `Only ${name(thread)}`)}</T>
+                <T v="caption" color={scope === s ? t.gold : t.ink2} style={{ fontWeight: '600' }}>{s === 'all' ? L('全部对话', 'All threads') : L(`仅${name(thread)}`, `Only ${name(thread)}`)}</T>
               </Pressable>
             ))}
           </View>
         ) : null}
       </View>
       <ScrollView contentContainerStyle={{ padding: space.lg, paddingBottom: space.xxl }} keyboardShouldPersistTaps="handled" automaticallyAdjustKeyboardInsets keyboardDismissMode={Platform.OS === 'web' ? 'none' : 'on-drag'}>
-        {!connected ? <Card><T v="callout" color={t.ink2}>{L('没连上服务器。', 'Not connected to the server.')}</T></Card> : null}
+        {!connected ? <Card><T v="callout" color={t.ink2}>{L('未连接服务器。', 'Not connected to the server.')}</T></Card> : null}
         {error ? <Card><T v="callout" color={t.bad}>{error}</T></Card> : null}
         {q.trim() ? (
           searching && !hits ? <ActivityIndicator color={t.gold} style={{ marginTop: space.lg }} /> : !hits?.length ? (
-            <Card><T v="callout" color={t.ink2}>{L(`没搜到「${q.trim()}」。`, `No results for "${q.trim()}".`)}</T></Card>
+            <Card><T v="callout" color={t.ink2}>{L(`未找到「${q.trim()}」的相关结果。`, `No results for "${q.trim()}".`)}</T></Card>
           ) : grouped.map(([day, list]) => (
             <View key={day}>
               <SectionLabel>{dayLabel(day)}</SectionLabel>
@@ -130,10 +130,10 @@ export function HistoryScreen() {
         ) : !days ? (
           connected ? <ActivityIndicator color={t.gold} style={{ marginTop: space.lg }} /> : null
         ) : !days.length ? (
-          <Card><T v="callout" color={t.ink2}>{L('这个对话还没有记录。', 'No history for this chat yet.')}</T></Card>
+          <Card><T v="callout" color={t.ink2}>{L('此对话暂无记录。', 'No history for this chat yet.')}</T></Card>
         ) : (
           <>
-            <SectionLabel>{L('按天翻（04:00 为一天的边界）', 'By day (a day starts at 04:00)')}</SectionLabel>
+            <SectionLabel>{L('按日浏览（每天以 04:00 为界）', 'By day (a day starts at 04:00)')}</SectionLabel>
             <Card style={{ paddingVertical: space.xs }}>
               {days.map((d, i) => (
                 <Pressable key={d.day} onPress={() => nav.navigate('HistoryDay', { thread, day: d.day })} accessibilityRole="button"
@@ -178,7 +178,7 @@ export function HistoryDayScreen() {
       <NavHeader title={`${name(thread)} · ${dayLabel(day)}`} onBack={() => nav.goBack()} />
       {error ? <Card style={{ margin: space.lg }}><T v="callout" color={t.bad}>{error}</T></Card> : null}
       {!msgs ? <ActivityIndicator color={t.gold} style={{ marginTop: space.lg }} /> : !msgs.length ? (
-        <Card style={{ margin: space.lg }}><T v="callout" color={t.ink2}>{L('这一天没有记录。', 'Nothing on this day.')}</T></Card>
+        <Card style={{ margin: space.lg }}><T v="callout" color={t.ink2}>{L('当天无记录。', 'Nothing on this day.')}</T></Card>
       ) : (
         <ScrollView ref={scroll} contentContainerStyle={{ padding: space.lg, gap: 14, paddingBottom: space.xxl }} onContentSizeChange={jump}>
           <T v="caption" color={t.ink3} style={{ textAlign: 'center' }}>{L('只读', 'Read-only')} · {msgCount(msgs.length)}</T>

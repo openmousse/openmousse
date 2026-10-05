@@ -48,7 +48,7 @@ export function CaptureBar({ keyword, placeholder, onSaved }: {
   const canRecord = Platform.OS !== 'web';
 
   const change = (v: string) => { setText(v); saveDraft(draftKey, v); };
-  const fail = (e: unknown) => Alert.alert(L('没记下', "Couldn't save"), e instanceof Error ? e.message : String(e));
+  const fail = (e: unknown) => Alert.alert(L('保存失败', "Couldn't save"), e instanceof Error ? e.message : String(e));
 
   // 打关键词时的补全：正在打的这个词对得上的已有关键词（开头对上的在前），没在打就给最常用的几个
   const suggestions = useMemo(() => {
@@ -78,7 +78,7 @@ export function CaptureBar({ keyword, placeholder, onSaved }: {
       if (kwMode) {
         const all = [...chips, ...split(token)];
         if (!all.length) return;
-        setBusy(L('正在记…', 'Saving…'));
+        setBusy(L('正在保存…', 'Saving…'));
         await capture({ kind: 'keywords', keywords: keyword ? [keyword, ...all] : all });
         setChips([]); setToken('');
         onSaved?.();
@@ -87,7 +87,7 @@ export function CaptureBar({ keyword, placeholder, onSaved }: {
       }
       const v = text.trim();
       if (!v) return;
-      setBusy(L('正在记…', 'Saving…'));
+      setBusy(L('正在保存…', 'Saving…'));
       await capture({ text: v, keywords: keyword ? [keyword] : undefined });
       change('');
       onSaved?.();
@@ -98,7 +98,7 @@ export function CaptureBar({ keyword, placeholder, onSaved }: {
   const withFiles = async (files: PendingFile[]) => {
     if (!files.length) return;
     try {
-      setBusy(L('正在传…', 'Uploading…'));
+      setBusy(L('正在上传…', 'Uploading…'));
       await captureFiles(files.slice(0, MAX_FILES), { text: text.trim() || undefined, keywords: keyword ? [keyword] : undefined });
       change('');
       onSaved?.();
@@ -107,7 +107,7 @@ export function CaptureBar({ keyword, placeholder, onSaved }: {
   const openAttach = () => {
     if (Platform.OS === 'web') { pickDocuments().then(withFiles).catch(fail); return; }
     sheet.open({
-      title: L('记一张照片或一个文件', 'Add a photo or a file'),
+      title: L('添加照片或文件', 'Add a photo or file'),
       content: (close) => (
         <View style={{ gap: space.sm }}>
           {[
@@ -120,7 +120,7 @@ export function CaptureBar({ keyword, placeholder, onSaved }: {
               <Icon size={20} color={t.ink} /><T v="headline">{label}</T>
             </Pressable>
           ))}
-          <T v="caption" color={t.ink3}>{L('输入框里写的字会一起记在这条上。5 MB 以内的放进库，Obsidian 里也看得到；大的留在服务器上。', 'Whatever you typed goes on the same note. Files up to 5 MB go into the vault (visible in Obsidian); bigger ones stay on the server.')}</T>
+          <T v="caption" color={t.ink3}>{L('输入框中的文字会一并记入这条想法。5 MB 以内的文件存入库中，可在 Obsidian 中查看；更大的文件保留在服务器上。', 'Any text in the input is saved with the note. Files up to 5 MB go into the vault (visible in Obsidian); larger files stay on the server.')}</T>
         </View>
       ),
     });
@@ -129,7 +129,7 @@ export function CaptureBar({ keyword, placeholder, onSaved }: {
   const startRecording = async () => {
     try {
       const perm = await AudioModule.requestRecordingPermissionsAsync();
-      if (!perm.granted) { Alert.alert(L('没有麦克风权限', 'No microphone access'), L('去系统设置里打开麦克风。', 'Turn on the microphone in Settings.')); return; }
+      if (!perm.granted) { Alert.alert(L('无麦克风权限', 'No microphone access'), L('请在系统设置中开启麦克风权限。', 'Turn on microphone access in Settings.')); return; }
       await setAudioModeAsync({ allowsRecording: true, playsInSilentMode: true });
       await recorder.prepareToRecordAsync();
       recorder.record();
@@ -143,7 +143,7 @@ export function CaptureBar({ keyword, placeholder, onSaved }: {
       await setAudioModeAsync({ allowsRecording: false, playsInSilentMode: true });
       const uri = recorder.uri;
       if (!uri) return;
-      setBusy(L('正在转文字…', 'Transcribing…'));
+      setBusy(L('正在转写…', 'Transcribing…'));
       await captureFiles([{ uri, name: `voice-${Date.now()}.m4a`, mime: 'audio/m4a', size: 0 }], { kind: 'voice', duration: secs, text: text.trim() || undefined, keywords: keyword ? [keyword] : undefined });
       change('');
       onSaved?.();
@@ -157,7 +157,7 @@ export function CaptureBar({ keyword, placeholder, onSaved }: {
     if (!nativeMenu) return undefined;
     const off = editMenu(menuKey, [
       { id: 'newline', title: L('换行', 'New line'), icon: 'return' },
-      { id: 'full', title: L('全屏写', 'Full screen'), icon: 'arrow.up.left.and.arrow.down.right' },
+      { id: 'full', title: L('全屏编辑', 'Full screen'), icon: 'arrow.up.left.and.arrow.down.right' },
     ], (e) => {
       const cur = latest.current.text;
       if (e.id === 'full') {
@@ -186,7 +186,7 @@ export function CaptureBar({ keyword, placeholder, onSaved }: {
     <View style={[styles.wrap, { borderTopColor: t.line, backgroundColor: kwMode ? t.surface : t.bg }]}>
       {kwMode ? (
         <View style={{ paddingHorizontal: space.md, paddingTop: space.sm, gap: 6 }}>
-          <T v="caption" color={t.ink3}>{token ? L('已有的关键词，点一下就行', 'Existing keywords, tap to add') : L('常用的', 'Most used')}</T>
+          <T v="caption" color={t.ink3}>{token ? L('已有关键词，轻点添加', 'Existing keywords, tap to add') : L('常用', 'Most used')}</T>
           <ScrollView horizontal showsHorizontalScrollIndicator={false} keyboardShouldPersistTaps="always" contentContainerStyle={{ gap: 8 }}>
             {suggestions.map((k) => (
               <Pressable key={k.k} onPress={() => addChip(k.k)} accessibilityRole="button" style={[styles.sug, { backgroundColor: t.tints.cyan.soft, borderColor: t.tints.cyan.soft }]}>
@@ -206,8 +206,8 @@ export function CaptureBar({ keyword, placeholder, onSaved }: {
         <View style={styles.bar}>
           <View style={[styles.recording, { backgroundColor: t.surface }]}>
             <View style={{ width: 10, height: 10, borderRadius: 5, backgroundColor: t.bad }} />
-            <T v="body" style={{ flex: 1, fontVariant: ['tabular-nums'] }}>{L('正在录', 'Recording')} {Math.floor(secs / 60)}:{String(secs % 60).padStart(2, '0')}</T>
-            <T v="caption" color={t.ink3}>{L('原声会留着', 'The recording is kept')}</T>
+            <T v="body" style={{ flex: 1, fontVariant: ['tabular-nums'] }}>{L('正在录音', 'Recording')} {Math.floor(secs / 60)}:{String(secs % 60).padStart(2, '0')}</T>
+            <T v="caption" color={t.ink3}>{L('将保留原始录音', 'Original audio is kept')}</T>
           </View>
           <Pressable onPress={stopRecording} accessibilityRole="button" accessibilityLabel={L('停止录音', 'Stop recording')} style={[styles.send, { backgroundColor: t.bad }]}>
             <Square size={16} color="#fff" fill="#fff" />
@@ -221,12 +221,12 @@ export function CaptureBar({ keyword, placeholder, onSaved }: {
             </Pressable>
           ) : null}
           {canRecord && !kwMode ? (
-            <Pressable onPress={startRecording} disabled={!!busy} hitSlop={4} accessibilityRole="button" accessibilityLabel={L('录一段语音', 'Record a voice note')} style={styles.icon}>
+            <Pressable onPress={startRecording} disabled={!!busy} hitSlop={4} accessibilityRole="button" accessibilityLabel={L('录制语音', 'Record a voice note')} style={styles.icon}>
               <Mic size={22} color={t.ink2} />
             </Pressable>
           ) : null}
           <Pressable onPress={() => { setKwMode((v) => !v); setTimeout(() => input.current?.focus(), 80); }} hitSlop={4} accessibilityRole="button"
-            accessibilityState={{ selected: kwMode }} accessibilityLabel={kwMode ? L('回到打字', 'Back to text') : L('打关键词', 'Add keywords')}
+            accessibilityState={{ selected: kwMode }} accessibilityLabel={kwMode ? L('返回文字输入', 'Back to text') : L('添加关键词', 'Add keywords')}
             style={[styles.icon, kwMode ? { backgroundColor: t.goldFill, borderRadius: 20 } : null]}>
             <Hash size={21} color={kwMode ? t.onGold : t.ink2} />
           </Pressable>
@@ -235,35 +235,35 @@ export function CaptureBar({ keyword, placeholder, onSaved }: {
               {chips.map((c) => (
                 <View key={c} style={[styles.chipk, { backgroundColor: t.cyan }]}>
                   <Text style={[type.callout, { color: t.surface, fontWeight: '600' }]}>#{c}</Text>
-                  <Pressable onPress={() => setChips((cur) => cur.filter((x) => x !== c))} hitSlop={6} accessibilityRole="button" accessibilityLabel={L(`去掉 ${c}`, `Remove ${c}`)}>
+                  <Pressable onPress={() => setChips((cur) => cur.filter((x) => x !== c))} hitSlop={6} accessibilityRole="button" accessibilityLabel={L(`移除 ${c}`, `Remove ${c}`)}>
                     <X size={13} color={t.surface} />
                   </Pressable>
                 </View>
               ))}
               <TextInput ref={input} value={token} onChangeText={onToken} onSubmitEditing={() => (token.trim() ? addChip(token) : submit())} submitBehavior="submit" returnKeyType="done"
                 onKeyPress={(e) => { if (webEnter) webEnter(e); else if (e.nativeEvent.key === 'Backspace' && !token && chips.length) setChips((c) => c.slice(0, -1)); }}
-                placeholder={chips.length ? '' : L('打关键词，空格分开', 'Type keywords, space between')} placeholderTextColor={t.ink3}
+                placeholder={chips.length ? '' : L('输入关键词，以空格分隔', 'Keywords, separated by spaces')} placeholderTextColor={t.ink3}
                 accessibilityLabel={L('关键词', 'Keywords')} style={[type.body, { flexGrow: 1, minWidth: 80, color: t.ink, paddingVertical: 4 }]} />
             </View>
           ) : (
             <View style={[styles.field, { backgroundColor: t.surface, borderColor: t.line }]}>
-              <GrowInput ref={input} value={text} onChangeText={change} multiline placeholder={busy ?? placeholder ?? L('记下来，它不会看', "Jot it down. It won't read it.")} placeholderTextColor={t.ink3}
-                onKeyPress={webEnter} editable={!busy} accessibilityLabel={L('记一条想法', 'Jot down a thought')} testID={menuKey}
+              <GrowInput ref={input} value={text} onChangeText={change} multiline placeholder={busy ?? placeholder ?? L('记录想法，不会发送给 Agent', "Note a thought. It isn't sent to the Agent.")} placeholderTextColor={t.ink3}
+                onKeyPress={webEnter} editable={!busy} accessibilityLabel={L('记录想法', 'Note a thought')} testID={menuKey}
                 {...(nativeMenu ? { submitBehavior: 'submit' as const, returnKeyType: 'done' as const, onSubmitEditing: () => { submit(); } } : null)}
                 onSelectionChange={(e) => { latest.current.sel = e.nativeEvent.selection; }}
                 style={[type.body, { flex: 1, color: t.ink, paddingTop: 9, paddingBottom: 9, maxHeight: 120 }]} />
-              <Pressable onPress={expand} hitSlop={6} accessibilityRole="button" accessibilityLabel={L('展开，全屏写', 'Expand to write full screen')} style={styles.expand}>
+              <Pressable onPress={expand} hitSlop={6} accessibilityRole="button" accessibilityLabel={L('展开全屏编辑', 'Expand to full screen')} style={styles.expand}>
                 <Maximize2 size={17} color={t.ink2} />
               </Pressable>
             </View>
           )}
-          <Pressable onPress={submit} disabled={!canSend || !!busy} accessibilityRole="button" accessibilityLabel={L('记下', 'Save')}
+          <Pressable onPress={submit} disabled={!canSend || !!busy} accessibilityRole="button" accessibilityLabel={L('保存', 'Save')}
             style={[styles.send, { backgroundColor: canSend ? t.goldFill : t.surface2 }]}>
             <ArrowUp size={20} color={canSend ? t.onGold : t.ink3} />
           </Pressable>
         </View>
       )}
-      {kwMode ? <T v="caption" color={t.ink3} style={{ paddingHorizontal: space.md, paddingBottom: 6 }}>{L('空格分开，回车记下 · 句子里写 #护城河 也算 · 已经记下的，点开也能加', 'Space between, Enter to save · #word inside a sentence counts too · add to saved ones by opening them')}</T> : null}
+      {kwMode ? <T v="caption" color={t.ink3} style={{ paddingHorizontal: space.md, paddingBottom: 6 }}>{L('以空格分隔，回车保存 · 句中的 #护城河 同样计入 · 已保存的想法可点开添加', 'Separate with spaces, Enter to save · #word in a sentence also counts · Open a saved thought to add more')}</T> : null}
       {busy && !kwMode ? <T v="caption" color={t.ink3} style={{ paddingHorizontal: space.md, paddingBottom: 6 }}>{busy}</T> : null}
     </View>
   );

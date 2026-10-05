@@ -132,7 +132,7 @@ function VoicePlay({ url, duration }: { url: string; duration: number | null }) 
   const c = t.tints.purple;
   return (
     <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
-      <Pressable onPress={toggle} hitSlop={6} accessibilityRole="button" accessibilityLabel={st.playing ? L('暂停', 'Pause') : L('播放原声', 'Play the recording')}
+      <Pressable onPress={toggle} hitSlop={6} accessibilityRole="button" accessibilityLabel={st.playing ? L('暂停', 'Pause') : L('播放原始录音', 'Play the recording')}
         style={{ width: 34, height: 34, borderRadius: 17, backgroundColor: c.soft, alignItems: 'center', justifyContent: 'center' }}>
         {st.playing ? <Square size={12} color={c.fg} fill={c.fg} /> : <Play size={14} color={c.fg} fill={c.fg} />}
       </Pressable>
@@ -160,12 +160,12 @@ export function FragmentCard({ f, selected, onToggle, onPress, onKeyword, full, 
   const showKw = f.kind !== 'keywords' && f.keywords.length > 0;
   const head = [look.label, f.kind === 'long' && f.chars ? L(`${f.chars} 字`, `${f.chars} chars`) : '', f.duration && f.kind === 'voice' ? mmss(f.duration) : '', withDay || full ? whenLabel(f.day, f.time) : f.time].filter(Boolean).join(' · ');
   return (
-    <Pressable onPress={onPress} disabled={!onPress} accessibilityRole={onPress ? 'button' : undefined} accessibilityHint={onPress ? L('点开看全文、改或删', 'Open to read, edit or delete') : undefined}
+    <Pressable onPress={onPress} disabled={!onPress} accessibilityRole={onPress ? 'button' : undefined} accessibilityHint={onPress ? L('打开以查看全文、编辑或删除', 'Open to read, edit or delete') : undefined}
       style={({ pressed }) => [styles.card, { backgroundColor: selected ? t.goldSoft : t.surface, borderColor: selected ? t.goldFill : t.line, borderWidth: selected ? 2 : StyleSheet.hairlineWidth, opacity: pressed ? 0.85 : 1, paddingRight: onToggle ? 46 : space.md }]}>
       <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
         <TypeTile kind={f.kind} />
         <T v="caption" color={t.ink3} style={{ fontWeight: '500' }}>{head}</T>
-        {f.source === 'obsidian' ? <T v="caption" color={t.ink3}>{L(' · Obsidian 里记的', ' · from Obsidian')}</T> : null}
+        {f.source === 'obsidian' ? <T v="caption" color={t.ink3}>{L(' · 来自 Obsidian', ' · from Obsidian')}</T> : null}
       </View>
       {f.kind === 'keywords' ? (
         <View style={styles.chips}>{f.keywords.map((k) => <KeywordChip key={k} k={k} big onPress={onKeyword ? () => onKeyword(k) : undefined} />)}</View>
@@ -197,7 +197,7 @@ export function FragmentCard({ f, selected, onToggle, onPress, onKeyword, full, 
       ))}
       {showKw ? <View style={styles.chips}>{f.keywords.map((k) => <KeywordChip key={k} k={k} onPress={onKeyword ? () => onKeyword(k) : undefined} />)}</View> : null}
       {onToggle ? (
-        <Pressable onPress={onToggle} hitSlop={4} accessibilityRole="checkbox" accessibilityState={{ checked: !!selected }} accessibilityLabel={L('选这条', 'Select this')} style={styles.check}>
+        <Pressable onPress={onToggle} hitSlop={4} accessibilityRole="checkbox" accessibilityState={{ checked: !!selected }} accessibilityLabel={L('选择此条', 'Select this')} style={styles.check}>
           <View style={[styles.circle, { borderColor: selected ? t.goldFill : t.line, backgroundColor: selected ? t.goldFill : t.surface }]}>
             {selected ? <Check size={13} color={t.onGold} strokeWidth={3} /> : null}
           </View>
@@ -210,9 +210,9 @@ export function FragmentCard({ f, selected, onToggle, onPress, onKeyword, full, 
 export function TopicRow({ tp, onPress, onLongPress }: { tp: TopicBrief; onPress: () => void; onLongPress?: () => void }) {
   const t = useTheme();
   const g = t.tints.gold;
-  const sub = [L(`${tp.count} 条碎片`, `${tp.count} thoughts`), tp.talked ? (tp.lastLine || L('聊过', 'Talked')) : L('还没聊', 'Not talked yet')].join(' · ');
+  const sub = [L(`${tp.count} 条碎片`, `${tp.count} thoughts`), tp.talked ? (tp.lastLine || L('已讨论', 'Talked')) : L('尚未讨论', 'Not talked yet')].join(' · ');
   return (
-    <Pressable onPress={onPress} onLongPress={onLongPress} accessibilityHint={onLongPress ? L('长按改名或删除主题', 'Long-press to rename or delete the topic') : undefined} accessibilityRole="button" style={({ pressed }) => [styles.row, { backgroundColor: t.surface, opacity: pressed ? 0.8 : 1 }]}>
+    <Pressable onPress={onPress} onLongPress={onLongPress} accessibilityHint={onLongPress ? L('长按以重命名或删除主题', 'Long-press to rename or delete the topic') : undefined} accessibilityRole="button" style={({ pressed }) => [styles.row, { backgroundColor: t.surface, opacity: pressed ? 0.8 : 1 }]}>
       <View style={[styles.tile34, { backgroundColor: g.soft }]}><Lightbulb size={17} color={g.fg} /></View>
       <View style={{ flex: 1, gap: 1 }}>
         <T v="headline" numberOfLines={1}>{tp.title}</T>
@@ -224,9 +224,9 @@ export function TopicRow({ tp, onPress, onLongPress }: { tp: TopicBrief; onPress
 
 const STATUS_TONE: Record<string, 'good' | 'warn' | 'neutral'> = { ok: 'good', fetching: 'neutral', blocked: 'warn', failed: 'warn', empty: 'warn' };
 export const saveStatusLabel = (s: SaveItem) => ({
-  ok: s.kind === 'link' ? L('正文已存', 'Text saved') : s.kind === 'file' ? L('文字已抽出', 'Text extracted') : '',
-  fetching: L('正在存正文…', 'Saving the text…'), blocked: L('网站挡住了', 'Blocked by the site'), failed: L('正文没存上', 'Text not saved'),
-  empty: L('没有正文', 'No text'), none: '',
+  ok: s.kind === 'link' ? L('正文已保存', 'Text saved') : s.kind === 'file' ? L('文字已提取', 'Text extracted') : '',
+  fetching: L('正在保存正文…', 'Saving the text…'), blocked: L('网站拒绝访问', 'Blocked by the site'), failed: L('正文保存失败', 'Text not saved'),
+  empty: L('无正文', 'No text'), none: '',
 }[s.textStatus] ?? '');
 
 export function SaveRow({ s, onPress, parts }: { s: SaveItem; onPress: () => void; parts?: Parts }) {
@@ -240,9 +240,9 @@ export function SaveRow({ s, onPress, parts }: { s: SaveItem; onPress: () => voi
         ? <Image source={{ uri: s.thumbUrl }} style={{ width: 52, height: 52, borderRadius: radius.sm, backgroundColor: t.surface2 }} accessibilityLabel={s.title || s.name || ''} />
         : <TypeTile kind={s.kind} size={40} />}
       <View style={{ flex: 1, gap: 3 }}>
-        <T v="headline" numberOfLines={2} style={{ fontSize: 15 }}>{s.title || s.name || L('（没有标题）', '(No title)')}</T>
+        <T v="headline" numberOfLines={2} style={{ fontSize: 15 }}>{s.title || s.name || L('（无标题）', '(No title)')}</T>
         {parts ? <Highlight parts={parts} v="caption" color={t.ink2} numberOfLines={2} /> : null}
-        <T v="caption" color={t.ink2} numberOfLines={1}>{[s.source, s.time && s.day ? `${dayLabel(s.day).split(' · ')[0]} ${s.time}` : '', s.givenTo ? L(`交给了 ${s.givenTo}`, `Handed to ${s.givenTo}`) : ''].filter(Boolean).join(' · ')}</T>
+        <T v="caption" color={t.ink2} numberOfLines={1}>{[s.source, s.time && s.day ? `${dayLabel(s.day).split(' · ')[0]} ${s.time}` : '', s.givenTo ? L(`已交给 ${s.givenTo}`, `Handed to ${s.givenTo}`) : ''].filter(Boolean).join(' · ')}</T>
         {status || s.keywords.length ? (
           <View style={[styles.chips, { marginTop: 2 }]}>
             {status ? <View style={{ backgroundColor: bg, borderRadius: radius.pill, paddingHorizontal: 7, paddingVertical: 2 }}><Text style={[type.caption, { color: fg, fontSize: 11 }]}>{status}</Text></View> : null}
@@ -250,7 +250,7 @@ export function SaveRow({ s, onPress, parts }: { s: SaveItem; onPress: () => voi
           </View>
         ) : null}
       </View>
-      {!s.seen ? <View style={{ width: 9, height: 9, borderRadius: 5, backgroundColor: t.cyan, marginTop: 6 }} accessibilityLabel={L('没看', 'Unread')} /> : null}
+      {!s.seen ? <View style={{ width: 9, height: 9, borderRadius: 5, backgroundColor: t.cyan, marginTop: 6 }} accessibilityLabel={L('未读', 'Unread')} /> : null}
     </Pressable>
   );
 }

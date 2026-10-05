@@ -48,7 +48,7 @@ export function BlockView({ block }: { block: Block }) {
   // 长按一块（标题、卡片空白处、列表的一行、按钮都行）：挪、藏、让它改、删
   const onLong = ctx?.openMenu && !ctx.readOnly ? () => ctx.openMenu?.(block) : undefined;
   let body: React.ReactNode;
-  if (d.error) body = <Card><T v="callout" color={t.bad}>{L(`这一块出错了：${d.error}`, `This block has a problem: ${d.error}`)}</T></Card>;
+  if (d.error) body = <Card><T v="callout" color={t.bad}>{L(`此区块出错：${d.error}`, `This block has an error: ${d.error}`)}</T></Card>;
   else if (block.type === 'stat') body = <StatBody block={block} />;
   else if (block.type === 'progress') body = <ProgressBody block={block} />;
   else if (block.type === 'chart') body = <ChartBody block={block} />;
@@ -56,7 +56,7 @@ export function BlockView({ block }: { block: Block }) {
   else if (block.type === 'checklist') body = <ChecklistBody block={block} />;
   else if (block.type === 'text') body = <Card><Markdown text={d.text || block.data.text || ''} compact /></Card>;
   else if (block.type === 'action') body = <ActionBody block={block} />;
-  else body = <Card><T v="callout" color={t.ink2}>{L('这一块要新版 app 才能显示。', 'This block needs a newer version of the app.')}</T></Card>;
+  else body = <Card><T v="callout" color={t.ink2}>{L('此区块需要更新 app 后才能显示。', 'This block needs a newer version of the app.')}</T></Card>;
   return (
     <Pressable onLongPress={onLong} delayLongPress={450} disabled={!onLong}>
       <BlockHeader block={block} />
@@ -93,7 +93,7 @@ function ProgressBody({ block }: { block: Block }) {
   const d = block.data;
   const ratio = d.ratio ?? 0;
   const pct = Math.round(ratio * 100);
-  const left = d.leftText ? (d.over ? L(`超了 ${d.leftText}`, `${d.leftText} over`) : L(`还剩 ${d.leftText}`, `${d.leftText} left`)) : '';
+  const left = d.leftText ? (d.over ? L(`超出 ${d.leftText}`, `${d.leftText} over`) : L(`剩余 ${d.leftText}`, `${d.leftText} left`)) : '';
   if (block.style === 'bar') {
     return (
       <Card style={{ gap: 10 }}>
@@ -124,7 +124,7 @@ function ProgressBody({ block }: { block: Block }) {
 
 function pointLabel(p: ChartPoint, by: string, n: number): string {
   const d = new Date(`${p.key}T12:00:00`);
-  if (p.current) return by === 'week' ? L('这周', 'This wk') : by === 'month' ? L('本月', 'This mo') : L('今天', 'Today');
+  if (p.current) return by === 'week' ? L('本周', 'This wk') : by === 'month' ? L('本月', 'This mo') : L('今天', 'Today');
   if (by === 'month') return L(`${d.getMonth() + 1}月`, MONTHS_EN[d.getMonth()]);
   if (by === 'day' && n <= 14) return weekdayShort(WEEKDAYS[d.getDay()]);
   return L(`${d.getMonth() + 1}/${d.getDate()}`, `${d.getDate()} ${MONTHS_EN[d.getMonth()]}`);
@@ -213,7 +213,7 @@ function ListBody({ block }: { block: Block }) {
   const rows = group == null || !block.group ? all : all.filter((r) => String(r.data[block.group as string] ?? '') === group);
   const canOpen = !ctx?.readOnly && (block.edit !== false || !!block.rowActions?.length);
   const tap = (r: BoardRow) => (canOpen && ctx ? () => openRow(sheet, ctx, block, r) : undefined);
-  if (!all.length) return <Card><T v="callout" color={t.ink2}>{block.empty || L('还没有记录。', 'Nothing here yet.')}</T></Card>;
+  if (!all.length) return <Card><T v="callout" color={t.ink2}>{block.empty || L('暂无记录。', 'Nothing here yet.')}</T></Card>;
   if (block.style === 'chips') {
     return (
       <View style={styles.chips}>
@@ -240,11 +240,11 @@ function ListBody({ block }: { block: Block }) {
       {hiddenN > 0 || (open && block.limit && rows.length > block.limit) ? (
         <Pressable onPress={() => setOpen((v) => !v)} accessibilityRole="button" accessibilityState={{ expanded: open }}
           style={({ pressed }) => [styles.row, { borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: t.line, opacity: pressed ? 0.6 : 1 }]}>
-          <T v="callout" style={{ flex: 1, fontWeight: '600' }}>{open ? L('收起', 'Show less') : L(`还有 ${hiddenN} 条`, `${hiddenN} more`)}</T>
+          <T v="callout" style={{ flex: 1, fontWeight: '600' }}>{open ? L('收起', 'Show less') : L(`另有 ${hiddenN} 条`, `${hiddenN} more`)}</T>
           <Disclosure open={open} />
         </Pressable>
       ) : null}
-      {more > 0 && (open || !block.limit) ? <T v="caption" color={t.ink3} style={{ fontWeight: '400', paddingVertical: 8 }}>{L(`只显示了前 ${all.length} 条，一共 ${d.total} 条`, `Showing the first ${all.length} of ${d.total}`)}</T> : null}
+      {more > 0 && (open || !block.limit) ? <T v="caption" color={t.ink3} style={{ fontWeight: '400', paddingVertical: 8 }}>{L(`仅显示前 ${all.length} 条，共 ${d.total} 条`, `Showing the first ${all.length} of ${d.total}`)}</T> : null}
     </Card>
   );
 }
@@ -275,10 +275,10 @@ function ChecklistBody({ block }: { block: Block }) {
     setLocal((m) => ({ ...m, [r.id]: next }));
     boardsApi.patchRow(r.id, { [block.check]: next })
       .then(() => ctx.reload())
-      .catch((e) => { setLocal((m) => { const n = { ...m }; delete n[r.id]; return n; }); showError(L('没记上', "Couldn't save"), e); })
+      .catch((e) => { setLocal((m) => { const n = { ...m }; delete n[r.id]; return n; }); showError(L('保存失败', "Couldn't save"), e); })
       .finally(() => setLocal((m) => { const n = { ...m }; delete n[r.id]; return n; }));
   };
-  if (!rows.length) return <Card><T v="callout" color={t.ink2}>{block.empty || L('清单是空的。', 'The list is empty.')}</T></Card>;
+  if (!rows.length) return <Card><T v="callout" color={t.ink2}>{block.empty || L('清单为空。', 'The list is empty.')}</T></Card>;
   const todo = rows.filter((r) => !isOn(r));
   const done = rows.filter(isOn);
   const line = (r: BoardRow, i: number) => {
@@ -342,7 +342,7 @@ function ActionBody({ block }: { block: Block }) {
     const accept: ('camera' | 'photos' | 'files')[] = a.accept?.length ? a.accept : ['camera', 'photos', 'files'];
     const go = (which: 'camera' | 'photos' | 'files') => {
       setBusy(i);
-      sendFiles(a, which).catch((e) => showError(L('没传上去', "Couldn't upload"), e)).finally(() => setBusy(null));
+      sendFiles(a, which).catch((e) => showError(L('上传失败', "Couldn't upload"), e)).finally(() => setBusy(null));
     };
     if (accept.length === 1) { go(accept[0]); return; }
     sheet.open({
@@ -350,8 +350,8 @@ function ActionBody({ block }: { block: Block }) {
       content: (close) => (
         <View style={{ gap: space.sm }}>
           {accept.includes('camera') ? <PickRow icon={Camera} label={L('拍照', 'Take a photo')} onPress={() => { close(); go('camera'); }} /> : null}
-          {accept.includes('photos') ? <PickRow icon={ImageIcon} label={L('从相册选', 'Choose from Photos')} onPress={() => { close(); go('photos'); }} /> : null}
-          {accept.includes('files') ? <PickRow icon={FileText} label={L('选文件', 'Choose a file')} onPress={() => { close(); go('files'); }} /> : null}
+          {accept.includes('photos') ? <PickRow icon={ImageIcon} label={L('从相册选择', 'Choose from Photos')} onPress={() => { close(); go('photos'); }} /> : null}
+          {accept.includes('files') ? <PickRow icon={FileText} label={L('选择文件', 'Choose a file')} onPress={() => { close(); go('files'); }} /> : null}
         </View>
       ),
     });

@@ -232,7 +232,7 @@ export async function readAllMetrics(days: number): Promise<MetricRow[]> {
 
 async function post(path: string, body: object) {
   const r = await fetch(`${getBase()}${path}`, { method: 'POST', headers: { 'Content-Type': 'application/json', ...authHeaders() }, body: JSON.stringify(body) });
-  if (!r.ok) throw new Error(L(`上传失败 HTTP ${r.status}`, `Upload failed: HTTP ${r.status}`));
+  if (!r.ok) throw new Error(L(`上传失败：HTTP ${r.status}`, `Upload failed: HTTP ${r.status}`));
   return r.json();
 }
 

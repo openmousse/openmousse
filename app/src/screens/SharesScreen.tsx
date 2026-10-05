@@ -26,29 +26,29 @@ export function SharesScreen() {
   const gone = (shares || []).filter((s) => s.status === 'revoked');
   return (
     <Screen>
-      <NavHeader title={L('分享出去的', 'Shared')} onBack={() => nav.goBack()} />
+      <NavHeader title={L('已分享', 'Shared')} onBack={() => nav.goBack()} />
       <ScrollView contentContainerStyle={{ padding: space.lg, paddingBottom: space.xxl, gap: space.md }} refreshControl={<PullRefresh onRefresh={load} />}>
         {!canLink ? (
           <View style={{ flexDirection: 'row', gap: space.sm, padding: space.md, borderRadius: radius.md, backgroundColor: t.warnSoft }}>
             <TriangleAlert size={17} color={t.warn} />
-            <T v="callout" style={{ flex: 1 }}>{L('服务器还没开对外的链接地址：链接只有你自己的设备打得开。干净版卡片不受影响。', "The server has no public address for links yet, so only your own devices can open them. Clean cards work regardless.")}</T>
+            <T v="callout" style={{ flex: 1 }}>{L('服务器尚未配置公网链接地址：链接仅可在你自己的设备上打开。简洁版卡片不受影响。', "The server has no public address for links yet, so only your own devices can open them. Clean cards work regardless.")}</T>
           </View>
         ) : null}
-        {err ? <Card><T v="callout" color={t.bad}>{L(`读不到：${err}`, `Couldn't load: ${err}`)}</T></Card> : null}
+        {err ? <Card><T v="callout" color={t.bad}>{L(`无法加载：${err}`, `Couldn't load: ${err}`)}</T></Card> : null}
         {!shares && !err ? <ActivityIndicator color={t.gold} style={{ marginTop: space.xl }} /> : null}
         {shares && !shares.length ? (
           <Card style={{ gap: space.xs }}>
-            <T v="headline">{L('还没分享过', 'Nothing shared yet')}</T>
-            <T v="callout" color={t.ink2}>{L('对话里长按一条回复 →「分享」，或者在 Zen 想完了存好以后点「分享」。发之前会先把私事挡住。', 'Long-press a reply in a chat → Share, or tap Share after saving a Done-thinking note in Zen. Private bits are hidden before anything goes out.')}</T>
+            <T v="headline">{L('暂无分享', 'Nothing shared yet')}</T>
+            <T v="callout" color={t.ink2}>{L('在对话中长按一条回复 →「分享」，或在 Zen 中完成思考并保存后点按「分享」。发送前会自动隐藏隐私信息。', 'Long-press a reply in a chat → Share, or tap Share after saving a Done-thinking note in Zen. Private bits are hidden before anything goes out.')}</T>
           </Card>
         ) : null}
         {live.length ? (
           <Card style={{ paddingVertical: space.xs }}>
             {live.map((s, i) => (
-              <ListRow key={s.id} icon={<Link2 size={20} color={t.cyan} />} title={s.title || L('（没有标题）', '(untitled)')}
+              <ListRow key={s.id} icon={<Link2 size={20} color={t.cyan} />} title={s.title || L('（无标题）', '(untitled)')}
                 sub={s.status === 'friends'
-                  ? L(`${s.day} · 只发给了 ${(s.sentTo ?? []).map((x) => x.name).join('、') || '朋友'}`, `${s.day} · sent to ${(s.sentTo ?? []).map((x) => x.name).join(', ') || 'friends'} only`)
-                  : L(`${s.day} · 看过 ${s.views} 次${s.blocked ? ` · 挡着 ${s.blocked} 处` : ''}${s.sentTo?.length ? ` · 发给了 ${s.sentTo.map((x) => x.name).join('、')}` : ''}`,
+                  ? L(`${s.day} · 仅发送给 ${(s.sentTo ?? []).map((x) => x.name).join('、') || '朋友'}`, `${s.day} · sent to ${(s.sentTo ?? []).map((x) => x.name).join(', ') || 'friends'} only`)
+                  : L(`${s.day} · 浏览 ${s.views} 次${s.blocked ? ` · 挡着 ${s.blocked} 处` : ''}${s.sentTo?.length ? ` · 发给了 ${s.sentTo.map((x) => x.name).join('、')}` : ''}`,
                     `${s.day} · ${s.views} view${s.views === 1 ? '' : 's'}${s.blocked ? ` · ${s.blocked} hidden` : ''}${s.sentTo?.length ? ` · sent to ${s.sentTo.map((x) => x.name).join(', ')}` : ''}`)}
                 onPress={() => nav.navigate('Share', { id: s.id })} last={i === live.length - 1} />
             ))}
@@ -56,11 +56,11 @@ export function SharesScreen() {
         ) : null}
         {gone.length ? (
           <>
-            <T v="caption" color={t.ink3} style={{ paddingHorizontal: space.xs, marginTop: space.sm }}>{L('收回了的', 'Withdrawn')}</T>
+            <T v="caption" color={t.ink3} style={{ paddingHorizontal: space.xs, marginTop: space.sm }}>{L('已收回', 'Withdrawn')}</T>
             <Card style={{ paddingVertical: space.xs }}>
               {gone.map((s, i) => (
-                <ListRow key={s.id} icon={<Undo2 size={20} color={t.ink3} />} title={s.title || L('（没有标题）', '(untitled)')}
-                  sub={L(`${s.day} 发的 · 看过 ${s.views} 次`, `Shared ${s.day} · ${s.views} view${s.views === 1 ? '' : 's'}`)} last={i === gone.length - 1} />
+                <ListRow key={s.id} icon={<Undo2 size={20} color={t.ink3} />} title={s.title || L('（无标题）', '(untitled)')}
+                  sub={L(`${s.day} 发布 · 浏览 ${s.views} 次`,`Shared ${s.day} · ${s.views} view${s.views === 1 ? '' : 's'}`)} last={i === gone.length - 1} />
               ))}
             </Card>
           </>

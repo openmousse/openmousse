@@ -19,9 +19,9 @@ export function JournalList({ entries, showGroup, empty }: { entries: JournalEnt
   const t = useTheme();
   const { groups, deleteJournal } = useStore();
   const gname = (id: string | null) => groups.find((g) => g.id === id)?.name ?? null;
-  const remove = (e: JournalEntry) => Alert.alert(L('删掉这条日志？', 'Delete this journal entry?'), L(`只删正文，${agentName()} 也不会再引用它。`, `This erases the text, and ${agentName()} won't refer to it again.`), [
+  const remove = (e: JournalEntry) => Alert.alert(L('删除这条日志？', 'Delete this journal entry?'), L(`将删除正文，${agentName()} 此后也不会再引用。`, `This erases the text, and ${agentName()} won't refer to it again.`), [
     { text: L('取消', 'Cancel'), style: 'cancel' },
-    { text: L('删除', 'Delete'), style: 'destructive', onPress: () => deleteJournal(e.id).catch((err) => Alert.alert(L('没做成', "Didn't go through"), String(err))) },
+    { text: L('删除', 'Delete'), style: 'destructive', onPress: () => deleteJournal(e.id).catch((err) => Alert.alert(L('删除失败', "Couldn't delete"), String(err))) },
   ]);
   if (!entries.length) return <Card><T v="callout" color={t.ink2}>{empty}</T></Card>;
   return (
@@ -48,7 +48,7 @@ export function JournalList({ entries, showGroup, empty }: { entries: JournalEnt
   );
 }
 
-const STATUS_LABEL = (): Record<Application['status'], string> => ({ planned: L('计划中', 'Planned'), in_progress: L('准备中', 'Preparing'), submitted: L('已提交', 'Submitted'), interview: L('面试', 'Interview'), offer: 'Offer', rejected: L('拒了', 'Rejected'), closed: L('关闭', 'Closed') });
+const STATUS_LABEL = (): Record<Application['status'], string> => ({ planned: L('计划中', 'Planned'), in_progress: L('准备中', 'Preparing'), submitted: L('已提交', 'Submitted'), interview: L('面试', 'Interview'), offer: 'Offer', rejected: L('已拒绝', 'Rejected'), closed: L('关闭', 'Closed') });
 const STATUS_TONE: Record<Application['status'], 'neutral' | 'cyan' | 'gold' | 'good' | 'bad'> = { planned: 'neutral', in_progress: 'cyan', submitted: 'gold', interview: 'gold', offer: 'good', rejected: 'bad', closed: 'neutral' };
 const KIND_NAME = (): Record<Application['kind'], string> => ({ job: L('实习 / 工作', 'Internship / job'), masters: L('硕士', "Master's"), fellowship: 'Fellowship', ra: 'RA', other: L('其它', 'Other') });
 const nDays = (n: number) => (n === 1 ? '1 day' : `${n} days`);
@@ -63,9 +63,9 @@ export function ApplicationsBoard({ apps, school }: { apps: Application[]; schoo
       <Card style={{ flexDirection: 'row', gap: space.md }}>
         <View style={{ flex: 1, gap: 2 }}><T v="title" style={{ fontVariant: ['tabular-nums'] }}>{apps.length}</T><T v="caption" color={t.ink3}>{L('进行中', 'Active')}</T></View>
         <View style={{ flex: 1, gap: 2 }}><T v="title" color={soon.length ? t.warn : t.ink} style={{ fontVariant: ['tabular-nums'] }}>{soon.length}</T><T v="caption" color={t.ink3}>{L('两周内到期', 'Due in 2 weeks')}</T></View>
-        <View style={{ flex: 1, gap: 2 }}><T v="title" style={{ fontVariant: ['tabular-nums'] }}>{noDl.length}</T><T v="caption" color={t.ink3}>{L('没填 ddl', 'No deadline')}</T></View>
+        <View style={{ flex: 1, gap: 2 }}><T v="title" style={{ fontVariant: ['tabular-nums'] }}>{noDl.length}</T><T v="caption" color={t.ink3}>{L('未设截止日', 'No deadline')}</T></View>
       </Card>
-      <SectionLabel>{L('按 ddl 排', 'By deadline')}</SectionLabel>
+      <SectionLabel>{L('按截止日期排序', 'By deadline')}</SectionLabel>
       {apps.length ? (
         <View style={{ gap: space.md }}>
           {apps.map((a) => (
@@ -75,9 +75,9 @@ export function ApplicationsBoard({ apps, school }: { apps: Application[]; schoo
                 <T v="caption" color={t.ink3} style={{ flex: 1 }}>{KIND_NAME()[a.kind]}</T>
                 <T v="caption" color={a.daysLeft != null && a.daysLeft <= 14 ? t.warn : t.ink3} style={{ fontVariant: ['tabular-nums'] }}>
                   {a.deadline
-                    ? L(`ddl ${a.deadline.slice(5)}${a.daysLeft != null ? `（${a.daysLeft >= 0 ? `还剩 ${a.daysLeft} 天` : `过了 ${-a.daysLeft} 天`}）` : ''}`,
+                    ? L(`截止 ${a.deadline.slice(5)}${a.daysLeft != null ? `（${a.daysLeft >= 0 ? `还剩 ${a.daysLeft} 天` : `过了 ${-a.daysLeft} 天`}）` : ''}`,
                       `Due ${a.deadline.slice(5)}${a.daysLeft != null ? ` (${a.daysLeft >= 0 ? `${nDays(a.daysLeft)} left` : `${nDays(-a.daysLeft)} ago`})` : ''}`)
-                    : L('ddl 待补', 'Deadline TBD')}
+                    : L('截止日期待定', 'Deadline TBD')}
                 </T>
               </View>
               <T v="headline">{a.org}</T>
@@ -87,7 +87,7 @@ export function ApplicationsBoard({ apps, school }: { apps: Application[]; schoo
               </View>
               <View style={{ flexDirection: 'row', alignItems: 'center', gap: space.sm }}>
                 <T v="caption" color={t.ink3} style={{ fontVariant: ['tabular-nums'] }}>{a.progress}%</T>
-                <T v="callout" color={t.ink2} style={{ flex: 1 }} numberOfLines={2}>{a.nextStep ? L(`下一步：${a.nextStep}`, `Next: ${a.nextStep}`) : L('下一步还没定', 'No next step yet')}</T>
+                <T v="callout" color={t.ink2} style={{ flex: 1 }} numberOfLines={2}>{a.nextStep ? L(`下一步：${a.nextStep}`, `Next: ${a.nextStep}`) : L('下一步待定', 'No next step yet')}</T>
               </View>
               {a.materials.length ? <T v="caption" color={t.ink3}>{L(`材料：${a.materials.join('、')}`, `Materials: ${a.materials.join(', ')}`)}</T> : null}
               {a.link ? <Pressable onPress={() => Linking.openURL(a.link!).catch(() => {})} accessibilityRole="link"><T v="caption" color={t.cyan} numberOfLines={1}>{a.link}</T></Pressable> : null}
@@ -95,11 +95,11 @@ export function ApplicationsBoard({ apps, school }: { apps: Application[]; schoo
           ))}
         </View>
       ) : <Card><T v="callout" color={t.ink2}>{school
-        ? L(`还没有学校记录。在对话里告诉 ${agentName()} 学校、项目和 ddl，它会记在这里。`, `No schools yet. Tell ${agentName()} the school, program and deadline in chat and it'll track them here.`)
-        : L(`还没有申请记录。在对话里告诉 ${agentName()} 公司、岗位和 ddl，它会记在这里。`, `No applications yet. Tell ${agentName()} the company, role and deadline in chat and it'll track them here.`)}</T></Card>}
+        ? L(`尚无学校记录。在对话中告诉 ${agentName()} 学校、项目和截止日期，即可在此跟踪。`, `No schools yet. Tell ${agentName()} the school, program and deadline in chat to track them here.`)
+        : L(`尚无申请记录。在对话中告诉 ${agentName()} 公司、岗位和截止日期，即可在此跟踪。`, `No applications yet. Tell ${agentName()} the company, role and deadline in chat to track them here.`)}</T></Card>}
       <T v="caption" color={t.ink3} style={{ marginTop: space.md, paddingHorizontal: space.xs }}>{school
-        ? L(`在对话里说「交了 X」「推荐信到了」「ddl 是 X」，${agentName()} 会更新这张表。`, `Say "submitted X", "reference letter is in" or "deadline is X" in chat and ${agentName()} updates this table.`)
-        : L(`在对话里说「我提交了」「收到面试」「ddl 是 X」，${agentName()} 会更新这张表。发 JD 过来它能按岗位改 CV 和 cover letter。`, `Say "I submitted", "got an interview" or "deadline is X" in chat and ${agentName()} updates this table. Send a job description and it can tailor your CV and cover letter.`)}</T>
+        ? L(`在对话中告知「已提交 X」「推荐信已到」「截止日期是 X」等进展，${agentName()} 将更新此表。`, `Say "submitted X", "reference letter is in" or "deadline is X" in chat and ${agentName()} updates this table.`)
+        : L(`在对话中告知「已提交」「收到面试」「截止日期是 X」等进展，${agentName()} 将更新此表。发送 JD 后，可按岗位修改 CV 和 cover letter。`, `Say "I submitted", "got an interview" or "deadline is X" in chat and ${agentName()} updates this table. Send a job description to have your CV and cover letter tailored to the role.`)}</T>
     </View>
   );
 }
@@ -150,17 +150,17 @@ export function SleepReportSection({ groupId, onAsk }: { groupId: string; onAsk:
   const ask = () => { send(groupId, L('出昨晚的睡眠报告', "Report on last night's sleep")); onAsk(); };
   return (
     <View style={{ marginBottom: space.lg }}>
-      <SectionLabel right={card ? <T v="caption" color={t.ink3}>{card.time}</T> : undefined}>{L('昨晚睡得怎么样', 'How you slept last night')}</SectionLabel>
+      <SectionLabel right={card ? <T v="caption" color={t.ink3}>{card.time}</T> : undefined}>{L('昨晚睡眠', "Last night's sleep")}</SectionLabel>
       {card ? (
         <Card style={{ gap: space.sm }}>
           <T v="headline">{card.title}</T>
           <Markdown text={card.body} color={t.ink2} compact />
-          <Btn label={busy ? L(`${agentName()} 正在出…`, `${agentName()} is on it…`) : L('重新出一份', 'Make a new one')} kind="quiet" onPress={ask} icon={<Sparkles size={14} color={t.ink} />} />
+          <Btn label={busy ? L(`${agentName()} 正在生成…`, `${agentName()} is generating…`) : L('重新生成', 'Regenerate')} kind="quiet" onPress={ask} icon={<Sparkles size={14} color={t.ink} />} />
         </Card>
       ) : (
         <Card style={{ gap: space.sm }}>
-          <T v="callout" color={t.ink2}>{L('今天还没有睡眠报告。健康 Agent 会按昨晚的分期、HRV、静息心率对你自己的基线来解读。', "No sleep report yet today. The health agent reads last night's sleep stages, HRV and resting heart rate against your own baseline.")}</T>
-          <Btn label={busy ? L(`${agentName()} 正在出…`, `${agentName()} is on it…`) : L(`让 ${agentName()} 解读昨晚`, `Ask ${agentName()} about last night`)} kind="primary" onPress={ask} icon={<Sparkles size={14} color={t.onGold} />} />
+          <T v="callout" color={t.ink2}>{L('今日尚无睡眠报告。健康 Agent 将对照你的个人基线，解读昨晚的睡眠分期、HRV 和静息心率。', "No sleep report yet today. The health Agent reads last night's sleep stages, HRV and resting heart rate against your own baseline.")}</T>
+          <Btn label={busy ? L(`${agentName()} 正在生成…`, `${agentName()} is generating…`) : L(`请 ${agentName()} 解读昨晚睡眠`, `Ask ${agentName()} about last night`)} kind="primary" onPress={ask} icon={<Sparkles size={14} color={t.onGold} />} />
         </Card>
       )}
     </View>

@@ -124,7 +124,7 @@ const KIND_ICON = { doc: FileText, audio: FileAudio, video: Film, file: Papercli
 function ModelTag({ m }: { m: Message }) {
   const t = useTheme();
   const model = modelOf(m.modelId);
-  const err = m.error ? L(` · 出错：${m.error}`, ` · Error: ${m.error}`) : '';
+  const err = m.error ? L(` · 错误：${m.error}`, ` · Error: ${m.error}`) : '';
   if (!model) {
     return m.modelId || m.error ? <T v="caption" color={m.error ? t.bad : t.ink3} style={{ marginTop: 4 }}>{m.modelId ?? ''}{err} · {m.time}</T> : null;
   }
@@ -133,7 +133,7 @@ function ModelTag({ m }: { m: Message }) {
   const billing = model.billing === '订阅' ? L('订阅', 'Subscription') : model.billing === '免费' ? L('免费', 'Free') : model.billing;
   return (
     <T v="caption" color={m.error ? t.bad : from ? t.warn : t.ink3} style={{ marginTop: 4 }}>
-      {model.short} · {billing}{from ? L(` · 请求的是 ${from.short}，回退链换成了它`, ` · requested ${from.short}, fell back to this`) : ''}{err} · {m.time}
+      {model.short} · {billing}{from ? L(` · 原请求 ${from.short}，已按回退链切换`, ` · requested ${from.short}, used fallback`) : ''}{err} · {m.time}
     </T>
   );
 }
@@ -149,7 +149,7 @@ function FileChip({ a, onPress, onRemove }: { a: Attachment; onPress?: () => voi
         <T v="callout" numberOfLines={1}>{a.name}</T>
         <T v="caption" color={a.status === 'warn' ? t.warn : t.ink3} numberOfLines={1}>{human(a.size)}{a.note ? ` · ${a.note}` : ''}</T>
       </View>
-      {onRemove ? <Pressable onPress={onRemove} hitSlop={8} accessibilityRole="button" accessibilityLabel={L(`去掉 ${a.name}`, `Remove ${a.name}`)}><X size={14} color={t.ink3} /></Pressable> : null}
+      {onRemove ? <Pressable onPress={onRemove} hitSlop={8} accessibilityRole="button" accessibilityLabel={L(`移除 ${a.name}`, `Remove ${a.name}`)}><X size={14} color={t.ink3} /></Pressable> : null}
     </Pressable>
   );
 }
@@ -261,7 +261,7 @@ export function Bubble({ m, showAvatar, onLongPress, before, from, highlight, on
           <View style={[styles.userBubble, { borderWidth: 1.5, borderStyle: 'dashed', borderColor: t.line, backgroundColor: t.bg, gap: 3 }]}>
             <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
               <EyeOff size={12} color={t.ink3} />
-              <T v="caption" color={t.ink3}>{L(`只记下 · 它没看 · ${m.time}`, `Private note · not shown to it · ${m.time}`)}</T>
+              <T v="caption" color={t.ink3}>{L(`仅记录 · Agent 不可见 · ${m.time}`, `Private note · not shown to the Agent · ${m.time}`)}</T>
             </View>
             <T v="body" color={t.ink2}>{text.replace(/^【只记下】/, '')}</T>
           </View>
@@ -281,7 +281,7 @@ export function Bubble({ m, showAvatar, onLongPress, before, from, highlight, on
       <View style={{ alignItems: 'flex-end', gap: 6 }}>
         {att.length ? <AttachmentList items={att} mine /> : null}
         {text ? (
-          <Pressable onLongPress={onLongPress} delayLongPress={350} accessibilityHint={L('长按可以复制、引用、撤回、重新编辑或删除', 'Long-press to copy, quote, unsend, edit or delete')}
+          <Pressable onLongPress={onLongPress} delayLongPress={350} accessibilityHint={L('长按可复制、引用、撤回、重新编辑或删除', 'Long-press to copy, quote, unsend, edit or delete')}
             style={({ pressed }) => [styles.userBubble, { backgroundColor: t.surface2, opacity: pressed ? 0.75 : 1, gap: m.replyTo ? 6 : 0 }]}>
             {/* 长按「引用」着发的：上面一行原话，点了跳回去 */}
             {m.replyTo ? <QuoteChip text={m.replyTo.text} onPress={onJump && m.replyTo ? () => onJump(m.replyTo!.id) : undefined} /> : null}
@@ -289,8 +289,8 @@ export function Bubble({ m, showAvatar, onLongPress, before, from, highlight, on
           </Pressable>
         ) : null}
         {/* 它正在回复时发的：先排队，这条回完和排着的一起发给它 */}
-        {m.queued ? <T v="caption" color={t.ink3} style={{ marginRight: 4 }}>{L('排队中 · 这条回完一起发给它', 'Queued · goes to it when this reply ends')}</T>
-          : m.steered ? <T v="caption" color={t.ink3} style={{ marginRight: 4 }}>{L('插话 · 它在这一轮的下一步看到', 'Cut in · it sees this at its next step')}</T> : null}
+        {m.queued ? <T v="caption" color={t.ink3} style={{ marginRight: 4 }}>{L('排队中 · 当前回复结束后发送', 'Queued · sends when the current reply ends')}</T>
+          : m.steered ? <T v="caption" color={t.ink3} style={{ marginRight: 4 }}>{L('已插入 · 将在本轮下一步读取', 'Inserted · read at the next step of this turn')}</T> : null}
       </View>
     );
   }
@@ -457,16 +457,16 @@ export function ChatView({ threadId, placeholder, empty, welcome, quote: quotePr
     if (Math.abs(y - l.y) > 1) { scroller.current?.scrollTo({ y, animated: true }); l.y = y; }
   };
 
-  const fail = (e: unknown) => Alert.alert(L('没做成', "Couldn't do that"), e instanceof Error ? e.message : String(e));
+  const fail = (e: unknown) => Alert.alert(L('操作失败', "Couldn't complete the action"), e instanceof Error ? e.message : String(e));
 
   const addFiles = (files: PendingFile[]) => {
     if (!files.length) return;
     const tooBig = files.filter((f) => f.size > MAX_BYTES);
-    if (tooBig.length) Alert.alert(L('文件太大', 'File too large'), L(`${tooBig.map((f) => f.name).join('、')} 超过 ${MAX_BYTES / 1024 / 1024} MB，没有加进去。`, `Over ${MAX_BYTES / 1024 / 1024} MB, not added: ${tooBig.map((f) => f.name).join(', ')}`));
+    if (tooBig.length) Alert.alert(L('文件太大', 'File too large'), L(`${tooBig.map((f) => f.name).join('、')} 超过 ${MAX_BYTES / 1024 / 1024} MB，未添加。`, `Over ${MAX_BYTES / 1024 / 1024} MB, not added: ${tooBig.map((f) => f.name).join(', ')}`));
     const ok = files.filter((f) => f.size <= MAX_BYTES);
     setPending((cur) => {
       const next = [...cur, ...ok];
-      if (next.length > MAX_FILES) Alert.alert(L('太多了', 'Too many files'), L(`一条消息最多 ${MAX_FILES} 个附件，多出来的没加。`, `Up to ${MAX_FILES} attachments per message. The extra ones weren't added.`));
+      if (next.length > MAX_FILES) Alert.alert(L('附件过多', 'Too many files'), L(`每条消息最多 ${MAX_FILES} 个附件，超出部分未添加。`, `Up to ${MAX_FILES} attachments per message. The extra ones weren't added.`));
       return next.slice(0, MAX_FILES);
     });
   };
@@ -479,8 +479,8 @@ export function ChatView({ threadId, placeholder, empty, welcome, quote: quotePr
       content: () => (
         <View style={{ gap: space.sm }}>
           <Action icon={Camera} label={L('拍照或录像', 'Take photo or video')} onPress={() => { close(); pickMedia(true).then(addFiles).catch(fail); }} />
-          <Action icon={ImageIcon} label={L('相册', 'Photo library')} note={L(`照片和视频，${agentName()} 直接看图`, `Photos and videos. ${agentName()} sees images directly.`)} onPress={() => { close(); pickMedia(false).then(addFiles).catch(fail); }} />
-          <Action icon={FileText} label={L('文件', 'Files')} note={L(`PDF、Word、表格、PPT、代码、录音，什么类型都行。每个 ${MAX_BYTES / 1024 / 1024} MB 以内，一条最多 ${MAX_FILES} 个。`, `PDF, Word, spreadsheets, slides, code, recordings: any type works. Up to ${MAX_BYTES / 1024 / 1024} MB each, ${MAX_FILES} per message.`)} onPress={() => { close(); pickDocuments().then(addFiles).catch(fail); }} />
+          <Action icon={ImageIcon} label={L('相册', 'Photo library')} note={L(`照片和视频，${agentName()} 可直接识别图片`, `Photos and videos. ${agentName()} sees images directly.`)} onPress={() => { close(); pickMedia(false).then(addFiles).catch(fail); }} />
+          <Action icon={FileText} label={L('文件', 'Files')} note={L(`支持 PDF、Word、表格、PPT、代码、录音等任意类型。单个文件不超过 ${MAX_BYTES / 1024 / 1024} MB，每条最多 ${MAX_FILES} 个。`, `Any file type, including PDF, Word, spreadsheets, slides, code and recordings. Up to ${MAX_BYTES / 1024 / 1024} MB each, ${MAX_FILES} per message.`)} onPress={() => { close(); pickDocuments().then(addFiles).catch(fail); }} />
         </View>
       ),
     });
@@ -491,7 +491,7 @@ export function ChatView({ threadId, placeholder, empty, welcome, quote: quotePr
     // 改一下任务：意见直接交给做这件事的子会话（不进这个对话），任务卡变成下一轮
     if (quote?.taskId) {
       if (!text || transcribing) return;
-      if (pending.length) { Alert.alert(L('改一下不能带附件', "Revisions can't carry attachments"), L('把要改的写成文字发给它。', 'Say what to change in words.')); return; }
+      if (pending.length) { Alert.alert(L('修改意见不支持附件', "Revisions can't include attachments"), L('请用文字说明需要修改的内容。', 'Describe the changes in text.')); return; }
       reviseTask(quote.taskId, text).catch(fail);
       setDraft('');
       setQuote(null);
@@ -521,7 +521,7 @@ export function ChatView({ threadId, placeholder, empty, welcome, quote: quotePr
   const startRecording = async () => {
     try {
       const perm = await AudioModule.requestRecordingPermissionsAsync();
-      if (!perm.granted) { Alert.alert(L('没有麦克风权限', 'No microphone access'), L(`去系统设置里给 ${agentName()} 打开麦克风。`, `Turn on the microphone for ${agentName()} in Settings.`)); return; }
+      if (!perm.granted) { Alert.alert(L('无麦克风权限', 'No microphone access'), L(`请在系统设置中为 ${agentName()} 开启麦克风权限。`, `Turn on the microphone for ${agentName()} in Settings.`)); return; }
       await setAudioModeAsync({ allowsRecording: true, playsInSilentMode: true });
       await recorder.prepareToRecordAsync();
       recorder.record();
@@ -538,7 +538,7 @@ export function ChatView({ threadId, placeholder, empty, welcome, quote: quotePr
       setTranscribing(true);
       const text = await transcribe({ uri, name: 'voice.m4a', mime: 'audio/m4a', size: 0 });
       if (text) setDraft((d) => (d.trim() ? `${d.trim()} ${text}` : text));
-      else Alert.alert(L('没听清', "Didn't catch that"), L('录音里没有识别出文字。', 'No speech was recognized in the recording.'));
+      else Alert.alert(L('未识别到语音', 'No speech detected'), L('录音中未识别出文字。', 'No speech was recognized in the recording.'));
     } catch (e) { fail(e); } finally { setTranscribing(false); }
   };
 
@@ -546,8 +546,8 @@ export function ChatView({ threadId, placeholder, empty, welcome, quote: quotePr
     const text = m.body.text;
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium).catch(() => {});
     const after = msgs.length - msgs.findIndex((x) => x.id === m.id) - 1;
-    const shared = threadId === 'main' && sharedChannels.length ? L(`主对话和 ${sharedChannels.join('、')} 共用，那边在这之后的消息也会一起退掉。`, ` The main chat is shared with ${sharedChannels.join(', ')}, so later messages there are rolled back too.`) : '';
-    const tail = after > 0 ? L(`之后的 ${after} 条也会一起去掉，`, after === 1 ? 'The message after it is also removed. ' : `The ${after} messages after it are also removed. `) : '';
+    const shared = threadId === 'main' && sharedChannels.length ? L(`主对话与 ${sharedChannels.join('、')} 共用，对应渠道中此后的消息也会一并回退。`, ` The main chat is shared with ${sharedChannels.join(', ')}, so later messages there are rolled back too.`) : '';
+    const tail = after > 0 ? L(`其后的 ${after} 条消息将一并移除，`, after === 1 ? 'The message after it is also removed. ' : `The ${after} messages after it are also removed. `) : '';
     const close = sheet.close;
     const rewind = (edit: boolean) => { close(); rewindMessage(threadId, m.id).then((txt) => { if (edit) setDraft(txt || text); }).catch(fail); };
     sheet.open({
@@ -556,29 +556,29 @@ export function ChatView({ threadId, placeholder, empty, welcome, quote: quotePr
         <View style={{ gap: space.sm }}>
           <Action icon={Copy} label={L('复制', 'Copy')} onPress={() => { close(); Clipboard.setStringAsync(text).catch(() => {}); }} />
           {m.id.startsWith('db') && m.role !== 'auto' && text.trim() ? (
-            <Action icon={Quote} label={L('引用', 'Quote')} note={L('引着这条接着说：它知道你说的是哪句，你的消息上面也带着原话', 'Reply to this one: it knows which line you mean, and your message shows it')}
+            <Action icon={Quote} label={L('引用', 'Quote')} note={L('引用这条消息回复：Agent 能看到所引原文，你的消息上方也会显示原话', 'Reply to this message: the Agent sees the quoted text, and your message shows it')}
               onPress={() => { close(); setQuote({ replyTo: m.id, title: text.replace(/\s+/g, ' ').slice(0, 40) }); setTimeout(() => input.current?.focus(), 250); }} />
           ) : null}
           {m.id.startsWith('db') && m.role !== 'auto' ? (
-            <Action icon={Bookmark} label={L('收藏', 'Save')} note={L('存进「Zen → 收藏」，以后能搜、能交给 Agent', 'Keep it in Zen → Saved to search or hand to an Agent later')}
-              onPress={() => { close(); saveMessage(threadId, m.id).then(() => Alert.alert(L('收藏好了', 'Saved'), L('在「Zen → 收藏」里', 'In Zen → Saved'))).catch(fail); }} />
+            <Action icon={Bookmark} label={L('收藏', 'Save')} note={L('保存到「Zen → 收藏」，之后可搜索或交给 Agent', 'Keep it in Zen → Saved to search or hand to an Agent later')}
+              onPress={() => { close(); saveMessage(threadId, m.id).then(() => Alert.alert(L('已收藏', 'Saved'), L('可在「Zen → 收藏」中查看', 'Find it in Zen → Saved'))).catch(fail); }} />
           ) : null}
           {canPod && m.id.startsWith('db') && m.role !== 'auto' && text.trim() ? (
-            <Action icon={Mic} label={L('放进播客', 'Add to a podcast')} note={L('当一期播客的素材：录前聊天、主持人追问、整理都参考', "Use it in an episode: prep, the host's questions and the note draw on it")}
-              onPress={() => sheet.open({ title: L('放进哪一期', 'Which episode'), content: (c) => (
+            <Action icon={Mic} label={L('添加到播客', 'Add to a podcast')} note={L('用作一期播客的素材：录制前准备、主持人提问和整理都会参考', "Use it in an episode: prep, the host's questions and the note draw on it")}
+              onPress={() => sheet.open({ title: L('选择一期', 'Choose an episode'), content: (c) => (
                 <PutInPodcast kind="chat" target={`${threadId}:${m.id}`} close={c} onOpen={(e) => openEpisode(nav, e)} />
               ) })} />
           ) : null}
           {m.id.startsWith('db') && m.role !== 'auto' && text.trim() ? (
-            <Action icon={ShareIcon} label={L('分享', 'Share')} note={L('先挡住私事，再发链接或一张卡片', 'Hides private bits first, then send a link or a card')}
+            <Action icon={ShareIcon} label={L('分享', 'Share')} note={L('先遮挡隐私内容，再以链接或卡片分享', 'Hides private details first, then shares a link or a card')}
               onPress={() => { close(); nav.navigate('Share', { from: { kind: 'message', thread: threadId, id: m.id } }); }} />
           ) : null}
           {m.role === 'user' && !busy ? <>
-            <Action icon={Pencil} label={L('重新编辑', 'Edit')} note={L(`放回输入框改完再发。${tail}${agentName()} 也会忘掉这段。${shared}${m.body.attachments?.length ? '附件要重新加。' : ''}`, `Puts it back in the input box to edit and resend. ${tail}${agentName()} will forget it too.${shared}${m.body.attachments?.length ? ' Attachments need to be added again.' : ''}`)} onPress={() => rewind(true)} />
-            <Action icon={Undo2} label={L('撤回', 'Unsend')} note={L(`${tail}${agentName()} 也会忘掉这段。${shared}`, `${tail}${agentName()} will forget it too.${shared}`)} onPress={() => rewind(false)} />
+            <Action icon={Pencil} label={L('重新编辑', 'Edit')} note={L(`放回输入框，修改后重新发送。${tail}${agentName()} 也会遗忘这段内容。${shared}${m.body.attachments?.length ? '附件需要重新添加。' : ''}`, `Puts it back in the input box to edit and resend. ${tail}${agentName()} will forget it too.${shared}${m.body.attachments?.length ? ' Attachments need to be added again.' : ''}`)} onPress={() => rewind(true)} />
+            <Action icon={Undo2} label={L('撤回', 'Unsend')} note={L(`${tail}${agentName()} 也会遗忘这段内容。${shared}`, `${tail}${agentName()} will forget it too.${shared}`)} onPress={() => rewind(false)} />
           </> : null}
-          {m.role === 'user' && busy ? <T v="callout" color={t.ink3}>{L(`${agentName()} 回完之后才能撤回或重新编辑。`, `You can unsend or edit once ${agentName()} has replied.`)}</T> : null}
-          <Action icon={Trash2} label={L('删除', 'Delete')} danger note={L(`只从这里的记录删掉，${agentName()} 仍然记得。`, `Only removes it from the history here. ${agentName()} still remembers it.`)} onPress={() => { close(); deleteMessage(threadId, m.id).catch(fail); }} />
+          {m.role === 'user' && busy ? <T v="callout" color={t.ink3}>{L(`${agentName()} 回复结束后才能撤回或重新编辑。`, `You can unsend or edit once ${agentName()} has replied.`)}</T> : null}
+          <Action icon={Trash2} label={L('删除', 'Delete')} danger note={L(`仅从此处的记录中删除，${agentName()} 仍会记得。`, `Only removes it from the history here. ${agentName()} still remembers it.`)} onPress={() => { close(); deleteMessage(threadId, m.id).catch(fail); }} />
         </View>
       ),
     });
@@ -652,8 +652,8 @@ export function ChatView({ threadId, placeholder, empty, welcome, quote: quotePr
           <LoaderCircle size={15} color={t.cyan} />
           <T v="caption" color={t.cyan} numberOfLines={1} style={{ flex: 1, fontSize: 13, fontWeight: '600' }}>
             {running.length === 1
-              ? L(`后台在做 · ${running[0].title}${running[0].step ? ` · ${running[0].step}` : ''}`, `Running in the background · ${running[0].title}${running[0].step ? ` · ${running[0].step}` : ''}`)
-              : L(`后台 ${running.length} 个在做 · ${running[0].title} 等`, `${running.length} running in the background · ${running[0].title} and more`)}
+              ? L(`后台运行中 · ${running[0].title}${running[0].step ? ` · ${running[0].step}` : ''}`, `Running in the background · ${running[0].title}${running[0].step ? ` · ${running[0].step}` : ''}`)
+              : L(`后台 ${running.length} 个任务运行中 · ${running[0].title} 等`, `${running.length} running in the background · ${running[0].title} and more`)}
           </T>
           <ChevronRight size={15} color={t.cyan} />
         </Pressable>
@@ -667,14 +667,14 @@ export function ChatView({ threadId, placeholder, empty, welcome, quote: quotePr
         refreshControl={<PullRefresh onRefresh={() => refreshThread(threadId)} />}>
         {connected && !hideHistoryLink && !showWelcome ? (
           <Pressable onPress={() => nav.navigate('History', { thread: threadId })} accessibilityRole="button" style={{ alignSelf: 'center', paddingVertical: 2 }}>
-            <T v="caption" color={t.ink3}>{L('这里只有今天的（04:00 起）· ', 'Today only (from 04:00) · ')}<T v="caption" color={t.gold}>{L('之前的在历史里', 'Earlier in History')}</T></T>
+            <T v="caption" color={t.ink3}>{L('仅显示今天（04:00 起）· ', 'Today only (from 04:00) · ')}<T v="caption" color={t.gold}>{L('更早的记录见历史', 'Earlier in History')}</T></T>
           </Pressable>
         ) : null}
         {showWelcome ? welcome : !msgs.length && !busy ? (
           <View style={{ alignItems: 'center', gap: space.sm, paddingVertical: space.xxl, paddingHorizontal: space.lg }}>
             <LensAvatar size={40} config={avatar} />
             <T v="callout" color={t.ink3} style={{ textAlign: 'center' }}>
-              {booting ? L('正在连服务器…', 'Connecting to the server…') : !connected ? L('没连上服务器。检查「我 → 服务器」，再回到这一页。', 'Not connected to the server. Check Me → Server, then come back here.') : empty ?? L('还没有对话。', 'No messages yet.')}
+              {booting ? L('正在连接服务器…', 'Connecting to the server…') : !connected ? L('未连接服务器。请检查「我 → 服务器」后返回此页。', 'Not connected to the server. Check Me → Server, then return to this page.') : empty ?? L('暂无对话。', 'No messages yet.')}
             </T>
           </View>
         ) : null}
@@ -707,11 +707,11 @@ export function ChatView({ threadId, placeholder, empty, welcome, quote: quotePr
               {quote.taskId ? <Pencil size={14} color={t.gold} /> : quote.ref ? <ListChecks size={14} color={t.gold} /> : quote.saveId ? <Bookmark size={14} color={t.gold} /> : quote.replyTo ? <Quote size={14} color={t.gold} /> : <Inbox size={14} color={t.gold} />}
               <T v="callout" numberOfLines={1} style={{ flex: 1, fontSize: 13 }}>
                 {quote.taskId
-                  ? L(`改「${quote.title}」· 直接发给做它的 ${modelLabel(quote.model)}`, `Revise "${quote.title}" · goes straight to ${modelLabel(quote.model)}`)
-                  : quote.ref ? L(`说的是：${quote.title}`, `About: ${quote.title}`) : quote.saveId ? L(`关于收藏：${quote.title}`, `About the saved item: ${quote.title}`)
+                  ? L(`修改「${quote.title}」· 发送给执行该任务的 ${modelLabel(quote.model)}`, `Revise "${quote.title}" · goes straight to ${modelLabel(quote.model)}`)
+                  : quote.ref ? L(`关于：${quote.title}`, `About: ${quote.title}`) : quote.saveId ? L(`关于收藏：${quote.title}`, `About the saved item: ${quote.title}`)
                     : quote.follow ? L(`跟进：${quote.title}`, `Follow up: ${quote.title}`) : quote.replyTo ? L(`引用：${quote.title}`, `Quoting: ${quote.title}`) : L(`回复：${quote.title}`, `Re: ${quote.title}`)}
               </T>
-              <Pressable onPress={() => setQuote(null)} hitSlop={10} accessibilityRole="button" accessibilityLabel={L('不带这条引用', 'Remove the quote')}>
+              <Pressable onPress={() => setQuote(null)} hitSlop={10} accessibilityRole="button" accessibilityLabel={L('移除引用', 'Remove the quote')}>
                 <X size={14} color={t.ink3} />
               </Pressable>
             </View>
@@ -723,7 +723,7 @@ export function ChatView({ threadId, placeholder, empty, welcome, quote: quotePr
               f.mime.startsWith('image/') ? (
                 <View key={`${f.uri}-${i}`} style={{ position: 'relative' }}>
                   <Image source={{ uri: f.uri }} style={{ width: 56, height: 56, borderRadius: radius.md, backgroundColor: t.surface2 }} accessibilityLabel={f.name} />
-                  <Pressable onPress={() => setPending((cur) => cur.filter((_, k) => k !== i))} hitSlop={8} accessibilityRole="button" accessibilityLabel={L(`去掉 ${f.name}`, `Remove ${f.name}`)}
+                  <Pressable onPress={() => setPending((cur) => cur.filter((_, k) => k !== i))} hitSlop={8} accessibilityRole="button" accessibilityLabel={L(`移除 ${f.name}`, `Remove ${f.name}`)}
                     style={[styles.removeDot, { backgroundColor: t.ink }]}><X size={12} color={t.bg} /></Pressable>
                 </View>
               ) : (
@@ -738,7 +738,7 @@ export function ChatView({ threadId, placeholder, empty, welcome, quote: quotePr
             <View style={[styles.recording, { backgroundColor: t.surface }]}>
               <View style={{ width: 10, height: 10, borderRadius: 5, backgroundColor: t.bad }} />
               <T v="body" style={{ flex: 1, fontVariant: ['tabular-nums'] }}>{L('正在录音', 'Recording')} {Math.floor(secs / 60)}:{String(secs % 60).padStart(2, '0')}</T>
-              <T v="caption" color={t.ink3}>{L('说完点停止，转成文字后可以改', 'Tap stop when done, then edit the text')}</T>
+              <T v="caption" color={t.ink3}>{L('点击停止结束录音，转写后可编辑', 'Tap stop when done, then edit the text')}</T>
             </View>
             <Pressable onPress={stopRecording} accessibilityRole="button" accessibilityLabel={L('停止录音', 'Stop recording')} style={[styles.send, { backgroundColor: t.bad }]}>
               <Square size={16} color="#fff" fill="#fff" />
@@ -751,8 +751,8 @@ export function ChatView({ threadId, placeholder, empty, welcome, quote: quotePr
             </Pressable>
             <TextInput
               ref={input}
-              value={draft} onChangeText={setDraft} placeholder={transcribing ? L('正在转文字…', 'Transcribing…') : quote?.follow ? L('问问进展，或者说还差什么', "Ask how it's going, or say what's missing")
-                : quote?.replyTo ? L('接着这句说…', 'Say something about it…') : quote ? L('说说要改什么', 'Say what should change')
+              value={draft} onChangeText={setDraft} placeholder={transcribing ? L('正在转写…', 'Transcribing…') : quote?.follow ? L('询问进展或补充要求', "Ask about progress or add what's missing")
+                : quote?.replyTo ? L('回复这条消息…', 'Reply to this message…') : quote ? L('说明需要修改的内容', 'Describe the changes')
                   : busy ? L('正在回复，可继续发送', 'Replying. You can keep sending.') : placeholder} placeholderTextColor={t.ink3}
               multiline numberOfLines={1} onSubmitEditing={submit} submitBehavior="submit" returnKeyType="send" enablesReturnKeyAutomatically onKeyPress={webEnter}
               accessibilityLabel={L('消息输入框', 'Message')} editable={!transcribing}
@@ -764,7 +764,7 @@ export function ChatView({ threadId, placeholder, empty, welcome, quote: quotePr
                 <Square size={14} color={t.ink} fill={t.ink} />
               </Pressable>
             ) : canRecord && !draft.trim() && !pending.length && !transcribing ? (
-              <Pressable onPress={startRecording} disabled={busy} accessibilityRole="button" accessibilityLabel={L('录音输入', 'Voice input')}
+              <Pressable onPress={startRecording} disabled={busy} accessibilityRole="button" accessibilityLabel={L('语音输入', 'Voice input')}
                 style={[styles.send, { backgroundColor: t.surface2 }]}>
                 <Mic size={20} color={busy ? t.ink3 : t.ink} />
               </Pressable>

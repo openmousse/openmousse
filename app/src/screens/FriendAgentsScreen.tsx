@@ -43,8 +43,8 @@ function toRounds(log: CardLogItem[], out: A2AOut[]): Round[] {
 function usedLine(it: CardLogItem): string {
   if (it.usedLabel) return it.usedLabel;
   const names = it.used.map((u) => (u === 'calendar' ? L('日程', 'calendar') : u === 'status' ? L('近况', "what's new") : u === 'address' ? L('住址', 'address')
-    : u.startsWith('share:') ? L('分享过的东西', 'a share') : u));
-  return names.length ? L(`用了：${names.join('、')}`, `Used: ${names.join(', ')}`) : '';
+    : u.startsWith('share:') ? L('分享内容', 'a share') : u));
+  return names.length ? L(`已使用：${names.join('、')}`, `Used: ${names.join(', ')}`) : '';
 }
 
 /** Doorman 的原因连成一句（「说了资料里没有的近况；提到了别的朋友（小林）」）。 */
@@ -55,51 +55,51 @@ function blockedLine(it: CardLogItem): string {
   const b = it.blocked;
   const why = reasonsText(it);
   if (b.includes('sentinel:hold')) {
-    const lead = it.ask?.kind === 'review' ? L('Doorman 扣下了原话，先回了一句「我确认一下」，出了一张卡等你点', 'Doorman held the original; it said "let me check" and made you a card')
-      : L('Doorman 扣下了原话，换成了「我去问一下」', 'Doorman held the original; it said "I\'ll ask" instead');
+    const lead = it.ask?.kind === 'review' ? L('Doorman 拦截了原话，已先告知对方稍后回复，并生成卡片等待你处理', 'Doorman held the original; it said "let me check" and made you a card')
+      : L('Doorman 拦截了原话，已改为告知对方需询问你本人', 'Doorman held the original; it said "I\'ll ask" instead');
     return why ? `${lead}${L('（', ' (')}${why}${L('）', ')')}` : lead;
   }
-  if (b.includes('sentinel:fail')) return L('Doorman 没能复查这句，换成了一句固定的话', "Doorman couldn't review it; a fixed line went instead");
-  if (b.some((x) => x.startsWith('leak'))) return L('原话里有这一档没放出来的东西，没发出去，换成了「得问本人」', "The original had something this tier doesn't get; it was replaced with \"ask them directly\"");
-  if (b.includes('commit')) return L('原话像是替你答应了，改成了「我去问一下」，并出了卡给你', 'The original sounded like a yes on your behalf; it became "I\'ll ask" and a card for you');
-  if (b.includes('empty')) return L('它没给出回答，换成了一句固定的话', 'It gave no answer; a fixed line went instead');
+  if (b.includes('sentinel:fail')) return L('Doorman 未能复查此句，已替换为固定回复', "Doorman couldn't review it; a fixed reply was sent instead");
+  if (b.some((x) => x.startsWith('leak'))) return L('原话包含此档位未开放的内容，未发送，已改为告知对方需询问你本人', "The original had something this tier doesn't get; it was replaced with \"ask them directly\"");
+  if (b.includes('commit')) return L('原话疑似代你做出承诺，已改为告知对方需询问你本人，并为你生成卡片', 'The original sounded like a yes on your behalf; it became "I\'ll ask" and a card for you');
+  if (b.includes('empty')) return L('未生成回答，已替换为固定回复', 'No answer was generated; a fixed reply was sent instead');
   return '';
 }
 
 function askOutcome(a: CardAsk): { label: string; tone: 'good' | 'gold' | 'neutral' } {
   switch (a.outcome) {
-    case 'released': return { label: L('你照发了', 'You sent it as is'), tone: 'good' };
-    case 'rewritten': return { label: L('你改了再发', 'You rewrote it'), tone: 'good' };
-    case 'withheld': return { label: L('你没发', "You didn't send it"), tone: 'neutral' };
-    case 'accepted': return { label: L('你同意了', 'You said yes'), tone: 'good' };
-    case 'declined': return { label: L('你没去', 'You said no'), tone: 'neutral' };
-    case 'counter': return { label: L('你想换个时间', 'You asked for another time'), tone: 'neutral' };
-    case 'ack': return { label: L('你看到了，会自己回', "You saw it and will reply yourself"), tone: 'neutral' };
-    case 'private_declined': return { label: L('你没说', "You didn't share it"), tone: 'neutral' };
+    case 'released': return { label: L('已照发', 'You sent it as is'), tone: 'good' };
+    case 'rewritten': return { label: L('已修改后发送', 'You rewrote it'), tone: 'good' };
+    case 'withheld': return { label: L('未发送', "You didn't send it"), tone: 'neutral' };
+    case 'accepted': return { label: L('已同意', 'You said yes'), tone: 'good' };
+    case 'declined': return { label: L('已拒绝', 'You said no'), tone: 'neutral' };
+    case 'counter': return { label: L('已请求改期', 'You asked for another time'), tone: 'neutral' };
+    case 'ack': return { label: L('已读，将亲自回复', "You saw it and will reply yourself"), tone: 'neutral' };
+    case 'private_declined': return { label: L('未透露', "You didn't share it"), tone: 'neutral' };
     default: break;
   }
-  if (a.status === 'withdrawn') return { label: L('对方撤回了', 'They withdrew it'), tone: 'neutral' };
+  if (a.status === 'withdrawn') return { label: L('对方已撤回', 'They withdrew it'), tone: 'neutral' };
   const day = a.proposal?.date ? ms(`${a.proposal.date}T23:59:59`) : 0;
-  return day && day < new Date().getTime() ? { label: L('过期了，没点', 'Expired'), tone: 'neutral' } : { label: L('等你点头', 'Waiting for you'), tone: 'gold' };
+  return day && day < new Date().getTime() ? { label: L('已过期', 'Expired'), tone: 'neutral' } : { label: L('待你确认', 'Waiting for you'), tone: 'gold' };
 }
 
 /** 你的名片 agent 去问以后，对方那边到哪一步了。 */
 export function outState(o: A2AOut, name: string): { label: string; tone: 'good' | 'gold' | 'warn' | 'neutral' } | null {
   switch (o.outcome) {
-    case 'accepted': return { label: L(`${name} 同意了`, `${name} said yes`), tone: 'good' };
-    case 'declined': return { label: L(`${name} 这次去不了`, `${name} can't make it`), tone: 'neutral' };
-    case 'counter': return { label: L(`${name} 想换个时间`, `${name} wants another time`), tone: 'warn' };
-    case 'ack': return { label: L(`${name} 看到了，会自己回你`, `${name} saw it and will reply`), tone: 'neutral' };
-    case 'private_declined': return { label: L(`${name} 不方便说`, `${name} would rather not say`), tone: 'neutral' };
-    case 'expired': return { label: L(`${name} 没来得及回`, `${name} didn't get to it`), tone: 'neutral' };
+    case 'accepted': return { label: L(`${name} 已同意`, `${name} said yes`), tone: 'good' };
+    case 'declined': return { label: L(`${name} 无法参加`, `${name} can't make it`), tone: 'neutral' };
+    case 'counter': return { label: L(`${name} 希望改期`, `${name} wants another time`), tone: 'warn' };
+    case 'ack': return { label: L(`${name} 已读，将亲自回复`, `${name} saw it and will reply`), tone: 'neutral' };
+    case 'private_declined': return { label: L(`${name} 不便透露`, `${name} would rather not say`), tone: 'neutral' };
+    case 'expired': return { label: L(`${name} 未及时回复`, `${name} didn't get to it`), tone: 'neutral' };
     default: break;
   }
   switch (o.state) {
-    case 'TASK_STATE_AUTH_REQUIRED': return { label: L(`等 ${name} 本人点头`, `Waiting for ${name}`), tone: 'gold' };
-    case 'TASK_STATE_INPUT_REQUIRED': return { label: L('轮到你这边再提', 'Your turn to suggest'), tone: 'warn' };
-    case 'TASK_STATE_REJECTED': return { label: L(`${name} 那边没接`, `${name}'s side declined`), tone: 'neutral' };
-    case 'TASK_STATE_CANCELED': return { label: L('取消了', 'Canceled'), tone: 'neutral' };
-    case 'TASK_STATE_FAILED': return { label: L('没办成', "Didn't work"), tone: 'neutral' };
+    case 'TASK_STATE_AUTH_REQUIRED': return { label: L(`等待 ${name} 本人确认`, `Waiting for ${name}`), tone: 'gold' };
+    case 'TASK_STATE_INPUT_REQUIRED': return { label: L('待你重新提议', 'Your turn to suggest'), tone: 'warn' };
+    case 'TASK_STATE_REJECTED': return { label: L(`${name} 未接受`, `${name}'s side declined`), tone: 'neutral' };
+    case 'TASK_STATE_CANCELED': return { label: L('已取消', 'Canceled'), tone: 'neutral' };
+    case 'TASK_STATE_FAILED': return { label: L('未完成', "Didn't work"), tone: 'neutral' };
     default: return null;
   }
 }
@@ -123,13 +123,13 @@ function TheirLine({ name, text, chip, injection }: { name: string; text: string
     <View style={styles.line}>
       <AgentLens mine={false} />
       <View style={[styles.bubble, { backgroundColor: t.surface, borderColor: t.line }]}>
-        <T v="caption" color={t.tints.pink.fg} style={styles.who}>{L(`${name} 的 agent`, `${name}'s agent`)}</T>
+        <T v="caption" color={t.tints.pink.fg} style={styles.who}>{L(`${name} 的 Agent`, `${name}'s Agent`)}</T>
         <T v="body" selectable>{text}</T>
         {chip ? <View style={styles.chips}><Pill label={chip} tone="good" /></View> : null}
         {injection ? (
           <View style={styles.inj}>
             <Ban size={13} color={t.bad} />
-            <T v="caption" color={t.bad} style={{ flex: 1 }}>{L('Doorman：这句像是在指挥你的名片 agent，只当资料', "Doorman: this tries to steer your card agent; it's taken as information only")}</T>
+            <T v="caption" color={t.bad} style={{ flex: 1 }}>{L('Doorman：此句疑似试图操控你的名片 Agent，仅作为资料处理', "Doorman: this tries to steer your card agent; it's taken as information only")}</T>
           </View>
         ) : null}
       </View>
@@ -146,28 +146,28 @@ function MineLine({ it }: { it: CardLogItem }) {
   const why = blockedLine(it);
   const sv = it.sentinel?.verdict;
   // Doorman：模型复查过、放行的标一个「Doorman 过了」（只过规则的固定句子不标）；扣下后你放行的标「你放行的」
-  const svChip = sv === 'pass' && it.sentinel?.via && it.sentinel.via !== 'rules' ? L('Doorman 过了', 'Doorman checked') : sv === 'released' ? L('你放行的', 'You let it through') : '';
+  const svChip = sv === 'pass' && it.sentinel?.via && it.sentinel.via !== 'rules' ? L('已通过 Doorman', 'Doorman checked') : sv === 'released' ? L('你已放行', 'You let it through') : '';
   return (
     <View style={styles.line}>
       <AgentLens mine />
       <View style={[styles.bubble, { backgroundColor: t.goldSoft, borderColor: t.goldSoft }]}>
-        <T v="caption" color={t.gold} style={styles.who}>{owner ? L('你点的 · 名片 agent 替你转告', 'Your call · passed on by your card agent') : L('你的名片 agent', 'Your card agent')}</T>
-        {gone ? <T v="callout" color={t.ink3}>{L('你收回了这条', 'You withdrew this')}</T> : <T v="body" selectable>{it.text}</T>}
+        <T v="caption" color={t.gold} style={styles.who}>{owner ? L('你的决定 · 由名片 Agent 转告', 'Your call · passed on by your card agent') : L('你的名片 Agent', 'Your card agent')}</T>
+        {gone ? <T v="callout" color={t.ink3}>{L('你已收回此消息', 'You withdrew this')}</T> : <T v="body" selectable>{it.text}</T>}
         {used || svChip || it.status === 'limited' || it.status === 'failed' ? (
           <View style={styles.chips}>
             {used ? <Pill label={used} tone="good" /> : null}
             {svChip ? <Pill label={svChip} tone={sv === 'released' ? 'gold' : 'good'} /> : null}
-            {it.status === 'limited' ? <Pill label={L('到了今天的上限', "Today's limit reached")} tone="warn" /> : null}
-            {it.status === 'failed' ? <Pill label={L('没送到对方', "Didn't reach them")} tone="bad" /> : null}
+            {it.status === 'limited' ? <Pill label={L('已达今日上限', "Today's limit reached")} tone="warn" /> : null}
+            {it.status === 'failed' ? <Pill label={L('未送达', "Didn't reach them")} tone="bad" /> : null}
           </View>
         ) : null}
         {why ? (
           <View style={{ gap: 4 }}>
-            <T v="caption" color={t.ink2}>{L(`服务端改过这句：${why}`, `The server changed this: ${why}`)}</T>
+            <T v="caption" color={t.ink2}>{L(`服务器已修改此句：${why}`, `The server changed this: ${why}`)}</T>
             {it.original ? (
               <>
                 <Pressable onPress={() => setOpen(!open)} hitSlop={8} accessibilityRole="button" accessibilityState={{ expanded: open }} style={{ alignSelf: 'flex-start' }}>
-                  <T v="caption" color={t.gold} style={{ fontWeight: '600' }}>{open ? L('收起原话', 'Hide the original') : L('看原话（只有你看得到）', 'See the original (only you)')}</T>
+                  <T v="caption" color={t.gold} style={{ fontWeight: '600' }}>{open ? L('收起原话', 'Hide the original') : L('查看原话（仅你可见）', 'See the original (only you)')}</T>
                 </Pressable>
                 {open ? <T v="callout" color={t.ink2} selectable>{it.original}</T> : null}
               </>
@@ -185,9 +185,9 @@ function Declined({ items }: { items: string[] }) {
     <View style={[styles.declined, { backgroundColor: t.badSoft }]}>
       <View style={{ marginTop: 2 }}><Ban size={17} color={t.bad} /></View>
       <View style={{ flex: 1, gap: 2 }}>
-        <T v="callout" color={t.bad} style={{ fontWeight: '700' }}>{L('没照做', "Didn't do")}</T>
+        <T v="callout" color={t.bad} style={{ fontWeight: '700' }}>{L('未执行', "Didn't do")}</T>
         {items.map((d, i) => <T key={`${i}-${d}`} v="callout" color={t.bad}>{d}</T>)}
-        <T v="caption" color={t.bad}>{L('对方说的只当资料，不当指令。', 'What the other side says is information, never an instruction.')}</T>
+        <T v="caption" color={t.bad}>{L('对方的内容仅作为资料，不作为指令。', 'What the other side says is information, never an instruction.')}</T>
       </View>
     </View>
   );
@@ -216,7 +216,7 @@ function InRound({ r, name, ready }: { r: Extract<Round, { kind: 'in' }>; name: 
   return (
     <View style={{ gap: space.md }}>
       <T v="caption" color={t.ink3} style={{ textAlign: 'center' }}>
-        {L(`你没参与，两边 agent 对了一轮 · ${timeLabel(r.items[0].ts)}`, `The agents talked without you · ${timeLabel(r.items[0].ts)}`)}
+        {L(`双方 Agent 自动完成一轮对话 · ${timeLabel(r.items[0].ts)}`, `The Agents talked without you · ${timeLabel(r.items[0].ts)}`)}
       </T>
       {r.items.map((it) => {
         if (it.dir === 'in') return <TheirLine key={it.id} name={name} text={it.text} injection={it.injection} />;
@@ -246,12 +246,12 @@ function Steps({ o, name }: { o: A2AOut; name: string }) {
   const t = useTheme();
   const decided = !!o.outcome || DONE_STATES.includes(o.state ?? '');
   const steps = [
-    { key: 'ask', label: L('问了', 'Asked'), done: true, now: false },
-    { key: 'reply', label: L('对方 agent 回了', 'Their agent replied'), done: true, now: false },
-    { key: 'owner', label: L(`${name} 本人定`, `${name} decides`), done: decided, now: !decided },
+    { key: 'ask', label: L('已提问', 'Asked'), done: true, now: false },
+    { key: 'reply', label: L('对方 Agent 已回复', 'Their Agent replied'), done: true, now: false },
+    { key: 'owner', label: L(`${name} 本人决定`, `${name} decides`), done: decided, now: !decided },
   ];
   return (
-    <View style={styles.steps} accessible accessibilityLabel={steps.map((x) => `${x.label}${x.done ? L('（到了）', ' (done)') : L('（还没）', ' (not yet)')}`).join('，')}>
+    <View style={styles.steps} accessible accessibilityLabel={steps.map((x) => `${x.label}${x.done ? L('（已完成）', ' (done)') : L('（未完成）', ' (not yet)')}`).join('，')}>
       {steps.map((x, i) => (
         <React.Fragment key={x.key}>
           {i ? <View style={[styles.stepLine, { backgroundColor: x.done ? t.good : t.line }]} /> : null}
@@ -285,11 +285,11 @@ export function AskOutCard({ o, name, onOpen, onMore }: { o: A2AOut; name: strin
   const more = !local && !o.later && !!onMore && needsMore(o);
   return (
     <Pressable onPress={onOpen} disabled={!onOpen} accessibilityRole={onOpen ? 'button' : undefined}
-      accessibilityHint={onOpen ? L('打开「agent 之间」', 'Opens Agent to agent') : undefined}
+      accessibilityHint={onOpen ? L('打开「Agent 之间」', 'Opens Agent to Agent') : undefined}
       style={({ pressed }) => [styles.askCard, { backgroundColor: t.surface, borderColor: t.goldSoft, opacity: pressed && onOpen ? 0.8 : 1 }]}>
       <View style={styles.askHead}>
         <PairLens bg={t.surface} />
-        <T v="caption" color={t.gold} style={{ flex: 1, fontWeight: '700' }} numberOfLines={1}>{L(`你的名片 agent 去问 ${name} 的 agent`, `Your card agent asked ${name}'s agent`)}</T>
+        <T v="caption" color={t.gold} style={{ flex: 1, fontWeight: '700' }} numberOfLines={1}>{L(`你的名片 Agent 询问了 ${name} 的 Agent`, `Your card agent asked ${name}'s Agent`)}</T>
         {o.createdAt && !local ? <T v="caption" color={t.ink3}>{timeLabel(o.createdAt)}</T> : null}
         {onOpen ? <ChevronRight size={14} color={t.ink3} /> : null}
       </View>
@@ -297,27 +297,27 @@ export function AskOutCard({ o, name, onOpen, onMore }: { o: A2AOut; name: strin
       {local ? (
         <View style={styles.waitRow}>
           <ActivityIndicator size="small" color={t.gold} />
-          <T v="caption" color={t.ink3}>{L(`等 ${name} 的 agent 回…（它要想一下）`, `Waiting for ${name}'s agent… (it takes a moment)`)}</T>
+          <T v="caption" color={t.ink3}>{L(`正在等待 ${name} 的 Agent 回复…（需要一些时间）`, `Waiting for ${name}'s Agent… (it takes a moment)`)}</T>
         </View>
       ) : o.reply ? (
         <View style={styles.replyRow}>
           <AgentLens mine={false} size={22} />
           <View style={[styles.replyBubble, { backgroundColor: t.bg, borderColor: t.line }]}>
-            <T v="caption" color={t.tints.pink.fg} style={{ fontWeight: '700' }}>{L(`${name} 的 agent`, `${name}'s agent`)}</T>
+            <T v="caption" color={t.tints.pink.fg} style={{ fontWeight: '700' }}>{L(`${name} 的 Agent`, `${name}'s Agent`)}</T>
             <T v="callout" selectable>{o.reply}</T>
             {o.usedLabel ? <View style={{ flexDirection: 'row' }}><Pill label={o.usedLabel} tone="good" /></View> : null}
           </View>
         </View>
       ) : null}
       {o.taskId && !local && !o.later ? <Steps o={o} name={name} /> : null}
-      {o.later ? <T v="caption" color={t.ink3}>{L('后来在同一件事里又接着说了，进展看最新那一条', 'Continued in a later message; see the latest one for where it stands')}</T> : null}
+      {o.later ? <T v="caption" color={t.ink3}>{L('此事项已有后续消息，请查看最新一条了解进展', 'Continued in a later message; see the latest one for where it stands')}</T> : null}
       {st || more ? (
         <View style={styles.askFoot}>
           {st ? <Pill label={st.label} tone={st.tone} /> : null}
           <View style={{ flex: 1 }} />
           {more ? (
             <Pressable onPress={onMore} accessibilityRole="button" hitSlop={6} style={({ pressed }) => [styles.moreBtn, { backgroundColor: t.goldSoft, opacity: pressed ? 0.7 : 1 }]}>
-              <T v="callout" color={t.gold} style={{ fontWeight: '700' }}>{L('再提一个时间', 'Suggest another time')}</T>
+              <T v="callout" color={t.gold} style={{ fontWeight: '700' }}>{L('另提时间', 'Suggest another time')}</T>
             </Pressable>
           ) : null}
         </View>
@@ -331,7 +331,7 @@ function OutRound({ r, name, onMore }: { r: Extract<Round, { kind: 'out' }>; nam
   return (
     <View style={{ gap: space.md }}>
       <T v="caption" color={t.ink3} style={{ textAlign: 'center' }}>
-        {L(`你的名片 agent 去问了 ${name} 的 agent · ${timeLabel(r.items[0].createdAt)}`, `Your card agent asked ${name}'s agent · ${timeLabel(r.items[0].createdAt)}`)}
+        {L(`你的名片 Agent 询问了 ${name} 的 Agent · ${timeLabel(r.items[0].createdAt)}`, `Your card agent asked ${name}'s Agent · ${timeLabel(r.items[0].createdAt)}`)}
       </T>
       {r.items.map((o, i) => (
         // 同一件事里只有最后一条能「再提一个时间」
@@ -352,24 +352,24 @@ function SaidCard({ r, friend, card }: { r: Extract<Round, { kind: 'in' }>; frie
   const held = r.items.filter((i) => i.dir === 'out' && i.sentinel?.verdict === 'hold').length;
   const steered = r.items.some((i) => i.dir === 'in' && i.injection);
   const rows: { tone: string; text: string }[] = [
-    ...(used.length ? used.map((u) => ({ tone: t.good, text: u })) : [{ tone: t.good, text: L('没用你的任何资料', 'None of your information') }]),
-    ...(asks ? [{ tone: t.gold, text: L(`要你定的出了 ${asks} 张卡，没替你答应`, `${asks} card${asks === 1 ? '' : 's'} for you; it agreed to nothing`) }] : []),
-    ...(declined.length ? [{ tone: t.bad, text: L(`没照做：${declined.join('；')}`, `Didn't do: ${declined.join('; ')}`) }] : []),
-    ...(reviewed || held ? [{ tone: held ? t.gold : t.good, text: held ? L(`Doorman 复查了 ${reviewed} 句，扣下 ${held} 句等你定`, `Doorman reviewed ${reviewed}, held ${held} for you`)
-      : L(`说出去的 ${reviewed} 句都过了 Doorman`, `All ${reviewed} line${reviewed === 1 ? '' : 's'} passed Doorman`) }] : []),
-    ...(steered ? [{ tone: t.bad, text: L('对方有话像是在指挥你的名片 agent，只当了资料', 'Something they said tried to steer your card agent; it was taken as information only') }] : []),
-    { tone: t.bad, text: L(`「${friend.tierName}」这一档它看不到：${hiddenFor(card, friend.tier).join('、')}`, `At "${friend.tierName}" it can't see: ${hiddenFor(card, friend.tier).join(', ')}`) },
+    ...(used.length ? used.map((u) => ({ tone: t.good, text: u })) : [{ tone: t.good, text: L('未使用你的任何资料', 'None of your information') }]),
+    ...(asks ? [{ tone: t.gold, text: L(`需你决定的事项已生成 ${asks} 张卡片，未代你答应`, `${asks} card${asks === 1 ? '' : 's'} for you; it agreed to nothing`) }] : []),
+    ...(declined.length ? [{ tone: t.bad, text: L(`未执行：${declined.join('；')}`, `Didn't do: ${declined.join('; ')}`) }] : []),
+    ...(reviewed || held ? [{ tone: held ? t.gold : t.good, text: held ? L(`Doorman 复查了 ${reviewed} 句，拦截 ${held} 句待你决定`, `Doorman reviewed ${reviewed}, held ${held} for you`)
+      : L(`发出的 ${reviewed} 句均已通过 Doorman`, `All ${reviewed} line${reviewed === 1 ? '' : 's'} passed Doorman`) }] : []),
+    ...(steered ? [{ tone: t.bad, text: L('对方的部分内容疑似试图操控你的名片 Agent，已仅作为资料处理', 'Something they said tried to steer your card agent; it was taken as information only') }] : []),
+    { tone: t.bad, text: L(`「${friend.tierName}」档位下不可访问：${hiddenFor(card, friend.tier).join('、')}`, `At "${friend.tierName}" it can't see: ${hiddenFor(card, friend.tier).join(', ')}`) },
   ];
   return (
     <Card style={{ gap: space.sm, padding: space.md }}>
-      <T v="label" color={t.ink3}>{L('这次它说出去的', 'What it said this time')}</T>
+      <T v="label" color={t.ink3}>{L('本次发出的内容', 'What it said this time')}</T>
       {rows.map((x, i) => (
         <View key={i} style={styles.said}>
           <View style={[styles.dot, { backgroundColor: x.tone }]} />
           <T v="callout" style={{ flex: 1 }}>{x.text}</T>
         </View>
       ))}
-      <T v="caption" color={t.ink3}>{L('说出去的每一句都记进了活动记录', 'Every line it said is in Activity')}</T>
+      <T v="caption" color={t.ink3}>{L('发出的每一句均已记入活动记录', 'Every line it said is in Activity')}</T>
     </Card>
   );
 }
@@ -419,7 +419,7 @@ export function FriendAgentsScreen() {
     return () => clearTimeout(h);
   }, [n]);
 
-  const name = friend?.name ?? L('朋友', 'Friend');
+  const name = friend?.name ?? L('好友', 'Friend');
   const canAsk = !!friend && friend.status === 'active' && friend.caps.includes('a2a');
   const ask = () => {
     const text = draft.trim();
@@ -432,7 +432,7 @@ export function FriendAgentsScreen() {
     setPrev(null);
     fr.a2aSend(friend.id, text, p)
       .then((o) => setOut((c) => [o, ...c.filter((x) => x.id !== o.id).map((x) => (o.taskId && x.taskId === o.taskId ? { ...x, later: true } : x))]))
-      .catch((e) => { setDraft(text); setPrev(p); showError(L('没问成', "Couldn't ask"), e); })
+      .catch((e) => { setDraft(text); setPrev(p); showError(L('提问失败', "Couldn't ask"), e); })
       .finally(() => setPend((c) => c.filter((x) => x.id !== tmp.id)));
   };
   const more = (o: A2AOut) => { setPrev(o); setTimeout(() => input.current?.focus(), 50); };
@@ -444,11 +444,11 @@ export function FriendAgentsScreen() {
   } : undefined;
   return (
     <Screen>
-      <NavHeader title={L(`${name} · agent 之间`, `${name} · Agents`)} sub={L('A2A · 对方身份已核对', 'A2A · identity verified')} onBack={() => nav.goBack()} />
+      <NavHeader title={L(`${name} · Agent 之间`, `${name} · Agents`)} sub={L('A2A · 对方身份已验证', 'A2A · identity verified')} onBack={() => nav.goBack()} />
       <View ref={root} style={{ flex: 1, paddingBottom: bottom.home }} onLayout={bottom.onLayout}>
       <ChatScroll ref={scroller} offset={bottom.offset} style={{ flex: 1 }} contentContainerStyle={{ padding: space.lg, paddingBottom: space.xxl, gap: space.lg }}
         keyboardShouldPersistTaps="handled" keyboardDismissMode={dismissMode} refreshControl={<PullRefresh onRefresh={load} />}>
-        {err ? <Card><T v="callout" color={t.bad}>{L(`读不到：${err}`, `Couldn't load: ${err}`)}</T></Card> : null}
+        {err ? <Card><T v="callout" color={t.bad}>{L(`无法加载：${err}`, `Couldn't load: ${err}`)}</T></Card> : null}
         {!log && !err ? <ActivityIndicator color={t.gold} style={{ marginTop: space.xl }} /> : null}
         {friend ? (
           <View style={styles.pair}>
@@ -457,17 +457,17 @@ export function FriendAgentsScreen() {
               <View style={[styles.lensRing, { left: 16, backgroundColor: t.bg }]}><AgentLens mine={false} /></View>
             </View>
             <View style={{ flex: 1, gap: 2 }}>
-              <T v="callout" style={{ fontWeight: '600' }}>{L(`你的名片 agent 和 ${name} 的 agent`, `Your card agent and ${name}'s agent`)}</T>
-              <T v="caption" color={t.ink3}>{L(`${name} 在「${friend.tierName}」这一档 · 指纹 ${friend.fingerprint}`, `${name} is at "${friend.tierName}" · fingerprint ${friend.fingerprint}`)}</T>
+              <T v="callout" style={{ fontWeight: '600' }}>{L(`你的名片 Agent 与 ${name} 的 Agent`, `Your card agent and ${name}'s Agent`)}</T>
+              <T v="caption" color={t.ink3}>{L(`${name} 位于「${friend.tierName}」档位 · 指纹 ${friend.fingerprint}`, `${name} is at "${friend.tierName}" · fingerprint ${friend.fingerprint}`)}</T>
             </View>
           </View>
         ) : null}
         {log && !n ? (
           <Card style={{ gap: space.sm }}>
-            <T v="headline">{L('还没有来往', 'Nothing yet')}</T>
-            <T v="callout" color={t.ink2}>{L(`${name} 的 agent 来问你（比如约个时间），或者你的名片 agent 替你去问 ${name} 的，都记在这里；要你定的会出一张卡，等你点头。`,
-              `When ${name}'s agent asks you something (say, a time to meet), or your card agent asks ${name}'s, it shows here; anything that needs your say becomes a card for you.`)}</T>
-            <T v="callout" color={t.ink2}>{L(`${name} 在聊天里对着你的分享追问，代答在聊天里。`, `When ${name} asks about your shares in the chat, the answers stay in the chat.`)}</T>
+            <T v="headline">{L('暂无记录', 'Nothing yet')}</T>
+            <T v="callout" color={t.ink2}>{L(`${name} 的 Agent 向你发起的询问（例如约定时间），以及你的名片 Agent 代你向 ${name} 发起的询问，都会记录在此；需要你决定的事项将生成卡片，等待你确认。`,
+              `When ${name}'s Agent asks you something (say, a time to meet), or your card agent asks ${name}'s, it shows here; anything that needs your say becomes a card for you.`)}</T>
+            <T v="callout" color={t.ink2}>{L(`${name} 在对话中就你的分享提问时，代答显示在对话中。`, `When ${name} asks about your shares in the chat, the answers stay in the chat.`)}</T>
           </Card>
         ) : null}
         {friend ? rounds.map((r) => (r.kind === 'out' ? <OutRound key={r.key} r={r} name={name} onMore={more} /> : (
@@ -479,7 +479,7 @@ export function FriendAgentsScreen() {
         {friend ? (
           <Pressable onPress={() => nav.navigate('CardAgent')} accessibilityRole="button" style={({ pressed }) => [styles.link, { backgroundColor: t.surface, opacity: pressed ? 0.7 : 1 }]}>
             <View style={[styles.linkIcon, { backgroundColor: t.goldSoft }]}><IdCard size={17} color={t.gold} /></View>
-            <T v="callout" style={{ flex: 1, fontWeight: '600' }}>{L('改名片：谁能问到什么', 'Edit your card: who can ask what')}</T>
+            <T v="callout" style={{ flex: 1, fontWeight: '600' }}>{L('编辑名片：设置可查询的内容', 'Edit your card: who can ask what')}</T>
             <ChevronRight size={16} color={t.ink3} />
           </Pressable>
         ) : null}
@@ -490,11 +490,11 @@ export function FriendAgentsScreen() {
             <View style={[styles.quote, { backgroundColor: t.goldSoft }]}>
               <AgentLens mine size={16} />
               <T v="callout" numberOfLines={2} style={{ flex: 1, fontSize: 13 }}>
-                {prev ? L(`接着说那件事：「${prev.text}」`, `Continuing: "${prev.text}"`)
-                  : L(`你的名片 agent 替你去问 ${name} 的 agent；要 ${name} 本人定的，对方会去问 ${name}`, `Your card agent asks ${name}'s agent for you; anything ${name} has to decide goes to ${name}`)}
+                {prev ? L(`继续此事项：「${prev.text}」`, `Continuing: "${prev.text}"`)
+                  : L(`你的名片 Agent 将代你询问 ${name} 的 Agent；需要 ${name} 本人决定的事项，将转交 ${name} 确认`, `Your card agent asks ${name}'s Agent for you; anything ${name} has to decide goes to ${name}`)}
               </T>
               {prev ? (
-                <Pressable onPress={() => setPrev(null)} hitSlop={10} accessibilityRole="button" accessibilityLabel={L('不接着说了', 'Start a new question')}>
+                <Pressable onPress={() => setPrev(null)} hitSlop={10} accessibilityRole="button" accessibilityLabel={L('发起新询问', 'Start a new question')}>
                   <X size={14} color={t.ink3} />
                 </Pressable>
               ) : null}
@@ -503,10 +503,10 @@ export function FriendAgentsScreen() {
           <View style={styles.composer}>
             <TextInput ref={input} value={draft} onChangeText={setDraft} multiline numberOfLines={1} onKeyPress={webEnter}
               onSubmitEditing={ask} submitBehavior="submit" returnKeyType="send" enablesReturnKeyAutomatically
-              placeholder={prev ? L('比如：那周五晚上呢？', 'e.g. How about Friday evening?') : L(`比如：${name} 这周哪天晚上有空？`, `e.g. Which evenings is ${name} free this week?`)}
-              placeholderTextColor={t.ink3} accessibilityLabel={L('要名片 agent 去问的话', 'What your card agent should ask')}
+              placeholder={prev ? L('例如：周五晚上可以吗？', 'e.g. How about Friday evening?') : L(`例如：${name} 本周哪天晚上有空？`, `e.g. Which evenings is ${name} free this week?`)}
+              placeholderTextColor={t.ink3} accessibilityLabel={L('要名片 Agent 询问的内容', 'What your card agent should ask')}
               style={[type.body, styles.input, { backgroundColor: t.surface, color: t.ink }]} />
-            <Pressable onPress={ask} disabled={!draft.trim()} accessibilityRole="button" accessibilityLabel={L('让它去问', 'Ask')}
+            <Pressable onPress={ask} disabled={!draft.trim()} accessibilityRole="button" accessibilityLabel={L('询问', 'Ask')}
               style={[styles.send, { backgroundColor: draft.trim() ? t.goldFill : t.surface2 }]}>
               <ArrowUp size={20} color={draft.trim() ? t.onGold : t.ink3} />
             </Pressable>

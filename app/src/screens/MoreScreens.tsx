@@ -33,10 +33,10 @@ function Page({ title, children, refresh }: { title: string; children: React.Rea
 function Status({ k, empty }: { k: DataKey; empty?: boolean }) {
   const t = useTheme();
   const { connected, booting, loading, dataErrors } = useStore();
-  if (booting) return <Card><T v="callout" color={t.ink2}>{L('正在连服务器…', 'Connecting to the server…')}</T></Card>;
-  if (!connected) return <Card><T v="callout" color={t.ink2}>{L('没连上服务器。检查「我 → 服务器」后下拉刷新。', 'Not connected to the server. Check Me → Server, then pull down to refresh.')}</T></Card>;
-  if (dataErrors[k]) return <Card><T v="callout" color={t.bad}>{L(`读取失败：${dataErrors[k]}`, `Couldn't load: ${dataErrors[k]}`)}</T></Card>;
-  if (empty && loading[k]) return <Card><T v="callout" color={t.ink2}>{L('正在读…', 'Loading…')}</T></Card>;
+  if (booting) return <Card><T v="callout" color={t.ink2}>{L('正在连接服务器…', 'Connecting to the server…')}</T></Card>;
+  if (!connected) return <Card><T v="callout" color={t.ink2}>{L('未连接服务器。请检查「我 → 服务器」后下拉刷新。', 'Not connected to the server. Check Me → Server, then pull down to refresh.')}</T></Card>;
+  if (dataErrors[k]) return <Card><T v="callout" color={t.bad}>{L(`加载失败：${dataErrors[k]}`, `Couldn't load: ${dataErrors[k]}`)}</T></Card>;
+  if (empty && loading[k]) return <Card><T v="callout" color={t.ink2}>{L('正在加载…', 'Loading…')}</T></Card>;
   return null;
 }
 
@@ -48,7 +48,7 @@ function EditProfileSheet({ item, close }: { item: ProfileItem; close: () => voi
   const [confirm, setConfirm] = useState(false);
   const run = (value: string | null) => {
     setBusy(true);
-    editProfile(item.id, value).then(close).catch((e) => Alert.alert(L('没改成', "Couldn't update"), e instanceof Error ? e.message : String(e))).finally(() => setBusy(false));
+    editProfile(item.id, value).then(close).catch((e) => Alert.alert(L('修改失败', "Couldn't update"), e instanceof Error ? e.message : String(e))).finally(() => setBusy(false));
   };
   const today = new Date().toLocaleDateString('en-CA');
   return (
@@ -56,13 +56,13 @@ function EditProfileSheet({ item, close }: { item: ProfileItem; close: () => voi
       <TextInput value={text} onChangeText={setText} multiline autoFocus accessibilityLabel={L('档案内容', 'Profile item')}
         style={[type.body, styles.input, { backgroundColor: t.surface, color: t.ink, minHeight: 96, textAlignVertical: 'top' }]} />
       <T v="caption" color={t.ink3}>{L(
-        `保存后这一条会标成你今天确认的（[L] ${today}），旧的一版另存在服务器上，${agentName()} 检索不到。`,
+        `保存后此条将标记为你今天确认（[L] ${today}），旧版本另存于服务器上，${agentName()} 无法检索。`,
         `Once saved, this item is marked as confirmed by you today ([L] ${today}). The old version is kept separately on the server, where ${agentName()} can't search it.`,
       )}</T>
-      <Btn label={busy ? L('保存中…', 'Saving…') : L('保存', 'Save')} onPress={() => { if (!busy && text.trim()) run(text.trim()); }} />
+      <Btn label={busy ? L('正在保存…', 'Saving…') : L('保存', 'Save')} onPress={() => { if (!busy && text.trim()) run(text.trim()); }} />
       {confirm
-        ? <Btn label={L('确认删掉这一条', 'Confirm delete')} kind="danger" icon={<Trash2 size={16} color={t.bad} />} onPress={() => !busy && run(null)} />
-        : <Btn label={L('删掉这一条', 'Delete this item')} kind="danger" icon={<Trash2 size={16} color={t.bad} />} onPress={() => setConfirm(true)} />}
+        ? <Btn label={L('确认删除', 'Confirm delete')} kind="danger" icon={<Trash2 size={16} color={t.bad} />} onPress={() => !busy && run(null)} />
+        : <Btn label={L('删除此条', 'Delete this item')} kind="danger" icon={<Trash2 size={16} color={t.bad} />} onPress={() => setConfirm(true)} />}
     </View>
   );
 }
@@ -76,8 +76,8 @@ export function IdentityScreen() {
     <Page title={L('基础档案', 'Profile')} refresh={['profile']}>
       <T v="callout" color={t.ink2} style={{ marginBottom: space.md }}>
         {L(
-          `${agentName()} 的 L0 档案（服务器上的 shared/profile/USER.md），所有 agent 共用。点一条就能改，改完直接写回文件。`,
-          `${agentName()}'s L0 profile (shared/profile/USER.md on the server), shared by all agents. Tap an item to edit it; changes are written straight back to the file.`,
+          `${agentName()} 的 L0 档案（服务器上的 shared/profile/USER.md），所有 Agent 共用。点击条目即可编辑，修改将直接写回文件。`,
+          `${agentName()}'s L0 profile (shared/profile/USER.md on the server), shared by all Agents. Tap an item to edit it; changes are written straight back to the file.`,
         )}
       </T>
       {live?.body.length ? (
@@ -99,8 +99,8 @@ export function IdentityScreen() {
             <SectionLabel>{sec}</SectionLabel>
             <Card style={{ paddingVertical: space.xs }}>
               {rows.map((p, i) => (
-                <Pressable key={p.id} onPress={() => sheet.open({ title: L(`改「${sec}」里的一条`, `Edit an item in "${sec}"`), content: (close) => <EditProfileSheet item={p} close={close} /> })}
-                  accessibilityRole="button" accessibilityHint={L('点一下修改', 'Tap to edit')}
+                <Pressable key={p.id} onPress={() => sheet.open({ title: L(`编辑「${sec}」中的条目`, `Edit an item in "${sec}"`), content: (close) => <EditProfileSheet item={p} close={close} /> })}
+                  accessibilityRole="button" accessibilityHint={L('点击编辑', 'Tap to edit')}
                   style={({ pressed }) => [styles.prow, i < rows.length - 1 && { borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: t.line }, { opacity: pressed ? 0.6 : 1 }]}>
                   <T v="body">{p.text}</T>
                   {p.sources.length || p.date ? <T v="caption" color={t.ink3}>{[p.sources.join(L('、', ', ')), p.date].filter(Boolean).join(' · ')}</T> : null}
@@ -121,12 +121,12 @@ export function JournalScreen() {
     <Page title={L('日志', 'Journal')} refresh={['journal']}>
       <T v="callout" color={t.ink2} style={{ marginBottom: space.md }}>
         {L(
-          `你在对话里说的训练感受、对事情的想法、做的决定，${agentName()} 记在这里（服务器的数据库，不进模型上下文，它需要时用工具查）。带 Agent 的也会出现在那个 Agent 的「记忆」页。`,
-          `How a workout felt, what you think about things, decisions you made: when you say it in chat, ${agentName()} logs it here (in the server's database, not the model's context; it looks things up with a tool when needed). Entries tied to an agent also show on that agent's Memory page.`,
+          `你在对话中提到的训练感受、想法和决定，由 ${agentName()} 记录在这里（存于服务器数据库，不进入模型上下文，需要时通过工具查询）。关联 Agent 的条目也会显示在该 Agent 的「记忆」页。`,
+          `How a workout felt, what you think about things, decisions you made: when you say it in chat, ${agentName()} logs it here (in the server's database, not the model's context; it looks things up with a tool when needed). Entries tied to an Agent also show on that Agent's Memory page.`,
         )}
       </T>
       <JournalList entries={journal} showGroup empty={L(
-        `还没有记录。跟 ${agentName()} 说「记一下」或者直接分享感受，就会出现在这里。`,
+        `暂无记录。对 ${agentName()} 说「记一下」或直接分享感受，记录将显示在这里。`,
         `Nothing yet. Tell ${agentName()} "note this" or just share how you feel, and it shows up here.`,
       )} />
     </Page>
@@ -140,8 +140,8 @@ export function MemoryScreen() {
     <Page title={L('记忆', 'Memory')} refresh={['memories']}>
       <T v="callout" color={t.ink2}>
         {L(
-          `${agentName()} 的长期记忆（L1，MEMORY.md${memoriesUpdated ? `，${memoriesUpdated}更新` : ''}）。每天的工作记忆由夜里的 Dreaming 整理后晋升到这里。点垃圾桶让它忘记。`,
-          `${agentName()}'s long-term memory (L1, MEMORY.md${memoriesUpdated ? `, updated ${memoriesUpdated}` : ''}). Each day's working memory is sorted overnight by Dreaming and promoted here. Tap the trash can to make it forget.`,
+          `${agentName()} 的长期记忆（L1，MEMORY.md${memoriesUpdated ? `，${memoriesUpdated}更新` : ''}）。每日工作记忆经夜间 Dreaming 整理后晋升至此。点击垃圾桶图标可忘记对应条目。`,
+          `${agentName()}'s long-term memory (L1, MEMORY.md${memoriesUpdated ? `, updated ${memoriesUpdated}` : ''}). Each day's working memory is sorted overnight by Dreaming and promoted here. Tap the trash can to forget an item.`,
         )}
       </T>
       <MemoryList scope="main" />
@@ -167,7 +167,7 @@ export function ActivityScreen() {
     <Page title={L('活动记录', 'Activity')} refresh={['activity']}>
       <T v="callout" color={t.ink2} style={{ marginBottom: space.md }}>
         {L(
-          `${agentName()} 每一次回复（在哪、用了什么工具）、定时任务的结果，以及你在 app 里做的有后果的操作。Gateway 的审计只记元数据，不记内容。`,
+          `${agentName()} 的每次回复（位置及所用工具）、定时任务结果，以及你在 app 中执行的重要操作。Gateway 审计仅记录元数据，不记录内容。`,
           `Every reply from ${agentName()} (where, and which tools it used), scheduled job results, and consequential actions you took in the app. The Gateway audit log keeps metadata only, not content.`,
         )}
       </T>
@@ -198,21 +198,21 @@ export function SecurityScreen() {
   return (
     <Page title={L('安全', 'Security')} refresh={['security']}>
       <T v="callout" color={t.ink2} style={{ marginBottom: space.md }}>{L(
-        '下面是服务器上的实测状态。安全措施没建好之前，发邮件以上级别的代办能力不会开放。',
+        '以下为服务器上的实测状态。安全措施完成之前，发送邮件及以上级别的代办能力不会开放。',
         'Below is the live status from the server. Until the safeguards below are built, acting on your behalf (sending email or anything bigger) stays off.',
       )}</T>
       <Status k="security" empty={!security} />
       {security ? (
         <>
-          <SectionLabel>{L('现在的状态', 'Current status')}</SectionLabel>
+          <SectionLabel>{L('当前状态', 'Current status')}</SectionLabel>
           <Card style={{ paddingVertical: space.xs }}>
             {security.facts.map((r, i) => <ListRow key={r.title} title={r.title} sub={r.sub} right={<Pill label={r.state} tone={r.tone} />} last={i === security.facts.length - 1} />)}
           </Card>
-          <SectionLabel>{L('还没做的安全措施', 'Security still to build')}</SectionLabel>
+          <SectionLabel>{L('待完成的安全措施', 'Planned safeguards')}</SectionLabel>
           <Card style={{ paddingVertical: space.xs }}>
             {security.plan.map((r, i) => <ListRow key={r.title} title={r.title} sub={r.sub} right={<Pill label={L('计划', 'Planned')} />} last={i === security.plan.length - 1} />)}
           </Card>
-          <SectionLabel>{L('代办能力的审批规则（计划，还没生效）', 'Approval rules for acting on your behalf (planned, not in effect yet)')}</SectionLabel>
+          <SectionLabel>{L('代办能力的审批规则（计划中，尚未生效）', 'Approval rules for acting on your behalf (planned, not in effect yet)')}</SectionLabel>
           <Card style={{ paddingVertical: space.xs }}>
             {security.rules.map(([k, v], i) => <ListRow key={k} title={k} right={<T v="callout" color={t.ink2}>{v}</T>} last={i === security.rules.length - 1} />)}
           </Card>
@@ -252,7 +252,7 @@ export function ModelsScreen() {
           {(models?.allowed ?? []).map((id, i, all) => <ListRow key={id} title={id} sub={i === 0 ? L('默认', 'Default') : undefined} last={i === all.length - 1} />)}
         </Card>
         <T v="caption" color={t.ink3} style={{ marginTop: space.sm, paddingHorizontal: space.xs }}>{L(
-          `模型、回退和计费由 ${claw.name} 自己管，在它那边改。app 里能切换的模型在服务器的 server.json（claw 段的 models）里配。`,
+          `模型、回退和计费由 ${claw.name} 自行管理，请在其配置中修改。app 中可切换的模型在服务器 server.json 的 claw 段（models）中配置。`,
           `${claw.name} handles models, fallbacks and billing itself; change them there. The models the app can switch between are set in server.json on the server (models in the claw section).`,
         )}</T>
       </Page>
@@ -274,12 +274,12 @@ export function ModelsScreen() {
               ))}
             </View>
             <T v="callout" color={t.ink2} style={{ marginTop: space.md }}>{L(
-              `默认 ${name(models.primary)}。前一个登录失效或额度用尽时自动换下一个，回复上标的是实际回答的模型。`,
+              `默认为 ${name(models.primary)}。前一个模型登录失效或额度用尽时自动切换到下一个，每条回复标注实际作答的模型。`,
               `Default: ${name(models.primary)}. If one's login lapses or its quota runs out, the next takes over; each reply shows the model that actually answered.`,
             )}</T>
           </Card>
-          <SectionLabel>{L('派出去的任务', 'Tasks sent out')}</SectionLabel>
-          <Card><T v="callout">{L(`默认 ${name(models.subagent)}，派活时可以换。`, `Default: ${name(models.subagent)}. You can switch when sending a task.`)}</T></Card>
+          <SectionLabel>{L('委派任务', 'Delegated tasks')}</SectionLabel>
+          <Card><T v="callout">{L(`默认为 ${name(models.subagent)}，委派任务时可切换。`, `Default: ${name(models.subagent)}. You can switch when sending a task.`)}</T></Card>
 
           <SectionLabel>{L('登录与计费', 'Sign-in & billing')}</SectionLabel>
           <Card style={{ paddingVertical: space.xs }}>
@@ -289,19 +289,19 @@ export function ModelsScreen() {
               // expires 是 OpenClaw 的短标签：30m / 5h / 30d（天数至少 2）
               const sub = ok
                 ? L(`${note}，登录有效${p.expires ? `，${p.expires.replace('d', ' 天')}后到期` : ''}。`, `${note}, signed in${p.expires ? `, expires in ${p.expires.replace('d', ' days')}` : ''}.`)
-                : L(`${note}的登录过期了。请求还能用，但会退到 API key 按量计费。`, `${note} login expired. Requests still work but fall back to pay-as-you-go API key billing.`);
+                : L(`${note}登录已过期。请求仍可正常发送，但将改用 API key 按量计费。`, `${note} login expired. Requests still work but fall back to pay-as-you-go API key billing.`);
               return <ListRow key={p.provider} title={providerLabel(p.provider) ?? p.name} sub={sub} right={<Pill label={ok ? L('正常', 'OK') : L('已过期', 'Expired')} tone={ok ? 'good' : 'warn'} />} last={i === subs.length - 1 && !keyed.length} />;
             })}
             {keyed.length ? <ListRow title={L('API key 按量计费', 'Pay-as-you-go API key')} sub={keyed.join(L('、', ', '))} last /> : null}
           </Card>
           {expired.map((p) => (
             <Card key={p.provider} style={{ marginTop: space.sm, gap: 6 }}>
-              <T v="callout" color={t.warn}>{L(`重新登录 ${providerLabel(p.provider) ?? p.name}：在服务器上运行`, `To sign in to ${providerLabel(p.provider) ?? p.name} again, run this on the server:`)}</T>
+              <T v="callout" color={t.warn}>{L(`如需重新登录 ${providerLabel(p.provider) ?? p.name}，请在服务器上运行：`, `To sign in to ${providerLabel(p.provider) ?? p.name} again, run this on the server:`)}</T>
               <T v="callout" selectable style={{ fontFamily: 'Menlo' }}>openclaw models auth login --provider {p.provider} --device-code</T>
             </Card>
           ))}
 
-          <SectionLabel>{L(`能选的模型（${allowed.length}）`, `Available models (${allowed.length})`)}</SectionLabel>
+          <SectionLabel>{L(`可选模型（${allowed.length}）`, `Available models (${allowed.length})`)}</SectionLabel>
           <Card style={{ paddingVertical: space.xs }}>
             {allowed.map((m, i) => (
               <ListRow key={m.id} title={m.name} sub={m.note} last={i === allowed.length - 1}
@@ -309,7 +309,7 @@ export function ModelsScreen() {
             ))}
           </Card>
           <T v="caption" color={t.ink3} style={{ marginTop: space.sm, paddingHorizontal: space.xs }}>{L(
-            `只列 Gateway 允许列表里、并且 app 认识的模型。允许列表一共 ${models.allowed.length} 个，在 openclaw.json 里改。`,
+            `仅列出 Gateway 允许列表中且 app 可识别的模型。允许列表共 ${models.allowed.length} 个，可在 openclaw.json 中修改。`,
             `Only models on the Gateway allowlist that the app knows about. The allowlist has ${models.allowed.length} in total; edit it in openclaw.json.`,
           )}</T>
         </>
@@ -358,7 +358,7 @@ export function AvatarScreen() {
       <Swatches colors={RINGS} value={avatar.ring} onPick={(c) => setAvatar({ ring: c })} label={L('光环颜色', 'Halo color')} />
       <SectionLabel>{L('数据流', 'Data stream')}</SectionLabel>
       <Swatches colors={STREAMS} value={avatar.stream} onPick={(c) => setAvatar({ stream: c })} label={L('数据流颜色', 'Data stream color')} />
-      <T v="caption" color={t.ink3} style={{ marginTop: space.lg }}>{L('存在服务器上，换设备也一样。', 'Saved on the server, so it looks the same on every device.')}</T>
+      <T v="caption" color={t.ink3} style={{ marginTop: space.lg }}>{L('保存在服务器上，所有设备保持一致。', 'Saved on the server, so it looks the same on every device.')}</T>
     </Page>
   );
 }

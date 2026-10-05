@@ -38,7 +38,7 @@ export function ConnectScreen() {
   }
 
   const finish = async (appName: string) => {
-    setMsg({ text: L(`连上了：${appName}`, `Connected to ${appName}`), ok: true });
+    setMsg({ text: L(`已连接：${appName}`, `Connected to ${appName}`), ok: true });
     // 记进「我的 claw」（令牌存本机钥匙串）和账号（只记名字和地址，不记令牌）
     await rememberClaw({ base: getBase(), token: getToken(), name: appName }).catch(() => null);
     syncClaw({ base: getBase(), name: appName }).catch(() => {});
@@ -51,8 +51,8 @@ export function ConnectScreen() {
   const pair = async () => {
     const p = parsePairing(pairText);
     const server = (p.server || base).trim();
-    if (!p.code) { setMsg({ text: L('配对码是 8 位字母数字，或者整条 openmousse://pair 链接', 'A pairing code is 8 letters and digits, or the whole openmousse://pair link'), ok: false }); return; }
-    if (!server) { setMsg({ text: L('先填服务器地址', 'Enter the server address first.'), ok: false }); return; }
+    if (!p.code) { setMsg({ text: L('配对码应为 8 位字母和数字，或完整的 openmousse://pair 链接', 'A pairing code is 8 letters and digits, or the full openmousse://pair link'), ok: false }); return; }
+    if (!server) { setMsg({ text: L('请先填写服务器地址', 'Enter the server address first.'), ok: false }); return; }
     setBusy(true); setMsg(null);
     const device = Platform.OS === 'web' ? 'web' : (Device.deviceName || Device.modelName || Platform.OS);
     const r = await pairWithCode(server, p.code, device);
@@ -62,7 +62,7 @@ export function ConnectScreen() {
   };
 
   const connect = async () => {
-    if (!base.trim()) { setMsg({ text: L('先填服务器地址', 'Enter the server address first.'), ok: false }); return; }
+    if (!base.trim()) { setMsg({ text: L('请先填写服务器地址', 'Enter the server address first.'), ok: false }); return; }
     setBusy(true); setMsg(null);
     const r = await testServer(base, token);
     if (!r.ok) { setMsg({ text: r.message, ok: false }); setBusy(false); return; }
@@ -76,19 +76,19 @@ export function ConnectScreen() {
         right={connected && !adding ? <Pill label={L('已连接', 'Connected')} tone="good" /> : undefined} />
       <ScrollView contentContainerStyle={{ padding: space.lg, paddingBottom: space.xxl }} keyboardShouldPersistTaps="handled" automaticallyAdjustKeyboardInsets keyboardDismissMode="interactive">
         <T v="callout" color={t.ink2} style={{ marginBottom: space.md }}>
-          {L('这个 app 是一个壳，所有对话、记忆和数据都在你自己的服务器上。点你的 claw 发来的配对链接，或者填服务器地址和接入令牌，就能用。',
+          {L('此 app 是客户端，所有对话、记忆和数据都保存在你自己的服务器上。点击 claw 发来的配对链接，或填写服务器地址和接入令牌，即可开始使用。',
             'This app connects to your own server, where all your chats, memory and data live. Tap the pairing link your claw sent you, or enter the server address and access token, to get started.')}
         </T>
         {/* 还没连上时才有用：没有服务器的人从这里去看怎么装 */}
         {connected ? null : (
-          <Pressable onPress={() => { Linking.openURL(GUIDE_URL).catch((e) => showError(L('打不开', "Couldn't open it"), e)); }} accessibilityRole="link" hitSlop={6} style={{ alignSelf: 'flex-start' }}>
-            <T v="callout" color={t.gold} style={{ fontWeight: '600' }}>{L('还没有服务器？看新手指南 →', 'No server yet? See the getting-started guide →')}</T>
+          <Pressable onPress={() => { Linking.openURL(GUIDE_URL).catch((e) => showError(L('无法打开', "Couldn't open it"), e)); }} accessibilityRole="link" hitSlop={6} style={{ alignSelf: 'flex-start' }}>
+            <T v="callout" color={t.gold} style={{ fontWeight: '600' }}>{L('尚无服务器？查看新手指南 →', 'No server yet? See the getting-started guide →')}</T>
           </Pressable>
         )}
         <SectionLabel>{L('配对码', 'Pairing code')}</SectionLabel>
         <T v="callout" color={t.ink2} style={{ marginBottom: 6 }}>
-          {L('你的 claw 替你装好以后会发来一条配对链接，点它就进到这里；也可以把链接或 8 位码粘贴在这里。',
-            'After your claw sets things up it sends you a pairing link; tapping it brings you here. You can also paste the link or the 8-character code.')}
+          {L('claw 完成安装后会发来一条配对链接，点击即可打开此页；也可以将链接或 8 位配对码粘贴到这里。',
+            'After your claw finishes setup it sends you a pairing link; tapping it opens this page. You can also paste the link or the 8-character code here.')}
         </T>
         <TextInput value={pairText} onChangeText={(v) => { setPairText(v); setMsg(null); const p = parsePairing(v); if (p.server) setBase(p.server); }}
           placeholder={L('openmousse://pair?… 或 8 位配对码', 'openmousse://pair?… or the 8-character code')}
@@ -96,8 +96,8 @@ export function ConnectScreen() {
           style={[type.body, styles.input, { backgroundColor: t.surface, color: t.ink }]} />
         {pairText.trim() ? (
           <View style={{ marginTop: space.md }}>
-            <T v="callout" color={t.ink2} style={{ marginBottom: 6 }}>{L(`会连到：${(parsePairing(pairText).server || base || '（先填下面的服务器地址）').trim()}`, `Will connect to: ${(parsePairing(pairText).server || base || '(enter the server address below)').trim()}`)}</T>
-            <Btn label={busy ? L('连接中…', 'Connecting…') : L('用配对码连接', 'Connect with the code')} onPress={() => !busy && pair()} />
+            <T v="callout" color={t.ink2} style={{ marginBottom: 6 }}>{L(`将连接到：${(parsePairing(pairText).server || base || '（先填下面的服务器地址）').trim()}`, `Will connect to: ${(parsePairing(pairText).server || base || '(enter the server address below)').trim()}`)}</T>
+            <Btn label={busy ? L('正在连接…', 'Connecting…') : L('使用配对码连接', 'Connect with code')} onPress={() => !busy && pair()} />
           </View>
         ) : null}
 
@@ -110,14 +110,14 @@ export function ConnectScreen() {
           placeholderTextColor={t.ink3} autoCapitalize="none" autoCorrect={false} secureTextEntry accessibilityLabel={L('接入令牌', 'Access token')}
           style={[type.body, styles.input, { backgroundColor: t.surface, color: t.ink }]} />
         {msg ? <T v="callout" color={msg.ok ? t.good : t.bad} style={{ marginTop: 8 }}>{msg.text}</T> : null}
-        <View style={{ marginTop: space.xl }}><Btn label={busy ? L('连接中…', 'Connecting…') : L('连接', 'Connect')} onPress={() => !busy && connect()} /></View>
+        <View style={{ marginTop: space.xl }}><Btn label={busy ? L('正在连接…', 'Connecting…') : L('连接', 'Connect')} onPress={() => !busy && connect()} /></View>
 
-        <SectionLabel>{L('怎么拿令牌', 'How to get a token')}</SectionLabel>
+        <SectionLabel>{L('获取令牌', 'How to get a token')}</SectionLabel>
         <Card>
-          <T v="callout" color={t.ink2}>{L('更省事的是配对码：在服务器上运行 tokens.py pair（或者让你的 claw 跑），手机扫码或点链接就行。要手填令牌的话，安装命令最后打印的「手机令牌」就是它。丢了的话，在服务器上运行：',
-            'Easier: a pairing code. Run tokens.py pair on your server (or ask your claw to), then scan the code or tap the link on the phone. To type a token instead, it\'s the phone token the install command printed at the end. Lost it? On your server run:')}</T>
+          <T v="callout" color={t.ink2}>{L('推荐使用配对码：在服务器上运行 tokens.py pair（或让你的 claw 运行），然后在手机上扫码或点击链接。如需手动填写令牌，请使用安装命令最后输出的「手机令牌」。如已丢失，在服务器上运行：',
+            'Recommended: a pairing code. Run tokens.py pair on your server (or ask your claw to), then scan the code or tap the link on the phone. To enter a token manually, it\'s the phone token printed at the end of the install command. If it is lost, run this on your server:')}</T>
           <T v="callout" selectable style={{ fontFamily: 'monospace', marginVertical: 6 }}>~/.openmousse/venv/bin/python ~/.openmousse/repo/server/tokens.py add phone2</T>
-          <T v="callout" color={t.ink2}>{L('把打印出来的新令牌填到上面。令牌存在这台设备的钥匙串里，不经过任何第三方。',
+          <T v="callout" color={t.ink2}>{L('将输出的新令牌填入上方。令牌保存在此设备的钥匙串中，不经过任何第三方。',
             "Paste the new token it prints into the field above. It's stored in this device's keychain and never passes through a third party.")}</T>
         </Card>
       </ScrollView>

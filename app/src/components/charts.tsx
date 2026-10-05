@@ -53,7 +53,7 @@ export function DayBars({ days, todayIndex, unit }: { days: { d: string; date: s
         const h = x.minutes > 0 ? Math.max(4, Math.round((x.minutes / max) * H)) : 2;
         return (
           <View key={x.date} style={{ flex: 1, alignItems: 'center', gap: 4 }} accessible
-            accessibilityLabel={`${weekdayName(x.d)}${x.minutes > 0 ? ` ${x.label} ${x.minutes} ${unit}` : L(' 没练', ' rest')}`}>
+            accessibilityLabel={`${weekdayName(x.d)}${x.minutes > 0 ? ` ${x.label} ${x.minutes} ${unit}` : L(' 未训练', ' rest')}`}>
             <View style={{ height: H, justifyContent: 'flex-end' }}>
               <View style={{ width: 14, height: h, borderRadius: x.minutes > 0 ? 4 : 1, backgroundColor: x.minutes > 0 ? (today ? t.cyan : t.chartA) : t.track }} />
             </View>

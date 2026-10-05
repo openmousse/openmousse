@@ -25,7 +25,7 @@ const ICONS: Record<string, typeof Plug> = {
   server: Server,
 };
 
-const statusWord = (s: Connector['status']) => ({ ok: L('在用', 'Working'), warn: L('要注意', 'Needs a look'), off: L('没接', 'Not connected') })[s];
+const statusWord = (s: Connector['status']) => ({ ok: L('正常', 'Working'), warn: L('需关注', 'Needs attention'), off: L('未连接', 'Not connected') })[s];
 const dotTone = (s: Connector['status']) => (s === 'ok' ? 'good' : s === 'warn' ? 'warn' : 'off') as 'good' | 'warn' | 'off';
 const zh = () => L('zh', 'en') === 'zh';
 
@@ -51,13 +51,13 @@ function ConnectorSheet({ c, close, go }: { c: Connector; close: () => void; go:
       ) : null}
       {c.uses ? (
         <View style={{ gap: 4 }}>
-          <T v="label" color={t.ink3} style={{ textTransform: 'uppercase' }}>{L('它用来做什么', 'What it does')}</T>
+          <T v="label" color={t.ink3} style={{ textTransform: 'uppercase' }}>{L('用途', 'What it does')}</T>
           <T v="callout">{c.uses}</T>
         </View>
       ) : null}
       {c.fix ? (
         <View style={[styles.fix, { backgroundColor: c.status === 'warn' ? t.warnSoft : t.surface }]}>
-          <T v="label" color={c.status === 'warn' ? t.warn : t.ink3} style={{ textTransform: 'uppercase' }}>{L('怎么修', 'How to fix it')}</T>
+          <T v="label" color={c.status === 'warn' ? t.warn : t.ink3} style={{ textTransform: 'uppercase' }}>{L('修复方法', 'How to fix it')}</T>
           <T v="callout" selectable>{c.fix}</T>
         </View>
       ) : null}
@@ -93,11 +93,11 @@ export function ConnectorsScreen() {
   const data = connectors?.kind === 'ok' ? connectors.data : null;
   let state: string | null = null;
   if (!data) {
-    if (booting) state = L('正在连服务器…', 'Connecting to the server…');
-    else if (!connected) state = L('没连上服务器。检查「设置 → 我的 claw」后下拉刷新。', 'Not connected to the server. Check Settings → My claws, then pull down to refresh.');
-    else if (dataErrors.connectors) state = L(`读不到：${dataErrors.connectors}`, `Couldn't load: ${dataErrors.connectors}`);
+    if (booting) state = L('正在连接服务器…', 'Connecting to the server…');
+    else if (!connected) state = L('未连接服务器。请检查「设置 → 我的 claw」后下拉刷新。', 'Not connected to the server. Check Settings → My claws, then pull down to refresh.');
+    else if (dataErrors.connectors) state = L(`无法加载：${dataErrors.connectors}`, `Couldn't load: ${dataErrors.connectors}`);
     else if (connectors?.kind === 'unsupported') state = null;
-    else if (loading.connectors || !connectors) state = L('正在查…', 'Checking…');
+    else if (loading.connectors || !connectors) state = L('正在检查…', 'Checking…');
   }
 
   const installed = apps?.apps ?? [];
@@ -127,7 +127,7 @@ export function ConnectorsScreen() {
             ) : null}
             {recommended.length ? (
               <>
-                <GroupLabel>{installed.length ? L('推荐', 'Suggested') : L('连一个试试', 'Try connecting one')}</GroupLabel>
+                <GroupLabel>{installed.length ? L('推荐', 'Suggested') : L('可连接的服务', 'Available connectors')}</GroupLabel>
                 <Group>
                   {recommended.map((c, i) => (
                     <Row key={c.id} first={i === 0} icon={<AppTile a={c} />} title={c.name} sub={descOf(c.desc, zh()) || undefined} chevron={false}
@@ -140,8 +140,8 @@ export function ConnectorsScreen() {
               <Row first title={L('查看全部连接器', 'Browse all connectors')} onPress={() => nav.navigate('AppGallery')} />
               <Row title={L('自定义连接器', 'Custom connector')} value={L('MCP 地址', 'MCP address')} onPress={() => nav.navigate('CustomApp')} />
             </Group>
-            <GroupNote>{L(`数字是能用的工具数。令牌存在 ${appName} 上；每个工具可以设成自动、先问我或关。`,
-              `The number is how many tools it offers. Tokens are kept on ${appName}; each tool can be Auto, Ask me or Off.`)}</GroupNote>
+            <GroupNote>{L(`数字为可用工具数。令牌保存在 ${appName} 上；每个工具可设为自动、需确认或关闭。`,
+              `The number is how many tools it offers. Tokens are stored on ${appName}; each tool can be set to Auto, Ask me or Off.`)}</GroupNote>
           </>
         ) : appsErr ? <T v="callout" color={t.bad} style={{ margin: space.lg }}>{appsErr}</T> : !appsOld && connected ? <ActivityIndicator style={{ marginTop: space.lg }} color={t.ink3} /> : null}
 
@@ -150,8 +150,8 @@ export function ConnectorsScreen() {
           <>
             {apps ? (
               <View style={{ marginTop: 34, marginHorizontal: space.lg + 4, paddingTop: 18, borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: t.line, gap: 4 }}>
-                <T v="headline">{L(`${agentName()} 本来就接着的`, `What ${agentName()} is already hooked up to`)}</T>
-                <T v="caption" color={t.ink3} style={{ fontWeight: '400' }}>{L('数据来源、渠道和通知现在怎么样；点一项看怎么修。', "Data sources, channels and notifications and how they're doing; tap one to see how to fix it.")}</T>
+                <T v="headline">{L(`${agentName()} 已有的连接`, `${agentName()}'s existing connections`)}</T>
+                <T v="caption" color={t.ink3} style={{ fontWeight: '400' }}>{L('数据来源、渠道和通知的当前状态；点击条目查看修复方法。', 'Current status of data sources, channels and notifications; tap an item to see how to fix it.')}</T>
               </View>
             ) : null}
             {data.groups.map((g) => (
@@ -167,7 +167,7 @@ export function ConnectorsScreen() {
                 </Group>
               </View>
             ))}
-            {data.checkedAt ? <GroupNote>{L(`查于 ${data.checkedAt}，下拉重新查`, `Checked ${data.checkedAt}; pull down to check again`)}</GroupNote> : null}
+            {data.checkedAt ? <GroupNote>{L(`检查于 ${data.checkedAt}，下拉可重新检查`, `Checked ${data.checkedAt}; pull down to check again`)}</GroupNote> : null}
           </>
         ) : null}
       </ScrollView>

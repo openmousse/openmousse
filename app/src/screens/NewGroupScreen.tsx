@@ -69,8 +69,8 @@ function NewGroupForm() {
 
   const create = () => {
     if (busy) return;
-    if (!name.trim()) { setErr(L('先给这个 Agent 起个名字', 'Give this agent a name first'), 'name'); return; }
-    if (!connected) { setErr(L('没连上服务器，建不了', "Not connected to the server, can't create it")); return; }
+    if (!name.trim()) { setErr(L('请先为此 Agent 命名', 'Give this Agent a name first'), 'name'); return; }
+    if (!connected) { setErr(L('未连接服务器，无法创建', "Not connected to the server, can't create it")); return; }
     setBusy('create');
     const study = example === 'study';
     addGroup({ name: name.trim(), purpose: purpose.trim(), icon, color, modelId, ...(study ? { template: 'study' } : {}) })
@@ -81,7 +81,7 @@ function NewGroupForm() {
   // 还没想好：开一个项目，把想法发过去，跳到那个项目里接着聊
   const talk = () => {
     if (busy) return;
-    if (!connected) { setErr(L('没连上服务器，开不了', "Not connected to the server, can't open it"), 'talk'); return; }
+    if (!connected) { setErr(L('未连接服务器，无法创建项目', "Not connected to the server, can't open a project"), 'talk'); return; }
     const n = name.trim();
     const p = purpose.trim();
     setBusy('talk');
@@ -96,18 +96,18 @@ function NewGroupForm() {
 
   return (
     <Screen>
-      <NavHeader title={L('新建 Agent', 'New agent')} onBack={() => nav.goBack()} />
+      <NavHeader title={L('新建 Agent', 'New Agent')} onBack={() => nav.goBack()} />
       <ScrollView contentContainerStyle={{ padding: space.lg, paddingTop: space.xl, paddingBottom: space.xxl }} keyboardShouldPersistTaps="handled" automaticallyAdjustKeyboardInsets keyboardDismissMode="interactive">
         {/* 预览：改名字、职责、颜色、图标，这里跟着变 */}
         <View style={styles.preview} accessible accessibilityLabel={L(`预览：${name.trim() || '还没起名'}`, `Preview: ${name.trim() || 'no name yet'}`)}>
           <GroupBadge icon={icon} color={color} size={64} />
           <View style={{ flex: 1, gap: 2 }}>
-            <T v="title" numberOfLines={1} color={name.trim() ? t.ink : t.ink3} style={{ fontWeight: '700' }}>{name.trim() || L('还没起名', 'No name yet')}</T>
-            <T v="callout" color={t.ink3} numberOfLines={2} style={{ fontSize: 13, lineHeight: 18 }}>{purpose.trim() || L('还没写它负责什么', "What it does isn't written yet")}</T>
+            <T v="title" numberOfLines={1} color={name.trim() ? t.ink : t.ink3} style={{ fontWeight: '700' }}>{name.trim() || L('未命名', 'No name yet')}</T>
+            <T v="callout" color={t.ink3} numberOfLines={2} style={{ fontSize: 13, lineHeight: 18 }}>{purpose.trim() || L('尚未填写职责', 'No description yet')}</T>
           </View>
         </View>
 
-        <SectionLabel>{L('从例子开始', 'Start from an example')}</SectionLabel>
+        <SectionLabel>{L('从示例开始', 'Start from an example')}</SectionLabel>
         <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: space.sm }}>
           {EXAMPLES().map((ex) => {
             const on = example === ex.key;
@@ -123,31 +123,31 @@ function NewGroupForm() {
           <View style={[styles.studyNote, { backgroundColor: t.cyanSoft }]}>
             <BookOpen size={18} color={t.cyan} />
             <View style={{ flex: 1, gap: 2 }}>
-              <T v="headline" style={{ fontSize: 14 }}>{L('带学习台', 'Comes with the study desk')}</T>
-              <T v="callout" color={t.ink2} style={{ fontSize: 13, lineHeight: 18 }}>{L('建好就有学习台：加课，每一节有学习页、学习路线、闪卡和小测。手机上复习做题，电脑上课件和学习页并排看。',
-                'Add courses; every session gets study notes, a study path, flashcards and a quiz. Review on the phone; slides and notes side by side on a computer.')}</T>
+              <T v="headline" style={{ fontSize: 14 }}>{L('附带学习台', 'Includes the study desk')}</T>
+              <T v="callout" color={t.ink2} style={{ fontSize: 13, lineHeight: 18 }}>{L('创建后即附带学习台：添加课程后，每节课都有学习页、学习路线、闪卡和小测。可在手机上复习做题，在电脑上并排查看课件和学习页。',
+                'Add courses; every session gets study notes, a study path, flashcards and a quiz. Review on your phone; view slides and notes side by side on a computer.')}</T>
             </View>
           </View>
         ) : null}
 
-        <SectionLabel>{L('名字', 'Name')}</SectionLabel>
-        <TextInput value={name} onChangeText={(v) => { setName(v); setErr(''); }} placeholder={L('比如：睡眠', 'e.g. Sleep')} placeholderTextColor={t.ink3}
-          accessibilityLabel={L('Agent 名字', 'Agent name')} style={[type.body, styles.input, { backgroundColor: t.surface, color: t.ink }]} />
+        <SectionLabel>{L('名称', 'Name')}</SectionLabel>
+        <TextInput value={name} onChangeText={(v) => { setName(v); setErr(''); }} placeholder={L('例如：睡眠', 'e.g. Sleep')} placeholderTextColor={t.ink3}
+          accessibilityLabel={L('Agent 名称', 'Agent name')}style={[type.body, styles.input, { backgroundColor: t.surface, color: t.ink }]} />
         {err.text && err.at === 'name' ? <T v="callout" color={t.bad} style={{ marginTop: 6 }}>{err.text}</T> : null}
 
-        <SectionLabel>{L('它负责什么', 'What it does')}</SectionLabel>
+        <SectionLabel>{L('职责', 'What it does')}</SectionLabel>
         <TextInput value={purpose} onChangeText={setPurpose} multiline
-          placeholder={L('一两句话说清职责。比如：记录每晚几点睡、几点起，找规律，提醒我别熬夜。', 'Its job in a sentence or two. E.g. Log when I fall asleep and wake up, spot patterns, remind me not to stay up late.')}
+          placeholder={L('用一两句话描述职责。例如：记录每晚的入睡和起床时间，分析规律，提醒我按时休息。', 'Its job in a sentence or two. E.g. Log when I fall asleep and wake up, spot patterns, remind me not to stay up late.')}
           placeholderTextColor={t.ink3} accessibilityLabel={L('Agent 职责', 'Agent purpose')}
           style={[type.body, styles.input, { backgroundColor: t.surface, color: t.ink, minHeight: 96, textAlignVertical: 'top' }]} />
         <Pressable onPress={talk} disabled={!!busy} accessibilityRole="button" accessibilityState={{ busy: busy === 'talk' }}
           style={({ pressed }) => [styles.talk, { backgroundColor: t.goldSoft, opacity: pressed || busy === 'talk' ? 0.7 : 1 }]}>
           <View style={[styles.talkIcon, { backgroundColor: t.surface }]}><MessageCircle size={18} color={t.gold} /></View>
           <View style={{ flex: 1, gap: 2 }}>
-            <T v="headline" style={{ fontSize: 15, fontWeight: '700' }}>{busy === 'talk' ? L('正在开一个项目…', 'Opening a project…') : L('还没想好？先聊聊', 'Not sure yet? Talk it through')}</T>
+            <T v="headline" style={{ fontSize: 15, fontWeight: '700' }}>{busy === 'talk' ? L('正在创建项目…', 'Creating a project…') : L('尚未确定？先讨论方案', 'Not sure yet? Talk it through')}</T>
             <T v="callout" color={t.ink2} style={{ fontSize: 13, lineHeight: 19 }}>{L(
-              `开一个项目，和 ${agentName()} 一起想清楚它管什么、记什么、看板放什么。想好了它出方案，你点头就建好。`,
-              `Opens a project where you and ${agentName()} work out what it looks after, what it keeps track of and what goes on its dashboard. Then it drafts a plan, and the agent is built once you approve.`,
+              `创建一个项目，与 ${agentName()} 一起明确它的职责、记录内容和看板布局。方案确定后，经你确认即可创建。`,
+              `Opens a project where you and ${agentName()} work out what it looks after, what it tracks and what goes on its dashboard. It then drafts a plan, and the Agent is created once you approve.`,
             )}</T>
           </View>
           <ChevronRight size={16} color={t.gold} />
@@ -159,11 +159,11 @@ function NewGroupForm() {
         <SectionLabel>{L('默认模型', 'Default model')}</SectionLabel>
         <ModelField value={modelId} onChange={setModelId} />
         <T v="callout" color={t.ink3} style={{ marginTop: 6, paddingHorizontal: space.xs }}>{L(
-          '默认跟主对话一样。记录类的 Agent 用省钱的就够；需要规划和判断的用贵的。进对话后随时能换。',
-          'Same as the main chat by default. A cheap model is enough for logging agents; use a pricier one for planning and judgment. You can switch anytime in the chat.',
+          '默认与主对话相同。记录类 Agent 使用低成本模型即可；需要规划和判断的建议使用高成本模型。进入对话后可随时切换。',
+          'Same as the main chat by default. A low-cost model is enough for logging Agents; use a higher-cost one for planning and judgment. You can switch at any time in the chat.',
         )}</T>
 
-        <View style={{ marginTop: space.xl }}><Btn label={busy === 'create' ? L('创建中…', 'Creating…') : L('创建', 'Create')} onPress={create} /></View>
+        <View style={{ marginTop: space.xl }}><Btn label={busy === 'create' ? L('正在创建…', 'Creating…') : L('创建', 'Create')} onPress={create} /></View>
         {err.text && err.at === 'create' ? <T v="callout" color={t.bad} style={{ marginTop: 6 }}>{err.text}</T> : null}
       </ScrollView>
     </Screen>

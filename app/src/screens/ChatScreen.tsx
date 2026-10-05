@@ -27,22 +27,22 @@ function SideChatMenu({ chat, close, onDeleted, onArchive }: { chat: SideChat; c
   const { renameSideChat, restoreProject, archiveSideChat, deleteSideChat } = useStore();
   const [title, setTitle] = useState(chat.title);
   const [confirm, setConfirm] = useState(false);
-  const run = (p: Promise<void>, after?: () => void) => p.then(() => { after?.(); close(); }).catch((e) => Alert.alert(L('没做成', "Couldn't do that"), e instanceof Error ? e.message : String(e)));
+  const run = (p: Promise<void>, after?: () => void) => p.then(() => { after?.(); close(); }).catch((e) => Alert.alert(L('操作失败', "Couldn't complete the action"), e instanceof Error ? e.message : String(e)));
   return (
     <View style={{ gap: space.md }}>
       <View style={{ flexDirection: 'row', gap: space.sm, alignItems: 'center' }}>
-        <TextInput value={title} onChangeText={setTitle} accessibilityLabel={L('项目名字', 'Project name')} style={[type.body, styles.input, { flex: 1, backgroundColor: t.surface, color: t.ink }]} />
-        <Btn label={L('改名', 'Rename')} kind="quiet" icon={<Pencil size={14} color={t.ink} />} onPress={() => { if (title.trim()) run(renameSideChat(chat.id, title.trim())); }} />
+        <TextInput value={title} onChangeText={setTitle} accessibilityLabel={L('项目名称', 'Project name')} style={[type.body, styles.input, { flex: 1, backgroundColor: t.surface, color: t.ink }]} />
+        <Btn label={L('重命名', 'Rename')} kind="quiet" icon={<Pencil size={14} color={t.ink} />} onPress={() => { if (title.trim()) run(renameSideChat(chat.id, title.trim())); }} />
       </View>
       {chat.archived
         ? <Btn label={L('恢复到侧栏', 'Restore to sidebar')} kind="quiet" icon={<ArchiveRestore size={16} color={t.ink} />}
             onPress={() => run(restoreProject(chat.id).catch(() => archiveSideChat(chat.id, false)))} />
         : <Btn label={L('归档…', 'Archive…')} kind="quiet" icon={<Archive size={16} color={t.ink} />} onPress={() => { close(); onArchive(); }} />}
-      <T v="caption" color={t.ink3}>{L('归档：先让它写一份结论存进记忆，再从侧栏收进「已归档」。对话记录都在，可以恢复。', 'Archive: it first writes a summary into memory, then moves the project into "Archived". The conversation is kept and you can restore it.')}</T>
+      <T v="caption" color={t.ink3}>{L('归档：Agent 先撰写一份结论存入记忆，再将项目移入侧栏的「已归档」。对话记录会保留，可以恢复。', 'Archive: the Agent first writes a summary into memory, then moves the project into "Archived". The conversation is kept and you can restore it.')}</T>
       {confirm
         ? <Btn label={L('确认删除对话记录', 'Confirm: delete the conversation')} kind="danger" icon={<Trash2 size={16} color={t.bad} />} onPress={() => run(deleteSideChat(chat.id), onDeleted)} />
         : <Btn label={L('删除', 'Delete')} kind="danger" icon={<Trash2 size={16} color={t.bad} />} onPress={() => setConfirm(true)} />}
-      <T v="caption" color={t.ink3}>{L(`删除：app 里的记录和项目卡删掉（它的截止也从日程里拿掉），${agentName()} 那边的会话也删掉（OpenClaw 会压缩存档一份）。活动记录里留一行。`, `Delete: removes the conversation and the project card (its deadlines leave your schedule) and ${agentName()}'s session too (OpenClaw keeps a compressed archive copy). One line stays in Activity.`)}</T>
+      <T v="caption" color={t.ink3}>{L(`删除：移除 app 中的记录和项目卡（截止日期一并从日程中移除），同时删除 ${agentName()} 端的会话（OpenClaw 会保留一份压缩存档）。活动记录中保留一行。`, `Delete: removes the conversation and the project card (its deadlines leave your schedule) and ${agentName()}'s session too (OpenClaw keeps a compressed archive copy). One line stays in Activity.`)}</T>
     </View>
   );
 }
@@ -91,7 +91,7 @@ function DrawerSection({ title, right, count, limit = 3, defaultOpen = true, emp
           {hidden > 0 ? (
             <Pressable onPress={() => setAll(true)} accessibilityRole="button" style={({ pressed }) => [styles.row, { opacity: pressed ? 0.6 : 1 }]}>
               <View style={{ width: 28 }} />
-              <T v="caption" color={t.gold}>{L(`还有 ${hidden} 个`, `${hidden} more`)}</T>
+              <T v="caption" color={t.gold}>{L(`另有 ${hidden} 个`, `${hidden} more`)}</T>
             </Pressable>
           ) : all && rows.length > limit ? (
             <Pressable onPress={() => setAll(false)} accessibilityRole="button" style={({ pressed }) => [styles.row, { opacity: pressed ? 0.6 : 1 }]}>
@@ -132,10 +132,10 @@ function Drawer({ active, onPick, onClose }: { active: string; onPick: (id: stri
           <T v="headline" style={{ flex: 1 }}>{`${agentName()}`}</T>
         </View>
         <ScrollView showsVerticalScrollIndicator={false}>
-          <DrawerRow icon={<LensAvatar size={20} config={avatar} />} label={L('主对话', 'Main chat')} sub={L('接待台，只放人话', 'Front desk, plain talk only')} on={active === 'main'} unread={n('main')} onPress={() => pick('main')} />
+          <DrawerRow icon={<LensAvatar size={20} config={avatar} />} label={L('主对话', 'Main chat')} sub={L('接待台 · 日常对话', 'Front desk for everyday conversation')} on={active === 'main'} unread={n('main')} onPress={() => pick('main')} />
 
-          <DrawerSection title={L('项目', 'Projects')} count={live.length} empty={L('持续几天、有截止的事，给它开一个。', 'Open one for anything with a goal and deadlines.')}
-            right={<Pressable onPress={() => { onClose(); sheet.open({ title: L('开一个项目', 'New project'), content: (close) => <NewProjectSheet close={close} onCreated={onPick} /> }); }} hitSlop={8} accessibilityRole="button" accessibilityLabel={L('开一个项目', 'New project')}><Plus size={16} color={t.gold} /></Pressable>}>
+          <DrawerSection title={L('项目', 'Projects')} count={live.length} empty={L('适用于持续多日、有截止日期的事项。', 'Open one for anything with a goal and deadlines.')}
+            right={<Pressable onPress={() => { onClose(); sheet.open({ title: L('新建项目', 'New project'), content: (close) => <NewProjectSheet close={close} onCreated={onPick} /> }); }} hitSlop={8} accessibilityRole="button" accessibilityLabel={L('新建项目', 'New project')}><Plus size={16} color={t.gold} /></Pressable>}>
             {live.map((c) => (
               <DrawerRow key={c.id} icon={<FolderKanban size={18} color={active === c.id ? t.gold : t.cyan} />} label={c.title}
                 sub={c.next !== undefined ? projectLine(c) : c.lastLine} subTone={c.next && c.next.left != null && c.next.left <= 3 ? 'warn' : undefined}
@@ -145,21 +145,21 @@ function Drawer({ active, onPick, onClose }: { active: string; onPick: (id: stri
           </DrawerSection>
 
           <DrawerSection title="Agents" count={groups.length}
-            right={<Pressable onPress={() => { onClose(); nav.navigate('Tabs', { screen: 'Agents' }); }} hitSlop={8} accessibilityRole="button" accessibilityLabel={L('全部 Agents', 'All agents')}><LayoutGrid size={15} color={t.gold} /></Pressable>}>
+            right={<Pressable onPress={() => { onClose(); nav.navigate('Tabs', { screen: 'Agents' }); }} hitSlop={8} accessibilityRole="button" accessibilityLabel={L('全部 Agent', 'All Agents')}><LayoutGrid size={15} color={t.gold} /></Pressable>}>
             {groups.map((g) => (
               <DrawerRow key={g.id} icon={<GroupBadge icon={g.icon} color={g.color} size={22} />} label={g.name} sub={g.lastLine} unread={n(g.id)} onPress={() => { onClose(); nav.navigate('Group', { id: g.id }); }} />
             ))}
           </DrawerSection>
 
           {claw.caps.tasks ? <DrawerSection title={L('任务', 'Tasks')} count={running}>
-            {[<DrawerRow key="tasks" icon={<ClipboardList size={18} color={running ? t.cyan : t.ink3} />} label={running ? L(`${running} 个在跑`, `${running} running`) : L('任务', 'Tasks')} sub={L('派给谁、做到哪、怎么做的', "Who's on it, how far along, how it's done")} onPress={() => { onClose(); nav.navigate('Tasks'); }}
+            {[<DrawerRow key="tasks" icon={<ClipboardList size={18} color={running ? t.cyan : t.ink3} />} label={running ? L(`${running} 个运行中`, `${running} running`) : L('任务', 'Tasks')} sub={L('执行者、进度与过程', 'Assignee, progress and steps')} onPress={() => { onClose(); nav.navigate('Tasks'); }}
               right={running ? <Pill label={String(running)} tone="cyan" /> : undefined} />]}
           </DrawerSection> : null}
 
-          <DrawerSection title={L('已归档', 'Archived')} count={archived.length} defaultOpen={false} empty={L('还没有归档的项目。', 'No archived projects yet.')}>
+          <DrawerSection title={L('已归档', 'Archived')} count={archived.length} defaultOpen={false} empty={L('暂无已归档的项目。', 'No archived projects yet.')}>
             {archived.map((c) => (
               <DrawerRow key={c.id} icon={<Archive size={16} color={t.ink3} />} label={c.title}
-                sub={c.closing ? L('在写结论…', 'Writing the summary…') : c.hasSummary ? L('已归档 · 有结论', 'Archived · with summary') : L('项目 · 已归档', 'Project · Archived')} unread={n(c.id)} onPress={() => pick(c.id)}
+                sub={c.closing ? L('正在撰写结论…', 'Writing the summary…') : c.hasSummary ? L('已归档 · 有结论', 'Archived · with summary') : L('项目 · 已归档', 'Project · Archived')} unread={n(c.id)} onPress={() => pick(c.id)}
                 right={<Pressable onPress={() => menu(c)} hitSlop={8} accessibilityRole="button" accessibilityLabel={L(`${c.title} 的更多操作`, `More actions for ${c.title}`)}><Ellipsis size={18} color={t.ink3} /></Pressable>} />
             ))}
           </DrawerSection>
@@ -189,13 +189,13 @@ function WelcomeCard({ onStart, onDismiss }: { onStart: () => void; onDismiss: (
   const t = useTheme();
   return (
     <Card style={{ gap: space.sm }}>
-      <T v="headline">{L('从这里开始', 'Start here')}</T>
-      <T v="callout" color={t.ink2}>{L('一开始是空的。说说你想让它管什么，它就给你建一个 Agent。', 'It starts empty. Tell it what you want looked after, and it builds an Agent for you.')}</T>
-      <T v="callout" color={t.ink2}>{L('也可以先让它认识一下你。', 'It can also get to know you first.')}</T>
+      <T v="headline">{L('开始使用', 'Get started')}</T>
+      <T v="callout" color={t.ink2}>{L(`告诉 ${agentName()} 你希望它负责哪些事务，它会为你创建相应的 Agent。`, `Tell ${agentName()} what you want looked after, and it creates an Agent for you.`)}</T>
+      <T v="callout" color={t.ink2}>{L('也可以先让它了解你。', 'Or let it get to know you first.')}</T>
       {/* 上下排：英文的两个按钮并排放不下，手机字号调大也不会挤成两行 */}
       <View style={{ gap: space.sm, marginTop: space.xs }}>
-        <Btn label={L('带我走一遍', 'Walk me through it')} onPress={onStart} />
-        <Btn label={L('我自己来', "I'll explore myself")} kind="quiet" onPress={onDismiss} />
+        <Btn label={L('开始引导', 'Walk me through it')} onPress={onStart} />
+        <Btn label={L('自行探索', 'Explore on my own')} kind="quiet" onPress={onDismiss} />
       </View>
     </Card>
   );
@@ -241,7 +241,7 @@ export function ChatScreen() {
   const segBar = friendsOn ? (
     <View style={styles.segBar}>
       <Segmented<'grava' | 'friends'> value={mode} onChange={(v) => { Keyboard.dismiss(); setMode(v); }}
-        options={[{ value: 'grava', label: agentName() }, { value: 'friends', label: friendsN ? L(`朋友 · ${friendsN}`, `Friends · ${friendsN}`) : L('朋友', 'Friends') }]} />
+        options={[{ value: 'grava', label: agentName() }, { value: 'friends', label: friendsN ? L(`好友 · ${friendsN}`, `Friends · ${friendsN}`) : L('好友', 'Friends') }]} />
     </View>
   ) : null;
   if (friendsOn && mode === 'friends') {
@@ -264,9 +264,9 @@ export function ChatScreen() {
         <View style={{ flex: 1 }}>
           <T v="headline" numberOfLines={1}>{side ? side.title : `${agentName()}`}</T>
           {side
-            ? <T v="caption" color={t.ink3} numberOfLines={1}>{side.archived ? L('已归档 · ', 'Archived · ') : L('项目 · ', 'Project · ')}{side.next ? leftWords(side.next.left) : side.goal || side.purpose || L('自己的上下文', 'Its own context')}</T>
+            ? <T v="caption" color={t.ink3} numberOfLines={1}>{side.archived ? L('已归档 · ', 'Archived · ') : L('项目 · ', 'Project · ')}{side.next ? leftWords(side.next.left) : side.goal || side.purpose || L('独立上下文', 'Its own context')}</T>
             : <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
-                {connected ? <Pill lines={1} label={sharedChannels.length ? L(`与 ${sharedChannels.join('、')} 共用主会话`, `Main session, shared with ${sharedChannels.join(', ')}`) : L('主会话', 'Main session')} tone="good" /> : <Pressable onPress={() => nav.navigate('Connect')} accessibilityRole="button" accessibilityLabel={L('设置服务器', 'Set up server')} style={{ flexShrink: 1 }}><Pill lines={1} label={booting ? L('正在连接…', 'Connecting…') : L('未连接，点这里设置', 'Not connected, tap to set up')} tone="warn" /></Pressable>}
+                {connected ? <Pill lines={1} label={sharedChannels.length ? L(`与 ${sharedChannels.join('、')} 共用主会话`, `Main session, shared with ${sharedChannels.join(', ')}`) : L('主会话', 'Main session')} tone="good" /> : <Pressable onPress={() => nav.navigate('Connect')} accessibilityRole="button" accessibilityLabel={L('设置服务器', 'Set up server')} style={{ flexShrink: 1 }}><Pill lines={1} label={booting ? L('正在连接…', 'Connecting…') : L('未连接，点击设置', 'Not connected, tap to set up')} tone="warn" /></Pressable>}
               </View>}
         </View>
         <Pressable onPress={() => nav.navigate('History', { thread: active })} hitSlop={8} accessibilityRole="button" accessibilityLabel={L('历史与搜索', 'History and search')} style={styles.menuBtn}>
@@ -275,11 +275,11 @@ export function ChatScreen() {
         <ModelSwitch value={threadModel[active] ?? threadModel.main} onChange={(id) => setThreadModel(active, id)} />
       </View>
       {side ? <ProjectPanel key={`p-${active}`} id={active} /> : null}
-      <ChatView key={active} threadId={active} quote={quote} quoteAt={quote ? wantedAt : 0} focus={focus} focusAt={focus ? wantedAt : 0} placeholder={side ? L(`跟「${side.title}」说点什么`, `Message "${side.title}"`) : L(`跟 ${agentName()} 说点什么`, `Message ${agentName()}`)}
-        empty={side ? (side.archived ? L('已归档，今天没有新消息。以前的对话在历史里（右上角的日历）。', 'Archived; nothing new today. Earlier messages are in History (calendar icon, top right).')
-          : L('这个项目今天还没聊过。它每天会先看一遍上面的项目卡，接着昨天做。', 'Nothing here today yet. It reads the project card above first each day and picks up where it left off.'))
-          : sharedChannels.length ? L(`主对话和 ${sharedChannels.join('、')} 共用同一个会话，这里还没有 app 发出的消息。`, `The main chat shares one session with ${sharedChannels.join(', ')}. No messages from the app here yet.`)
-            : L('今天还没聊过。', 'Nothing here today yet.')}
+      <ChatView key={active} threadId={active} quote={quote} quoteAt={quote ? wantedAt : 0} focus={focus} focusAt={focus ? wantedAt : 0} placeholder={side ? L(`给「${side.title}」发消息`, `Message "${side.title}"`) : L(`给 ${agentName()} 发消息`, `Message ${agentName()}`)}
+        empty={side ? (side.archived ? L('已归档，今天暂无新消息。更早的对话见历史（右上角日历图标）。', 'Archived; nothing new today. Earlier messages are in History (calendar icon, top right).')
+          : L('此项目今天暂无对话。Agent 每天会先读取上方的项目卡，再接续之前的进度。', 'Nothing here today yet. It reads the project card above first each day and picks up where it left off.'))
+          : sharedChannels.length ? L(`主对话与 ${sharedChannels.join('、')} 共用同一会话，此处暂无从 app 发出的消息。`, `The main chat shares one session with ${sharedChannels.join(', ')}. No messages from the app here yet.`)
+            : L('今天暂无对话。', 'Nothing here today yet.')}
         welcome={welcome} />
       {open ? <Drawer active={active} onPick={setActive} onClose={() => setOpen(false)} /> : null}
     </Screen>

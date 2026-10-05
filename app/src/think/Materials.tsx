@@ -31,25 +31,25 @@ function kindLook(t: Theme, k: MatKind | 'friends') {
 function whoLabel(m: PodMaterial): string {
   if (m.kind === 'file') return m.note || L('文件', 'File');
   if (m.kind === 'save') return L('收藏', 'Saved');
-  if (m.who === 'friend') return L(`${m.friend ?? '朋友'}说的 · 只在这一期里用`, `${m.friend ?? 'A friend'} said · this episode only`);
-  if (m.who === 'assistant') return m.kind === 'friend' ? L('你的名片 agent 答的', 'Your card agent') : L(`${agentName()} 回的`, `${agentName()} replied`);
-  return L('你说的', 'You said');
+  if (m.who === 'friend') return L(`${m.friend ?? '朋友'}的发言 · 仅用于本期`, `${m.friend ?? 'A friend'} said · this episode only`);
+  if (m.who === 'assistant') return m.kind === 'friend' ? L('你的名片 Agent 的回答', 'Your card agent') : L(`${agentName()} 的回复`, `${agentName()} replied`);
+  return L('你的发言', 'You said');
 }
 
 /** 「素材 · N」那一行。dark：录音页的深色。 */
 export function MaterialsRow({ id, count, dark, onCount }: { id: string; count: number; dark?: boolean; onCount: (n: number) => void }) {
   const t = useTheme();
   const sheet = useSheet();
-  const open = () => sheet.open({ title: L('这一期的素材', 'Materials for this episode'), content: () => <MaterialsSheet id={id} onCount={onCount} /> });
+  const open = () => sheet.open({ title: L('本期素材', 'Materials for this episode'), content: () => <MaterialsSheet id={id} onCount={onCount} /> });
   const fg = dark ? '#ECEEF0' : t.ink;
   const sub = dark ? '#A6AEB7' : t.ink3;
   return (
-    <Pressable onPress={open} accessibilityRole="button" accessibilityLabel={L(`素材 ${count} 条，点开加或拿掉`, `${count} materials, tap to add or remove`)}
+    <Pressable onPress={open} accessibilityRole="button" accessibilityLabel={L(`素材 ${count} 条，轻点以添加或移除`, `${count} materials, tap to add or remove`)}
       style={({ pressed }) => [styles.row, { backgroundColor: dark ? '#15181D' : t.surface, borderColor: dark ? '#2A3038' : t.line, opacity: pressed ? 0.7 : 1 }]}>
       <Paperclip size={16} color={dark ? '#DDB56A' : t.gold} />
       <Text style={[type.callout, { color: fg, fontWeight: '600' }]}>{L(`素材 · ${count}`, `Materials · ${count}`)}</Text>
       <Text style={[type.caption, { color: sub, flex: 1, fontWeight: '400' }]} numberOfLines={1}>
-        {count ? L('录前、追问、整理都参考', 'Used in prep, questions and the note') : L('放进聊过的、朋友聊天、文件', 'Add chats, friend chats, files')}
+        {count ? L('用于录前讨论、追问和整理', 'Used in prep, questions and the note') : L('添加对话、好友聊天或文件', 'Add chats, friend chats or files')}
       </Text>
       {count ? <ChevronRight size={16} color={sub} /> : <Plus size={16} color={sub} />}
     </Pressable>
@@ -64,29 +64,29 @@ export function MaterialsSheet({ id, onCount }: { id: string; onCount?: (n: numb
   const [view, setView] = useState<View_>({ v: 'list' });
   const [busy, setBusy] = useState<string | null>(null);
   const got = useCallback((list: PodMaterial[]) => { setItems(list); onCount?.(list.length); }, [onCount]);
-  useEffect(() => { pod.materials(id).then(got).catch((e) => showError(L('素材没读出来', "Couldn't load materials"), e)); }, [id, got]);
+  useEffect(() => { pod.materials(id).then(got).catch((e) => showError(L('无法加载素材', "Couldn't load materials"), e)); }, [id, got]);
 
   const drop = async (m: PodMaterial) => {
     if (busy) return;
     setBusy(m.id);
-    try { got(await pod.removeMaterial(id, m.id)); } catch (e) { showError(L('没拿掉', "Couldn't remove it"), e); } finally { setBusy(null); }
+    try { got(await pod.removeMaterial(id, m.id)); } catch (e) { showError(L('移除失败', "Couldn't remove it"), e); } finally { setBusy(null); }
   };
   const files = async () => {
     if (busy) return;
-    const picked = await pickDocuments().catch((e) => { showError(L('选不了文件', "Couldn't pick files"), e); return []; });
+    const picked = await pickDocuments().catch((e) => { showError(L('无法选择文件', "Couldn't pick files"), e); return []; });
     if (!picked.length) return;
     setBusy('files');
     try {
       const r = await pod.uploadMaterials(id, picked.slice(0, 10));
       got(r.items);
-      if (r.failed.length) showError(L('有的没放进来', 'Some files were not added'), r.failed.map((f) => `${f.name}：${f.error}`).join('\n'));
-    } catch (e) { showError(L('没传上去', "Couldn't upload"), e); } finally { setBusy(null); }
+      if (r.failed.length) showError(L('部分文件未能添加', 'Some files were not added'), r.failed.map((f) => `${f.name}：${f.error}`).join('\n'));
+    } catch (e) { showError(L('上传失败', "Couldn't upload"), e); } finally { setBusy(null); }
   };
   const add = async (list: { kind: MatKind; ref: string }[]) => {
     const r = await pod.addMaterials(id, list);
     got(r.items);
     setView({ v: 'list' });
-    if (r.failed.length) showError(L(`${r.failed.length} 条没放进来`, `${r.failed.length} not added`), r.failed.map((f) => f.error).join('\n'));
+    if (r.failed.length) showError(L(`${r.failed.length} 条未能添加`, `${r.failed.length} not added`), r.failed.map((f) => f.error).join('\n'));
   };
 
   if (view.v !== 'list') {
@@ -96,14 +96,14 @@ export function MaterialsSheet({ id, onCount }: { id: string; onCount?: (n: numb
   }
   const kinds: { k: View_['v'] | 'file'; label: string; Icon: typeof Paperclip; look: MatKind }[] = [
     { k: 'chat', label: L('主对话', 'Chats'), Icon: MessageCircle, look: 'chat' },
-    { k: 'friends', label: L('朋友聊天', 'Friends'), Icon: Users, look: 'friend' },
+    { k: 'friends', label: L('好友聊天', 'Friends'), Icon: Users, look: 'friend' },
     { k: 'file', label: L('文件', 'Files'), Icon: FileText, look: 'file' },
     { k: 'zen', label: L('Zen 想法', 'Zen'), Icon: Lightbulb, look: 'idea' },
     { k: 'save', label: L('收藏', 'Saved'), Icon: Bookmark, look: 'save' },
   ];
   return (
     <View style={{ gap: space.md }}>
-      <T v="callout" color={t.ink2}>{L('录前聊天、主持人追问、录完整理、费曼对照都会参考。朋友说的只在这一期里用，存进库的笔记只写「参考了和谁的聊天」。',
+      <T v="callout" color={t.ink2}>{L('录前讨论、主持人追问、录后整理和费曼对照均会参考这些素材。好友的发言仅用于本期，存入库中的笔记只注明「参考了与谁的聊天」。',
         "Used when you talk it through, for the host's questions, the note and the Feynman check. What friends said stays in this episode; the saved note only says whose chat it drew on.")}</T>
       {items === null ? <ActivityIndicator color={t.gold} /> : items.length ? (
         <View style={[styles.box, { backgroundColor: t.surface, borderColor: t.line }]}>
@@ -117,15 +117,15 @@ export function MaterialsSheet({ id, onCount }: { id: string; onCount?: (n: numb
                   {m.preview ? <T v="callout" color={t.ink2} numberOfLines={2}>{m.preview}</T> : null}
                   <T v="caption" color={m.who === 'friend' ? lk.fg : t.ink3} style={{ fontWeight: '400' }} numberOfLines={1}>{whoLabel(m)}</T>
                 </View>
-                <Pressable onPress={() => drop(m)} hitSlop={10} accessibilityRole="button" accessibilityLabel={L(`拿掉：${m.title}`, `Remove: ${m.title}`)} style={styles.x}>
+                <Pressable onPress={() => drop(m)} hitSlop={10} accessibilityRole="button" accessibilityLabel={L(`移除：${m.title}`, `Remove: ${m.title}`)} style={styles.x}>
                   {busy === m.id ? <ActivityIndicator size="small" color={t.ink3} /> : <X size={16} color={t.ink3} />}
                 </Pressable>
               </View>
             );
           })}
         </View>
-      ) : <T v="callout" color={t.ink3}>{L('还没有素材。', 'No materials yet.')}</T>}
-      <T v="label" color={t.ink3} style={{ textTransform: 'uppercase' }}>{L('加素材', 'Add')}</T>
+      ) : <T v="callout" color={t.ink3}>{L('暂无素材。', 'No materials yet.')}</T>}
+      <T v="label" color={t.ink3} style={{ textTransform: 'uppercase' }}>{L('添加素材', 'Add')}</T>
       <View style={styles.grid}>
         {kinds.map((x) => {
           const lk = kindLook(t, x.look);
@@ -157,35 +157,35 @@ function Picker({ kind, friendId, friendName, onBack, onFriend, onAdd, have }: {
     const load = kind === 'zen' ? Promise.all([pod.pick('topic'), pod.pick('idea')]).then(([a, b]) => [...a, ...b])
       : kind === 'friends' ? pod.pick('friend') : kind === 'friend' ? pod.pick('friend', friendId) : pod.pick(kind);
     let live = true;  // 点得快换了页：旧的那次回来不算
-    load.then((r) => { if (live) setRows(r); }).catch((e) => { if (live) { setRows([]); showError(L('没读出来', "Couldn't load"), e); } });
+    load.then((r) => { if (live) setRows(r); }).catch((e) => { if (live) { setRows([]); showError(L('加载失败', "Couldn't load"), e); } });
     return () => { live = false; };
   }, [kind, friendId]);
-  const title = { chat: L('主对话里你说的', 'What you said in chats'), friends: L('和谁的聊天', 'Which friend'), friend: L(`和${friendName ?? ''}的聊天`, `Chat with ${friendName ?? ''}`),
-    zen: L('Zen 的主题和想法', 'Zen topics and thoughts'), save: L('收藏', 'Saved') }[kind];
+  const title = { chat: L('你在主对话中的发言', 'What you said in chats'), friends: L('选择好友', 'Choose a friend'), friend: L(`与${friendName ?? ''}的聊天`, `Chat with ${friendName ?? ''}`),
+    zen: L('Zen 主题和想法', 'Zen topics and thoughts'), save: L('收藏', 'Saved') }[kind];
   const toggle = (k: string) => setSel((s) => (s.includes(k) ? s.filter((x) => x !== k) : [...s, k]));
   const go = async () => {
     if (!sel.length || busy) return;
     setBusy(true);
     try {
       await onAdd(sel.map((k) => { const [kind, ...rest] = k.split('|'); return { kind: kind as MatKind, ref: rest.join('|') }; }));
-    } catch (e) { showError(L('没放进来', "Couldn't add"), e); } finally { setBusy(false); }
+    } catch (e) { showError(L('添加失败', "Couldn't add"), e); } finally { setBusy(false); }
   };
   const sub = (r: PodPick) => {
     const when = timeLabel(r.at);
     if (r.kind === 'chat') return [r.where, when].filter(Boolean).join(' · ');
-    if (r.kind === 'friend') return [r.who === 'me' ? L('你', 'You') : r.who === 'agent' ? L('你的名片 agent', 'Your card agent') : r.agent ? L(`${r.where}的名片 agent`, `${r.where}'s card agent`) : r.where, when].filter(Boolean).join(' · ');
+    if (r.kind === 'friend') return [r.who === 'me' ? L('你', 'You') : r.who === 'agent' ? L('你的名片 Agent', 'Your card agent') : r.agent ? L(`${r.where}的名片 Agent`, `${r.where}'s card agent`) : r.where, when].filter(Boolean).join(' · ');
     if (r.kind === 'topic') return L(`主题 · ${r.n ?? 0} 条想法`, `Topic · ${r.n ?? 0} thoughts`);
     return when;
   };
   return (
     <View style={{ gap: space.md }}>
       <Pressable onPress={onBack} accessibilityRole="button" style={{ flexDirection: 'row', alignItems: 'center', gap: 2, alignSelf: 'flex-start' }}>
-        <ChevronLeft size={20} color={t.gold} /><T v="callout" color={t.gold} style={{ fontWeight: '600' }}>{kind === 'friend' ? L('朋友', 'Friends') : L('素材', 'Materials')}</T>
+        <ChevronLeft size={20} color={t.gold} /><T v="callout" color={t.gold} style={{ fontWeight: '600' }}>{kind === 'friend' ? L('好友', 'Friends') : L('素材', 'Materials')}</T>
       </Pressable>
       <T v="headline">{title}</T>
-      {kind === 'friend' ? <T v="caption" color={t.ink3} style={{ fontWeight: '400', marginTop: -8 }}>{L(`${friendName}说的只在这一期里用，不原话进库和世界树。`, `What ${friendName} said stays in this episode, never quoted into the vault or memory tree.`)}</T> : null}
+      {kind === 'friend' ? <T v="caption" color={t.ink3} style={{ fontWeight: '400', marginTop: -8 }}>{L(`${friendName}的发言仅用于本期，不会以原话存入库或世界树。`, `What ${friendName} said stays in this episode, never quoted into the vault or memory tree.`)}</T> : null}
       {rows === null ? <ActivityIndicator color={t.gold} /> : !rows.length ? (
-        <T v="callout" color={t.ink3}>{kind === 'friends' ? L('还没有和朋友聊过。', 'No friend chats yet.') : L('这里还没有东西。', 'Nothing here yet.')}</T>
+        <T v="callout" color={t.ink3}>{kind === 'friends' ? L('暂无好友聊天记录。', 'No friend chats yet.') : L('暂无内容。', 'Nothing here yet.')}</T>
       ) : (
         <View style={[styles.box, { backgroundColor: t.surface, borderColor: t.line }]}>
           {rows.map((r, i) => {
@@ -214,14 +214,14 @@ function Picker({ kind, friendId, friendName, onBack, onFriend, onAdd, have }: {
                 </View>
                 <View style={{ flex: 1, minWidth: 0, gap: 2 }}>
                   <T v="callout" numberOfLines={3}>{r.text || r.title}</T>
-                  <T v="caption" color={t.ink3} style={{ fontWeight: '400' }} numberOfLines={1}>{already ? L('已经放进来了', 'Already added') : sub(r)}</T>
+                  <T v="caption" color={t.ink3} style={{ fontWeight: '400' }} numberOfLines={1}>{already ? L('已添加', 'Already added') : sub(r)}</T>
                 </View>
               </Pressable>
             );
           })}
         </View>
       )}
-      {kind !== 'friends' ? <Btn label={busy ? L('正在放…', 'Adding…') : sel.length ? L(`放进这一期 · ${sel.length}`, `Add to this episode · ${sel.length}`) : L('选几条', 'Pick some')} onPress={go} /> : null}
+      {kind !== 'friends' ? <Btn label={busy ? L('正在添加…', 'Adding…') : sel.length ? L(`添加到本期 · ${sel.length}`, `Add to this episode · ${sel.length}`) : L('请选择', 'Select items')} onPress={go} /> : null}
     </View>
   );
 }
@@ -241,19 +241,19 @@ export function PutInPodcast({ kind, target, close, onOpen }: { kind: MatKind; t
     try {
       const r = await pod.quick(kind, target, episode);
       setDone({ episode: r.episode, count: r.count });
-    } catch (e) { showError(L('没放进去', "Couldn't add it"), e); } finally { setBusy(null); }
+    } catch (e) { showError(L('添加失败', "Couldn't add it"), e); } finally { setBusy(null); }
   };
   if (done) {
     return (
       <View style={{ gap: space.md }}>
         <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
           <Check size={18} color={t.good} strokeWidth={2.5} />
-          <T v="headline" color={t.good} style={{ flex: 1 }}>{L(`放进了「${done.episode.title}」`, `Added to “${done.episode.title}”`)}</T>
+          <T v="headline" color={t.good} style={{ flex: 1 }}>{L(`已添加到「${done.episode.title}」`, `Added to “${done.episode.title}”`)}</T>
         </View>
-        <T v="callout" color={t.ink2}>{L(`这一期现在有 ${done.count} 条素材。录前聊天、主持人追问、整理都会参考。`, `This episode now has ${done.count} materials, used in prep, questions and the note.`)}</T>
+        <T v="callout" color={t.ink2}>{L(`本期现有 ${done.count} 条素材，将用于录前讨论、主持人追问和整理。`, `This episode now has ${done.count} materials, used in prep, questions and the note.`)}</T>
         <View style={{ flexDirection: 'row', gap: space.sm }}>
-          <Btn label={L('好', 'OK')} kind="quiet" flex onPress={close} />
-          <Btn label={L('去这一期', 'Open it')} flex onPress={() => { close(); onOpen(done.episode); }} />
+          <Btn label={L('完成', 'Done')} kind="quiet" flex onPress={close} />
+          <Btn label={L('打开本期', 'Open episode')} flex onPress={() => { close(); onOpen(done.episode); }} />
         </View>
       </View>
     );
@@ -262,7 +262,7 @@ export function PutInPodcast({ kind, target, close, onOpen }: { kind: MatKind; t
     <View style={{ gap: space.sm }}>
       <Pressable onPress={() => put()} disabled={!!busy} accessibilityRole="button" style={({ pressed }) => [styles.ep, { backgroundColor: t.goldSoft, opacity: pressed ? 0.7 : 1 }]}>
         {busy === 'new' ? <ActivityIndicator size="small" color={t.gold} /> : <Plus size={18} color={t.gold} />}
-        <T v="headline" color={t.gold} style={{ flex: 1 }}>{L('新开一期', 'New episode')}</T>
+        <T v="headline" color={t.gold} style={{ flex: 1 }}>{L('新建一期', 'New episode')}</T>
       </Pressable>
       {eps === null ? <ActivityIndicator color={t.gold} /> : eps.map((e) => (
         <Pressable key={e.id} onPress={() => put(e.id)} disabled={!!busy} accessibilityRole="button" style={({ pressed }) => [styles.ep, { backgroundColor: t.surface, opacity: pressed ? 0.7 : 1 }]}>
@@ -274,8 +274,8 @@ export function PutInPodcast({ kind, target, close, onOpen }: { kind: MatKind; t
         </Pressable>
       ))}
       <T v="caption" color={t.ink3} style={{ fontWeight: '400' }}>{kind === 'friend'
-        ? L('朋友说的只在这一期里用：不原话进库和世界树，存进库的笔记只写「参考了和谁的聊天」。', "A friend's words stay in that episode: never quoted into the vault or memory tree.")
-        : L('录前聊天、主持人追问、录完整理都会参考它。', "Used in prep, the host's questions and the note.")}</T>
+        ? L('好友的发言仅用于该期：不会以原话存入库或世界树，存入库中的笔记只注明「参考了与谁的聊天」。', "A friend's words stay in that episode: never quoted into the vault or memory tree.")
+        : L('录前讨论、主持人追问和录后整理均会参考此内容。', "Used in prep, the host's questions and the note.")}</T>
     </View>
   );
 }

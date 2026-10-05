@@ -69,7 +69,7 @@ export function ThinkWriteScreen() {
   const finish = async () => {
     if (ended.current) return;
     ended.current = true;
-    setBusy(L('正在收尾…', 'Wrapping up…'));
+    setBusy(L('正在结束…', 'Ending…'));
     try {
       let wrote: { id: string; title: string; chars: number } | null = null;
       const text = body.trim();
@@ -83,7 +83,7 @@ export function ThinkWriteScreen() {
       nav.replace('ZenEnd', { summary, wrote, text, title: title.trim() });
     } catch (e) {
       ended.current = false;
-      showError(L('没收好尾', "Couldn't wrap up"), e);
+      showError(L('无法结束', "Couldn't end focus time"), e);
     } finally { setBusy(null); }
   };
   // 到点了：自己收尾（服务器那边也按到点结束）。finish 每次渲染都是新的，经 ref 调
@@ -101,17 +101,17 @@ export function ThinkWriteScreen() {
   const saveAs = async (where: 'long' | 'writing') => {
     const text = body.trim();
     if (!text || busy) return;
-    setBusy(L('正在存…', 'Saving…'));
+    setBusy(L('正在保存…', 'Saving…'));
     try {
       if (where === 'writing') {
         const path = await thinkApi.writeNote({ title: title.trim(), text });
-        Alert.alert(L('存进了「写作」', 'Saved to Writing'), path);
+        Alert.alert(L('已保存到「写作」', 'Saved to Writing'), path);
       } else {
         await capture({ kind: 'long', title: title.trim() || undefined, text });
       }
       clear();
       nav.goBack();
-    } catch (e) { showError(L('没存上', "Couldn't save"), e); } finally { setBusy(null); }
+    } catch (e) { showError(L('保存失败', "Couldn't save"), e); } finally { setBusy(null); }
   };
 
   const record = async () => {
@@ -120,19 +120,19 @@ export function ThinkWriteScreen() {
         await recorder.stop();
         await setAudioModeAsync({ allowsRecording: false, playsInSilentMode: true });
         if (!recorder.uri) return;
-        setBusy(L('正在转文字…', 'Transcribing…'));
+        setBusy(L('正在转写…', 'Transcribing…'));
         const said = await transcribe({ uri: recorder.uri, name: 'voice.m4a', mime: 'audio/m4a', size: 0 });
         if (said) setBody((b) => (b.trim() ? `${b.trimEnd()}\n\n${said}` : said));
         setBusy(null);
         return;
       }
       const perm = await AudioModule.requestRecordingPermissionsAsync();
-      if (!perm.granted) { Alert.alert(L('没有麦克风权限', 'No microphone access'), L('去系统设置里打开麦克风。', 'Turn on the microphone in Settings.')); return; }
+      if (!perm.granted) { Alert.alert(L('无麦克风权限', 'No microphone access'), L('请在系统设置中开启麦克风权限。', 'Turn on microphone access in Settings.')); return; }
       await setAudioModeAsync({ allowsRecording: true, playsInSilentMode: true });
       await recorder.prepareToRecordAsync();
       recorder.record();
       Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => {});
-    } catch (e) { setBusy(null); showError(L('没录上', "Couldn't record"), e); }
+    } catch (e) { setBusy(null); showError(L('录音失败', "Couldn't record"), e); }
   };
 
   const ink = zen ? Z.ink : t.ink;
@@ -146,7 +146,7 @@ export function ThinkWriteScreen() {
         <View style={{ paddingHorizontal: 20, paddingTop: 12, gap: 10 }}>
           <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
             <Timer size={16} color={Z.meta} />
-            <Text style={[type.callout, { color: Z.meta, fontVariant: ['tabular-nums'] }]}>{focus ? L(`还剩 ${mm}`, `${mm} left`) : L('冥想时间', 'Focus time')}</Text>
+            <Text style={[type.callout, { color: Z.meta, fontVariant: ['tabular-nums'] }]}>{focus ? L(`剩余 ${mm}`, `${mm} left`) : L('冥想时间', 'Focus time')}</Text>
             <View style={{ flex: 1 }} />
             <Pressable onPress={finish} disabled={!!busy} accessibilityRole="button" style={({ pressed }) => [styles.end, { opacity: pressed ? 0.7 : 1 }]}>
               <Text style={[type.callout, { color: Z.gold, fontWeight: '600' }]}>{busy ?? L('结束', 'End')}</Text>
@@ -157,7 +157,7 @@ export function ThinkWriteScreen() {
           </View>
           <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
             <BellOff size={13} color={Z.meta} />
-            <T v="caption" color={Z.meta}>{L('推送已压住，结束时一次给你', 'Notifications are held until the end')}</T>
+            <T v="caption" color={Z.meta}>{L('推送已暂停，结束后统一送达', 'Notifications are held until the end')}</T>
           </View>
         </View>
       ) : (
@@ -167,7 +167,7 @@ export function ThinkWriteScreen() {
           </Pressable>
           <View style={{ flex: 1, alignItems: 'center' }}>
             <T v="headline" style={{ fontSize: 14, fontVariant: ['tabular-nums'] }}>{L(`${count} 字`, `${count} words`)}</T>
-            <T v="caption" color={t.ink3}>{busy ?? L('已自动保存 · 它不会看', "Autosaved · it won't read this")}</T>
+            <T v="caption" color={t.ink3}>{busy ?? L('已自动保存 · 不会发送给 Agent', 'Autosaved · not sent to the Agent')}</T>
           </View>
           <Pressable onPress={() => sheet.open({ title: L('进入冥想时间', 'Focus time'), content: (close) => <ZenStartSheet close={close} /> })} accessibilityRole="button"
             accessibilityLabel={L('进入冥想时间', 'Start focus time')} style={[styles.round, { backgroundColor: t.lensField }]}>
@@ -176,26 +176,26 @@ export function ThinkWriteScreen() {
         </View>
       )}
       <ScrollView style={{ flex: 1 }} contentContainerStyle={{ paddingHorizontal: zen ? 26 : 24, paddingTop: zen ? 36 : 18, paddingBottom: 40, gap: 14 }} keyboardShouldPersistTaps="handled">
-        <TextInput value={title} onChangeText={setTitle} placeholder={L('标题（可以不写）', 'Title (optional)')} placeholderTextColor={meta}
+        <TextInput value={title} onChangeText={setTitle} placeholder={L('标题（可选）', 'Title (optional)')} placeholderTextColor={meta}
           accessibilityLabel={L('标题', 'Title')} style={[styles.title, { color: ink }]} />
         <GrowInput value={body} onChangeText={setBody} multiline scrollEnabled={false} autoFocus={!body}
-          placeholder={zen ? L('只有你和字。', 'Just you and the words.') : L('写吧，写多长都行。', 'Write as much as you like.')} placeholderTextColor={meta}
+          placeholder={zen ? L('只有你与文字。', 'Just you and the words.') : L('开始书写，篇幅不限。', 'Write as much as you like.')} placeholderTextColor={meta}
           accessibilityLabel={L('正文', 'Body')} style={[styles.body, { color: zen ? Z.body : t.ink, fontSize: zen ? 18 : 17, lineHeight: zen ? 33 : 31 }]} />
       </ScrollView>
       <View style={[styles.bottom, { borderTopColor: zen ? 'transparent' : t.line }]}>
         {Platform.OS !== 'web' ? (
-          <Pressable onPress={record} accessibilityRole="button" accessibilityLabel={rec.isRecording ? L('停，转成文字', 'Stop and transcribe') : L('说一段，转成文字', 'Dictate')}
+          <Pressable onPress={record} accessibilityRole="button" accessibilityLabel={rec.isRecording ? L('停止并转写', 'Stop and transcribe') : L('语音输入', 'Dictate')}
             style={[styles.round, { backgroundColor: rec.isRecording ? t.bad : zen ? Z.line : t.bg }]}>
             {rec.isRecording ? <Square size={15} color="#fff" fill="#fff" /> : <Mic size={19} color={zen ? Z.body : t.ink2} />}
           </Pressable>
         ) : null}
         <View style={{ flex: 1 }} />
         {zen ? (
-          <T v="caption" color={Z.meta} style={{ fontVariant: ['tabular-nums'] }}>{L(`${count} 字 · 自动保存`, `${count} words · autosaved`)}</T>
+          <T v="caption" color={Z.meta} style={{ fontVariant: ['tabular-nums'] }}>{L(`${count} 字 · 已自动保存`, `${count} words · autosaved`)}</T>
         ) : (
           <>
-            <Btn label={L('存进「写作」', 'To Writing')} kind="quiet" onPress={() => saveAs('writing')} />
-            <Btn label={L('存成一条', 'Save as a thought')} onPress={() => saveAs('long')} />
+            <Btn label={L('存入「写作」', 'To Writing')} kind="quiet" onPress={() => saveAs('writing')} />
+            <Btn label={L('存为想法', 'Save as a thought')} onPress={() => saveAs('long')} />
           </>
         )}
       </View>
@@ -211,13 +211,13 @@ export function ZenEndScreen() {
   const wrote = route.params?.wrote as { id: string; title: string; chars: number } | null | undefined;
   const [toWriting, setToWriting] = useState<string | null>(null);
   if (!s) return null;
-  const line = [`${s.from} – ${s.to}`, s.words ? L(`写了 ${s.words} 字`, `${s.words} words`) : '', s.notes ? L(`记了 ${s.notes} 条`, `${s.notes} saved`) : ''].filter(Boolean).join(' · ');
+  const line = [`${s.from} – ${s.to}`, s.words ? L(`书写 ${s.words} 字`, `${s.words} words`) : '', s.notes ? L(`记录 ${s.notes} 条`, `${s.notes} saved`) : ''].filter(Boolean).join(' · ');
   const next = s.next[0];
   const writing = async () => {
     try {
       const path = await thinkApi.writeNote({ title: route.params?.title || wrote?.title || '', text: route.params?.text || '' });
       setToWriting(path);
-    } catch (e) { showError(L('没放进去', "Couldn't save"), e); }
+    } catch (e) { showError(L('保存失败', "Couldn't save"), e); }
   };
   return (
     <Screen>
@@ -235,18 +235,18 @@ export function ZenEndScreen() {
         ) : null}
         {wrote ? (
           <>
-            <SectionLabel>{L('你写的', 'What you wrote')}</SectionLabel>
+            <SectionLabel>{L('本次书写', 'What you wrote')}</SectionLabel>
             <View style={[styles.card, { backgroundColor: t.surface }]}>
               <View style={[styles.tile, { backgroundColor: t.tints.gold.soft }]}><Pencil size={16} color={t.tints.gold.fg} /></View>
               <View style={{ flex: 1, gap: 2 }}>
-                <T v="headline" numberOfLines={1}>{wrote.title || L('一篇长文', 'A long piece')}</T>
-                <T v="caption" color={t.ink2}>{toWriting ? L(`也放进了 ${toWriting}`, `Also in ${toWriting}`) : L(`长文 · ${wrote.chars} 字 · 已存成一条`, `${wrote.chars} words · saved as a thought`)}</T>
+                <T v="headline" numberOfLines={1}>{wrote.title || L('长文', 'A long piece')}</T>
+                <T v="caption" color={t.ink2}>{toWriting ? L(`已同时存入 ${toWriting}`, `Also in ${toWriting}`) : L(`长文 · ${wrote.chars} 字 · 已存为想法`, `${wrote.chars} words · saved as a thought`)}</T>
               </View>
-              {!toWriting ? <Btn label={L('进「写作」', 'To Writing')} kind="quiet" onPress={writing} /> : null}
+              {!toWriting ? <Btn label={L('存入「写作」', 'To Writing')} kind="quiet" onPress={writing} /> : null}
             </View>
           </>
         ) : null}
-        <SectionLabel>{s.held.length ? L(`这段时间压住的 · ${s.held.length}`, `Held while you focused · ${s.held.length}`) : L('这段时间压住的', 'Held while you focused')}</SectionLabel>
+        <SectionLabel>{s.held.length ? L(`期间暂缓的推送 · ${s.held.length}`, `Held while you focused · ${s.held.length}`) : L('期间暂缓的推送', 'Held while you focused')}</SectionLabel>
         {s.held.length ? (
           <View style={[styles.list, { backgroundColor: t.surface }]}>
             {s.held.map((h, i) => (
@@ -262,11 +262,11 @@ export function ZenEndScreen() {
               </Pressable>
             ))}
           </View>
-        ) : <T v="callout" color={t.ink3}>{L('没有推送进来。', 'Nothing came in.')}</T>}
-        {s.inbox ? <T v="callout" color={t.ink2}>{L(`等你点头的有 ${s.inbox} 件。`, `${s.inbox} waiting for your OK.`)}</T> : null}
-        <Btn label={L('去「今天」一起看', 'Open Today')} onPress={() => nav.navigate('Tabs', { screen: '今天' })} />
-        <T v="caption" color={t.ink3} style={{ textAlign: 'center' }}>{L('没推送、没响，都攒在这里', 'Nothing buzzed; it all waited here')}</T>
-        <Btn label={L('回到 Zen', 'Back to Zen')} kind="quiet" icon={<TextIcon size={15} color={t.ink} />} onPress={() => nav.navigate('Tabs', { screen: '思考' })} />
+        ) : <T v="callout" color={t.ink3}>{L('期间无推送。', 'Nothing came in.')}</T>}
+        {s.inbox ? <T v="callout" color={t.ink2}>{L(`${s.inbox} 项待你确认。`, `${s.inbox} waiting for your OK.`)}</T> : null}
+        <Btn label={L('前往「今天」', 'Open Today')} onPress={() => nav.navigate('Tabs', { screen: '今天' })} />
+        <T v="caption" color={t.ink3} style={{ textAlign: 'center' }}>{L('期间未推送、未提醒，内容均汇总于此', 'Nothing buzzed; everything waited here')}</T>
+        <Btn label={L('返回 Zen', 'Back to Zen')} kind="quiet" icon={<TextIcon size={15} color={t.ink} />} onPress={() => nav.navigate('Tabs', { screen: '思考' })} />
       </ScrollView>
     </Screen>
   );

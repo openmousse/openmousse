@@ -55,21 +55,21 @@ export class AccountError extends Error {
 function explain(status: number, j: Record<string, unknown>): string {
   const code = String(j.error_code || j.error || j.code || '');
   const msg = String(j.msg || j.message || j.error_description || '');
-  if (code === 'otp_expired' || /expired or is invalid/i.test(msg)) return L('验证码不对，或者已经过期了', 'That code is wrong or has expired');
-  if (status === 429 || /rate limit/i.test(code + msg)) return L('发得太频繁了，过一会儿再试', 'Too many tries. Wait a bit and try again');
-  if (code === 'email_address_invalid' || code === 'validation_failed' || /invalid.*email|email.*invalid/i.test(msg)) return L('邮箱格式不对', "That email address doesn't look right");
-  if (code === 'user_banned') return L('这个账号被停用了', 'This account has been disabled');
-  return msg || L(`账号服务出错（${status}）`, `The account service returned an error (${status})`);
+  if (code === 'otp_expired' || /expired or is invalid/i.test(msg)) return L('验证码错误或已过期', 'The code is incorrect or has expired');
+  if (status === 429 || /rate limit/i.test(code + msg)) return L('请求过于频繁，请稍后重试', 'Too many attempts. Try again later');
+  if (code === 'email_address_invalid' || code === 'validation_failed' || /invalid.*email|email.*invalid/i.test(msg)) return L('邮箱格式无效', 'Invalid email address');
+  if (code === 'user_banned') return L('此账号已停用', 'This account has been disabled');
+  return msg || L(`账号服务错误（${status}）`, `The account service returned an error (${status})`);
 }
 
 async function call<T>(path: string, init: { method?: string; body?: unknown; user?: boolean; timeoutMs?: number; headers?: Record<string, string> } = {}): Promise<T> {
   const cfg = accountConfig();
-  if (!cfg) throw new AccountError(L('这个 app 没有账号服务', "This app doesn't have an account service"));
+  if (!cfg) throw new AccountError(L('此 app 未配置账号服务', 'This app has no account service configured'));
   // 用户的请求带他的 access token；登录前的（发码、验码、换 token）只带 apikey：新式的 publishable key 不是 JWT，放进 Authorization 会被拒
   let bearer: string | null = null;
   if (init.user) {
     const s = await fresh();
-    if (!s?.access) throw new AccountError(L('先登录', 'Sign in first'));
+    if (!s?.access) throw new AccountError(L('请先登录', 'Sign in first'));
     bearer = s.access;
   }
   const ctl = new AbortController();
@@ -96,8 +96,8 @@ async function call<T>(path: string, init: { method?: string; body?: unknown; us
   } catch (e) {
     if (e instanceof AccountError) throw e;
     const err = new AccountError(e instanceof Error && e.name === 'AbortError'
-      ? L('账号服务没有回应，等一下再试', "The account service didn't answer. Try again in a moment")
-      : L('连不上账号服务，看看网络', "Can't reach the account service. Check your connection"));
+      ? L('账号服务无响应，请稍后重试', 'The account service is not responding. Try again later')
+      : L('无法连接账号服务，请检查网络', "Can't reach the account service. Check your connection"));
     err.network = true;
     throw err;
   } finally {

@@ -20,7 +20,7 @@ export async function pickDocuments(): Promise<PendingFile[]> {
 
 export async function pickMedia(camera: boolean): Promise<PendingFile[]> {
   const perm = camera ? await ImagePicker.requestCameraPermissionsAsync() : await ImagePicker.requestMediaLibraryPermissionsAsync();
-  if (!perm.granted) throw new Error(camera ? L('没有相机权限，去系统设置里打开。', 'No camera access. Turn it on in Settings.') : L('没有相册权限，去系统设置里打开。', 'No photo library access. Turn it on in Settings.'));
+  if (!perm.granted) throw new Error(camera ? L('无相机权限，请在系统设置中开启。', 'No camera access. Turn it on in Settings.') : L('无相册权限，请在系统设置中开启。', 'No photo library access. Turn it on in Settings.'));
   const res = camera
     ? await ImagePicker.launchCameraAsync({ mediaTypes: ['images', 'videos'], quality: 0.9 })
     : await ImagePicker.launchImageLibraryAsync({ mediaTypes: ['images', 'videos'], allowsMultipleSelection: true, selectionLimit: MAX_FILES, quality: 0.9 });

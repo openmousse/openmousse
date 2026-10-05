@@ -64,33 +64,33 @@ export function ClawScreen() {
     try {
       const p: PairCode = await devicesApi.pairNew(base, L('另一台设备', 'another device'));
       sheet.open({
-        title: L('添加一台设备', 'Add a device'),
+        title: L('添加设备', 'Add a device'),
         content: () => (
           <View style={{ gap: space.md }}>
-            <T v="callout" color={t.ink2}>{L('在另一台 iPhone 上用相机扫这个码，或者把链接发过去点开。10 分钟内有效，只能用一次。',
-              'Scan this with the camera on the other iPhone, or send it the link. Valid for 10 minutes, once.')}</T>
+            <T v="callout" color={t.ink2}>{L('在另一台 iPhone 上用相机扫描此二维码，或将链接发送到该设备后打开。10 分钟内有效，仅可使用一次。',
+              'Scan this with the camera on the other iPhone, or send the link to it and open it there. Valid for 10 minutes, single use.')}</T>
             <QrCode qr={p.qr} label={L('配对二维码', 'Pairing QR code')} />
             <T v="title" selectable style={{ textAlign: 'center', letterSpacing: 3 }}>{p.code}</T>
             <View style={{ flexDirection: 'row', gap: space.sm }}>
-              <Btn flex kind="quiet" label={L('拷贝链接', 'Copy link')} onPress={() => { Clipboard.setStringAsync(p.link).catch(() => {}); }} />
-              {Platform.OS === 'web' ? null : <Btn flex kind="quiet" label={L('发给…', 'Send…')} onPress={() => { Share.share({ message: p.link }).catch(() => {}); }} />}
+              <Btn flex kind="quiet" label={L('复制链接', 'Copy link')} onPress={() => { Clipboard.setStringAsync(p.link).catch(() => {}); }} />
+              {Platform.OS === 'web' ? null : <Btn flex kind="quiet" label={L('发送…', 'Send…')} onPress={() => { Share.share({ message: p.link }).catch(() => {}); }} />}
             </View>
           </View>
         ),
       });
-    } catch (e) { showError(L('出不了配对码', "Couldn't make a pairing code"), e); }
+    } catch (e) { showError(L('未能生成配对码', "Couldn't create a pairing code"), e); }
   };
 
   const removeDevice = (d: Device) => {
-    Alert.alert(L(`收回「${d.label}」？`, `Remove ${d.label}?`), L('它的令牌作废，下次要重新配对才能连。', "Its token stops working; it'll need to pair again."), [
+    Alert.alert(L(`移除「${d.label}」？`, `Remove ${d.label}?`), L('该设备的令牌将失效，需重新配对才能连接。', "Its token stops working; it will need to pair again."), [
       { text: L('取消', 'Cancel'), style: 'cancel' },
-      { text: L('收回', 'Remove'), style: 'destructive', onPress: () => { devicesApi.remove(d.name).then(load).catch((e) => showError(L('没收回', "Couldn't remove it"), e)); } },
+      { text: L('移除', 'Remove'), style: 'destructive', onPress: () => { devicesApi.remove(d.name).then(load).catch((e) => showError(L('移除失败', "Couldn't remove it"), e)); } },
     ]);
   };
 
   const disconnect = () => {
-    Alert.alert(L(`从这台设备上断开「${appName}」？`, `Disconnect ${appName} from this device?`),
-      L('只删这台设备上的令牌，claw 上的对话、记忆、连接器都不动。以后要连，重新配对就行。', 'Only this device forgets its token; chats, memory and connectors on the claw stay. You can pair again any time.'), [
+    Alert.alert(L(`从此设备断开「${appName}」？`, `Disconnect ${appName} from this device?`),
+      L('仅删除此设备上的令牌，claw 上的对话、记忆和连接器不受影响。如需再次连接，重新配对即可。', 'Only this device forgets its token; chats, memory and connectors on the claw stay. You can pair again at any time.'), [
         { text: L('取消', 'Cancel'), style: 'cancel' },
         {
           text: L('断开', 'Disconnect'), style: 'destructive', onPress: async () => {
@@ -102,7 +102,7 @@ export function ClawScreen() {
               forgetAccountClaw(was).catch(() => {});
               refreshLive();
               nav.reset({ index: 0, routes: [{ name: next ? 'Tabs' : 'Connect' }] });
-            } catch (e) { showError(L('没断开', "Couldn't disconnect"), e); }
+            } catch (e) { showError(L('断开失败', "Couldn't disconnect"), e); }
           },
         },
       ]);
@@ -118,14 +118,14 @@ export function ClawScreen() {
             <Tile size={56} bg={t.cyanSoft}><Server size={28} color={t.cyan} /></Tile>
             <View style={{ flex: 1, minWidth: 0, gap: 4 }}>
               <T v="title" numberOfLines={1}>{appName}</T>
-              <T v="callout" color={t.ink2} numberOfLines={1}>{`${claw.name}${L(' · ', ' · ')}${L(`${agents} 个 agent`, `${agents} agents`)}`}</T>
+              <T v="callout" color={t.ink2} numberOfLines={1}>{`${claw.name}${L(' · ', ' · ')}${L(`${agents} 个 Agent`, `${agents} Agents`)}`}</T>
             </View>
-            <Chip label={connected ? L('在线', 'Online') : L('连不上', 'Offline')} tone={connected ? 'good' : 'warn'} />
+            <Chip label={connected ? L('在线', 'Online') : L('离线', 'Offline')} tone={connected ? 'good' : 'warn'} />
           </View>
-          <T v="callout" color={t.ink2}>{L('对话、记忆、连接器的令牌都存在这台机器上。', 'Chats, memory and connector tokens are kept on this machine.')}</T>
+          <T v="callout" color={t.ink2}>{L('对话、记忆和连接器令牌均保存在这台机器上。', 'Chats, memory and connector tokens are stored on this machine.')}</T>
         </Group>
 
-        <GroupLabel>{L('怎么连的', 'How it connects')}</GroupLabel>
+        <GroupLabel>{L('连接方式', 'Connection')}</GroupLabel>
         <Group>
           <Row first title={L('地址', 'Address')} value={base.replace(/^https?:\/\//, '')} />
           <Row title={L('网络', 'Network')} value={networkOf(base)} />
@@ -156,26 +156,26 @@ export function ClawScreen() {
 
         {shown ? (
           <>
-            <GroupLabel>{L('能连它的设备', 'Devices that can connect')}</GroupLabel>
+            <GroupLabel>{L('可连接的设备', 'Devices that can connect')}</GroupLabel>
             <Group>
               {shown.map((d, i) => (
                 <Row key={d.name} first={i === 0}
                   icon={d.current ? <Smartphone size={22} color={t.cyan} /> : d.paired ? <Smartphone size={22} color={t.ink3} /> : /web/i.test(d.name) ? <Monitor size={22} color={t.ink3} /> : <KeyRound size={22} color={t.ink3} />}
-                  title={d.label} value={d.current ? L('这台', 'This one') : undefined} tone="accent"
+                  title={d.label} value={d.current ? L('本机', 'This device') : undefined} tone="accent"
                   onPress={d.current ? undefined : () => removeDevice(d)} chevron={false}
-                  right={d.current ? undefined : <T v="callout" color={t.bad}>{L('收回', 'Remove')}</T>} />
+                  right={d.current ? undefined : <T v="callout" color={t.bad}>{L('移除', 'Remove')}</T>} />
               ))}
-              <Row icon={<Plus size={22} color={t.cyan} />} title={L('添加一台设备', 'Add a device')} accent onPress={addDevice} />
+              <Row icon={<Plus size={22} color={t.cyan} />} title={L('添加设备', 'Add a device')} accent onPress={addDevice} />
             </Group>
-            <GroupNote>{L('新设备扫码就连上，令牌不经过任何聊天。', "A new device connects by scanning a code; no token goes through a chat.")}</GroupNote>
+            <GroupNote>{L('新设备扫码即可连接，令牌不经过任何聊天。', "New devices connect by scanning a code; tokens never pass through a chat.")}</GroupNote>
           </>
         ) : null}
 
         <Group style={{ marginTop: 26 }}>
           <Row first icon={<ShieldCheck size={22} color={t.cyan} />} title={L('安全检查', 'Security check')} onPress={() => nav.navigate('Security')} />
-          <Row title={L('从这台设备上断开', 'Disconnect from this device')} danger onPress={disconnect} />
+          <Row title={L('从此设备断开', 'Disconnect from this device')} danger onPress={disconnect} />
         </Group>
-        <GroupNote>{L('断开只删这台设备上的令牌，claw 上的东西都不动。', 'Disconnecting only removes the token on this device; nothing on the claw changes.')}</GroupNote>
+        <GroupNote>{L('断开仅删除此设备上的令牌，claw 上的数据不受影响。', 'Disconnecting only removes the token on this device; nothing on the claw changes.')}</GroupNote>
       </ScrollView>
     </Screen>
   );
