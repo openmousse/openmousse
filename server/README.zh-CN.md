@@ -123,6 +123,7 @@ python3 inbox_ctl.py list [--status recent]
 - `POST /api/chat/stop` `{thread}`：停掉正在进行的回复——断开到 Gateway 的连接，Gateway 就中止这一轮；已经说了的留着，末尾加「（停了）」，status `stopped`，不推送。排着的接着发。
 - 长按「引用」：`/api/chat/send` 带 `replyTo`（`db<id>`）。模型另外看到原话，这条记 `reply_to`，`/api/chat/history` 里带 `replyTo {id, role, text}`，app 在气泡上面显示。
 - 走 Gateway 的 WebSocket 对话通道（server.json `chat.transport: "ws"`，见 `gateway_ws.py`）时：回复进行中你又发的不排队，改成**插话**——`chat.send` 带 `queueMode: steer`，Gateway 在这一轮的下一步把这句交给模型，还是同一条回复（这条记 status `steered`，app 上标「插话」）；Gateway 没能插进去、排成了单独一轮的，接管它记成这条的回复。停止用 `chat.abort`。一轮由 Gateway 跑到底：服务重启时还没回完的，启动后接管或从 `chat.history` 补回回复。带图片的消息仍走 HTTP（照样排队）。第一次连会在本机回环地址自动配对，设备身份存 `<data_dir>/gateway-device.json`。
+- **回复过程中的进度**（只在 WebSocket 对话通道上，2026-10-05）：同一条连接上 Gateway 的 `agent` 事件带着这一轮的准备阶段（`run_status`）、每一步工具（`item`：模型写的标题和状态）和模型的思考摘要（`thinking`）。服务器合成一份快照，经这条回复的 SSE 发 `event: progress` `{since, phase, steps: [{id, tool, detail, status: running | done | failed}], thought}`（最近 6 步、思考最后 600 字；重新接上的客户端先收到当前这份）。命令参数和输出一律不转。走 HTTP 时没有进度，app 等待时照样有动画。
 - `GET /api/chat/busy` → `{running, queued, idle}`。要重启服务就用 `python3 safe_restart.py --unit <服务名>`：等没有进行中的回复、没有排着的消息再重启（最多等 10 分钟），重启会掐断进行中的回复。
 
 ## 附件

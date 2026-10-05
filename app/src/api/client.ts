@@ -5,6 +5,7 @@ import { fetch as expoFetch } from 'expo/fetch';
 import type { Attachment, ChatCard, Message, PendingFile } from '../data/types';
 import { L } from '../i18n';
 import { authHeaders, fileUrl, getBase, HttpError } from './base';
+import { setReplyProgress, type ReplyProgress } from './progress';
 
 export interface GravaApi {
   readonly connected: boolean;
@@ -79,7 +80,7 @@ export async function readSse(body: ReadableStream<Uint8Array>, onEvent: (event:
   }
 }
 
-async function consume(r: Response, onDelta?: (partial: string) => void, onStart?: (userId: string) => void, onCard?: (card: ChatCard) => void,
+async function consume(thread: string, r: Response, onDelta?: (partial: string) => void, onStart?: (userId: string) => void, onCard?: (card: ChatCard) => void,
   onQueued?: (userId: string, steer: boolean) => void, onDequeued?: () => void): Promise<Message> {
   if (!r.ok) {
     const j = await r.json().catch(() => ({}));
@@ -89,15 +90,17 @@ async function consume(r: Response, onDelta?: (partial: string) => void, onStart
   let partial = '';
   let done: any = null;
   let queued = false;  // 排队的：start 带的是合成那一轮的 id，不是这条的
+  // progress：在想什么、做到哪一步（只在 Gateway 对话通道上有），这条流结束就清掉
   await readSse(r.body as unknown as ReadableStream<Uint8Array>, (event, data) => {
     // queued：排队（steer = 插进了正在跑的那一轮）；text：整段换掉（对话通道的 replace / 最终文字和流出来的不一样）
     if (event === 'queued') { queued = true; onQueued?.(data.userId, !!data.steer); }
     else if (event === 'start') { if (queued) onDequeued?.(); else onStart?.(data.userId); }
     else if (event === 'delta') { partial += data.text; onDelta?.(partial); }
     else if (event === 'text') { partial = data.text ?? ''; onDelta?.(partial); }
-    else if (event === 'done') done = data;
+    else if (event === 'done') { done = data; setReplyProgress(thread, null); }
+    else if (event === 'progress' && data && Array.isArray(data.steps)) setReplyProgress(thread, data as ReplyProgress);
     else if (event === 'card' && data && (data.kind === 'handoff' || data.kind === 'task' || data.kind === 'schedule' || data.kind === 'project' || data.kind === 'course')) onCard?.(data as ChatCard);
-  });
+  }).finally(() => setReplyProgress(thread, null));
   if (!done) throw new Error(L('流中断', 'Reply stream cut off'));
   return { id: done.id, role: 'grava', time: done.time, modelId: done.modelId, fallbackFrom: done.fallbackFrom ?? undefined, body: { type: 'text', text: done.text }, error: done.status === 'error' ? done.error : undefined };
 }
@@ -155,7 +158,7 @@ export class HttpApi implements GravaApi {
     const started = (id: string) => { userId = id; onStart?.(id); };
     const queuedAs = (id: string, steer: boolean) => { userId = id; extra?.onQueued?.(id, steer); };
     try {
-      return await consume(r as unknown as Response, onDelta, started, extra?.onCard, queuedAs, extra?.onDequeued);
+      return await consume(threadId, r as unknown as Response, onDelta, started, extra?.onCard, queuedAs, extra?.onDequeued);
     } catch (e) {
       // 流断了（切后台、锁屏、5G/Wi-Fi 切换）：服务端照样跑完。先重新接上（15 分钟内回完的也接得上）；
       // 再不行就去历史记录里找这条之后的回复。只有都找不到才算真的没发出去。
@@ -172,7 +175,7 @@ export class HttpApi implements GravaApi {
   async attach(threadId: string, onDelta?: (partial: string) => void, onCard?: (card: ChatCard) => void): Promise<Message | null> {
     const r = await expoFetch(`${getBase()}/api/chat/stream?thread=${encodeURIComponent(threadId)}`, { headers: { Accept: 'text/event-stream', ...authHeaders() } });
     if (r.status === 204) return null;
-    return consume(r as unknown as Response, onDelta, undefined, onCard);
+    return consume(threadId, r as unknown as Response, onDelta, undefined, onCard);
   }
   async history(threadId: string, day?: string) {
     const r = await expoFetch(`${getBase()}/api/chat/history?thread=${encodeURIComponent(threadId)}${day ? `&day=${day}` : ''}`, { headers: { Accept: 'application/json', ...authHeaders() } });

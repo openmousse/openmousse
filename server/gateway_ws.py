@@ -15,6 +15,8 @@
 - chat 事件 {runId, sessionKey, seq, state: status | delta | final | aborted | error}：delta 带 deltaText（replace = 整段换掉），
   final / aborted 带 message（content 数组）。要收到某个会话的事件先 sessions.messages.subscribe {key}，断线重连后重新订阅。
   （实测 2026-09-28：chat 事件对 operator 连接是广播的，没订阅的会话也收得到，所以 Telegram、别的 Agent 的轮次也会经过这里。）
+- agent 事件（同一连接、订阅了会话就有）：只转 run_status（准备阶段）、item（工具步骤的标题和状态）、thinking（思考摘要），
+  进这一轮的队列时 state = "agent"，chat.py 拼成给 app 的 progress（2026-10-05）。
 - 没人认领的一轮第一次出事件时问 ADOPT（settle.py 挂上：后台任务做完后派它的会话里那一轮 announce:…，是 app 派的就接过去）。
 """
 from __future__ import annotations
@@ -37,6 +39,7 @@ from config import settings
 CLIENT = {"id": "webchat", "version": "openmousse-server", "platform": "linux", "mode": "webchat"}
 ROLE, SCOPES = "operator", ["operator.read", "operator.write"]
 PROTOCOL = 4
+PROGRESS_STREAMS = ("run_status", "item", "thinking")  # agent 事件里转给 app 看进度的（chat.py 的 note_progress）
 BUFFER_SECONDS = 30  # 还没人认领的 runId 的事件留多久（chat.send 的回应和它第一批事件谁先到说不准）
 # 没人认领的一轮第一次出事件时调它（同步）：(payload) → True = 它已经 watch 了这个 runId，这个事件和之后的都进那个队列
 ADOPT: Callable[[dict], bool] | None = None
@@ -79,6 +82,7 @@ class GatewayWS:
         self.runs: dict[str, asyncio.Queue] = {}  # runId → 这一轮的 chat 事件
         self.early: dict[str, list[tuple[float, dict]]] = {}  # 还没人认领的 runId 的事件
         self.asked: dict[str, float] = {}  # 问过 ADOPT 的 runId（每个只问一次）→ 问的时间
+        self.pre: dict[str, list[tuple[float, dict]]] = {}  # 还没人认领的 runId 的进度事件（progress），认领时补进队列
         self.subscribed: set[str] = set()
         self.models: dict[str, str] = {}  # 会话 → 现在用的模型（provider/model），发之前对一下
 
@@ -159,6 +163,8 @@ class GatewayWS:
                         fut.set_result(j)
                 elif j.get("type") == "event" and j.get("event") == "chat":
                     self.route(j.get("payload") or {})
+                elif j.get("type") == "event" and j.get("event") == "agent":
+                    self.progress(j.get("payload") or {})
         except Exception:  # noqa: BLE001 — 连接断了：下面统一收尾
             pass
         finally:
@@ -191,6 +197,23 @@ class GatewayWS:
         for k in [k for k, v in self.early.items() if v and now - v[-1][0] > BUFFER_SECONDS]:
             self.early.pop(k, None)
 
+    def progress(self, p: dict) -> None:
+        """agent 事件里给人看进度的三种（准备阶段、工具步骤、思考摘要）：放进这一轮的队列，state 记成 "agent"。
+        命令参数和输出（tool / command_output）不转。还没人认领的 runId 先攒着（chat.send 的回应可能比它晚到），不问 ADOPT。"""
+        rid = str(p.get("runId") or "")
+        if not rid or p.get("stream") not in PROGRESS_STREAMS or p.get("isHeartbeat"):
+            return
+        item = {"runId": rid, "state": "agent", "stream": p.get("stream"), "data": p.get("data") or {}}
+        q = self.runs.get(rid)
+        if q is not None:
+            q.put_nowait(item)
+            return
+        now = time.time()
+        if rid not in self.asked:  # 问过 ADOPT 又没人要的（Telegram、定时任务的轮次）不攒；和 early 分开放，不影响 route 问 ADOPT
+            self.pre.setdefault(rid, []).append((now, item))
+        for k in [k for k, v in self.pre.items() if v and now - v[-1][0] > BUFFER_SECONDS]:
+            self.pre.pop(k, None)
+
     async def call(self, method: str, params: dict, timeout: float = 30) -> dict:
         await self.ensure()
         rid = self.next_id()
@@ -217,7 +240,7 @@ class GatewayWS:
     def watch(self, run_id: str) -> asyncio.Queue:
         """认领一个 runId：之后它的 chat 事件进这个队列（认领前已经到的也补进去）。"""
         q = self.runs.setdefault(run_id, asyncio.Queue())
-        for _, p in self.early.pop(run_id, []):
+        for _, p in sorted(self.pre.pop(run_id, []) + self.early.pop(run_id, []), key=lambda x: x[0]):
             q.put_nowait(p)
         return q
 

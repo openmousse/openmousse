@@ -25,6 +25,8 @@ import { saveMessage } from '../api/think';
 import { isRemote } from '../api/files';
 import { podFeatures } from '../api/podcast';
 import { PutInPodcast } from '../think/Materials';
+import { useReplyProgress } from '../api/progress';
+import { StepsLine, ThinkingPanel, WritingDots } from './Thinking';
 import { openEpisode } from '../think/Podcast';
 
 // 从「今天」的「去对话里说」带过来、还没发出去的引用，也按线程记着。
@@ -404,6 +406,7 @@ export function ChatView({ threadId, placeholder, empty, welcome, quote: quotePr
   const [canPod, setCanPod] = useState(false);
   useEffect(() => { podFeatures().then((f) => setCanPod(f.materials)).catch(() => {}); }, []);
   const busy = !!typing[threadId];
+  const progress = useReplyProgress(threadId);  // 在想什么、做到哪一步（Gateway 对话通道才有）
   const placed = useMemo(() => placeCards(allCards, msgs, busy), [allCards, msgs, busy]);
   const liveHandoffs = placed.live.filter((c): c is HandoffCard => c.kind === 'handoff');
   const liveTasks = placed.live.filter((c) => c.kind !== 'handoff');  // 任务卡、日程卡
@@ -420,7 +423,7 @@ export function ChatView({ threadId, placeholder, empty, welcome, quote: quotePr
       list.current.y = Math.max(0, list.current.content - list.current.height + list.current.inset);  // 滚动事件回来之前先按目标位置算
     }, 60);
     return () => clearTimeout(h);
-  }, [msgs.length, busy, partial?.length, inboxCount, cardCount, cardState]);
+  }, [msgs.length, busy, partial?.length, inboxCount, cardCount, cardState, progress?.steps.length, progress?.thought]);
 
   // 从转交卡 / 「主对话转来」点过来：等列表排好（上面那个滚到底之后）再滚到那一条，闪一下金边
   useEffect(() => {
@@ -679,13 +682,18 @@ export function ChatView({ threadId, placeholder, empty, welcome, quote: quotePr
         <ChatTasks cards={placed.below.get(-1)} onRevise={reviseCard} thread={threadId} />
         {messageList}
         {busy ? (
-          <View style={{ flexDirection: 'row', gap: space.sm, alignItems: partial || liveHandoffs.length ? 'flex-start' : 'center' }}>
+          <View style={{ flexDirection: 'row', gap: space.sm, alignItems: 'flex-start' }}>
             <LensAvatar size={28} config={avatar} />
             <View style={{ flex: 1, gap: 8 }}>
               {/* 这次回复里正在转给 Agent 的：先问，问完它再接着写 */}
               {liveHandoffs.map((c) => <HandoffChip key={c.id} card={c} />)}
-              {partial ? <ReplyText text={partial} resolveQuote={findQuote} onJump={onJump} />
-                : liveHandoffs.length ? null : <T v="callout" color={t.ink3}>{L(`发给 ${agentName()} 了，等回复…`, `Sent to ${agentName()}, waiting for a reply…`)}</T>}
+              {partial ? (
+                <>
+                  <StepsLine progress={progress} />
+                  <ReplyText text={partial} resolveQuote={findQuote} onJump={onJump} />
+                  <WritingDots />
+                </>
+              ) : liveHandoffs.length ? null : <ThinkingPanel progress={progress} />}
             </View>
           </View>
         ) : null}
@@ -745,7 +753,7 @@ export function ChatView({ threadId, placeholder, empty, welcome, quote: quotePr
               ref={input}
               value={draft} onChangeText={setDraft} placeholder={transcribing ? L('正在转文字…', 'Transcribing…') : quote?.follow ? L('问问进展，或者说还差什么', "Ask how it's going, or say what's missing")
                 : quote?.replyTo ? L('接着这句说…', 'Say something about it…') : quote ? L('说说要改什么', 'Say what should change')
-                  : busy ? L(`${agentName()} 还在回，现在发的会接着给它`, `${agentName()} is replying; what you send now still reaches it`) : placeholder} placeholderTextColor={t.ink3}
+                  : busy ? L('正在回复，可继续发送', 'Replying. You can keep sending.') : placeholder} placeholderTextColor={t.ink3}
               multiline numberOfLines={1} onSubmitEditing={submit} submitBehavior="submit" returnKeyType="send" enablesReturnKeyAutomatically onKeyPress={webEnter}
               accessibilityLabel={L('消息输入框', 'Message')} editable={!transcribing}
               style={[type.body, styles.input, { backgroundColor: t.surface, color: t.ink }]}

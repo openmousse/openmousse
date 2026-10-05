@@ -27,7 +27,7 @@ const native = Platform.OS !== 'web';
 export const modelLabel = (id: string | null | undefined) => modelOf(id ?? undefined)?.name.replace(/^Claude /, '') ?? modelName(id);
 
 /** 每秒走一下的「现在」（毫秒）：只在 on 的时候走，给「问了 12 秒」「做了 6 分钟」这种活的数字用。 */
-function useNow(on: boolean): number {
+export function useNow(on: boolean): number {
   const [now, setNow] = useState(0);
   useEffect(() => {
     if (!on) return undefined;
@@ -51,8 +51,8 @@ export function Spinner({ size = 14, color }: { size?: number; color: string }) 
   return <Animated.View style={{ transform: [{ rotate }] }}><LoaderCircle size={size} color={color} /></Animated.View>;
 }
 
-/** 「正在问」后面一闪一闪的三个点。 */
-function Dots({ color }: { color: string }) {
+/** 「正在问」后面一闪一闪的三个点（回复正在出字时，对话里文字下面也用它）。 */
+export function Dots({ color }: { color: string }) {
   const [v] = useState(() => new Animated.Value(0));
   useEffect(() => {
     const loop = Animated.loop(Animated.timing(v, { toValue: 3, duration: 1200, easing: Easing.linear, useNativeDriver: native }));

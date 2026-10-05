@@ -71,6 +71,7 @@ class Run:
     stopping: bool = False  # 用户点了「停」（/api/chat/stop）：断开到 Gateway 的连接，Gateway 就中止这一轮
     stream_task: asyncio.Task | None = None  # 流式读 Gateway 的那一段（停的时候取消它）
     gw_run: str | None = None  # 走 WebSocket 对话通道时 Gateway 给这一轮的 runId（停、插话、断线后接着收都靠它）
+    progress: dict | None = None  # 走对话通道时：准备阶段、工具步骤、最近的思考摘要（note_progress），客户端重新接上时补发
 
     def publish(self, item: tuple[str, dict]) -> None:
         for q in list(self.queues):
@@ -424,6 +425,50 @@ async def claw_stream(run: Run, content: str | list) -> None:
     await claw.stream(messages, claw.day_key(run.key or session_key(run.thread), day_of(run.started)), run.model, on_delta)
 
 
+PROGRESS_STEPS = 6       # 进度里最多留最近几步
+PROGRESS_THOUGHT = 600   # 思考摘要留最后多少字
+
+
+def note_progress(run: Run, p: dict) -> bool:
+    """对话通道的 agent 事件 → run.progress（给 app 画「在想 / 在做」）：
+    {"since": 开始的 Unix 秒, "phase": 准备阶段或 thinking / tool, "steps": [{"id", "tool", "detail", "status"}], "thought": 最近一段思考摘要}。
+    步骤只取 kind = tool 的条目（exec 另有一条 command，重复），detail 是模型自己写的标题（读文件只留文件名），不带命令参数和输出。
+    返回 False = 这个事件不改变显示。"""
+    stream, d = p.get("stream"), p.get("data") or {}
+    pr = run.progress or {"since": round(run.t0, 1), "phase": "", "steps": [], "thought": ""}
+    if stream == "run_status":
+        phase = str(d.get("phase") or "")
+        if not phase or pr["phase"] == phase:
+            return False
+        pr["phase"] = phase
+    elif stream == "thinking":
+        text = str(d.get("text") or "").strip()
+        if not text:
+            return False
+        pr["phase"], pr["thought"] = "thinking", text[-PROGRESS_THOUGHT:]
+    elif stream == "item":
+        if d.get("kind") != "tool" or not d.get("itemId"):
+            return False
+        sid, name = str(d["itemId"]), str(d.get("name") or "")
+        detail = str(d.get("meta") or "").strip()
+        if name in ("read", "write", "edit", "apply_patch") and detail:
+            detail = re.sub(r"^(from|to|in)\s+", "", detail)
+            detail = detail.rstrip("/").rsplit("/", 1)[-1]
+        status = str(d.get("status") or "")
+        status = "failed" if d.get("isError") or status in ("failed", "error") else "done" if d.get("phase") == "end" or status == "completed" else "running"
+        old = next((x for x in pr["steps"] if x["id"] == sid), None)
+        step = {"id": sid, "tool": name, "detail": detail[:120] or (old or {}).get("detail", ""), "status": status}
+        if step == old:
+            return False
+        steps = [step if x["id"] == sid else x for x in pr["steps"]] if old else [*pr["steps"], step]
+        pr["steps"] = steps[-PROGRESS_STEPS:]
+        pr["phase"] = "tool" if any(x["status"] == "running" for x in pr["steps"]) else "thinking"
+    else:
+        return False
+    run.progress = pr
+    return True
+
+
 async def gateway_ws_stream(run: Run, text: str | None) -> None:
     """经 Gateway 的对话通道：发出去（text 为 None = 接管一个已经在跑的 runId），按 runId 收 chat 事件攒进 run.text。
     断过线：重连后这一轮还在跑就接着收，已经结束了就去 chat.history 补回回复。"""
@@ -438,6 +483,10 @@ async def gateway_ws_stream(run: Run, text: str | None) -> None:
         lost = False
         async for p in c.events(run.gw_run):
             st = p.get("state")
+            if st == "agent":
+                if note_progress(run, p):
+                    run.publish(("progress", run.progress))
+                continue
             if st == "delta":
                 d = p.get("deltaText") or ""
                 if p.get("replace"):
@@ -584,6 +633,8 @@ async def attach(run: Run) -> AsyncIterator[bytes]:
         yield sse("start", {"userId": f"db{run.user_id}", "time": hhmm(run.started), "modelId": run.model, "sessionKey": run.key or session_key(run.thread)})
         for card in list(run.cards.values()):  # 这次回复里已经出的转交卡、任务卡（老版本 app 不认 card 事件，直接跳过）
             yield sse("card", card)
+        if run.progress and not run.done:  # 想到哪、做到哪（老版本 app 不认 progress 事件，直接跳过）
+            yield sse("progress", run.progress)
         if run.text:
             yield sse("delta", {"text": run.text})
         if run.done:
@@ -871,6 +922,8 @@ async def watch_steer(thread: str, key: str | None, rid: str, user_id: int, ts: 
             except asyncio.TimeoutError:
                 break
             st = p.get("state")
+            if st == "agent":  # 进度事件说明不了插进去没有，只看 chat 事件
+                continue
             if st == "disconnected":
                 break
             if st == "final" and not gw_mod.message_text(p.get("message")):
