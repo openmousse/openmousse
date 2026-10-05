@@ -162,8 +162,9 @@ export function HistoryDayScreen() {
   const { thread, day, focus } = useRoute<any>().params as { thread: string; day: string; focus?: string };
   const name = useThreadName();
   // 那天提过、要你点头的事：跟在提它的消息下面（处理过的是回执；还没处理的照样能点）
-  const { inboxByThread } = useStore();
+  const { inboxByThread, avatar, groups } = useStore();
   const asks = inboxByThread[thread] ?? [];
+  const groupIds = useMemo(() => groups.map((g) => g.id), [groups]);
   const [msgs, setMsgs] = useState<Message[] | null>(null);
   const [error, setError] = useState('');
   const scroll = useRef<ScrollView>(null);
@@ -187,7 +188,7 @@ export function HistoryDayScreen() {
           {msgs.map((m, i) => (
             <View key={m.id} onLayout={(e) => { ys.current[m.id] = e.nativeEvent.layout.y; }}
               style={focus === m.id ? [styles.focus, { borderLeftColor: t.gold }] : undefined}>
-              <Bubble m={m} showAvatar={m.role === 'grava' && msgs[i - 1]?.role !== 'grava'} />
+              <Bubble m={m} avatar={avatar} groupIds={groupIds} showAvatar={m.role === 'grava' && msgs[i - 1]?.role !== 'grava'} />
               {asks.filter((it) => it.messageId != null && `db${it.messageId}` === m.id).map((it) => (
                 <View key={it.id} style={{ paddingLeft: 36, marginTop: 14 }}><InboxCard item={it} variant="chat" /></View>
               ))}

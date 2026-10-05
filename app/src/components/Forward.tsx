@@ -186,6 +186,8 @@ export function SelectMark({ on }: { on: boolean }) {
 }
 
 /** 一个对话里的多选：选了哪些 ref；「选这一段」交给服务器圈，圈完带回一句要点 */
+const NO_REFS: string[] = [];
+
 export function useSelect() {
   const [refs, setRefs] = useState<string[] | null>(null);
   const [gist, setGist] = useState('');
@@ -204,7 +206,8 @@ export function useSelect() {
       setRefs([ref]);
     } finally { setBusy(false); }
   }, []);
-  return { on: refs !== null, refs: refs ?? [], gist, busy, start, stop, toggle, around, has: (ref: string) => !!refs?.includes(ref) };
+  // refs 不在多选时给同一个空数组：ChatView 的消息列表拿它当 useMemo 的依赖，每次给个新的 [] 就等于每按一个键整段对话重画（2026-10-05）
+  return { on: refs !== null, refs: refs ?? NO_REFS, gist, busy, start, stop, toggle, around, has: (ref: string) => !!refs?.includes(ref) };
 }
 
 /** 长按菜单里转发那几项（ChatView、朋友聊天共用）：每项是 [图标, 名字, 说明, 点了做什么] */

@@ -5,6 +5,7 @@ import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { ActivityIndicator, Platform, Pressable, ScrollView, StyleSheet, TextInput, View } from 'react-native';
 import { useFocusEffect, useNavigation, useRoute } from '@react-navigation/native';
 import * as study from '../api/study';
+import { usePartial } from '../api/partial';
 import { CourseChip } from '../components/ChatCards';
 import { pickDocuments, pickMedia } from '../components/chatInput';
 import { Check, ImageIcon, Send } from '../components/icons';
@@ -486,7 +487,8 @@ const TIPS = () => ({
 
 function AgentMini({ agent, course, step, onReply, generating }: { agent: string; course: string; step: number; onReply: () => void; generating: boolean }) {
   const t = useTheme();
-  const { threads, streaming, typing, send, refreshThread, cardsByThread, liveCards, groups } = useStore();
+  const { threads, typing, send, refreshThread, cardsByThread, liveCards, groups } = useStore();
+  const partial = usePartial(agent);
   useThreadOnScreen(agent);
   const [text, setText] = useState('');
   const [files, setFiles] = useState<PendingFile[]>([]);
@@ -537,7 +539,7 @@ function AgentMini({ agent, course, step, onReply, generating }: { agent: string
         if (m.role === 'auto') return <T key={m.id} v="caption" color={t.ink3} style={{ textAlign: 'center' }}>{txt}</T>;
         return <View key={m.id} style={{ gap: 6 }}><Markdown text={txt} small />{mine.map((c) => <CourseChip key={c.id} card={c} />)}</View>;
       })}
-      {busy ? <View style={{ gap: 6 }}>{streaming[agent] ? <Markdown text={streaming[agent]} small /> : <ActivityIndicator color={t.ink3} style={{ alignSelf: 'flex-start' }} />}
+      {busy ? <View style={{ gap: 6 }}>{partial ? <Markdown text={partial} small /> : <ActivityIndicator color={t.ink3} style={{ alignSelf: 'flex-start' }} />}
         {cards.filter((c) => c.messageId == null).map((c) => <CourseChip key={c.id} card={c} />)}</View> : null}
       {files.length ? <T v="caption" color={t.ink2}>{L(`${files.length} 个附件，将随消息一起发送`, `${files.length} attachment(s) will be sent`)}</T> : null}
       <View style={{ flexDirection: 'row', gap: space.sm, alignItems: 'flex-end' }}>

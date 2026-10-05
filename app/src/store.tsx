@@ -26,6 +26,7 @@ import * as goalsApi from './api/goals';
 import * as treeApi from './api/tree';
 import * as connectorsApi from './api/connectors';
 import { isMeditating } from './think/focus';
+import { setPartial } from './api/partial';
 
 // 2026-09-23 起：界面上的每一项都来自服务器上的真实来源，没有示例数据。连不上服务器时各页显示"未连接"，不冒充。
 
@@ -60,8 +61,7 @@ interface State {
   threads: Record<string, Message[]>;
   threadModel: Record<string, string>;
   typing: Record<string, boolean>;
-  /** 流式输出中的半截回复 */
-  streaming: Record<string, string>;
+  // 流式输出中的半截回复不在这里：在 api/partial.ts（usePartial），一秒变几十次，放这里全 app 跟着重画
   tasks: Task[];
   /** 后台任务的额度（任务页顶上）。老服务器没有 */
   taskQuota: TaskQuota | null;
@@ -333,7 +333,6 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
     threads: {},
     threadModel: { main: 'anthropic/claude-opus-5-5' },
     typing: {},
-    streaming: {},
     tasks: [],
     taskQuota: null,
     cardsByThread: {},
@@ -478,9 +477,8 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
       const threads = { ...st.threads };
       const threadModel = { ...st.threadModel };
       const typing = { ...st.typing };
-      const streaming = { ...st.streaming };
       const inboxByThread = { ...st.inboxByThread };
-      for (const tid of inFlight) { typing[tid] = true; streaming[tid] = hist.find(([x]) => x === tid)?.[1]?.inFlight?.text ?? ''; }
+      for (const tid of inFlight) typing[tid] = true;
       for (const [tid, h] of hist) {
         if (!h) continue;
         threads[tid] = h.messages;
@@ -489,17 +487,19 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
       for (const [tid, items] of boxes) if (items) inboxByThread[tid] = items;
       const cardsByThread = { ...st.cardsByThread };
       for (const [tid, c] of cardLists) if (c) cardsByThread[tid] = c;
-      return { ...st, threads, threadModel, typing, streaming, inboxByThread, cardsByThread };
+      return { ...st, threads, threadModel, typing, inboxByThread, cardsByThread };
     });
+    // 已经出的字和上面的「输入中」同一次重画（quiet：不单独通知）
+    for (const tid of inFlight) setPartial(tid, hist.find(([x]) => x === tid)?.[1]?.inFlight?.text ?? '', true);
     for (const tid of inFlight) {
       const still = () => (sending.current[tid] ?? 0) > 0;
       const queued = !!hist.find(([x]) => x === tid)?.[1]?.messages.some((m) => m.queued);
-      api.current.attach(tid, (partial) => setS((st) => ({ ...st, streaming: { ...st.streaming, [tid]: partial } })), onLiveCard(tid))
-        .then((reply) => setS((st) => {
-          const streaming = { ...st.streaming }; delete streaming[tid];
-          return reply ? { ...appendMsg(st, tid, reply), typing: { ...st.typing, [tid]: still() }, streaming } : { ...st, typing: { ...st.typing, [tid]: still() }, streaming };
-        }))
-        .catch(() => setS((st) => ({ ...st, typing: { ...st.typing, [tid]: still() } })))
+      api.current.attach(tid, (partial) => setPartial(tid, partial), onLiveCard(tid))
+        .then((reply) => {
+          setPartial(tid, null, true);  // 和下面加进这条回复同一次重画
+          setS((st) => (reply ? { ...appendMsg(st, tid, reply), typing: { ...st.typing, [tid]: still() } } : { ...st, typing: { ...st.typing, [tid]: still() } }));
+        })
+        .catch(() => { setPartial(tid, null, true); setS((st) => ({ ...st, typing: { ...st.typing, [tid]: still() } })); })
         .finally(() => {
           loadThreadCards(tid, true).catch(() => {});
           // 回复进行中排着的消息：这一轮回完会合成下一轮发出去，再读一次接上它
@@ -524,12 +524,16 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
     if (!h) return;
     setS((st) => ({ ...st, threads: { ...st.threads, [threadId]: h.messages }, threadModel: h.modelId ? { ...st.threadModel, [threadId]: h.modelId } : st.threadModel }));
     if (h.inFlight && !latest.current.typing[threadId]) {
-      setS((st) => ({ ...st, typing: { ...st.typing, [threadId]: true }, streaming: { ...st.streaming, [threadId]: h.inFlight?.text ?? '' } }));
+      setPartial(threadId, h.inFlight.text ?? '', true);
+      setS((st) => ({ ...st, typing: { ...st.typing, [threadId]: true } }));
       // 还有这边发出去、没拿到回复的：别把「输入中」关掉（它们各自回完再关）
       const still = () => (sending.current[threadId] ?? 0) > 0;
-      api.current.attach(threadId, (partial) => setS((st) => ({ ...st, streaming: { ...st.streaming, [threadId]: partial } })), onLiveCard(threadId))
-        .then((reply) => setS((st) => { const streaming = { ...st.streaming }; delete streaming[threadId]; return reply ? { ...appendMsg(st, threadId, reply), typing: { ...st.typing, [threadId]: still() }, streaming } : { ...st, typing: { ...st.typing, [threadId]: still() }, streaming }; }))
-        .catch(() => setS((st) => ({ ...st, typing: { ...st.typing, [threadId]: still() } })))
+      api.current.attach(threadId, (partial) => setPartial(threadId, partial), onLiveCard(threadId))
+        .then((reply) => {
+          setPartial(threadId, null, true);  // 和下面加进这条回复同一次重画
+          setS((st) => (reply ? { ...appendMsg(st, threadId, reply), typing: { ...st.typing, [threadId]: still() } } : { ...st, typing: { ...st.typing, [threadId]: still() } }));
+        })
+        .catch(() => { setPartial(threadId, null, true); setS((st) => ({ ...st, typing: { ...st.typing, [threadId]: still() } })); })
         .finally(() => {
           loadThreadCards(threadId, true).catch(() => {});
           // 回复进行中排着的消息：这一轮回完会合成下一轮发出去，再读一次接上它
@@ -937,7 +941,7 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
     // 它正在回复时发的：先排队（气泡下面标「排队」），排着的那一轮开跑时去掉；插进正在跑的那一轮的标「插话」
     const queuedAs = (userId: string, steer: boolean) => { swapId(userId); patchMine(steer ? { steered: true } : { queued: true }); };
     const dequeued = () => patchMine({ queued: false });
-    api.current.send(threadId, text, modelId, (partial) => setS((st) => ({ ...st, streaming: { ...st.streaming, [threadId]: partial } })), swapId, files,
+    api.current.send(threadId, text, modelId, (partial) => setPartial(threadId, partial), swapId, files,
       { ...(opts?.inboxId ? { inboxId: opts.inboxId } : {}), ...(opts?.ref ? { ref: opts.ref } : {}), ...(opts?.save ? { save: opts.save } : {}), ...(opts?.replyTo ? { replyTo: opts.replyTo } : {}),
         ...(opts?.study ? { study: opts.study } : {}),
         onCard: onLiveCard(threadId), onQueued: queuedAs, onDequeued: dequeued })
@@ -949,20 +953,21 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
         if (latest.current.sideChats.some((c) => c.id === threadId)) { loadProjectRef.current(threadId).catch(() => {}); reload('sideChats').catch(() => {}); }  // 它可能改了项目卡
         return reply;
       })
-      .then((reply) => setS((st) => {
-        // 排着的几条拿到的是同一条回复（appendMsg 按 id 去重）；都回完了才不算「输入中」
-        const left = Math.max(0, (sending.current[threadId] ?? 1) - 1);
-        sending.current[threadId] = left;
-        const streaming = { ...st.streaming }; delete streaming[threadId];
-        const list = (st.threads[threadId] ?? []).map((m) => (m.id === myId && m.queued ? { ...m, queued: false } : m));
-        return {
-          ...appendMsg({ ...st, threads: { ...st.threads, [threadId]: list } }, threadId, reply),
-          typing: { ...st.typing, [threadId]: left > 0 },
-          streaming,
-          groups: st.groups.map((g) => (g.id === threadId ? { ...g, lastLine: reply.body.text } : g)),
-          sideChats: st.sideChats.map((c) => (c.id === threadId ? { ...c, lastLine: reply.body.text, updatedAt: Date.now() } : c)),
-        };
-      }));
+      .then((reply) => {
+        setPartial(threadId, null, true);  // 和下面加进这条回复同一次重画
+        setS((st) => {
+          // 排着的几条拿到的是同一条回复（appendMsg 按 id 去重）；都回完了才不算「输入中」
+          const left = Math.max(0, (sending.current[threadId] ?? 1) - 1);
+          sending.current[threadId] = left;
+          const list = (st.threads[threadId] ?? []).map((m) => (m.id === myId && m.queued ? { ...m, queued: false } : m));
+          return {
+            ...appendMsg({ ...st, threads: { ...st.threads, [threadId]: list } }, threadId, reply),
+            typing: { ...st.typing, [threadId]: left > 0 },
+            groups: st.groups.map((g) => (g.id === threadId ? { ...g, lastLine: reply.body.text } : g)),
+            sideChats: st.sideChats.map((c) => (c.id === threadId ? { ...c, lastLine: reply.body.text, updatedAt: Date.now() } : c)),
+          };
+        });
+      });
   }, [reload, loadThreadInbox, loadThreadCards, onLiveCard]);
 
   // 调试用：开发服务器（npm run web）里 ?say=你好 会在连上后自动往主对话发一条（真的发给 agent），方便截图流式输出。

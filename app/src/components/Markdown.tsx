@@ -8,8 +8,13 @@ import { radius, type, useTheme } from '../theme';
 const md = MarkdownIt({ typographer: false, linkify: true, breaks: true });
 const mono = Platform.select({ ios: 'Menlo', android: 'monospace', default: 'ui-monospace, SFMono-Regular, Menlo, monospace' });
 
-/** compact：段落、列表之间更紧（卡片里的说明）。small：字号降到 callout、表格格子更窄（卡片里的结果预览）。 */
-export function Markdown({ text, color, compact, small }: { text: string; color?: string; compact?: boolean; small?: boolean }) {
+const openLink = (url: string) => { Linking.openURL(url).catch(() => {}); return false; };
+
+/**
+ * compact：段落、列表之间更紧（卡片里的说明）。small：字号降到 callout、表格格子更窄（卡片里的结果预览）。
+ * memo：文字没变就不重新解析。MarkdownDisplay 自己也是 memo，但只要有一个 prop 是新的（以前 onLinkPress 每次现写一个）就整段重新解析、重建渲染器。
+ */
+export const Markdown = React.memo(function Markdown({ text, color, compact, small }: { text: string; color?: string; compact?: boolean; small?: boolean }) {
   const t = useTheme();
   const ink = color ?? t.ink;
   const styles = useMemo(() => ({
@@ -42,8 +47,8 @@ export function Markdown({ text, color, compact, small }: { text: string; color?
     image: { borderRadius: radius.md },
   }), [t, ink, compact, small]);
   return (
-    <MarkdownDisplay style={styles as any} markdownit={md} onLinkPress={(url: string) => { Linking.openURL(url).catch(() => {}); return false; }}>
+    <MarkdownDisplay style={styles as any} markdownit={md} onLinkPress={openLink}>
       {text}
     </MarkdownDisplay>
   );
-}
+});

@@ -1,16 +1,15 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { agentName } from '../brand';
 import { useNavigation } from '@react-navigation/native';
-import { Alert, Image, Platform, Pressable, ScrollView, StyleSheet, TextInput, View, type LayoutChangeEvent, type NativeScrollEvent, type NativeSyntheticEvent, type TextInputKeyPressEventData } from 'react-native';
+import { Alert, Image, Platform, Pressable, ScrollView, StyleSheet, View, type LayoutChangeEvent, type NativeScrollEvent, type NativeSyntheticEvent } from 'react-native';
 import * as Clipboard from 'expo-clipboard';
 import * as Haptics from 'expo-haptics';
-import { AudioModule, RecordingPresets, setAudioModeAsync, useAudioRecorder, useAudioRecorderState } from 'expo-audio';
-import { ArrowUp, Bookmark, Camera, ChevronRight, Copy, EyeOff, FileAudio, FileText, Film, ImageIcon, Inbox, ListChecks, LoaderCircle, Mic, Paperclip, Pencil, Quote, ShareIcon, Square, Trash2, Undo2, X } from './icons';
+import { Bookmark, Camera, ChevronRight, Copy, EyeOff, FileAudio, FileText, Film, ImageIcon, Inbox, ListChecks, LoaderCircle, Mic, Paperclip, Pencil, Quote, ShareIcon, Trash2, Undo2, X } from './icons';
 import type { Attachment, ChatCard, HandoffCard, InboxItem, Message, PendingFile, TaskCardInfo } from '../data/types';
 import { L } from '../i18n';
 import type { ChatQuote } from '../navigation';
 import { useStore } from '../store';
-import { radius, space, type, useTheme } from '../theme';
+import { radius, space, useTheme } from '../theme';
 import { LensAvatar } from './LensAvatar';
 import { ChatScroll, KeyboardSticky, dismissMode, useBottomInset } from './keyboard';
 import { modelOf } from './ModelPicker';
@@ -20,16 +19,17 @@ import { Markdown } from './Markdown';
 import { InboxCard } from './InboxCard';
 import { CourseChip, HandoffChip, HandoffFrom, ProjectChip, ScheduleChip, TaskCardView, modelLabel } from './ChatCards';
 import { MAX_FILES, pickDocuments, pickMedia } from './chatInput';
-import { loadDraft, saveDraft } from '../drafts';
 import { saveMessage } from '../api/think';
 import { isRemote } from '../api/files';
 import { podFeatures } from '../api/podcast';
 import { PutInPodcast } from '../think/Materials';
 import { useReplyProgress } from '../api/progress';
+import { usePartial } from '../api/partial';
 import { StepsLine, ThinkingPanel, WritingDots } from './Thinking';
 import { openEpisode } from '../think/Podcast';
 import * as fw from '../api/forward';
 import { BasketPill, BundleCard, ForwardTranscript, SelectBar, SelectMark, forwardActions, openBack, setBasketCount, useForwardSupported, useSelect } from './Forward';
+import { Composer, type ComposerHandle } from './ChatComposer';
 
 // 从「今天」的「去对话里说」带过来、还没发出去的引用，也按线程记着。
 const quotes = new Map<string, ChatQuote>();
@@ -66,10 +66,10 @@ function placeInbox(items: InboxItem[], msgs: Message[]): Map<number, InboxItem[
 }
 
 /** 对话里的一张收件箱卡：和助手的消息对齐（让出头像那一列）。 */
-function ChatInbox({ items }: { items?: InboxItem[] }) {
+const ChatInbox = React.memo(function ChatInbox({ items }: { items?: InboxItem[] }) {
   if (!items?.length) return null;
   return <>{items.map((it) => <View key={it.id} style={{ paddingLeft: 36 }}><InboxCard item={it} variant="chat" /></View>)}</>;
-}
+});
 
 /**
  * 转交卡、任务卡放在哪：挂在 db<messageId> 那条回复上（转交卡在回复文字上面，是先问的；任务卡在下面，是回复里说的那件事）。
@@ -97,7 +97,7 @@ function placeCards(cards: ChatCard[], msgs: Message[], busy: boolean) {
 }
 
 /** 回复下面的任务卡（和转交卡一样让出头像那一列；转交卡如果按时间排到这里，也走这里）。 */
-function ChatTasks({ cards, onRevise, thread }: { cards?: ChatCard[]; onRevise: (c: TaskCardInfo) => void; thread: string }) {
+const ChatTasks = React.memo(function ChatTasks({ cards, onRevise, thread }: { cards?: ChatCard[]; onRevise: (c: TaskCardInfo) => void; thread: string }) {
   if (!cards?.length) return null;
   return <>{cards.map((c) => (
     <View key={c.id} style={{ paddingLeft: 36 }}>
@@ -105,13 +105,11 @@ function ChatTasks({ cards, onRevise, thread }: { cards?: ChatCard[]; onRevise: 
         : c.kind === 'course' ? <CourseChip card={c} /> : <HandoffChip card={c} />}
     </View>
   ))}</>;
-}
+});
 
 // 上限对齐主流 LLM 产品（服务端 files.py 同样的数）：一条消息 10 个附件，每个 30 MB，类型不限。
 const MAX_BYTES = 30 * 1024 * 1024;
 const PLACEHOLDER_TEXT = '（见附件）';  // 只发附件时服务端（chat.py）和 store 记的占位文字；按原文比较后隐藏，不翻译
-// 语音输入只要听清人声：16 kHz 单声道 32 kbps 的 AAC，比默认的 44.1 kHz 立体声 128 kbps 小 6 倍，上传快得多，转写质量不受影响。
-const SPEECH_PRESET = { ...RecordingPresets.HIGH_QUALITY, sampleRate: 16000, numberOfChannels: 1, bitRate: 32000 };
 
 const human = (n: number) => (n >= 1024 * 1024 ? `${(n / 1024 / 1024).toFixed(1)} MB` : `${Math.max(1, Math.round(n / 1024))} KB`);
 
@@ -121,6 +119,7 @@ function inboxLine(text: string): string {
   const head = s.split(/现在去做|，?不用再报 done|有要接着做的|改好后用|Do it now|It has taken effect|If something follows|When it is revised/)[0].trim();
   return /[一-鿿」]$/.test(head) ? `${head}。` : head;
 }
+type AvatarConfig = React.ComponentProps<typeof LensAvatar>['config'];
 const KIND_ICON = { doc: FileText, audio: FileAudio, video: Film, file: Paperclip, image: ImageIcon } as const;
 
 function ModelTag({ m }: { m: Message }) {
@@ -215,7 +214,7 @@ function QuoteChip({ text, onPress, spaced }: { text: string; onPress?: () => vo
 }
 
 /** 回复正文：引用行画成引用条，其余照常 Markdown。 */
-function ReplyText({ text, resolveQuote, onJump }: { text: string; resolveQuote?: (q: string) => string | undefined; onJump?: (id: string) => void }) {
+const ReplyText = React.memo(function ReplyText({ text, resolveQuote, onJump }: { text: string; resolveQuote?: (q: string) => string | undefined; onJump?: (id: string) => void }) {
   const parts = splitQuotes(text);
   if (!parts.some((x) => x.quote)) return <Markdown text={text} />;
   return (
@@ -227,10 +226,17 @@ function ReplyText({ text, resolveQuote, onJump }: { text: string; resolveQuote?
       })}
     </View>
   );
-}
+});
 
-export function Bubble({ m, showAvatar, onLongPress, before, from, highlight, onJump, resolveQuote }: {
-  m: Message; showAvatar: boolean; onLongPress?: () => void;
+/**
+ * 一条消息。memo，不读 store（头像、Agent 列表由外面传进来）：store 一变（流式回复每来一段字都变）读 store 的组件全都要重画，
+ * 一天几十条长回复每段字都重新排一遍版。回调要稳定（ChatView 用 handlers ref 包着），onLongPress 收到的是这条消息。
+ */
+export const Bubble = React.memo(function Bubble({ m, avatar, groupIds, showAvatar, onLongPress, before, from, highlight, onJump, resolveQuote }: {
+  m: Message; showAvatar: boolean; onLongPress?: (m: Message) => void;
+  avatar: AvatarConfig;
+  /** 合并转发卡里点「回到原对话」时分辨是不是 Agent 的对话 */
+  groupIds: string[];
   /** 回复文字上面的东西（这条回复里转出去的转交卡） */
   before?: React.ReactNode;
   /** 「主对话转来」这一条对应的转交记录（点一下回去） */
@@ -243,8 +249,8 @@ export function Bubble({ m, showAvatar, onLongPress, before, from, highlight, on
   resolveQuote?: (q: string) => string | undefined;
 }) {
   const t = useTheme();
-  const { avatar, groups } = useStore();
   const sheet = useSheet();
+  const long = onLongPress ? () => onLongPress(m) : undefined;
   const att = m.body.attachments ?? [];
   const text = att.length && m.body.text === PLACEHOLDER_TEXT ? '' : m.body.text;
   if (m.role === 'auto') {
@@ -283,14 +289,14 @@ export function Bubble({ m, showAvatar, onLongPress, before, from, highlight, on
     const fwd = m.forward;
     // 合并转发给这个 Agent 的：上面一张聊天记录卡，点开看全部（每段能回到原来的对话）
     const openFwd = fwd ? () => sheet.open({ title: fwd.gist || L('聊天记录', 'Messages'), content: (close) => (
-      <ForwardTranscript id={fwd.id} onBack={(it) => { close(); openBack(it.back, groups.map((g) => g.id)); }} />
+      <ForwardTranscript id={fwd.id} onBack={(it) => { close(); openBack(it.back, groupIds); }} />
     ) }) : undefined;
     return (
       <View style={{ alignItems: 'flex-end', gap: 6 }}>
         {fwd ? <BundleCard mine title={fwd.gist} n={fwd.n} convs={fwd.convs} lines={fwd.lines} onOpen={openFwd} /> : null}
         {att.length ? <AttachmentList items={att} mine /> : null}
         {text ? (
-          <Pressable onLongPress={onLongPress} delayLongPress={350} accessibilityHint={L('长按可复制、引用、撤回、重新编辑或删除', 'Long-press to copy, quote, unsend, edit or delete')}
+          <Pressable onLongPress={long} delayLongPress={350} accessibilityHint={L('长按可复制、引用、撤回、重新编辑或删除', 'Long-press to copy, quote, unsend, edit or delete')}
             style={({ pressed }) => [styles.userBubble, { backgroundColor: t.surface2, opacity: pressed ? 0.75 : 1, gap: m.replyTo ? 6 : 0 }]}>
             {/* 长按「引用」着发的：上面一行原话，点了跳回去 */}
             {m.replyTo ? <QuoteChip text={m.replyTo.text} onPress={onJump && m.replyTo ? () => onJump(m.replyTo!.id) : undefined} /> : null}
@@ -304,7 +310,7 @@ export function Bubble({ m, showAvatar, onLongPress, before, from, highlight, on
     );
   }
   return (
-    <Pressable onLongPress={onLongPress} delayLongPress={350} style={{ flexDirection: 'row', gap: space.sm }}>
+    <Pressable onLongPress={long} delayLongPress={350} style={{ flexDirection: 'row', gap: space.sm }}>
       <View style={{ width: 28 }}>{showAvatar || before ? <LensAvatar size={28} config={avatar} /> : null}</View>
       <View style={{ flex: 1 }}>
         {before ? <View style={{ gap: 8, marginBottom: 8 }}>{before}</View> : null}
@@ -314,7 +320,7 @@ export function Bubble({ m, showAvatar, onLongPress, before, from, highlight, on
       </View>
     </Pressable>
   );
-}
+});
 
 export function Action({ icon: Icon, label, note, danger, onPress }: { icon: typeof Copy; label: string; note?: string; danger?: boolean; onPress: () => void }) {
   const t = useTheme();
@@ -349,13 +355,13 @@ export function ChatView({ threadId, placeholder, empty, welcome, quote: quotePr
   study?: string;
 }) {
   const t = useTheme();
-  const { threads, typing, send, stop, avatar, streaming, connected, booting, deleteMessage, rewindMessage, transcribe, refreshThread, sharedChannels, inboxByThread, cardsByThread, liveCards, reviseTask } = useStore();
+  const { threads, typing, send, stop, avatar, groups, connected, booting, deleteMessage, rewindMessage, transcribe, refreshThread, sharedChannels, inboxByThread, cardsByThread, liveCards, reviseTask } = useStore();
   const sheet = useSheet();
   const threadMsgs = threads[threadId];
   const msgs = useMemo(() => threadMsgs ?? [], [threadMsgs]);
   // 这个对话里的收件箱卡片：跟在提它的那条消息下面（处理过的显示成回执）
-  // 打字时整页会重算（输入框的字记在这个组件里）：消息列表用 useMemo 包起来，只在消息、卡片变了时重排，
-  // 每按一个键不再把整段对话重新排版一遍（2026-09-28：主对话攒了一天几十条长回复，打字每个字母都卡）。
+  // 输入框的字记在 Composer 里，打字不重画这一页。store 一变（流式回复每来一段字）这一页还是会重画：消息列表用 useMemo 包起来，
+  // 只在消息、卡片变了时重排；依赖里每一项都要稳定（2026-09-28 主对话打字卡；10/5 转发的多选每次给个新的 []，又卡回去了）。
   const threadInbox = inboxByThread[threadId];
   const slots = useMemo(() => placeInbox(threadInbox ?? [], msgs), [threadInbox, msgs]);
   const inboxCount = inboxByThread[threadId]?.length ?? 0;
@@ -383,26 +389,18 @@ export function ChatView({ threadId, placeholder, empty, welcome, quote: quotePr
     setQuoteSeen(quoteAt);
     if (quoteProp) setQuote(quoteProp);
   }
-  const input = useRef<TextInput>(null);
+  const composer = useRef<ComposerHandle>(null);
   useEffect(() => {
     if (quote) quotes.set(threadId, quote); else quotes.delete(threadId);
   }, [threadId, quote]);
   // 带着引用进来：直接把光标放进输入框
   useEffect(() => {
     if (!quoteAt || !quoteProp) return undefined;
-    const h = setTimeout(() => input.current?.focus(), 350);
+    const h = setTimeout(() => composer.current?.focus(), 350);
     return () => clearTimeout(h);
   }, [quoteAt, quoteProp]);
-  const partial = streaming[threadId];
-  const [draft, setDraft] = useState(() => loadDraft(threadId));  // 没发出去的草稿存在本机（drafts.ts），退出 app 也还在
-  // 同一个 ChatView 换了线程（Agent 页没按线程重建）：换成那个线程的草稿，别把这边的带过去
-  const [draftOf, setDraftOf] = useState(threadId);
-  if (draftOf !== threadId) {
-    setDraftOf(threadId);
-    setDraft(loadDraft(threadId));
-  }
+  const partial = usePartial(threadId);  // 正在出的字：不在 store 里，只有这一页跟着它重画
   const [pending, setPending] = useState<PendingFile[]>([]);
-  const [transcribing, setTranscribing] = useState(false);
   const scroller = useRef<ScrollView>(null);
   const root = useRef<View>(null);
   const bottom = useBottomInset(root);
@@ -426,9 +424,9 @@ export function ChatView({ threadId, placeholder, empty, welcome, quote: quotePr
   // 每条消息在列表里的位置（定位到某一条用）；从转交卡点过来的那一条闪一下
   const ys = useRef<Record<string, number>>({});
   const [flash, setFlash] = useState<string | null>(null);
-  const recorder = useAudioRecorder(SPEECH_PRESET);
-  const rec = useAudioRecorderState(recorder, 250);
-  const canRecord = Platform.OS !== 'web';
+  // 气泡里用的：Agent 的 id 列表只在 Agent 增删时换一个（store 每次重新拉 groups 都是新数组）
+  const groupKey = groups.map((g) => g.id).join('\n');
+  const groupIds = useMemo(() => (groupKey ? groupKey.split('\n') : []), [groupKey]);
 
   useEffect(() => {
     const h = setTimeout(() => {
@@ -451,8 +449,6 @@ export function ChatView({ threadId, placeholder, empty, welcome, quote: quotePr
     const off = setTimeout(() => setFlash(null), 2600);
     return () => { clearTimeout(go); clearTimeout(off); };
   }, [focus, focusAt, msgs.length]);
-
-  useEffect(() => { saveDraft(threadId, draft); }, [threadId, draft]);
 
   const track = (e: NativeSyntheticEvent<NativeScrollEvent>) => {
     list.current.y = e.nativeEvent.contentOffset.y;
@@ -499,60 +495,32 @@ export function ChatView({ threadId, placeholder, empty, welcome, quote: quotePr
     });
   };
 
-  const submit = () => {
-    const text = draft.trim();
+  // 输入框按发送（Composer 管着草稿，把去掉首尾空白的字交过来）：返回 true 让它清空输入框
+  const submit = (text: string): boolean | Promise<boolean> => {
     // 改一下任务：意见直接交给做这件事的子会话（不进这个对话），任务卡变成下一轮
     if (quote?.taskId) {
-      if (!text || transcribing) return;
-      if (pending.length) { Alert.alert(L('修改意见不支持附件', "Revisions can't include attachments"), L('请用文字说明需要修改的内容。', 'Describe the changes in text.')); return; }
+      if (!text) return false;
+      if (pending.length) { Alert.alert(L('修改意见不支持附件', "Revisions can't include attachments"), L('请用文字说明需要修改的内容。', 'Describe the changes in text.')); return false; }
       reviseTask(quote.taskId, text).catch(fail);
-      setDraft('');
       setQuote(null);
-      return;
+      return true;
     }
     const taken = text && !pending.length && intercept ? intercept(text) : null;
-    if (taken) {
-      taken.then(() => setDraft('')).catch(fail);
-      return;
-    }
-    if ((!text && !pending.length) || transcribing) return;  // 它正在回复也能发：服务器先排队，这条回完一起发给它
+    if (taken) return taken.then(() => true, (e) => { fail(e); return false; });
+    if (!text && !pending.length) return false;  // 它正在回复也能发：服务器先排队，这条回完一起发给它
     // 带着引用：收件箱里还没定下来的那件事 = 修改意见（服务器收到 inboxId 会把它退回去改），处理过的 = 跟进；收藏：模型另外看到那条收藏；长按「引用」的：模型看到原话
     const via = quote?.inboxId ? { inboxId: quote.inboxId } : quote?.ref ? { ref: quote.ref } : quote?.saveId ? { save: quote.saveId } : quote?.replyTo ? { replyTo: quote.replyTo } : undefined;
     send(threadId, text, pending.length ? pending : undefined, study ? { ...via, study } : via);
-    setDraft('');
     setPending([]);
     setQuote(null);
+    return true;
   };
 
   // 任务卡上点「改一下」/「接着做」：输入框上面带「改：标题」，光标放进去；接着做的先填一句
   const reviseCard = (c: TaskCardInfo) => {
     setQuote({ taskId: c.id, title: c.title, model: c.modelId });
-    if (c.timedOut && !draft.trim()) setDraft(L('接着做完，从停下的地方继续', 'Keep going from where you stopped'));
-    setTimeout(() => input.current?.focus(), 250);
-  };
-
-  const startRecording = async () => {
-    try {
-      const perm = await AudioModule.requestRecordingPermissionsAsync();
-      if (!perm.granted) { Alert.alert(L('无麦克风权限', 'No microphone access'), L(`请在系统设置中为 ${agentName()} 开启麦克风权限。`, `Turn on the microphone for ${agentName()} in Settings.`)); return; }
-      await setAudioModeAsync({ allowsRecording: true, playsInSilentMode: true });
-      await recorder.prepareToRecordAsync();
-      recorder.record();
-      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => {});
-    } catch (e) { fail(e); }
-  };
-
-  const stopRecording = async () => {
-    try {
-      await recorder.stop();
-      await setAudioModeAsync({ allowsRecording: false, playsInSilentMode: true });
-      const uri = recorder.uri;
-      if (!uri) return;
-      setTranscribing(true);
-      const text = await transcribe({ uri, name: 'voice.m4a', mime: 'audio/m4a', size: 0 });
-      if (text) setDraft((d) => (d.trim() ? `${d.trim()} ${text}` : text));
-      else Alert.alert(L('未识别到语音', 'No speech detected'), L('录音中未识别出文字。', 'No speech was recognized in the recording.'));
-    } catch (e) { fail(e); } finally { setTranscribing(false); }
+    if (c.timedOut) composer.current?.fill(L('接着做完，从停下的地方继续', 'Keep going from where you stopped'));
+    setTimeout(() => composer.current?.focus(), 250);
   };
 
   const openActions = (m: Message) => {
@@ -562,7 +530,7 @@ export function ChatView({ threadId, placeholder, empty, welcome, quote: quotePr
     const shared = threadId === 'main' && sharedChannels.length ? L(`主对话与 ${sharedChannels.join('、')} 共用，对应渠道中此后的消息也会一并回退。`, ` The main chat is shared with ${sharedChannels.join(', ')}, so later messages there are rolled back too.`) : '';
     const tail = after > 0 ? L(`其后的 ${after} 条消息将一并移除，`, after === 1 ? 'The message after it is also removed. ' : `The ${after} messages after it are also removed. `) : '';
     const close = sheet.close;
-    const rewind = (edit: boolean) => { close(); rewindMessage(threadId, m.id).then((txt) => { if (edit) setDraft(txt || text); }).catch(fail); };
+    const rewind = (edit: boolean) => { close(); rewindMessage(threadId, m.id).then((txt) => { if (edit) composer.current?.set(txt || text); }).catch(fail); };
     sheet.open({
       title: m.role === 'user' ? L('这条消息', 'This message') : L(`${agentName()} 的回复`, `${agentName()}'s reply`),
       content: () => (
@@ -570,7 +538,7 @@ export function ChatView({ threadId, placeholder, empty, welcome, quote: quotePr
           <Action icon={Copy} label={L('复制', 'Copy')} onPress={() => { close(); Clipboard.setStringAsync(text).catch(() => {}); }} />
           {m.id.startsWith('db') && m.role !== 'auto' && text.trim() ? (
             <Action icon={Quote} label={L('引用', 'Quote')} note={L('引用这条消息回复：Agent 能看到所引原文，你的消息上方也会显示原话', 'Reply to this message: the Agent sees the quoted text, and your message shows it')}
-              onPress={() => { close(); setQuote({ replyTo: m.id, title: text.replace(/\s+/g, ' ').slice(0, 40) }); setTimeout(() => input.current?.focus(), 250); }} />
+              onPress={() => { close(); setQuote({ replyTo: m.id, title: text.replace(/\s+/g, ' ').slice(0, 40) }); setTimeout(() => composer.current?.focus(), 250); }} />
           ) : null}
           {canForward && m.id.startsWith('db') && m.role !== 'auto' && text.trim() ? forwardActions({
             forward: () => { close(); nav.navigate('Forward', { refs: [fw.chatRef(threadId, m.id)] }); },
@@ -622,17 +590,23 @@ export function ChatView({ threadId, placeholder, empty, welcome, quote: quotePr
     }
     return undefined;
   };
-  // 列表里的回调走 ref：拿到的永远是最新的（reviseCard 要读当前草稿），又不让列表因为回调换了而重排。
-  const handlers = useRef({ openActions, reviseCard, jumpTo, resolveQuote });
-  useEffect(() => { handlers.current = { openActions, reviseCard, jumpTo, resolveQuote }; });  // 每次渲染后更新（回调只在点按时才用，提交后再换不影响）
+  const stopReply = () => { stop(threadId).catch(fail); };
+  // 列表和输入框的回调走 ref：拿到的永远是最新的（submit 要读当前的引用和附件），又不让列表、输入框因为回调换了而重画。
+  const handlers = useRef({ openActions, reviseCard, jumpTo, resolveQuote, submit, openAttach, stopReply });
+  useEffect(() => { handlers.current = { openActions, reviseCard, jumpTo, resolveQuote, submit, openAttach, stopReply }; });  // 每次渲染后更新（回调只在点按时才用，提交后再换不影响）
   const onJump = useCallback((mid: string) => handlers.current.jumpTo(mid), []);
   const findQuote = useCallback((q: string) => handlers.current.resolveQuote(q), []);
+  const onLong = useCallback((m: Message) => handlers.current.openActions(m), []);
+  const onRevise = useCallback((c: TaskCardInfo) => handlers.current.reviseCard(c), []);
+  const onSubmit = useCallback((text: string) => handlers.current.submit(text), []);
+  const onAttach = useCallback(() => handlers.current.openAttach(), []);
+  const onStop = useCallback(() => handlers.current.stopReply(), []);
   const messageList = useMemo(() => (
     <>
         {msgs.map((m, i) => {
           const above = placed.above.get(i);
           const bubble = (
-            <Bubble m={m} showAvatar={m.role === 'grava' && msgs[i - 1]?.role !== 'grava'} onLongPress={() => handlers.current.openActions(m)}
+            <Bubble m={m} avatar={avatar} groupIds={groupIds} showAvatar={m.role === 'grava' && msgs[i - 1]?.role !== 'grava'} onLongPress={onLong}
               before={above?.length ? above.map((c) => <HandoffChip key={c.id} card={c} />) : undefined}
               from={m.role === 'auto' ? incoming.find((h) => h.relayId === m.id) : undefined} highlight={flash === m.id}
               onJump={onJump} resolveQuote={findQuote} />
@@ -650,29 +624,16 @@ export function ChatView({ threadId, placeholder, empty, welcome, quote: quotePr
                   </Pressable>
                 ) : bubble}
               </View>
-              <ChatTasks cards={placed.below.get(i)} onRevise={(c) => handlers.current.reviseCard(c)} thread={threadId} />
+              <ChatTasks cards={placed.below.get(i)} onRevise={onRevise} thread={threadId} />
               <ChatInbox items={slots.get(i)} />
             </React.Fragment>
           );
         })}
     </>
-  ), [msgs, placed, slots, incoming, flash, threadId, onJump, findQuote, picking, picked, toggle]);
+  ), [msgs, placed, slots, incoming, flash, threadId, avatar, groupIds, onLong, onRevise, onJump, findQuote, picking, picked, toggle]);
 
-  // 它正在回复也能发（服务器排队，回完一起发给它）；改一下任务不经过这个对话
-  const canSend = quote?.taskId ? !!draft.trim() && !transcribing : (!!draft.trim() || pending.length > 0) && !transcribing;
-  // 正在回复、输入框空着：发送键换成「停」
-  const showStop = busy && !draft.trim() && !pending.length && !quote?.taskId;
   // 「从这里开始」只在对话还空着时出现，占住空白提示的位置；发出第一条就没了
   const showWelcome = !!welcome && !msgs.length && !busy;
-  // 手机上回车键是「发送」，发完键盘留着接着打（submitBehavior）。网页的多行输入框不认 submitBehavior，
-  // 自己接 Enter：发送、不丢焦点；Shift+Enter 换行；输入法选字时按的 Enter 不算。
-  const webEnter = Platform.OS === 'web' ? (e: NativeSyntheticEvent<TextInputKeyPressEventData>) => {
-    const k = e.nativeEvent as unknown as KeyboardEvent;
-    if (k.key !== 'Enter' || k.shiftKey || k.isComposing || k.keyCode === 229) return;
-    e.preventDefault();
-    submit();
-  } : undefined;
-  const secs = Math.floor((rec.durationMillis ?? 0) / 1000);
 
   return (
     <View ref={root} onLayout={bottom.onLayout} style={{ flex: 1, paddingBottom: bottom.home }}>
@@ -709,7 +670,7 @@ export function ChatView({ threadId, placeholder, empty, welcome, quote: quotePr
           </View>
         ) : null}
         <ChatInbox items={slots.get(-1)} />
-        <ChatTasks cards={placed.below.get(-1)} onRevise={reviseCard} thread={threadId} />
+        <ChatTasks cards={placed.below.get(-1)} onRevise={onRevise} thread={threadId} />
         {messageList}
         {busy ? (
           <View style={{ flexDirection: 'row', gap: space.sm, alignItems: 'flex-start' }}>
@@ -727,7 +688,7 @@ export function ChatView({ threadId, placeholder, empty, welcome, quote: quotePr
             </View>
           </View>
         ) : null}
-        {busy ? <ChatTasks cards={liveTasks} onRevise={reviseCard} thread={threadId} /> : null}
+        {busy ? <ChatTasks cards={liveTasks} onRevise={onRevise} thread={threadId} /> : null}
       </ChatScroll>
       <KeyboardSticky offset={bottom.offset} style={[styles.composerWrap, { borderTopColor: t.line, backgroundColor: t.bg }]}>
         {sel.on ? (
@@ -769,50 +730,10 @@ export function ChatView({ threadId, placeholder, empty, welcome, quote: quotePr
             ))}
           </ScrollView>
         ) : null}
-        {rec.isRecording ? (
-          <View style={styles.composer}>
-            <View style={[styles.recording, { backgroundColor: t.surface }]}>
-              <View style={{ width: 10, height: 10, borderRadius: 5, backgroundColor: t.bad }} />
-              <T v="body" style={{ flex: 1, fontVariant: ['tabular-nums'] }}>{L('正在录音', 'Recording')} {Math.floor(secs / 60)}:{String(secs % 60).padStart(2, '0')}</T>
-              <T v="caption" color={t.ink3}>{L('点击停止结束录音，转写后可编辑', 'Tap stop when done, then edit the text')}</T>
-            </View>
-            <Pressable onPress={stopRecording} accessibilityRole="button" accessibilityLabel={L('停止录音', 'Stop recording')} style={[styles.send, { backgroundColor: t.bad }]}>
-              <Square size={16} color="#fff" fill="#fff" />
-            </Pressable>
-          </View>
-        ) : (
-          <View style={styles.composer}>
-            <Pressable onPress={openAttach} hitSlop={6} accessibilityRole="button" accessibilityLabel={L('添加附件', 'Add attachment')} style={styles.iconBtn}>
-              <Paperclip size={22} color={t.ink2} />
-            </Pressable>
-            <TextInput
-              ref={input}
-              value={draft} onChangeText={setDraft} placeholder={transcribing ? L('正在转写…', 'Transcribing…') : quote?.follow ? L('询问进展或补充要求', "Ask about progress or add what's missing")
-                : quote?.replyTo ? L('回复这条消息…', 'Reply to this message…') : quote ? L('说明需要修改的内容', 'Describe the changes')
-                  : busy ? L('正在回复，可继续发送', 'Replying. You can keep sending.') : placeholder} placeholderTextColor={t.ink3}
-              multiline numberOfLines={1} onSubmitEditing={submit} submitBehavior="submit" returnKeyType="send" enablesReturnKeyAutomatically onKeyPress={webEnter}
-              accessibilityLabel={L('消息输入框', 'Message')} editable={!transcribing}
-              style={[type.body, styles.input, { backgroundColor: t.surface, color: t.ink }]}
-            />
-            {showStop ? (
-              <Pressable onPress={() => { stop(threadId).catch(fail); }} accessibilityRole="button" accessibilityLabel={L('停止回复', 'Stop the reply')}
-                style={[styles.send, { backgroundColor: t.surface2 }]}>
-                <Square size={14} color={t.ink} fill={t.ink} />
-              </Pressable>
-            ) : canRecord && !draft.trim() && !pending.length && !transcribing ? (
-              <Pressable onPress={startRecording} disabled={busy} accessibilityRole="button" accessibilityLabel={L('语音输入', 'Voice input')}
-                style={[styles.send, { backgroundColor: t.surface2 }]}>
-                <Mic size={20} color={busy ? t.ink3 : t.ink} />
-              </Pressable>
-            ) : (
-              <Pressable onPress={submit} disabled={!canSend} accessibilityRole="button" accessibilityLabel={L('发送', 'Send')}
-                style={[styles.send, { backgroundColor: canSend ? t.goldFill : t.surface2 }]}>
-                <ArrowUp size={20} color={canSend ? t.onGold : t.ink3} />
-              </Pressable>
-            )}
-          </View>
-        )}
         </>}
+        {/* 多选时让给转发条，但不卸载：草稿和正在录的音都还在 */}
+        <Composer handle={composer} threadId={threadId} placeholder={placeholder} quote={quote} busy={busy} hasFiles={pending.length > 0} hidden={sel.on}
+          onSubmit={onSubmit} onStop={onStop} onAttach={onAttach} transcribe={transcribe} />
       </KeyboardSticky>
     </View>
   );
@@ -821,13 +742,8 @@ export function ChatView({ threadId, placeholder, empty, welcome, quote: quotePr
 const styles = StyleSheet.create({
   userBubble: { maxWidth: '82%', borderRadius: radius.lg, borderBottomRightRadius: 6, paddingHorizontal: 14, paddingVertical: 9 },
   composerWrap: { borderTopWidth: StyleSheet.hairlineWidth },
-  composer: { flexDirection: 'row', alignItems: 'flex-end', gap: space.sm, paddingHorizontal: space.md, paddingVertical: space.sm },
-  input: { flex: 1, minHeight: 40, maxHeight: 120, borderRadius: 20, paddingHorizontal: 16, paddingTop: 9, paddingBottom: 9 },
   action: { flexDirection: 'row', alignItems: 'center', gap: space.md, borderRadius: radius.md, padding: space.lg },
-  send: { width: 40, height: 40, borderRadius: 20, alignItems: 'center', justifyContent: 'center' },
-  iconBtn: { width: 40, height: 40, alignItems: 'center', justifyContent: 'center' },
   chip: { flexDirection: 'row', alignItems: 'center', gap: 8, borderWidth: StyleSheet.hairlineWidth, borderRadius: radius.md, paddingHorizontal: 10, paddingVertical: 6, maxWidth: 260 },
-  recording: { flex: 1, flexDirection: 'row', alignItems: 'center', gap: 8, minHeight: 40, borderRadius: 20, paddingHorizontal: 14 },
   removeDot: { position: 'absolute', top: -6, right: -6, width: 20, height: 20, borderRadius: 10, alignItems: 'center', justifyContent: 'center' },
   quote: { flexDirection: 'row', alignItems: 'center', gap: 6, borderRadius: radius.md, paddingHorizontal: 10, paddingVertical: 7 },
   quoteChip: { borderLeftWidth: 3, borderRadius: 0, paddingLeft: 8, paddingVertical: 1, alignSelf: 'stretch' },
