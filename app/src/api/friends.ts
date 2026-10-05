@@ -30,6 +30,8 @@ export interface FriendsHome {
   friends: Friend[]; invites: Invite[];
   /** 有对外地址，但外面连不进来（Funnel 没开 /f，或者朋友的服务器试过、连不上）；publicFix = 在服务器上要跑的那一句。老服务器没有 */
   unreachable?: boolean; publicFix?: string;
+  /** 中继（server/relay.py）：base = 中继给的地址（连上过才有）；me.url 等于它说明朋友经中继找到这台服务器。老服务器没有 */
+  relay?: { enabled: boolean; url: string | null; connected: boolean; base: string | null; error: string | null };
 }
 
 export type FriendMsgKind = 'text' | 'share' | 'ask' | 'answer' | 'system';

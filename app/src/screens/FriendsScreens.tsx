@@ -97,22 +97,25 @@ function NotReady() {
 }
 
 /** 有对外地址，但外面连不进来（Funnel 没开 /f，或者朋友的服务器试过、连不上）：说清楚，给出在服务器上要跑的那一句。 */
-export function PublicWarn({ fix }: { fix?: string }) {
+export function PublicWarn({ fix, relay }: { fix?: string; relay?: boolean }) {
   const t = useTheme();
   const [copied, setCopied] = useState(false);
+  const cmd = relay ? undefined : fix;  // 用的是中继：没有要在服务器上跑的命令，等它重新连上
   return (
     <View style={[styles.warn, { backgroundColor: t.warnSoft, flexDirection: 'column', alignItems: 'stretch' }]}>
       <View style={{ flexDirection: 'row', gap: space.sm, alignItems: 'flex-start' }}>
         <TriangleAlert size={17} color={t.warn} />
         <T v="callout" style={{ flex: 1 }}>
-          {L('外网暂时无法连接你的服务器，好友发来的消息无法送达。请在服务器上开启公网访问（Tailscale Funnel）：',
-            "Your server can't be reached from the internet, so friends' messages can't get through. Turn on public access (Tailscale Funnel) on the server:")}
+          {relay ? L('服务器暂时未连接到 OpenMousse 中继，好友发来的消息会在恢复连接后送达。服务器会自动重连。',
+            "Your server isn't connected to the OpenMousse relay right now; friends' messages arrive once it reconnects, which it does automatically.")
+            : L('外网暂时无法连接你的服务器，好友发来的消息无法送达。请在服务器上开启公网访问（Tailscale Funnel）：',
+              "Your server can't be reached from the internet, so friends' messages can't get through. Turn on public access (Tailscale Funnel) on the server:")}
         </T>
       </View>
-      {fix ? (
-        <Pressable onPress={() => { Clipboard.setStringAsync(fix).then(() => setCopied(true)).catch(() => {}); }} accessibilityRole="button"
+      {cmd ? (
+        <Pressable onPress={() => { Clipboard.setStringAsync(cmd).then(() => setCopied(true)).catch(() => {}); }} accessibilityRole="button"
           accessibilityLabel={L('复制命令', 'Copy the command')} style={({ pressed }) => [styles.codeRow, { backgroundColor: t.surface, opacity: pressed ? 0.7 : 1 }]}>
-          <T v="caption" selectable style={{ flex: 1, fontFamily: Platform.OS === 'ios' ? 'Menlo' : 'monospace', fontSize: 12 }}>{fix}</T>
+          <T v="caption" selectable style={{ flex: 1, fontFamily: Platform.OS === 'ios' ? 'Menlo' : 'monospace', fontSize: 12 }}>{cmd}</T>
           {copied ? <Check size={15} color={t.good} /> : <Copy size={15} color={t.ink2} />}
         </Pressable>
       ) : null}
@@ -175,7 +178,7 @@ export function FriendsHome() {
       {err ? <Card><T v="callout" color={t.bad}>{L(`无法加载：${err}`, `Couldn't load: ${err}`)}</T></Card> : null}
       {!data && !err ? <ActivityIndicator color={t.gold} style={{ marginTop: space.xl }} /> : null}
       {data?.why === 'no_name' ? <NameCard suggest={data.me.suggest} onSaved={() => { load(); }} /> : data?.why === 'no_url' ? <NotReady /> : null}
-      {data?.unreachable ? <PublicWarn fix={data.publicFix} /> : null}
+      {data?.unreachable ? <PublicWarn fix={data.publicFix} relay={!!data.relay?.base && data.me.url === data.relay.base} /> : null}
       {data && !data.friends.length ? (
         <Card style={{ gap: space.sm }}>
           <T v="headline">{L('暂无好友', 'No friends yet')}</T>
@@ -633,7 +636,7 @@ export function FriendChatScreen() {
   const active = friend?.status === 'active';
   const canAgent = !!friend && active && hasA2A;
   // 连不上对方服务器（网络错误，不是对方拒收）：聊天顶上说一句原因，别让人以为一直在「发送中」
-  const unreachable = active && msgs.some((m) => retrying(m) && /^network\b/.test(m.error ?? ''));
+  const unreachable = active && msgs.some((m) => retrying(m) && /^(network\b|50[234]\b)/.test(m.error ?? ''));
   const lines = timeline(msgs, outs);
   const openAgents = () => { if (friend) nav.navigate('FriendAgents', { id: friend.id }); };
   const sub = friend ? [friend.tierName, friend.agent ? L(`有 Agent · 可追问 ${friend.name} 的分享`, `Has an Agent · you can ask about ${friend.name}'s shares`) : ''].filter(Boolean).join(' · ') : undefined;
@@ -650,8 +653,8 @@ export function FriendChatScreen() {
             <View style={[styles.notice, { backgroundColor: t.surface, borderColor: t.line }]}>
               <TriangleAlert size={16} color={t.warn} />
               <T v="callout" color={t.ink2} style={{ flex: 1 }}>
-                {L(`暂时无法连接 ${friend.name} 的服务器，消息尚未送达。常见原因是对方的公网访问（Tailscale Funnel）尚未开启；连接恢复后将自动送达，消息最多保留 3 天。`,
-                  `${friend.name}'s server can't be reached right now, so your messages haven't been delivered. Usually their public access (Tailscale Funnel) isn't on yet; messages go through automatically once it is, and are kept for up to 3 days.`)}
+                {L(`暂时无法连接 ${friend.name} 的服务器，消息尚未送达。对方的服务器可能离线，或尚未开启公网访问；连接恢复后将自动送达，消息最多保留 3 天。`,
+                  `${friend.name}'s server can't be reached right now, so your messages haven't been delivered. Their server may be offline or not open to the internet yet; messages go through automatically once it's reachable, and are kept for up to 3 days.`)}
               </T>
             </View>
           ) : null}
@@ -855,7 +858,7 @@ export function AddFriendScreen() {
       <NavHeader title={L('添加好友', 'Add a friend')} onBack={() => nav.goBack()} />
       <ScrollView contentContainerStyle={{ padding: space.lg, paddingBottom: space.xxl, gap: space.md }} automaticallyAdjustKeyboardInsets keyboardShouldPersistTaps="handled">
         {home?.why === 'no_name' ? <NameCard suggest={home.me.suggest} onSaved={() => { loadHome(); }} /> : home?.why === 'no_url' ? <NotReady /> : null}
-        {home?.unreachable ? <PublicWarn fix={home.publicFix} /> : null}
+        {home?.unreachable ? <PublicWarn fix={home.publicFix} relay={!!home.relay?.base && home.me.url === home.relay.base} /> : null}
 
         <SectionLabel>{L('使用对方的邀请码', "Use someone's invite")}</SectionLabel>
         <Card style={{ gap: space.sm }}>

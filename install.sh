@@ -161,9 +161,9 @@ ask MOUSSE_NAME "助手叫什么 / assistant name (shown in the app)" "$DEF_NAME
 if [ "$CLAW_KIND" = openclaw ] && [ ! -f "$MOUSSE_OPENCLAW_HOME/openclaw.json" ]; then
   die "$MOUSSE_OPENCLAW_HOME/openclaw.json 不存在 / not found. Install OpenClaw and run openclaw onboard first (or give another claw's OpenAI-compatible URL instead)."
 fi
-# 可以跳过的两个：Obsidian 库（世界树和思考空间放进去）、开公网（Tailscale Funnel：AI 平台连世界树、分享链接、加朋友）
+# 可以跳过的两个：Obsidian 库（世界树和思考空间放进去）、开公网（Tailscale Funnel：AI 平台连世界树、分享链接、好友直连；默认开，2026-10-05）
 ask MOUSSE_VAULT "（可跳过）Obsidian 库在这台服务器上的文件夹（已在同步：Obsidian Sync / Syncthing / git），世界树和思考空间放进去，回车跳过 / (optional) Obsidian vault folder on this server (already synced: Obsidian Sync / Syncthing / git) for the memory tree and the thinking space, Enter skips" ""
-ask MOUSSE_TREE_PUBLIC "（可跳过）开公网 HTTPS 吗？开了：Claude.ai、ChatGPT、Gemini 这些支持 MCP 的 AI 平台能连世界树，分享能发链接，能加朋友。用 Tailscale Funnel，只开这几条路，app 的接口不上公网 / (optional) open up public HTTPS? Then AI platforms such as Claude.ai, ChatGPT or Gemini (any MCP client) can reach the memory tree, shares get links, and friends can add you. Uses Tailscale Funnel and opens only those paths, never the app's API (y/n)" "n"
+ask MOUSSE_TREE_PUBLIC "开公网 HTTPS 吗（推荐）？开了：Claude.ai、ChatGPT、Gemini 这些支持 MCP 的 AI 平台能连世界树，分享能发链接，好友直连这台服务器。用 Tailscale Funnel，只开这几条路，app 的接口不上公网。不开也能加好友（经 OpenMousse 中继，消息端到端加密）/ Open up public HTTPS (recommended)? Then AI platforms such as Claude.ai, ChatGPT or Gemini (any MCP client) can reach the memory tree, shares get links, and friends connect to this server directly. Uses Tailscale Funnel and opens only those paths, never the app's API. Friends work without it too, through the OpenMousse relay with end-to-end encryption (y/n)" "y"
 case "$(printf '%s' "$MOUSSE_TREE_PUBLIC" | tr '[:upper:]' '[:lower:]')" in y|yes|1|true|是*) MOUSSE_TREE_PUBLIC=yes ;; *) MOUSSE_TREE_PUBLIC=no ;; esac
 OPTIONAL=()
 if [ -n "$MOUSSE_VAULT" ]; then OPTIONAL+=("--vault=$MOUSSE_VAULT"); fi

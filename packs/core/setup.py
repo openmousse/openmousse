@@ -704,7 +704,7 @@ def add_mcp_server(oc_path: Path, url: str, home: Path, openclaw_bin: str) -> No
 
 
 def enable_llm_task(oc_path: Path, home: Path, openclaw_bin: str) -> bool:
-    """开公网（能加朋友）时：名片 agent 替你回朋友和别家的 agent，要一次零工具的模型调用，走 OpenClaw 自带的 llm-task 插件
+    """好友默认能加（开公网直连，或者经中继）：名片 agent 替你回朋友和别家的 agent，要一次零工具的模型调用，走 OpenClaw 自带的 llm-task 插件
     （Gateway 的 /tools/invoke 按名字调，不会进任何 agent 的对话工具表）。plugins.entries.llm-task.enabled = true；
     单独备份、单独 validate，不认的版本就撤回（名片 agent 退回固定句子）；你自己关掉的（enabled: false）不动。返回是否要重启 Gateway。"""
     oc = load_json(oc_path)
@@ -841,10 +841,42 @@ def free_port(start: int, tries: int = 20) -> int | None:
     return None
 
 
+def social_defaults() -> None:
+    """好友的推送没写过就按默认：好友发来的话响铃，名片 agent 代答了、有人用了邀请码静音。已有的设置不改。"""
+    cfg = load_json(SERVER_JSON) if SERVER_JSON.exists() else {}
+    social = dict(cfg["social"]) if isinstance(cfg.get("social"), dict) else {}
+    if "push" in social:
+        return
+    social["push"] = {"message": "ring", "answered": "quiet", "friend": "quiet"}
+    cfg["social"] = social
+    dump_json(SERVER_JSON, cfg, mode=0o600)
+    say(L("server.json 补上了 social.push（好友发来的话响铃，其余静音）", "server.json now has social.push (a friend's message rings, the rest is quiet)"))
+
+
+def funnel_link(text: str) -> str:
+    """tailscale 输出里让你去后台授权 Funnel 的那个链接（没有就空）。"""
+    m = re.search(r"https://login\.tailscale\.com/\S+", text)
+    return m.group(0).rstrip(".,)") if m else ""
+
+
+def funnel_serving(dns: str) -> bool | None:
+    """Funnel 真的把 /f 开到公网了吗（funnel status --json 里 AllowFunnel 和 /f 的处理都在）；读不出来是 None。"""
+    r = tailscale("funnel", "status", "--json")
+    try:
+        d = json.loads(r.stdout) if r.returncode == 0 and r.stdout.strip() else None
+    except ValueError:
+        d = None
+    if not isinstance(d, dict):
+        return None
+    hp = f"{dns}:443"
+    handlers = ((d.get("Web") or {}).get(hp) or {}).get("Handlers") or {}
+    return bool((d.get("AllowFunnel") or {}).get(hp) and any(str(k).rstrip("/") == "/f" for k in handlers))
+
+
 def share_public() -> tuple[list[str], str]:
     """「开公网」答 y：分享链接和朋友也要公网 HTTPS。server.json 补上 share.public_port（服务在 127.0.0.1 上另起的小服务，
     server/public.py，只有 /s 分享页和 /f 朋友，没有 /api）和 share.public_url（https://<MagicDNS 名字>），Funnel 只开 /s、/f 指过去。
-    朋友的推送（social.push）没写过就按默认：朋友发来的话响，名片 agent 代答了、有人用了邀请码静音。
+    好友的推送默认值在 social_defaults()（不开公网也写）。
     public_url 已经是别的地址（自己的域名 / 反向代理）就只补端口，Funnel 不动，告诉用户转哪两条。已有的设置一律不改。
     → (还要用户在服务器上跑的命令，[] = 都好了；对外地址，"" = 没配成)。服务要重启才起小服务：安装器最后一步本来就重启。"""
     tag = L("分享和朋友：", "Sharing and friends: ")
@@ -876,9 +908,6 @@ def share_public() -> tuple[list[str], str]:
     if not url:
         url = share["public_url"] = own
         changed.append(f"share.public_url = {own}")
-    if "push" not in social:
-        social["push"] = {"message": "ring", "answered": "quiet", "friend": "quiet"}
-        changed.append(L("social.push（朋友发来的话响铃，其余静音）", "social.push (a friend's message rings, the rest is quiet)"))
     if changed:
         cfg["share"], cfg["social"] = share, social
         dump_json(SERVER_JSON, cfg, mode=0o600)
@@ -900,13 +929,21 @@ def share_public() -> tuple[list[str], str]:
         r = tailscale(*args)
         if r.returncode == 0:
             continue
+        out = r.stdout + "\n" + r.stderr
+        link = funnel_link(out)
         say(tag + L("Funnel 没开成，tailscale 说：", "Funnel didn't come up; tailscale says:"))
-        for x in [x.strip() for x in (r.stdout + "\n" + r.stderr).splitlines() if x.strip()][-8:]:
+        for x in [x.strip() for x in out.splitlines() if x.strip()][-8:]:
             say("  " + x)
-        return [L("sudo tailscale set --operator=$USER   # 只要一次：以后不用 sudo 就能配 Funnel", "sudo tailscale set --operator=$USER   # once, so Funnel can be set up without sudo"),
-                shown[0] + L("   # tailnet 还没开 Funnel 的话它会给一个链接，点开照做", "   # if Funnel isn't enabled for your tailnet yet, it prints a link: open it and follow it"),
-                shown[1]], url
-    say(tag + L(f"Funnel 开好了：{own}/s/…（分享链接）和 {own}/f/…（朋友）", f"Funnel is on: {own}/s/… (share links) and {own}/f/… (friends)"))
+        say(tag + L("在此之前好友经 OpenMousse 中继找到这台服务器，照样能加", "until then friends reach this server through the OpenMousse relay, so adding friends still works"))
+        steps = [L(f"# 先在浏览器里打开这个链接，给你的 tailnet 开 Funnel：{link}", f"# first open this link in a browser to enable Funnel for your tailnet: {link}")] if link else []
+        return steps + [L("sudo tailscale set --operator=$USER   # 只要一次：以后不用 sudo 就能配 Funnel", "sudo tailscale set --operator=$USER   # once, so Funnel can be set up without sudo"),
+                        shown[0] + ("" if link else L("   # tailnet 还没开 Funnel 的话它会给一个链接，点开照做", "   # if Funnel isn't enabled for your tailnet yet, it prints a link: open it and follow it")),
+                        shown[1]], url
+    serving = funnel_serving(dns)
+    if serving is False:  # 命令说成功了，但状态里 /f 没在公网上（2026-10-05 第一个朋友就是这样）
+        say(tag + L("Funnel 命令跑完了，但 /f 没有出现在公网上；好友先经 OpenMousse 中继找到这台服务器", "Funnel ran, but /f isn't public; friends reach this server through the OpenMousse relay for now"))
+        return [L("tailscale funnel status   # 看 /f 在不在、有没有标 (Funnel on)", "tailscale funnel status   # check that /f is listed with (Funnel on)"), *shown], url
+    say(tag + L(f"Funnel 开好了：{own}/s/…（分享链接）和 {own}/f/…（好友）", f"Funnel is on: {own}/s/… (share links) and {own}/f/… (friends)"))
     return [], url
 
 
@@ -1197,8 +1234,8 @@ def main() -> None:
         restart = patch_openclaw(oc_path, home, cfg.get("openclaw_bin") or "openclaw")
         restart = allow_skill_links(oc_path, repo / "packs/core/skills", home, cfg.get("openclaw_bin") or "openclaw") or restart
         add_mcp_server(oc_path, mcp_url(cfg), home, cfg.get("openclaw_bin") or "openclaw")
-        if a.tree_public:  # 「开公网」= 能加朋友：名片 agent 走 llm-task
-            restart = enable_llm_task(oc_path, home, cfg.get("openclaw_bin") or "openclaw") or restart
+        # 好友默认就能加（不开公网也经 OpenMousse 中继，2026-10-05）：名片 agent 走 llm-task
+        restart = enable_llm_task(oc_path, home, cfg.get("openclaw_bin") or "openclaw") or restart
     public = None
     if not a.no_tree:
         print(L("世界树", "Memory tree"))
@@ -1207,9 +1244,13 @@ def main() -> None:
         if not generic and oc_path.exists() and oc_path.read_bytes() != oc_before:
             restart = True  # 世界树往 extraPaths 里加了导出的文件夹
     social = None
-    if a.tree_public:  # 同一问：分享链接和朋友（server.json 要在下面重启服务之前写好，小服务是服务启动时起的）
-        print(L("分享和朋友", "Sharing and friends"))
+    print(L("分享和好友", "Sharing and friends"))
+    social_defaults()  # 好友的推送档位：不管开不开公网都要（好友默认经中继能加）
+    if a.tree_public:  # 同一问：分享链接和好友直连（server.json 要在下面重启服务之前写好，小服务是服务启动时起的）
         social = share_public()
+    else:
+        say(L("好友经 OpenMousse 中继（relay.openmousse.ai）找到这台服务器，不需要公网；消息端到端加密。server.json 写 \"relay\": false 可关",
+              "Friends reach this server through the OpenMousse relay (relay.openmousse.ai), no public address needed; messages are end-to-end encrypted. Set \"relay\": false in server.json to turn it off"))
     restarted = False
     self_apply = restart and gateway_applies_config(oc_path)
     if not a.no_systemd:

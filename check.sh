@@ -476,13 +476,29 @@ else:
         print("    " + L("（没开公网：Claude.ai、ChatGPT 这些还连不上它；要开就再跑一遍安装命令，「开公网」答 y）",
                         "(not public: Claude.ai, ChatGPT and the like can't reach it yet; to open it, run the installer again and answer y)"))
 
-# —— 分享和朋友（公网）——
-section(L("分享和朋友", "Sharing and friends"))
+# —— 分享和朋友（公网 / 中继）——
+section(L("分享和好友", "Sharing and friends"))
+fc, fb = http(f"http://{host}:{port}/api/friends", tok)
+try:
+    fr = json.loads(fb) if fc == 200 else {}
+except ValueError:
+    fr = {}
+rl = fr.get("relay") if isinstance(fr.get("relay"), dict) else None
+if rl is None:
+    pass  # 老服务没有中继
+elif not rl.get("enabled"):
+    print("    " + L("（中继关着：server.json 的 relay 是 false，好友只能直连）", "(relay off: server.json has relay false, friends can only connect directly)"))
+elif rl.get("connected"):
+    via = (fr.get("me") or {}).get("url") == rl.get("base")
+    ok(L("OpenMousse 中继", "OpenMousse relay"), str(rl.get("url")) + (L(" · 好友经它找到这台服务器", " · friends reach this server through it") if via else L(" · 备用（直连优先）", " · standby (direct first)")))
+else:
+    warn(L("OpenMousse 中继没连上", "Not connected to the OpenMousse relay"), str(rl.get("error") or rl.get("url")),
+         L("服务会自己重连；一直连不上就看服务日志", "the server reconnects by itself; if it never does, check the server log"))
 sh = cfg.get("share") if isinstance(cfg.get("share"), dict) else {}
 purl, pport = str(sh.get("public_url") or "").strip().rstrip("/"), sh.get("public_port")
 if not (purl and pport):
-    print("    " + L("（没开公网：分享只能发图、不能发链接，也加不了朋友；要开就再跑一遍安装命令，「开公网」答 y）",
-                    "(not public: shares go out as images only, no links, and no friends yet; to open it, run the installer again and answer y to going public)"))
+    print("    " + L("（没开公网：分享只能发图、不能发链接；好友经中继照样能加。要开就再跑一遍安装命令，「开公网」答 y）",
+                    "(not public: shares go out as images only, no links; friends still work through the relay. To open it, run the installer again and answer y to going public)"))
 else:
     c, b = http(f"http://127.0.0.1:{pport}/f/card")
     try:
