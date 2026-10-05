@@ -857,7 +857,7 @@ def drain(thread: str) -> None:
     QUEUED.pop(thread, None)
     ids = [it.user_id for it in items]
     try:
-        token = gateway_token()
+        token = gateway_token() if claw.is_openclaw() else ""  # 别的 claw 没有 Gateway 令牌（和 begin 一样）
         content, gw_text = combine(items)
         if daily := daily_context(thread):
             content, gw_text = with_context(daily, content), f"{daily}\n\n{gw_text}"
