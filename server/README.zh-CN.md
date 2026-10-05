@@ -514,6 +514,7 @@ app 里「对话 → 朋友」。你的服务器和朋友的服务器直接说�
 - **分享发给朋友**：分享页选朋友，对方收到的是同一份挡过私事的快照（`▇▇▇`，原文不出服务器）。不开链接时这条分享 status = `friends`，`/s/` 打不开。收回分享 = 发出去的每一份都收回。
 - **追问和名片 agent**：朋友能对着你分享的东西追问；分享开着追问、对方那一档 `shares` 是 `ask` 时，你的名片 agent（`cardagent.py`，不经 claw，没有工具）按那一档代答，并说明用了什么。每条代答你都看得到：没问题 / 我来改 / 收回。没有名片 agent 时追问等你自己回。档位（亲近 / 朋友 / 同学 / 陌生）和近况在「对话 → 朋友 → 我的名片 agent」（`/api/card`）；健康和世界树哪一档都不给。名片 agent 说出去的每一句先过 **Doorman**（`sentinel.py`，第 9 步安全底座）：规则 + 另起一次的独立复查，不妥的先扣下、出一张卡等你照发 / 改一下 / 不发，复查不了就换成固定的话（细节见 `docs/a2a.zh-CN.md` 2.4.1）。
 - **推送**：朋友的推送是新的推送类型，`server.json` 的 `social.push` 开了才推（`{"message": "ring", "answered": "quiet", "friend": "quiet"}`；`agents` = 你的名片 agent 问过的事、对方本人定了，没写就跟着 `answered`）。朋友发来的照样算未读、算进角标。
+- **你的名字、外面连不连得到你**（2026-10-05）：名片上的名字就是 `user_name`；app 用 `PATCH /api/card {name}` 设（同时写进档案，和 `settings_ctl.py user-name` 一样），第一次连上服务器后马上请用户设。`share.public_url` 是 `*.ts.net` 地址、但 `tailscale funnel status` 里 `/f` 没开到公网，或者最近一个试着连你的朋友服务器没连上时，`GET /api/friends` 报 `unreachable`（`publicFix` = 要跑的命令）。别人兑换你的邀请码时，你的服务器先试着取一下对方的名片再回话，回 `reach: true | false`，对方服务器记下来显示；之后收到任何朋友发来的消息就清掉。还没送到、在重试的消息带 `error` 和 `nextTry`，对它调 `…/retry` 马上再试一次。
 - `social.allow_http: true` 只给同一台机器上的测试服用（`http://127.0.0.1:<端口>` 这种地址），真服务器别开。
 
 | 接口 | |
@@ -525,7 +526,7 @@ app 里「对话 → 朋友」。你的服务器和朋友的服务器直接说�
 | `GET /api/friends/{id}/messages?after=`、`POST …/messages`、`POST …/ask`、`POST …/read` | 聊天记录（`recent` 带状态变化）；发；对着对方的一条分享追问；标已读 |
 | `POST /api/friends/messages/{id}/review`、`…/revoke`、`…/retry` | 名片 agent 的代答：`{action: ok \| edit \| revoke, text?}`；收回自己发的；重发没送到的 |
 | `POST /api/shares/{id}/send` | `{friends, ask, link, text?}` |
-| `GET` / `PATCH /api/card` | 档位和近况 |
+| `GET` / `PATCH /api/card` | 档位、近况和名字（`name`；还没设时有 `suggest`） |
 | `GET /f/card`、`/f/jwks.json`、`/f/i/{token}/{key}`；`POST /f/hello`、`/f/msg` | 公开的（只在小服务上）：签名名片、公钥、邀请落地页；兑换邀请码、投消息（要签名） |
 
 ## 代办和 Doorman 出口（预览）

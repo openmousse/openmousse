@@ -44,8 +44,8 @@ export function ConnectScreen() {
     syncClaw({ base: getBase(), name: appName }).catch(() => {});
     refreshLive();
     setBusy(false);
-    // 第一次连上（之前一台都没有）：先到「接上常用的」，服务器没有连接器的话那一页自己直接进去
-    nav.reset({ index: 0, routes: [{ name: firstTime ? 'Starter' : 'Tabs' }] });
+    // 第一次连上（之前一台都没有）：先问朋友怎么称呼你（服务器已经有名字就自己跳过），再到「接上常用的」（没有连接器的话那一页自己直接进去）
+    nav.reset({ index: 0, routes: [{ name: firstTime ? 'MyName' : 'Tabs' }] });
   };
 
   const pair = async () => {

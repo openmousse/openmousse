@@ -22,10 +22,13 @@ export interface Invite {
 export interface FriendsHome {
   /** 能不能加朋友：没有外面打得进来的地址（no_url）或没设称呼（no_name）就不行 */
   ready: boolean; why: 'no_url' | 'no_name' | null;
-  me: { name: string; fingerprint: string; url: string | null };
+  /** suggest：还没设名字时建议的（这台机器的用户全名，可能为空） */
+  me: { name: string; fingerprint: string; url: string | null; suggest?: string };
   /** 我的名片 agent 开着没有（开着才会替我答朋友的追问） */
   agent: boolean;
   friends: Friend[]; invites: Invite[];
+  /** 有对外地址，但外面连不进来（Funnel 没开 /f，或者朋友的服务器试过、连不上）；publicFix = 在服务器上要跑的那一句。老服务器没有 */
+  unreachable?: boolean; publicFix?: string;
 }
 
 export type FriendMsgKind = 'text' | 'share' | 'ask' | 'answer' | 'system';
@@ -55,6 +58,8 @@ export interface CardSettings {
   people: Record<Tier, { id: string; name: string }[]>;
   agent: boolean;
   tierNames: Record<AnyTier, string>;
+  /** 朋友看到的名字（server.json 的 user_name）；suggest = 还没设时建议的。老服务器没有 */
+  name?: string; suggest?: string;
 }
 export type ScopeKey = 'calendar' | 'status' | 'shares' | 'notes' | 'address';
 
@@ -64,8 +69,9 @@ export const newInvite = (b: { note?: string; tier: Tier; days?: number }) =>
 export const withdrawInvite = (id: string) => request(`/api/friends/invites/${id}`, { method: 'DELETE' });
 export const preview = (code: string) =>
   request<{ name: string; fingerprint: string; url: string; agent: boolean; already: string | null }>('/api/friends/preview', { method: 'POST', body: { code }, timeoutMs: 20000 });
+/** unreachable：对方的服务器试着连回你、没连上（你的公网访问没开好）；老服务器没有这一项 */
 export const accept = (b: { code: string; tier: Tier; alias?: string }) =>
-  request<{ friend: Friend }>('/api/friends/accept', { method: 'POST', body: b, timeoutMs: 30000 }).then((j) => j.friend);
+  request<{ friend: Friend; unreachable?: boolean; publicFix?: string }>('/api/friends/accept', { method: 'POST', body: b, timeoutMs: 30000 });
 export const patchFriend = (id: string, b: { alias?: string; tier?: Tier }) =>
   request<{ friend: Friend }>(`/api/friends/${id}`, { method: 'PATCH', body: b }).then((j) => j.friend);
 export const removeFriend = (id: string) => request(`/api/friends/${id}`, { method: 'DELETE' });
@@ -153,7 +159,7 @@ export interface CardHealth {
   sentinel?: { backend: string; today: { checked: number; held: number; failed: number }; lastError: { at: string; error: string } | null };
 }
 export const cardHealth = () => request<CardHealth>('/api/card/health');
-export const patchCard = (b: { tiers?: Partial<Record<AnyTier, Partial<Record<ScopeKey, string>>>>; status?: string }) =>
+export const patchCard = (b: { tiers?: Partial<Record<AnyTier, Partial<Record<ScopeKey, string>>>>; status?: string; name?: string }) =>
   request<CardSettings>('/api/card', { method: 'PATCH', body: b });
 
 /** 贴进来的文字里有没有邀请码（…/f/i/<令牌>/<公钥>，或 openmousse://friends/add?code=…）。 */

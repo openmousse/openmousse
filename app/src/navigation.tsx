@@ -40,7 +40,7 @@ import { AddCourseScreen } from './screens/AddCourseScreen';
 import { StudyHomeScreen, StudyPageScreen, StudySessionScreen } from './screens/StudyScreens';
 import { ShareScreen } from './screens/ShareScreen';
 import { SharesScreen } from './screens/SharesScreen';
-import { AddFriendScreen, CardAgentScreen, FriendChatScreen } from './screens/FriendsScreens';
+import { AddFriendScreen, CardAgentScreen, FriendChatScreen, MyNameScreen } from './screens/FriendsScreens';
 import { FriendAgentsScreen } from './screens/FriendAgentsScreen';
 import { findCode } from './api/friends';
 import type { PushTarget } from './data/types';
@@ -233,6 +233,7 @@ export function RootNavigator() {
         <Stack.Screen name="AppGallery" component={AppGalleryScreen} />
         <Stack.Screen name="AppDetail" component={AppDetailScreen} />
         <Stack.Screen name="CustomApp" component={CustomAppScreen} />
+        <Stack.Screen name="MyName" component={MyNameScreen} options={{ gestureEnabled: false }} />
         <Stack.Screen name="Starter" component={StarterScreen} options={{ gestureEnabled: false }} />
         <Stack.Screen name="Group" component={GroupScreen} />
         <Stack.Screen name="History" component={HistoryScreen} />

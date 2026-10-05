@@ -21,9 +21,12 @@ import html
 import inspect
 import json
 import logging
+import os
 import re
 import secrets
+import shutil
 import sqlite3
+import subprocess
 import threading
 import time
 import uuid
@@ -96,6 +99,53 @@ def not_ready() -> str | None:
     if not social.my_name():
         return "no_name"
     return None
+
+
+GENERIC_NAMES = {"ubuntu", "root", "admin", "administrator", "user", "debian", "pi", "ec2-user", "default", "openmousse"}
+MAC_TAILSCALE = "/Applications/Tailscale.app/Contents/MacOS/Tailscale"
+_funnel: dict = {"url": None, "at": 0.0, "off": False}
+
+
+def suggest_name() -> str:
+    """还没设名字时给的建议：这台机器的用户全名（macOS 上一般是真名）；Linux 服务器上常是「Ubuntu」这种，就不建议。"""
+    try:
+        import pwd
+        full = pwd.getpwuid(os.getuid()).pw_gecos.split(",")[0].strip()
+    except (ImportError, KeyError, OSError):
+        return ""
+    return full if full and full.lower() not in GENERIC_NAMES and len(full) <= social.NAME_MAX else ""
+
+
+def funnel_off() -> bool:
+    """对外地址是 Tailscale 的 <机器>.ts.net，但 Funnel 没把 /f 开到公网：朋友的服务器连不进来（2026-10-05 第一个朋友就是这样，
+    他发来的到了，回他的一直送不到）。看不出来（没有 tailscale 命令、读不了状态、用的是自己的域名）一律当开着。结果留 5 分钟。"""
+    url = social.my_url()
+    host = (urlsplit(url).hostname or "").lower() if url else ""
+    if not host.endswith(".ts.net"):
+        return False
+    now = time.time()
+    if _funnel["url"] == url and now - _funnel["at"] < 300:
+        return bool(_funnel["off"])
+    exe = shutil.which("tailscale") or (MAC_TAILSCALE if os.path.exists(MAC_TAILSCALE) else None)
+    off = False
+    if exe:
+        try:
+            r = subprocess.run([exe, "funnel", "status", "--json"], capture_output=True, text=True, timeout=5)
+            d = json.loads(r.stdout) if r.returncode == 0 and r.stdout.strip() else None
+        except (OSError, subprocess.TimeoutExpired, ValueError):
+            d = None
+        if isinstance(d, dict):
+            hp = f"{host}:{urlsplit(url).port or 443}"
+            handlers = ((d.get("Web") or {}).get(hp) or {}).get("Handlers") or {}
+            off = not ((d.get("AllowFunnel") or {}).get(hp) and any(str(k).rstrip("/") == "/f" for k in handlers))
+    _funnel.update(url=url, at=now, off=off)
+    return off
+
+
+def public_fix() -> str:
+    """Funnel 没开 /f 时，在服务器上要跑的那一句。"""
+    port = share.cfg().get("public_port") or 8089
+    return f"tailscale funnel --bg --set-path=/f http://127.0.0.1:{port}/f"
 
 
 def need_ready() -> None:
@@ -574,7 +624,13 @@ async def hello(request: Request):
         if fresh:
             await asyncio.to_thread(became_friends, f, LS(f"{f['name']} 用了你的邀请码", f"{f['name']} used your invite"))
             run_on_main(notify(f, "friend", LS(f"{f['name']} 用了你的邀请码，你们成了朋友", f"{f['name']} used your invite; you're now friends")))
-        return {"ok": True, "card": mine}
+        # 试一下能不能连回对方（之后的消息都要从这边送过去）：连不上就告诉对方，多半是对方的 Funnel 没开（老版本对方不认这个字段）
+        try:
+            await asyncio.wait_for(social.fetch_card(info["url"], info["x"]), 6)
+            reach = True
+        except (HTTPException, httpx.HTTPError, OSError, asyncio.TimeoutError, ValueError):
+            reach = False
+        return {"ok": True, "card": mine, "reach": reach}
     except HTTPException as e:
         return _err(e)
 
@@ -656,6 +712,8 @@ async def receive(request: Request):
         return social.err(401, "unknown_sender")
     if not rate_ok(peer.kid or ""):
         return social.err(429, "slow_down", retry_after=60)
+    if '"ok": false' in (social.get_setting("reach") or ""):  # 朋友的服务器送进来了：之前「连不到你」的结论作废
+        social.set_setting("reach", json.dumps({"ok": True, "at": now_iso(), "by": f["name"]}, ensure_ascii=False))
     try:
         m = json.loads(body)
         if not isinstance(m, dict) or m.get("v") != 1:
@@ -899,8 +957,18 @@ def friends_payload() -> dict:
         inv = conn.execute("SELECT * FROM friend_invites ORDER BY created_at DESC LIMIT 50").fetchall()
     fl = [friend_json(social.friend_dict(r), unread.get(r["id"]), lasts.get(r["id"])) for r in frows]  # type: ignore[arg-type]
     fl.sort(key=lambda x: (x["last"] or {}).get("ts") or x["createdAt"], reverse=True)
-    return {"ok": True, "ready": not_ready() is None, "why": not_ready(),
-            "me": {"name": social.my_name(), "fingerprint": ids["fingerprint"], "url": social.my_url()},
+    why = not_ready()
+    reach = social.get_setting("reach")  # 最近一次朋友的服务器回来说「连不到你」（hello 时它试过）
+    try:
+        reach = json.loads(reach) if reach else None
+    except ValueError:
+        reach = None
+    return {"ok": True, "ready": why is None, "why": why,
+            "me": {"name": social.my_name(), "fingerprint": ids["fingerprint"], "url": social.my_url(),
+                   "suggest": "" if social.my_name() else suggest_name()},
+            # 有对外地址，但外面连不进来：Funnel 没开 /f，或者朋友的服务器试过、连不上（publicFix = 在服务器上要跑的那一句）
+            "unreachable": (why is None and (funnel_off() or bool(reach and reach.get("ok") is False))),
+            "publicFix": public_fix(),
             "agent": agent_available(), "friends": fl,
             "invites": [invite_json(r) for r in inv if invite_state(r) == "open"]}
 
@@ -947,7 +1015,8 @@ async def preview(body: CodeIn):
     except HTTPException as e:
         if e.status_code == 400:
             raise bad(400, "对方的名片和邀请码对不上，不加。", "Their card doesn't match the invite.") from e
-        raise bad(502, "连不上对方的服务器，过会儿再试。", "Couldn't reach their server. Try again later.") from e
+        raise bad(502, "连不上对方的服务器。可能是对方的公网访问（Tailscale Funnel）还没开，或者服务器没在运行；请对方检查后再试。",
+                  "Couldn't reach their server. Their public access (Tailscale Funnel) may not be on yet, or the server isn't running; ask them to check, then try again.") from e
     old = social.friend_by_kid(info["kid"])
     return {"ok": True, "name": info["name"], "fingerprint": social.fingerprint(info["x"]), "url": info["url"],
             "agent": "agent" in info["caps"] or "a2a" in info["caps"],
@@ -989,7 +1058,11 @@ async def accept(body: AcceptIn):
     f, fresh = await asyncio.to_thread(upsert_friend, info, tier=body.tier, via="code", alias=body.alias)
     if fresh:
         await asyncio.to_thread(became_friends, f, LS(f"你用了 {f['name']} 的邀请码", f"you used {f['name']}'s invite"))
-    return {"ok": True, "friend": friend_json(f)}
+    reach = (r.json() or {}).get("reach")  # 对方试着连回这边的结果（老版本没有 = 不知道）
+    if isinstance(reach, bool):
+        social.set_setting("reach", json.dumps({"ok": reach, "at": now_iso(), "by": f["name"]}, ensure_ascii=False))
+        _funnel["at"] = 0.0  # Funnel 的状态也重新看
+    return {"ok": True, "friend": friend_json(f), "unreachable": reach is False, "publicFix": public_fix()}
 
 
 class FriendPatch(BaseModel):
@@ -1292,16 +1365,43 @@ async def get_card():
     for f in await asyncio.to_thread(social.friends):
         people.setdefault(f["tier"], []).append({"id": f["id"], "name": f["name"]})
     return {"ok": True, "tiers": t, "scopes": {k: list(v) for k, v in social.SCOPES.items()}, "status": social.card_status(),
-            "people": people, "agent": agent_available(), "tierNames": {k: tier_name(k) for k in social.TIERS}}
+            "people": people, "agent": agent_available(), "tierNames": {k: tier_name(k) for k in social.TIERS},
+            "name": social.my_name(), "suggest": "" if social.my_name() else suggest_name()}
 
 
 class CardPatch(BaseModel):
     tiers: dict[str, dict[str, str]] | None = None
     status: str | None = None
+    name: str | None = None  # 朋友看到的名字（2026-10-05）
+
+
+def set_my_name(raw_name: str) -> None:
+    """朋友看到的名字：就是 server.json 的 user_name（也是给模型的称呼），和 settings_ctl.py user-name 一样写进档案。
+    名片跟着变，投递循环给每个朋友发一条新名片。"""
+    import settings_ctl
+    name = " ".join(raw_name.split())
+    if not name:
+        raise bad(400, "名字不能为空", "The name can't be empty")
+    if len(name) > settings_ctl.MAX_NAME:
+        raise bad(400, f"名字最多 {settings_ctl.MAX_NAME} 个字", f"A name is at most {settings_ctl.MAX_NAME} characters")
+    data = settings_ctl.load()
+    if data is None:
+        raise bad(500, "server.json 读不了（不是合法的 JSON？），没改。", "Can't read server.json (not valid JSON?); nothing changed.")
+    if str(data.get("user_name") or "").strip() == name:
+        return
+    data["user_name"] = name
+    settings_ctl.save(data)
+    try:
+        settings_ctl.write_profile(name)
+    except OSError:
+        pass  # 档案写不了不影响名字本身
+    kick()
 
 
 @router.patch("/api/card")
 async def patch_card(body: CardPatch):
+    if body.name is not None:
+        await asyncio.to_thread(set_my_name, body.name)
     if body.tiers:
         await asyncio.to_thread(social.set_tier_scopes, body.tiers)
         log_activity(L("改了名片 agent 的档位", "Changed the card agent's tiers"), "social")

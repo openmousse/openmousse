@@ -83,17 +83,66 @@ const TIER_OPTS = (): { value: Tier; label: string }[] => [
   { value: 'close', label: L('亲近', 'Close') }, { value: 'friend', label: L('朋友', 'Friend') }, { value: 'mate', label: L('同学', 'Classmate') },
 ];
 
-function NotReady({ why }: { why: Home['why'] }) {
+function NotReady() {
   const t = useTheme();
   return (
     <View style={[styles.warn, { backgroundColor: t.warnSoft }]}>
       <TriangleAlert size={17} color={t.warn} />
       <T v="callout" style={{ flex: 1 }}>
-        {why === 'no_name'
-          ? L('先在「我 → 身份」设一个称呼：朋友那边显示它。', 'Set the name to call you first (Me → Identity): friends see it.')
-          : L('要先有一个外面打得进来的地址（服务器的 share.public_url，安装时那一问）：朋友的服务器要能把消息送回来。', "Your server needs an address people can reach first (share.public_url, the installer's question): friends' servers have to reach you.")}
+        {L('服务器尚未开启公网访问，朋友的服务器无法把消息送回给你。请在服务器上重新运行安装命令，在「开公网」一步选择 y。',
+          "Your server has no public address yet, so friends' servers can't deliver to you. Run the installer again on the server and answer y to going public.")}
       </T>
     </View>
+  );
+}
+
+/** 有对外地址，但外面连不进来（Funnel 没开 /f，或者朋友的服务器试过、连不上）：说清楚，给出在服务器上要跑的那一句。 */
+export function PublicWarn({ fix }: { fix?: string }) {
+  const t = useTheme();
+  const [copied, setCopied] = useState(false);
+  return (
+    <View style={[styles.warn, { backgroundColor: t.warnSoft, flexDirection: 'column', alignItems: 'stretch' }]}>
+      <View style={{ flexDirection: 'row', gap: space.sm, alignItems: 'flex-start' }}>
+        <TriangleAlert size={17} color={t.warn} />
+        <T v="callout" style={{ flex: 1 }}>
+          {L('外网暂时无法连接你的服务器，朋友发给你的消息送不进来。请在服务器上开启公网访问（Tailscale Funnel）：',
+            "Your server can't be reached from the internet, so friends' messages can't get through. Turn on public access (Tailscale Funnel) on the server:")}
+        </T>
+      </View>
+      {fix ? (
+        <Pressable onPress={() => { Clipboard.setStringAsync(fix).then(() => setCopied(true)).catch(() => {}); }} accessibilityRole="button"
+          accessibilityLabel={L('复制命令', 'Copy the command')} style={({ pressed }) => [styles.codeRow, { backgroundColor: t.surface, opacity: pressed ? 0.7 : 1 }]}>
+          <T v="caption" selectable style={{ flex: 1, fontFamily: Platform.OS === 'ios' ? 'Menlo' : 'monospace', fontSize: 12 }}>{fix}</T>
+          {copied ? <Check size={15} color={t.good} /> : <Copy size={15} color={t.ink2} />}
+        </Pressable>
+      ) : null}
+    </View>
+  );
+}
+
+/** 朋友看到的名字（服务器的 user_name：名片上、对方的好友列表里，agent 也用它称呼你）。加朋友之前必须有。 */
+export function NameCard({ suggest, onSaved }: { suggest?: string; onSaved: (name: string) => void }) {
+  const t = useTheme();
+  const [v, setV] = useState(suggest ?? '');
+  const [busy, setBusy] = useState(false);
+  const save = async () => {
+    const name = v.trim();
+    if (!name || busy) return;
+    setBusy(true);
+    try { await fr.patchCard({ name }); onSaved(name); } catch (e) { showError(L('未保存', "Couldn't save"), e); } finally { setBusy(false); }
+  };
+  return (
+    <Card style={{ gap: space.sm }}>
+      <T v="headline">{L('设置对外名字', 'Set the name friends see')}</T>
+      <T v="callout" color={t.ink2}>{L('添加朋友前需要先设置名字。它显示在你的名片和对方的好友列表中，你的 agent 也会用它称呼你。',
+        'You need a name before adding friends. It appears on your card and in their friends list, and your agent calls you by it.')}</T>
+      <View style={{ flexDirection: 'row', gap: space.sm, alignItems: 'center' }}>
+        <TextInput value={v} onChangeText={setV} onSubmitEditing={save} returnKeyType="done" maxLength={40} autoCorrect={false}
+          placeholder={L('名字或昵称', 'Your name or nickname')} placeholderTextColor={t.ink3} accessibilityLabel={L('对外名字', 'Name friends see')}
+          style={[type.body, styles.field, { flex: 1, backgroundColor: t.surface, color: t.ink, borderColor: t.line }]} />
+        {busy ? <ActivityIndicator color={t.gold} /> : <Btn label={L('保存', 'Save')} onPress={save} />}
+      </View>
+    </Card>
   );
 }
 
@@ -125,7 +174,8 @@ export function FriendsHome() {
       </View>
       {err ? <Card><T v="callout" color={t.bad}>{L(`读不到：${err}`, `Couldn't load: ${err}`)}</T></Card> : null}
       {!data && !err ? <ActivityIndicator color={t.gold} style={{ marginTop: space.xl }} /> : null}
-      {data && !data.ready ? <NotReady why={data.why} /> : null}
+      {data?.why === 'no_name' ? <NameCard suggest={data.me.suggest} onSaved={() => { load(); }} /> : data?.why === 'no_url' ? <NotReady /> : null}
+      {data?.unreachable ? <PublicWarn fix={data.publicFix} /> : null}
       {data && !data.friends.length ? (
         <Card style={{ gap: space.sm }}>
           <T v="headline">{L('还没有朋友', 'No friends yet')}</T>
@@ -595,6 +645,7 @@ export function FriendChatScreen() {
         <ChatScroll ref={scroller} offset={bottom.offset} style={{ flex: 1 }} contentContainerStyle={{ padding: space.lg, gap: space.lg }}
           keyboardShouldPersistTaps="handled" keyboardDismissMode={dismissMode} refreshControl={<PullRefresh onRefresh={load} />}>
           {err ? <Card><T v="callout" color={t.bad}>{L(`读不到：${err}`, `Couldn't load: ${err}`)}</T></Card> : null}
+          {route.params?.unreachable ? <PublicWarn fix={route.params?.fix as string | undefined} /> : null}
           {friend && unreachable ? (
             <View style={[styles.notice, { backgroundColor: t.surface, borderColor: t.line }]}>
               <TriangleAlert size={16} color={t.warn} />
@@ -666,6 +717,56 @@ export function FriendChatScreen() {
           </KeyboardSticky>
         ) : null}
       </View>
+    </Screen>
+  );
+}
+
+// —— 第一次连上服务器：朋友怎么称呼你（在「接上常用的」之前） ——
+
+/** 连接页第一次连上以后先到这里：服务器还没有名字（user_name）就请他设一个，加朋友、名片、agent 称呼都用它；
+ * 已经有了、老服务器（/api/card 没有 name）或者读不到，直接去下一步。 */
+export function MyNameScreen() {
+  const t = useTheme();
+  const nav = useNavigation<any>();
+  const { appName } = useStore();
+  const [suggest, setSuggest] = useState<string | null>(null);
+  const [v, setV] = useState('');
+  const [busy, setBusy] = useState(false);
+  const next = useCallback(() => nav.reset({ index: 0, routes: [{ name: 'Starter' }] }), [nav]);
+  useEffect(() => {
+    fr.card().then((c) => {
+      if (c.name === undefined || c.name) next();
+      else { setSuggest(c.suggest ?? ''); setV(c.suggest ?? ''); }
+    }).catch(() => next());
+  }, [next]);
+  const save = async () => {
+    const name = v.trim();
+    if (!name || busy) return;
+    setBusy(true);
+    try { await fr.patchCard({ name }); next(); } catch (e) { showError(L('未保存', "Couldn't save"), e); setBusy(false); }
+  };
+  if (suggest === null) return <Screen><ActivityIndicator style={{ marginTop: space.xxl }} color={t.ink3} /></Screen>;
+  return (
+    <Screen>
+      <ScrollView contentContainerStyle={{ flexGrow: 1, paddingBottom: space.xl }} automaticallyAdjustKeyboardInsets keyboardShouldPersistTaps="handled">
+        <View style={{ paddingHorizontal: space.xl, paddingTop: space.xl, gap: 8 }}>
+          <T v="callout" color={t.cyan} style={{ fontWeight: '600' }}>{L('开始之前', 'Before you start')}</T>
+          <T v="largeTitle" style={{ fontSize: 28 }}>{L('朋友怎么称呼你', 'What should friends call you?')}</T>
+          <T v="body" color={t.ink2}>{L(`这个名字显示在你的名片上，添加朋友时对方会看到；${appName} 也用它称呼你。之后可在「朋友 → 我的名片 agent」中修改。`,
+            `This name is on your card, and friends see it when you add each other; ${appName} calls you by it too. Change it later in Friends → My card agent.`)}</T>
+        </View>
+        <TextInput value={v} onChangeText={setV} onSubmitEditing={save} returnKeyType="done" maxLength={40} autoCorrect={false} autoFocus
+          placeholder={L('名字或昵称', 'Your name or nickname')} placeholderTextColor={t.ink3} accessibilityLabel={L('对外名字', 'Name friends see')}
+          style={[type.title, styles.bigField, { backgroundColor: t.surface, color: t.ink }]} />
+        <View style={{ flex: 1 }} />
+        <Pressable onPress={save} disabled={!v.trim() || busy} accessibilityRole="button"
+          style={({ pressed }) => [styles.primary, { backgroundColor: v.trim() ? t.cyan : t.surface2, opacity: pressed || busy ? 0.7 : 1 }]}>
+          {busy ? <ActivityIndicator color="#FFFFFF" /> : <T v="headline" color={v.trim() ? '#FFFFFF' : t.ink3}>{L('继续', 'Continue')}</T>}
+        </Pressable>
+        <Pressable onPress={next} accessibilityRole="button" style={{ height: 44, alignItems: 'center', justifyContent: 'center', marginTop: 6 }}>
+          <T v="callout" color={t.ink2}>{L('先跳过', 'Skip for now')}</T>
+        </Pressable>
+      </ScrollView>
     </Screen>
   );
 }
@@ -742,8 +843,9 @@ export function AddFriendScreen() {
     if (!who || busy) return;
     setBusy(true);
     try {
-      const f = await fr.accept({ code: who.code, tier: theirTier, alias: alias.trim() || undefined });
-      nav.replace('FriendChat', { id: f.id });
+      const r = await fr.accept({ code: who.code, tier: theirTier, alias: alias.trim() || undefined });
+      // 对方试着连回来、没连上：到了聊天页顶上说一句（你的公网访问没开好，对方的消息送不到你这里）
+      nav.replace('FriendChat', { id: r.friend.id, ...(r.unreachable ? { unreachable: 1, fix: r.publicFix } : {}) });
     } catch (e) { showError(L('没加上', "Couldn't add"), e); } finally { setBusy(false); }
   };
 
@@ -752,7 +854,8 @@ export function AddFriendScreen() {
     <Screen>
       <NavHeader title={L('加朋友', 'Add a friend')} onBack={() => nav.goBack()} />
       <ScrollView contentContainerStyle={{ padding: space.lg, paddingBottom: space.xxl, gap: space.md }} automaticallyAdjustKeyboardInsets keyboardShouldPersistTaps="handled">
-        {home && !home.ready ? <NotReady why={home.why} /> : null}
+        {home?.why === 'no_name' ? <NameCard suggest={home.me.suggest} onSaved={() => { loadHome(); }} /> : home?.why === 'no_url' ? <NotReady /> : null}
+        {home?.unreachable ? <PublicWarn fix={home.publicFix} /> : null}
 
         <SectionLabel>{L('用对方给你的邀请码', "Use someone's invite")}</SectionLabel>
         <Card style={{ gap: space.sm }}>
@@ -872,6 +975,12 @@ export function CardAgentScreen() {
     const next = opts[(opts.indexOf(cur) + 1) % opts.length];
     try { setData(await fr.patchCard({ tiers: { [tier]: { [key]: next } } })); } catch (e) { showError(L('没改成', "Couldn't change it"), e); }
   };
+  const [name, setName] = useState<string | null>(null);
+  const [nameSaved, setNameSaved] = useState(false);
+  const saveName = async () => {
+    if (name == null || !name.trim() || name.trim() === data?.name) return;
+    try { setData(await fr.patchCard({ name: name.trim() })); setName(null); setNameSaved(true); } catch (e) { showError(L('未保存', "Couldn't save"), e); }
+  };
   const saveStatus = async () => {
     if (status == null) return;
     try { setData(await fr.patchCard({ status })); setStatus(null); setSaved(true); } catch (e) { showError(L('没存上', "Couldn't save"), e); }
@@ -889,6 +998,20 @@ export function CardAgentScreen() {
             <TriangleAlert size={17} color={t.warn} />
             <T v="callout" style={{ flex: 1 }}>{L('名片 agent 还没开：朋友对着你的分享追问时，不会自动回答，你自己看着回。档位先定好，开了就按这个来。', "The card agent isn't on yet: when friends ask about your shares, nothing answers automatically. Set the tiers now; it follows them once on.")}</T>
           </View>
+        ) : null}
+        {data && data.name !== undefined ? (
+          <>
+            <SectionLabel caps={false}>{L('对外名字（名片上、朋友的好友列表里显示）', 'Name friends see (on your card and in their list)')}</SectionLabel>
+            <Card style={{ gap: space.sm }}>
+              <View style={{ flexDirection: 'row', gap: space.sm, alignItems: 'center' }}>
+                <TextInput value={name ?? data.name ?? ''} onChangeText={(v) => { setName(v); setNameSaved(false); }} onSubmitEditing={saveName} returnKeyType="done"
+                  maxLength={40} autoCorrect={false} placeholder={data.suggest || L('名字或昵称', 'Your name or nickname')} placeholderTextColor={t.ink3}
+                  style={[type.body, styles.field, { flex: 1, color: t.ink, borderColor: t.line }]} accessibilityLabel={L('对外名字', 'Name friends see')} />
+                {name != null && name.trim() && name.trim() !== data.name ? <Btn label={L('保存', 'Save')} kind="quiet" onPress={saveName} /> : null}
+              </View>
+              {nameSaved ? <T v="caption" color={t.good}>{L('已保存，朋友那边会随名片更新', 'Saved. Friends see it when your card updates.')}</T> : null}
+            </Card>
+          </>
         ) : null}
         {data ? (
           <>
@@ -983,6 +1106,9 @@ const styles = StyleSheet.create({
   review: { borderWidth: 1, borderStyle: 'dashed', borderRadius: 14, padding: space.md, gap: space.sm },
   mini: { flexDirection: 'row', alignItems: 'center', gap: 4, height: 32, paddingHorizontal: 12, borderRadius: 16 },
   composerWrap: { borderTopWidth: StyleSheet.hairlineWidth },
+  bigField: { marginHorizontal: space.lg, marginTop: space.xl, height: 56, borderRadius: radius.md, paddingHorizontal: space.lg },
+  primary: { marginHorizontal: space.lg, marginTop: space.xl, height: 52, borderRadius: radius.md, alignItems: 'center', justifyContent: 'center' },
+  codeRow: { flexDirection: 'row', alignItems: 'center', gap: space.sm, borderRadius: radius.sm, paddingHorizontal: 10, paddingVertical: 8 },
   notice: { flexDirection: 'row', alignItems: 'flex-start', gap: space.sm, borderWidth: StyleSheet.hairlineWidth, borderRadius: radius.md, padding: space.md },
   composer: { flexDirection: 'row', alignItems: 'flex-end', gap: space.sm, paddingHorizontal: space.md, paddingVertical: space.sm },
   input: { flex: 1, minHeight: 40, maxHeight: 120, borderRadius: 20, paddingHorizontal: 16, paddingTop: 9, paddingBottom: 9 },
