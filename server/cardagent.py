@@ -887,6 +887,8 @@ def dedupe_key(channel: str, ref: str, ask: dict) -> str:
     if ask["kind"] == "review":  # Doorman 扣下的一句：每句一张，不顶掉同一段对话里在等你的约时间的卡
         return f"card:{channel}:{ref or '-'}:review:{uuid.uuid4().hex[:10]}"
     if ref:
+        with _lock, inbox.idb():  # 新装的服务器上收件箱表可能还没建（app 还没打开过）：先建好再 JOIN
+            pass
         with _lock, cdb() as conn:
             r = conn.execute("""SELECT i.dedupe FROM card_asks a JOIN inbox i ON i.id = a.inbox_id WHERE a.channel=? AND a.ref=? AND a.kind != 'review'
                 AND i.status IN ('pending','revising') ORDER BY a.updated_at DESC LIMIT 1""", (channel, ref)).fetchone()

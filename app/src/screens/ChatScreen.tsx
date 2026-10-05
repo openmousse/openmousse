@@ -229,7 +229,7 @@ export function ChatScreen() {
   const elsewhere = Object.entries(unread.threads).some(([tid, u]) => tid !== active && u.n > 0);
   // 顶上切「Grava | 朋友」（社交第二层）：服务器的未读里有 friends 才有朋友功能。点通知 / 小窗跳到某个对话时切回来。
   const friendsOn = unread.friends !== undefined;
-  const friendsN = Object.values(unread.friends ?? {}).reduce((sum, u) => sum + u.n, 0);
+  const friendsN = Object.values(unread.friends ?? {}).reduce((sum, u) => sum + (u.muted ? 0 : u.n), 0);  // 免打扰的不算
   const [mode, setMode] = useState<'grava' | 'friends'>(() => (Platform.OS === 'web' && typeof window !== 'undefined' && new URLSearchParams(window.location.search).get('friends') === '1' ? 'friends' : 'grava'));
   const [seenAt, setSeenAt] = useState(wantedAt);
   if (wantedAt !== seenAt) { setSeenAt(wantedAt); if (wanted) setMode('grava'); }

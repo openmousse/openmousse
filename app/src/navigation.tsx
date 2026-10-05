@@ -59,7 +59,7 @@ function Tabs() {
   const insets = useSafeAreaInsets();
   // 未读（青色）：「对话」= 主对话 + 项目 + 朋友，「Agents」= 各个 Agent，「Zen」（路由名「思考」）= 聊聊里的回复。「今天」（金色）= 等你点头的。
   const n = (id: string) => unread.threads[id]?.n ?? 0;
-  const friendsUnread = Object.values(unread.friends ?? {}).reduce((sum, u) => sum + u.n, 0);  // 朋友发来还没看的（「对话」页的「朋友」）
+  const friendsUnread = Object.values(unread.friends ?? {}).reduce((sum, u) => sum + (u.muted ? 0 : u.n), 0);  // 朋友发来还没看的（「对话」页的「朋友」；免打扰的不算）
   const chatUnread = n('main') + sideChats.reduce((sum, c) => sum + n(c.id), 0) + friendsUnread;
   const agentUnread = groups.reduce((sum, g) => sum + n(g.id), 0);
   const thinkUnread = Object.entries(unread.threads).reduce((sum, [tid, u]) => sum + (tid.startsWith('tp-') ? u.n : 0), 0);

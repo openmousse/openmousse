@@ -107,7 +107,7 @@ export interface Receipt { item: InboxItem; day: string }
 /** 未读：只列出 n > 0 的线程。last.id 是消息的数字 id（app 里的消息 id 是 "db<id>"）。 */
 export interface UnreadThread { n: number; mine: number; last?: { id: number; text: string; ts: string; origin: string } }
 /** 朋友发来还没看的（社交第二层）：{朋友 id: {n, last}}。老服务器没有这个字段（= 没有朋友功能）。 */
-export interface UnreadFriend { n: number; last?: { text: string; ts: string; kind: string } | null }
+export interface UnreadFriend { n: number; last?: { text: string; ts: string; kind: string } | null; /** 免打扰：不算进角标和「好友」的数 */ muted?: boolean }
 export interface UnreadSummary { threads: Record<string, UnreadThread>; feedNew: string[]; inbox: number; badge: number; friends?: Record<string, UnreadFriend> }
 
 /** 推送 / 小窗点开去哪。 */

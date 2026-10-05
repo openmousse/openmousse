@@ -131,7 +131,7 @@ function normalizeUnread(j: Partial<UnreadSummary> | null | undefined): UnreadSu
     badge: Number(j.badge) || 0,
     // 朋友（社交第二层）：有这个字段 = 服务器有朋友功能（空对象也算）
     ...(j.friends && typeof j.friends === 'object' ? { friends: Object.fromEntries(Object.entries(j.friends)
-      .map(([fid, u]) => [fid, { n: Number(u?.n) || 0, last: u?.last ?? null }]).filter(([, u]) => (u as { n: number }).n > 0)) } : {}),
+      .map(([fid, u]) => [fid, { n: Number(u?.n) || 0, last: u?.last ?? null, ...(u?.muted ? { muted: true } : {}) }]).filter(([, u]) => (u as { n: number }).n > 0)) } : {}),
   };
 }
 
