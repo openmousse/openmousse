@@ -1,6 +1,7 @@
 // 合并转发的几块界面：聊天记录卡（发给朋友的、转给 Agent 的）、点开看全部、多选时底下那一条、转发篮的小按钮、长按菜单里的几项。
 import React, { useCallback, useEffect, useState } from 'react';
 import { ActivityIndicator, Pressable, StyleSheet, View } from 'react-native';
+import { httpStatus } from '../api/base';
 import * as fw from '../api/forward';
 import type { ForwardItem } from '../api/forward';
 import { Check, Forward, Layers, ListChecks, MessagesSquare, PackagePlus, X } from './icons';
@@ -11,23 +12,32 @@ import { navigationRef } from '../navigation';
 import { radius, space, useTheme } from '../theme';
 
 // —— 转发篮里有几条：几个页面共用一个数，谁改了都通知一遍 ——
+// 服务器有没有合并转发（老服务器 /api/forward/basket 是 404）：没有就不在长按菜单里放转发那几项。
 
 let basketCount = 0;
-const listeners = new Set<(n: number) => void>();
+let supported: boolean | null = null;
+const listeners = new Set<() => void>();
+const notify = () => listeners.forEach((f) => f());
 export function setBasketCount(n: number) {
   basketCount = n;
-  listeners.forEach((f) => f(n));
+  notify();
 }
-export const refreshBasket = () => fw.basket().then((b) => setBasketCount(b.count)).catch(() => {});
-export function useBasketCount(): number {
-  const [n, setN] = useState(basketCount);
+export const refreshBasket = () => fw.basket()
+  .then((b) => { supported = true; setBasketCount(b.count); })
+  .catch((e) => { if (httpStatus(e) === 404) { supported = false; notify(); } });
+function useBasketState(): { n: number; ok: boolean } {
+  const [, bump] = useState(0);
   useEffect(() => {
-    listeners.add(setN);
+    const f = () => bump((x) => x + 1);
+    listeners.add(f);
     refreshBasket();
-    return () => { listeners.delete(setN); };
+    return () => { listeners.delete(f); };
   }, []);
-  return n;
+  return { n: basketCount, ok: supported !== false };
 }
+export const useBasketCount = () => useBasketState().n;
+/** 这台服务器能合并转发（还没问到时当能：问到 404 再藏起来） */
+export const useForwardSupported = () => useBasketState().ok;
 
 /** 转发篮有东西时浮在输入栏上面的一个小按钮 */
 export function BasketPill({ onPress }: { onPress: () => void }) {

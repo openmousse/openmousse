@@ -27,7 +27,7 @@ import { podFeatures } from '../api/podcast';
 import { PutInPodcast } from '../think/Materials';
 import { openEpisode } from '../think/Podcast';
 import * as fw from '../api/forward';
-import { BasketPill, BundleCard, SelectBar, SelectMark, Transcript, forwardActions, setBasketCount, useSelect } from '../components/Forward';
+import { BasketPill, BundleCard, SelectBar, SelectMark, Transcript, forwardActions, setBasketCount, useForwardSupported, useSelect } from '../components/Forward';
 
 export { AgentLens, timeLabel };
 
@@ -546,6 +546,7 @@ export function FriendChatScreen() {
   const [sending, setSending] = useState(false);
   // 合并转发：多选 / 「选这一段」时消息左边出勾，输入栏换成「加入转发篮 · 转发」
   const sel = useSelect();
+  const canForward = useForwardSupported();
   const scroller = useRef<ScrollView>(null);
   const input = useRef<TextInput>(null);
   const root = useRef<View>(null);
@@ -642,7 +643,7 @@ export function FriendChatScreen() {
     const canWithdraw = m.dir === 'out' && !gone && (m.kind === 'text' || m.kind === 'share');
     const podOk = canPod && (m.kind === 'text' || m.kind === 'ask' || m.kind === 'answer') && !gone && !!m.text.trim();
     const copyText = m.kind === 'share' ? (m.share?.text || m.share?.quote || m.share?.title || '') : m.text;
-    const canFwd = !gone && m.kind !== 'system' && (!!m.text.trim() || m.kind === 'share');
+    const canFwd = canForward && !gone && m.kind !== 'system' && (!!m.text.trim() || m.kind === 'share');
     const ref = fw.friendRef(id, m.id);
     if (gone) return;
     sheet.open({ title: m.dir === 'out' ? L('此消息', 'This message') : L(`${friend?.name ?? ''} 的消息`, `From ${friend?.name ?? ''}`), content: (close) => (

@@ -29,7 +29,7 @@ import { useReplyProgress } from '../api/progress';
 import { StepsLine, ThinkingPanel, WritingDots } from './Thinking';
 import { openEpisode } from '../think/Podcast';
 import * as fw from '../api/forward';
-import { BasketPill, BundleCard, ForwardTranscript, SelectBar, SelectMark, forwardActions, openBack, setBasketCount, useSelect } from './Forward';
+import { BasketPill, BundleCard, ForwardTranscript, SelectBar, SelectMark, forwardActions, openBack, setBasketCount, useForwardSupported, useSelect } from './Forward';
 
 // 从「今天」的「去对话里说」带过来、还没发出去的引用，也按线程记着。
 const quotes = new Map<string, ChatQuote>();
@@ -414,6 +414,7 @@ export function ChatView({ threadId, placeholder, empty, welcome, quote: quotePr
   // 合并转发：多选 / 「选这一段」时消息左边出勾，输入栏换成「加入转发篮 · 转发」
   const sel = useSelect();
   const { on: picking, refs: picked, toggle } = sel;
+  const canForward = useForwardSupported();
   // 长按「放进播客」：服务器有播客素材才显示（老服务器没有）
   const [canPod, setCanPod] = useState(false);
   useEffect(() => { podFeatures().then((f) => setCanPod(f.materials)).catch(() => {}); }, []);
@@ -571,7 +572,7 @@ export function ChatView({ threadId, placeholder, empty, welcome, quote: quotePr
             <Action icon={Quote} label={L('引用', 'Quote')} note={L('引用这条消息回复：Agent 能看到所引原文，你的消息上方也会显示原话', 'Reply to this message: the Agent sees the quoted text, and your message shows it')}
               onPress={() => { close(); setQuote({ replyTo: m.id, title: text.replace(/\s+/g, ' ').slice(0, 40) }); setTimeout(() => input.current?.focus(), 250); }} />
           ) : null}
-          {m.id.startsWith('db') && m.role !== 'auto' && text.trim() ? forwardActions({
+          {canForward && m.id.startsWith('db') && m.role !== 'auto' && text.trim() ? forwardActions({
             forward: () => { close(); nav.navigate('Forward', { refs: [fw.chatRef(threadId, m.id)] }); },
             around: () => { close(); sel.around(fw.chatRef(threadId, m.id)); },
             pick: () => { close(); sel.start(fw.chatRef(threadId, m.id)); },
