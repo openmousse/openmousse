@@ -19,6 +19,7 @@ import { appsApi, noApps, type AppSummary } from '../api/apps';
 import { activeClawId, listClaws, pingClaw, switchToClaw, touchClaw, type Claw } from '../api/claws';
 import { defaultBase, getBase } from '../api/base';
 import { podFeatures } from '../api/podcast';
+import { serverOutdated } from '../api/version';
 import { L, useLang, type LangPref } from '../i18n';
 import { useStore } from '../store';
 import { space, useAppearance, useTheme } from '../theme';
@@ -41,7 +42,7 @@ export function MeScreen() {
   const nav = useNavigation<any>();
   const sheet = useSheet();
   const {
-    avatar, profile, memories, connected, booting, authFailed, appName, tasks, security, models, journal, tree, connectors, reload, claw, refreshLive,
+    avatar, profile, memories, connected, booting, authFailed, appName, tasks, security, models, journal, tree, connectors, reload, claw, server, refreshLive,
   } = useStore();
   const { appearance, setAppearance } = useAppearance();
   const { pref, setPref } = useLang();
@@ -146,7 +147,9 @@ export function MeScreen() {
 
   const connectedApps = (apps ?? []).filter((a) => a.status !== 'error');
   const appsNeedAuth = (apps ?? []).filter((a) => a.status === 'needs_auth').length;
-  const clawStatus = connected ? L('在线', 'Online') : booting ? L('正在连接…', 'Connecting…') : authFailed ? L('令牌无效', 'Invalid token') : L('无法连接', 'Unreachable');
+  const outdated = connected && serverOutdated(server);  // 服务器比这版 app 旧：点进去有更新方法
+  const clawStatus = connected ? (outdated ? L('在线 · 需要更新', 'Online · update needed') : L('在线', 'Online'))
+    : booting ? L('正在连接…', 'Connecting…') : authFailed ? L('令牌无效', 'Invalid token') : L('无法连接', 'Unreachable');
 
   return (
     <Screen>
@@ -181,10 +184,10 @@ export function MeScreen() {
         <Group>
           {(web || !claws.length) ? (
             <Row first icon={<Tile size={36} bg={t.cyanSoft}><Server size={20} color={t.cyan} /></Tile>} title={appName}
-              sub={`${claw.name} · ${clawStatus}`} right={<Dot tone={connected ? 'good' : 'warn'} />} onPress={() => nav.navigate(connected ? 'Claw' : 'Connect')} />
+              sub={`${claw.name} · ${clawStatus}`} right={<Dot tone={connected && !outdated ? 'good' : 'warn'} />} onPress={() => nav.navigate(connected ? 'Claw' : 'Connect')} />
           ) : claws.map((c, i) => {
             const active = c.id === activeId;
-            const st = active ? (connected ? 'good' : 'warn') : alive[c.id] === 'ok' ? 'good' : alive[c.id] ? 'warn' : 'off';
+            const st = active ? (connected && !outdated ? 'good' : 'warn') : alive[c.id] === 'ok' ? 'good' : alive[c.id] ? 'warn' : 'off';
             const line = active ? clawStatus : alive[c.id] === 'ok' ? L('在线', 'Online') : alive[c.id] === 'auth' ? L('令牌无效', 'Invalid token') : alive[c.id] === 'down' ? L('无法连接', 'Unreachable') : '…';
             return (
               <Row key={c.id} first={i === 0}

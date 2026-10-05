@@ -12,6 +12,7 @@ import type { InboxItem } from '../data/types';
 import { L } from '../i18n';
 import { useStore } from '../store';
 import { space, useTheme } from '../theme';
+import { needsUpdate } from '../api/version';
 
 /** 按最近一次你动它的时间排：跟进过的跟着跟进那天走 */
 const whenOf = (i: InboxItem) => i.followedAt || i.decidedAt || i.createdAt;
@@ -60,9 +61,9 @@ export function InboxScreen() {
     return [...m.entries()];
   }, [inboxRecent]);
   const status = !connected
-    ? (booting ? L('正在连接服务器…', 'Connecting to the server…') : L('未连接服务器。请检查「我 → 服务器」后下拉刷新。', 'Not connected to the server. Check Me → Server, then pull down to refresh.'))
+    ? (booting ? L('正在连接服务器…', 'Connecting to the server…') : L('未连接服务器。请检查「设置 → 我的 claw」后下拉刷新。', 'Not connected to the server. Check Settings → My claws, then pull down to refresh.'))
     : dataErrors.inboxRecent ? L(`无法加载：${dataErrors.inboxRecent}`, `Couldn't load: ${dataErrors.inboxRecent}`)
-      : serverSupport.inbox === false ? L('当前服务器版本尚不支持收件箱，暂无记录。', "The server version doesn't support the inbox yet, so there's nothing here.")
+      : serverSupport.inbox === false ? needsUpdate('当前服务器不支持收件箱。', "This server doesn't support the inbox yet.")
         : !inboxRecent.length ? (loading.inboxRecent ? L('正在加载…', 'Loading…') : L('最近 7 天暂无已处理事项。', 'Nothing decided in the last 7 days.'))
           : '';
   return (

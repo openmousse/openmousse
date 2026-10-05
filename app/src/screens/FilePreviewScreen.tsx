@@ -17,6 +17,7 @@ import { filePreview, isRemote, pageOf, pageWidth, previewOf, withParam, type Fi
 import type { Attachment } from '../data/types';
 import { L } from '../i18n';
 import { radius, space, type, useTheme } from '../theme';
+import { needsUpdate } from '../api/version';
 
 const KIND_ICON = { doc: FileText, audio: FileAudio, video: Film, file: Paperclip, image: ImageIcon } as const;
 const mono = Platform.select({ ios: 'Menlo', android: 'monospace', default: 'ui-monospace, SFMono-Regular, Menlo, monospace' });
@@ -40,7 +41,7 @@ const plainImage = (a: Attachment) => a.kind === 'image' && a.mime !== 'image/sv
 const NONE: Attachment[] = [];
 const errText = (e: unknown) => {
   const msg = e instanceof Error ? e.message : String(e);
-  return msg === 'Not Found' ? L('当前服务器不支持在 app 内预览，请更新服务器。', "This server can't preview files in the app yet. Update the server.") : msg;
+  return msg === 'Not Found' ? needsUpdate('当前服务器不支持在 app 内预览。', "This server can't preview files in the app yet.") : msg;
 };
 
 export function FilePreviewScreen() {

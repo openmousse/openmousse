@@ -8,6 +8,7 @@ import { dataApi, missing, resetServerSupport, serverSupport } from './api/data'
 import { healthSupported, loadWake, postSignal, startHealthBackground, syncHealth, type WakeState } from './api/health';
 import { flushShareOutbox, refreshWidget, shareConfig, startLive, syncLive } from './api/native';
 import { HEALTH_KEYS, OPENCLAW, loadHealthParts, loadLive, probe, type ClawInfo, type LiveData } from './api/live';
+import { OLD_SERVER, setServerInfo, type ServerInfo } from './api/version';
 import { onPushReceived, onPushResponse, registerCategories, registerPush, setAppBadge, type PushAction, type PushInfo } from './api/push';
 import { useBanner, type BannerSpec } from './components/Banner';
 import { kindLabel } from './components/InboxCard';
@@ -46,6 +47,8 @@ interface State {
   firstRun: boolean;
   /** 服务器背后的 claw（/api/health）：别的 claw 做不到的（后台任务、插话、执行审批……）app 按 caps 藏起来。连上之前当 OpenClaw。 */
   claw: ClawInfo;
+  /** 服务器的版本和能力（/api/health 的 server，见 api/version.ts）。连上之前、老服务器 = OLD_SERVER。 */
+  server: ServerInfo;
   /** 训记、日历、Apple 健康。null 表示没连上。 */
   live: LiveData | null;
   liveLoading: boolean;
@@ -320,6 +323,7 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
     sharedChannels: [],
     firstRun: false,
     claw: OPENCLAW,
+    server: OLD_SERVER,
     live: null,
     liveLoading: true,
     liveErrors: {},
@@ -816,7 +820,8 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
       lastMarked.current = {};
       setAgentName(p.appName);
       persistAgentName(p.appName).catch(() => {});
-      setS((st) => ({ ...st, configLoaded: true, needsServer: false, authFailed: false, appName: agentName(), sharedChannels: p.sharedChannels, firstRun: p.firstRun, claw: p.claw, connected: true, booting: false }));
+      setServerInfo(p.server);
+      setS((st) => ({ ...st, configLoaded: true, needsServer: false, authFailed: false, appName: agentName(), sharedChannels: p.sharedChannels, firstRun: p.firstRun, claw: p.claw, server: p.server, connected: true, booting: false }));
       // 原生扩展（1.0.5 起）：地址和令牌给分享 / 小组件扩展，补传分享扩展没传上去的，实时活动和小组件对一遍
       const fg = AppState.currentState === 'active';  // 也可能是 iOS 在后台叫醒来同步健康数据的
       shareConfig();

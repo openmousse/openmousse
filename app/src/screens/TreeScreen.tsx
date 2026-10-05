@@ -18,6 +18,7 @@ import type { TreeBranch, TreeConnect, TreeInfo, TreeLeaf, TreeStorage } from '.
 import { L, lang } from '../i18n';
 import { useStore } from '../store';
 import { radius, space, useTheme } from '../theme';
+import { needsUpdate } from '../api/version';
 
 // —— 文字 ————————————————————————————————————————————————————————————
 
@@ -398,7 +399,7 @@ export function TreeScreen() {
           <T v="callout" color={t.ink2}>{tree.hint || L('接入后将显示在这里。', 'Once it is, it shows up here.')}</T>
         </Note>
       );
-    } else if (tree?.kind === 'unsupported') state = <Note>{L('当前服务器版本不支持此页面，请更新服务器后再查看。', "The server's version doesn't have this page yet. Update the server and check back.")}</Note>;
+    } else if (tree?.kind === 'unsupported') state = <Note>{needsUpdate('当前服务器不支持此页面。', "This server doesn't have this page yet.")}</Note>;
     else if (loading.tree || !tree) state = <Note>{L('正在加载…', 'Loading…')}</Note>;
   }
   return (

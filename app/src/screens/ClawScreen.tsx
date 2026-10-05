@@ -14,6 +14,7 @@ import { getBase } from '../api/base';
 import { activeClawId, forgetClaw, listClaws } from '../api/claws';
 import { devicesApi, type Device, type PairCode } from '../api/devices';
 import { home as friendsHome } from '../api/friends';
+import { UPDATE_CMD, serverOutdated } from '../api/version';
 import { L } from '../i18n';
 import { useStore } from '../store';
 import { radius, space, useTheme } from '../theme';
@@ -44,7 +45,7 @@ export function ClawScreen() {
   const t = useTheme();
   const nav = useNavigation<any>();
   const sheet = useSheet();
-  const { appName, claw, connected, groups, models, connectors, reload, refreshLive } = useStore();
+  const { appName, claw, server, connected, groups, models, connectors, reload, refreshLive } = useStore();
   const [devices, setDevices] = useState<Device[] | null>(null);
   const [finger, setFinger] = useState<string | null>(null);
   const base = getBase() || (Platform.OS === 'web' && typeof window !== 'undefined' ? window.location.origin : '');
@@ -79,6 +80,23 @@ export function ClawScreen() {
         ),
       });
     } catch (e) { showError(L('未能生成配对码', "Couldn't create a pairing code"), e); }
+  };
+
+  const outdated = connected && serverOutdated(server);
+  const openUpdate = () => {
+    sheet.open({
+      title: L('更新服务器', 'Update the server'),
+      content: () => (
+        <View style={{ gap: space.md }}>
+          <T v="callout" color={t.ink2}>{L('在运行服务器的机器上执行以下命令。现有设置、对话和数据都会保留，更新完成后服务自动重启，app 会重新连接。',
+            'Run this on the machine the server runs on. Your settings, chats and data are kept; the server restarts when it finishes and the app reconnects.')}</T>
+          <View style={{ padding: 12, borderRadius: radius.md, backgroundColor: t.surface2 }}>
+            <T v="caption" selectable style={{ fontFamily: Platform.OS === 'ios' ? 'Menlo' : 'monospace', fontSize: 12 }}>{UPDATE_CMD}</T>
+          </View>
+          <Btn kind="quiet" label={L('复制命令', 'Copy command')} onPress={() => { Clipboard.setStringAsync(UPDATE_CMD).catch(() => {}); }} />
+        </View>
+      ),
+    });
   };
 
   const removeDevice = (d: Device) => {
@@ -133,7 +151,20 @@ export function ClawScreen() {
           <Row title={L('地址和令牌', 'Address and token')} onPress={() => nav.navigate('Connect')} />
         </Group>
 
-        {models ? (
+        {connected ? (
+          <>
+            <GroupLabel>{L('版本', 'Version')}</GroupLabel>
+            <Group>
+              <Row first title={L('服务器', 'Server')} tone={outdated ? 'warn' : undefined}
+                value={server.version ? `${server.version}${server.commit ? ` · ${server.commit}` : ''}` : L('旧版本', 'Old version')} />
+              {claw.kind === 'openclaw' && server.openclaw ? <Row title="OpenClaw" value={server.openclaw} /> : null}
+              {outdated ? <Row title={L('更新服务器', 'Update the server')} accent onPress={openUpdate} /> : null}
+            </Group>
+            {outdated ? <GroupNote>{L('服务器版本较旧，部分功能无法使用。', "The server is out of date, so some features aren't available.")}</GroupNote> : null}
+          </>
+        ) : null}
+
+        {models?.primary ? (  // OpenClaw 还没配默认模型时 primary 是 null
           <>
             <GroupLabel>{L('模型', 'Models')}</GroupLabel>
             <Group>

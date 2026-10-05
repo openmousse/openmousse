@@ -1,6 +1,7 @@
 // 看板数据：训练 / 饮食 / 身体数据、日历、Apple 健康，全部只读；来源由服务器的可选数据源决定。
 import type { HealthDay } from './health';
 import { AuthError, request } from './base';
+import { serverOf, type ServerInfo } from './version';
 
 export interface LiveTrain { title: string; minutes: number; kcal: number | null; start: string; sets_done: number;
   movements: { name: string; type: string; sets_done: number; sets_total: number; top_set: string }[] }
@@ -58,9 +59,10 @@ export const OPENCLAW: ClawInfo = { kind: 'openclaw', name: 'OpenClaw', caps: { 
   billing: true, channels: true, rewind: true, modelSwitch: true } };
 
 /** firstRun：全新的服务器（还没有任何消息、也没建过 Agent），主对话空着时顶上放「从这里开始」。老服务器没有这个字段 = false。 */
-export type ProbeResult = { status: 'ok'; appName: string; sharedChannels: string[]; sources: Sources; firstRun: boolean; claw: ClawInfo } | { status: 'auth' | 'down' };
+/** server：服务器的版本和能力（见 version.ts）；老服务器没有这一段 = OLD_SERVER。 */
+export type ProbeResult = { status: 'ok'; appName: string; sharedChannels: string[]; sources: Sources; firstRun: boolean; claw: ClawInfo; server: ServerInfo } | { status: 'auth' | 'down' };
 
-type HealthResp = { ok: boolean; app_name?: string; shared_channels?: string[]; sources?: Sources; first_run?: boolean; claw?: Partial<ClawInfo> };
+type HealthResp = { ok: boolean; app_name?: string; shared_channels?: string[]; sources?: Sources; first_run?: boolean; claw?: Partial<ClawInfo>; server?: unknown };
 
 function clawOf(c?: Partial<ClawInfo>): ClawInfo {
   if (!c?.kind || c.kind === 'openclaw') return OPENCLAW;
@@ -71,7 +73,7 @@ export async function probe(): Promise<ProbeResult> {
   try {
     const h = await get<HealthResp>('/api/health');
     return h.ok ? { status: 'ok', appName: h.app_name || 'OpenMousse', sharedChannels: h.shared_channels ?? [], sources: h.sources ?? {}, firstRun: h.first_run === true,
-      claw: clawOf(h.claw) } : { status: 'down' };
+      claw: clawOf(h.claw), server: serverOf(h.server) } : { status: 'down' };
   } catch (e) {
     return { status: e instanceof AuthError ? 'auth' : 'down' };
   }

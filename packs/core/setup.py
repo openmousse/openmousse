@@ -1295,6 +1295,10 @@ def main() -> None:
     print()
     print("=" * 60)
     print(L(f"装好了。服务地址：{url}", f"Done. Server: {url}"))
+    vm = re.search(r'^VERSION = "([^"]+)"', (repo / "server/version.py").read_text(encoding="utf8"), re.M) if (repo / "server/version.py").exists() else None
+    head = subprocess.run(["git", "-C", str(repo), "rev-parse", "--short=7", "HEAD"], capture_output=True, text=True).stdout.strip()
+    if vm:
+        print(f"OpenMousse {vm.group(1)}" + (L(f"（{head}）", f" ({head})") if head else ""))
     if generic:
         ok, detail = probe_claw(cfg.get("claw") or {})
         print(L(f"你的 claw：{cfg['claw'].get('name')}（{cfg['claw'].get('url')}）" + ("，接口连得上 ✓" if ok else f"，接口现在连不上 ✗（{detail}）：看它在不在跑、地址和令牌对不对，改 server.json 的 claw 段不用重启"),

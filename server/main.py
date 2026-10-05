@@ -46,6 +46,7 @@ from sources import calendar_ics, xunji, xunji_name  # noqa: E402
 import study  # noqa: E402
 import cards  # noqa: E402
 import claw  # noqa: E402
+import version  # noqa: E402
 import schedule  # noqa: E402
 import chat  # noqa: E402
 import settle  # noqa: E402
@@ -312,7 +313,7 @@ def shared_channels() -> list[str]:
 def health(request: Request):
     return {"ok": True, "app_name": settings.app_name, "time": datetime.now(TZ).strftime("%Y-%m-%d %H:%M"), "timezone": settings.timezone,
             "principal": getattr(request.state, "principal", None), "shared_channels": shared_channels(),
-            "sources": sources.AVAILABLE, "chat": "live", "claw": claw.info(),
+            "sources": sources.AVAILABLE, "chat": "live", "claw": claw.info(), "server": version.info(claw.kind()),
             "first_run": first_run()}  # 新实例（还没有消息、没有 Agent）：app 在主对话顶上放「从这里开始」
 
 

@@ -169,13 +169,29 @@ def restart_hint(u: str) -> str:
 # —— 开头：版本 ——
 repo = (MOUSSE / "repo").resolve() if (MOUSSE / "repo").exists() else None
 code, ver, _ = run(["git", "-C", str(repo), "log", "-1", "--format=%h %cd", "--date=short"]) if repo else (1, "", "")
+
+
+def version_of(text: str) -> str:
+    """server/version.py 里的 VERSION（年.月.日，同一天再发加 -2）。"""
+    m = re.search(r'^VERSION = "([^"]+)"', text or "", re.M)
+    return m.group(1) if m else ""
+
+
+def vkey(v: str) -> tuple:
+    return tuple(int(x) for x in re.findall(r"\d+", v))
+
+
+try:
+    repo_version = version_of((repo / "server/version.py").read_text(encoding="utf8")) if repo else ""
+except OSError:
+    repo_version = ""  # 加版本号之前的仓库
 tz = cfg.get("timezone") or ""
 try:
     TZ = ZoneInfo(tz) if tz else None
 except (ValueError, KeyError):
     TZ = None
 print(L("OpenMousse 自检", "OpenMousse check") + f" · {datetime.now(TZ):%Y-%m-%d %H:%M}" + (f" · {tz}" if tz else "")
-      + f" · OpenMousse {ver or '?'}" + f" · Python {sys.version.split()[0]}")
+      + f" · OpenMousse {repo_version + ' ' if repo_version else ''}{f'({ver})' if repo_version and ver else ver or '?'}" + f" · Python {sys.version.split()[0]}")
 
 # —— 系统 ——
 section(L("系统", "System"))
@@ -233,6 +249,25 @@ elif code in (401, 403):
     bad(L("服务在，但令牌对不上", "Server is up but the token doesn't match"), f"HTTP {code}", L("令牌改过的话重启一下服务：", "if you changed tokens, restart it: ") + restart_cmd("openmousse-server"))
 else:
     bad(L("服务连不上", "Server not reachable"), f"http://{host}:{port} · {clean(body, 80)}", restart_hint("openmousse-server"))
+if code == 200:  # 版本（server/version.py）：没有 server 段 = 加版本号之前的服务；提交号和仓库对不上 = 拉了新代码没重启
+    srv = health.get("server") if isinstance(health.get("server"), dict) else None
+    head = ver.split()[0] if ver else ""
+    running = str((srv or {}).get("commit") or "")
+    if not srv and repo_version:
+        warn(L("仓库更新了，服务还在跑旧代码", "The code was updated but the server still runs the old code"), L(f"仓库是 {repo_version}", f"the repository has {repo_version}"), restart_hint("openmousse-server"))
+    elif not srv:
+        warn(L("服务是旧版（还没有版本号）", "The server is an old version (no version number yet)"), "", L("更新：再跑一遍安装命令", "update: run the installer again"))
+    elif head and running and not (head.startswith(running) or running.startswith(head)):
+        warn(L("仓库更新了，服务还在跑旧代码", "The code was updated but the server still runs the old code"),
+             L(f"在跑 {srv.get('version')}（{running}），仓库是 {repo_version or '?'}（{head}）", f"running {srv.get('version')} ({running}), the repository has {repo_version or '?'} ({head})"),
+             restart_hint("openmousse-server"))
+    else:
+        ok(L("版本", "Version"), f"{srv.get('version')} · {running or '?'} · API {srv.get('api')}" + (f" · OpenClaw {srv['openclaw']}" if srv.get("openclaw") else ""))
+    # 公开库有没有更新的一版：读 main 上的 server/version.py（读不到就不说）
+    c3, b3 = http("https://raw.githubusercontent.com/openmousse/openmousse/main/server/version.py", timeout=5)
+    latest, mine = (version_of(b3) if c3 == 200 else ""), str((srv or {}).get("version") or repo_version or "")
+    if latest and mine and vkey(latest) > vkey(mine):
+        warn(L(f"有新版本 {latest}", f"A newer version is out: {latest}"), L(f"这台是 {mine}", f"this one runs {mine}"), L("更新：再跑一遍安装命令", "update: run the installer again"))
 if code == 200:  # MCP 入口：claw 不用 shell 也能用看板、收件箱这些（server/mcp_bridge.py）
     mtok = str(tokens.get("mcp") or "")
     if not mtok:

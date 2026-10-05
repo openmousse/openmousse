@@ -14,6 +14,7 @@ import type { AgentColor, Group, GroupIcon, GroupPatch } from '../data/types';
 import { L } from '../i18n';
 import { useStore } from '../store';
 import { radius, space, type, useTheme } from '../theme';
+import { needsUpdate } from '../api/version';
 
 const COLORS: AgentColor[] = ['cyan', 'gold', 'green', 'purple', 'pink', 'orange'];
 const errText = (e: unknown) => (e instanceof Error ? e.message : String(e));
@@ -136,7 +137,7 @@ function EditGroupBody({ g }: { g: Group }) {
     setErr('');
     updateGroup(g.id, patch).then(() => nav.goBack()).catch((e) => {
       // 405：服务器还是老版本，没有 PATCH /api/groups/{id}
-      setErr(httpStatus(e) === 405 ? L('服务器暂不支持编辑 Agent，请先更新服务器。', "This server can't edit Agents yet. Update the server first.") : errText(e));
+      setErr(httpStatus(e) === 405 ? needsUpdate('当前服务器不支持编辑 Agent。', "This server can't edit Agents yet.") : errText(e));
       setBusy(false);
     });
   };
