@@ -2,7 +2,7 @@
 
 这里只有 /s/<令牌>（分享的链接页和预览图，见 share.py）、/f/…（朋友之间：名片、邀请、签名消息，见 social.py、friends.py，
 协议见 docs/social-protocol.zh-CN.md）和 robots.txt：没有 /api，也不认任何令牌或 Tailscale 设备，所以从外网进来的请求碰不到主服务。
-公网上 /s 和 /f 各是一条 Funnel 路径，开哪条由你定。
+公网上 /s 和 /f 各是一条 Funnel 路径，开哪条由你定。没有公网入口时，/f 经中继进来（relay.py 进程内调这个 app，不需要它监听端口）。
 """
 from __future__ import annotations
 

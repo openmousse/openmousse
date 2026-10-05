@@ -1,0 +1,12 @@
+{
+  "name": "openmousse-relay",
+  "private": true,
+  "license": "AGPL-3.0-only",
+  "scripts": {
+    "dev": "wrangler dev --port 8787",
+    "deploy": "wrangler deploy"
+  },
+  "devDependencies": {
+    "wrangler": "^4.147.0"
+  }
+}

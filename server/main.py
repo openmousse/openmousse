@@ -87,6 +87,7 @@ from saves import router as saves_router  # noqa: E402 — 收藏
 from live import router as live_router  # noqa: E402 — 实时活动（app 1.0.5 起）
 from widget import router as widget_router  # noqa: E402 — 小组件（app 1.0.5 起）
 from share import public_router as share_public_router, router as share_router  # noqa: E402 — 分享（社交第一层）
+import relay  # noqa: E402 — 中继（relay.py）：没有公网入口时朋友经它连进来
 import friends  # noqa: E402 — 朋友（社交第二层）：/api/friends…、/api/card；/f/… 只挂在公网小服务 public.py 上
 from a2a import router as a2a_router  # noqa: E402 — agent 之间（社交第三层）：/api/a2a…、/api/card…，顺带挂上收件箱 social 类的钩子
 from egress import router as egress_router  # noqa: E402 — Doorman 出口（第 9 步）：代办沙箱的出网判断 /api/egress…，顺带挂上收件箱 egress 类的钩子
@@ -119,6 +120,7 @@ async def lifespan(_app: FastAPI):
     alerts.start()  # Agent 的提醒：到点查表，有东西就推
     coursegen.start()  # 学习台：生成学习页的队列用服务的事件循环
     friends.start()  # 朋友聊天的投递循环：发出去的消息排队发、失败重试；名片变了告诉朋友
+    relay.start()  # 往外连中继：没有公网入口时朋友经它找到这台服务器（server.json "relay": false 关掉）
     if mcp_bridge is None:
         yield
         return

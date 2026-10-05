@@ -1,0 +1,16 @@
+# OpenMousse 中继（relay.openmousse.ai）。部署：npx wrangler deploy（账号和自定义域名在 Cloudflare 后台或 wrangler login 里配，不写进仓库）。
+name = "openmousse-relay"
+main = "src/index.js"
+compatibility_date = "2026-06-01"
+workers_dev = true
+
+# 官方中继的自定义域名（Cloudflare 会自动建 DNS 记录和证书）；自己部署一份就改成你的域名
+routes = [{ pattern = "relay.openmousse.ai", custom_domain = true }]
+
+[[durable_objects.bindings]]
+name = "MAILBOX"
+class_name = "Mailbox"
+
+[[migrations]]
+tag = "v1"
+new_sqlite_classes = ["Mailbox"]

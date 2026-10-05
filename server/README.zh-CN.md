@@ -508,12 +508,13 @@ app 的「思考」tab（2026-09-28 起界面上叫 **Zen**，代码和接口仍
 
 app 里「对话 → 朋友」。你的服务器和朋友的服务器直接说话：身份是每台服务器一把 Ed25519 密钥（不是地址），加朋友靠一次性邀请码，两台服务器之间的每个请求都带签名。协议见 [`../docs/social-protocol.zh-CN.md`](../docs/social-protocol.zh-CN.md)；代码是 [`social.py`](social.py)（身份、名片、签名、表、档位）和 [`friends.py`](friends.py)（邀请码、聊天、投递、分享发给朋友、追问）。
 
-- **两边都要有公网地址**：朋友经小服务（[`public.py`](public.py)）的 `/f` 找到你：用 Tailscale Funnel 或反向代理指过去（`tailscale funnel --bg --set-path /f http://127.0.0.1:<share.public_port>/f`），再设 `share.public_url`。没有它、或者没设 `user_name`，app 会说为什么还不能加朋友。反向代理不许改写 `/f` 这一段（路径签在签名里）。
+- **好友怎么找到你**：经小服务（[`public.py`](public.py)）的 `/f`：直连（用 Tailscale Funnel 或反向代理指过去，`tailscale funnel --bg --set-path /f http://127.0.0.1:<share.public_port>/f`，再设 `share.public_url`），或者没有能用的公网地址时默认经 OpenMousse 中继（见下）。没设 `user_name` 时 app 先请你设名字再加好友。反向代理不许改写 `/f` 这一段（路径签在签名里）。
 - **邀请码**：一个链接 `<你的地址>/f/i/<令牌>/<你的公钥>`，只能用一次，默认 7 天，服务器只存令牌的哈希。浏览器打开是一页落地页（带给手机扫的二维码和「在 app 里打开」）；app 粘进来，用链接里的公钥核对对方服务器的名片，再签名 `POST /f/hello` 兑换。10 位指纹给两个人打电话时对一下。
 - **聊天**：一条消息一个签名的 `POST /f/msg`。发出去的先排进 `friend_messages`，投递循环按朋友依次发，失败重试最多 3 天；改、收回、名字或地址变了、删朋友也都是消息。拉黑 = 对方发的一律收下不存。
 - **分享发给朋友**：分享页选朋友，对方收到的是同一份挡过私事的快照（`▇▇▇`，原文不出服务器）。不开链接时这条分享 status = `friends`，`/s/` 打不开。收回分享 = 发出去的每一份都收回。
 - **追问和名片 agent**：朋友能对着你分享的东西追问；分享开着追问、对方那一档 `shares` 是 `ask` 时，你的名片 agent（`cardagent.py`，不经 claw，没有工具）按那一档代答，并说明用了什么。每条代答你都看得到：没问题 / 我来改 / 收回。没有名片 agent 时追问等你自己回。档位（亲近 / 朋友 / 同学 / 陌生）和近况在「对话 → 朋友 → 我的名片 agent」（`/api/card`）；健康和世界树哪一档都不给。名片 agent 说出去的每一句先过 **Doorman**（`sentinel.py`，第 9 步安全底座）：规则 + 另起一次的独立复查，不妥的先扣下、出一张卡等你照发 / 改一下 / 不发，复查不了就换成固定的话（细节见 `docs/a2a.zh-CN.md` 2.4.1）。
 - **推送**：朋友的推送是新的推送类型，`server.json` 的 `social.push` 开了才推（`{"message": "ring", "answered": "quiet", "friend": "quiet"}`；`agents` = 你的名片 agent 问过的事、对方本人定了，没写就跟着 `answered`）。朋友发来的照样算未读、算进角标。
+- **中继和端到端信封**（2026-10-05，[`relay.py`](relay.py)、[`../relay/`](../relay/)）：没有能用的公网地址的服务器往外连 OpenMousse 中继（默认 `https://relay.openmousse.ai`），好友经 `https://relay.openmousse.ai/u/<kid>` 找到它，所以新装、没开 Funnel 也能加好友。名片多了一把 X25519 公钥（`enc`）：新版服务器之间的消息、邀请握手、A2A 都经 `POST /f/sealed` 封起来，中继只看得到密文。server.json 写 `"relay": false` 关掉。协议见 [`../docs/social-protocol.zh-CN.md`](../docs/social-protocol.zh-CN.md) 6.1。
 - **你的名字、外面连不连得到你**（2026-10-05）：名片上的名字就是 `user_name`；app 用 `PATCH /api/card {name}` 设（同时写进档案，和 `settings_ctl.py user-name` 一样），第一次连上服务器后马上请用户设。`share.public_url` 是 `*.ts.net` 地址、但 `tailscale funnel status` 里 `/f` 没开到公网，或者最近一个试着连你的朋友服务器没连上时，`GET /api/friends` 报 `unreachable`（`publicFix` = 要跑的命令）。别人兑换你的邀请码时，你的服务器先试着取一下对方的名片再回话，回 `reach: true | false`，对方服务器记下来显示；之后收到任何朋友发来的消息就清掉。还没送到、在重试的消息带 `error` 和 `nextTry`，对它调 `…/retry` 马上再试一次。
 - `social.allow_http: true` 只给同一台机器上的测试服用（`http://127.0.0.1:<端口>` 这种地址），真服务器别开。
 

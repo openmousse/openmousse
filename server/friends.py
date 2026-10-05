@@ -24,9 +24,7 @@ import logging
 import os
 import re
 import secrets
-import shutil
 import sqlite3
-import subprocess
 import threading
 import time
 import uuid
@@ -41,6 +39,7 @@ from pydantic import BaseModel
 import i18n
 import qr
 import share
+import relay
 import social
 from chat import _lock, log_activity, now_iso
 from config import settings
@@ -59,7 +58,7 @@ GIVE_UP = 3 * 86400
 MID_RE = re.compile(r"^[0-9a-f]{32}$")
 FID_RE = re.compile(r"^fr-[0-9a-f]{8}$")
 IID_RE = re.compile(r"^iv-[0-9a-f]{8}$")
-CODE_RE = re.compile(r"(https?://[^\s/?#<>\"']+)/f/i/([A-Za-z0-9_-]{22})/([A-Za-z0-9_-]{43})")
+CODE_RE = re.compile(r"(https?://[^\s/?#<>\"']+(?:/[A-Za-z0-9._~-]+){0,4}?)/f/i/([A-Za-z0-9_-]{22})/([A-Za-z0-9_-]{43})")  # 根地址可以带路径前缀（中继的 /u/<kid>）
 SHOW = ("text", "share", "ask", "answer", "system")   # 在对话里显示的；edit / revoke / card / bye 是控制消息
 CONTROL = ("edit", "revoke", "card", "bye")
 NAME_OF_TIER = {"close": ("亲近", "Close"), "friend": ("朋友", "Friend"), "mate": ("同学", "Classmate"), "stranger": ("陌生", "Stranger")}
@@ -102,8 +101,6 @@ def not_ready() -> str | None:
 
 
 GENERIC_NAMES = {"ubuntu", "root", "admin", "administrator", "user", "debian", "pi", "ec2-user", "default", "openmousse"}
-MAC_TAILSCALE = "/Applications/Tailscale.app/Contents/MacOS/Tailscale"
-_funnel: dict = {"url": None, "at": 0.0, "off": False}
 
 
 def suggest_name() -> str:
@@ -116,30 +113,22 @@ def suggest_name() -> str:
     return full if full and full.lower() not in GENERIC_NAMES and len(full) <= social.NAME_MAX else ""
 
 
-def funnel_off() -> bool:
-    """对外地址是 Tailscale 的 <机器>.ts.net，但 Funnel 没把 /f 开到公网：朋友的服务器连不进来（2026-10-05 第一个朋友就是这样，
-    他发来的到了，回他的一直送不到）。看不出来（没有 tailscale 命令、读不了状态、用的是自己的域名）一律当开着。结果留 5 分钟。"""
+def unreachable() -> bool:
+    """有对外地址，但外面连不进来：用中继的看连没连上；直连的看 Funnel 有没有把 /f 开到公网，或者最近试过的朋友服务器连不上。"""
     url = social.my_url()
-    host = (urlsplit(url).hostname or "").lower() if url else ""
-    if not host.endswith(".ts.net"):
+    if not url:
         return False
-    now = time.time()
-    if _funnel["url"] == url and now - _funnel["at"] < 300:
-        return bool(_funnel["off"])
-    exe = shutil.which("tailscale") or (MAC_TAILSCALE if os.path.exists(MAC_TAILSCALE) else None)
-    off = False
-    if exe:
-        try:
-            r = subprocess.run([exe, "funnel", "status", "--json"], capture_output=True, text=True, timeout=5)
-            d = json.loads(r.stdout) if r.returncode == 0 and r.stdout.strip() else None
-        except (OSError, subprocess.TimeoutExpired, ValueError):
-            d = None
-        if isinstance(d, dict):
-            hp = f"{host}:{urlsplit(url).port or 443}"
-            handlers = ((d.get("Web") or {}).get(hp) or {}).get("Handlers") or {}
-            off = not ((d.get("AllowFunnel") or {}).get(hp) and any(str(k).rstrip("/") == "/f" for k in handlers))
-    _funnel.update(url=url, at=now, off=off)
-    return off
+    b = relay.my_base()
+    if b and url == b:
+        return not relay.state["connected"]
+    if relay.direct_broken(url):
+        return True
+    reach = social.get_setting("reach")
+    try:
+        reach = json.loads(reach) if reach else None
+    except ValueError:
+        reach = None
+    return bool(reach and reach.get("ok") is False)
 
 
 def public_fix() -> str:
@@ -396,15 +385,19 @@ async def send_one(r) -> bool:
         _set(r["id"], status="failed", error="no card")
         return True
     tries = r["tries"] + 1
-    try:
-        resp = await social.signed_post(f["url"] + "/f/msg", payload, to_kid=f["kid"])
-        code, err = resp.status_code, None
+    alt = social.card_relay(social.friend_card(f))  # 对方名片上的中继地址：直连连不上时换它
+    for base in [f["url"]] + ([alt] if alt and alt != f["url"] else []):
         try:
-            err = (resp.json() or {}).get("error")
-        except ValueError:
-            err = None
-    except (httpx.HTTPError, HTTPException, OSError) as e:
-        code, err = 0, type(e).__name__
+            resp = await social.signed_post(base + "/f/msg", payload, to_kid=f["kid"])
+            code, err = resp.status_code, None
+            try:
+                err = (resp.json() or {}).get("error")
+            except ValueError:
+                err = None
+        except (httpx.HTTPError, HTTPException, OSError) as e:
+            code, err = 0, type(e).__name__
+        if code not in (0, 502, 503, 504):
+            break
     if code == 200:
         _set(r["id"], status="sent", tries=tries, next_try=None, error=None)
         return True
@@ -958,17 +951,13 @@ def friends_payload() -> dict:
     fl = [friend_json(social.friend_dict(r), unread.get(r["id"]), lasts.get(r["id"])) for r in frows]  # type: ignore[arg-type]
     fl.sort(key=lambda x: (x["last"] or {}).get("ts") or x["createdAt"], reverse=True)
     why = not_ready()
-    reach = social.get_setting("reach")  # 最近一次朋友的服务器回来说「连不到你」（hello 时它试过）
-    try:
-        reach = json.loads(reach) if reach else None
-    except ValueError:
-        reach = None
     return {"ok": True, "ready": why is None, "why": why,
             "me": {"name": social.my_name(), "fingerprint": ids["fingerprint"], "url": social.my_url(),
                    "suggest": "" if social.my_name() else suggest_name()},
             # 有对外地址，但外面连不进来：Funnel 没开 /f，或者朋友的服务器试过、连不上（publicFix = 在服务器上要跑的那一句）
-            "unreachable": (why is None and (funnel_off() or bool(reach and reach.get("ok") is False))),
+            "unreachable": why is None and unreachable(),
             "publicFix": public_fix(),
+            "relay": relay.status(),
             "agent": agent_available(), "friends": fl,
             "invites": [invite_json(r) for r in inv if invite_state(r) == "open"]}
 
@@ -1040,7 +1029,12 @@ async def accept(body: AcceptIn):
         raise bad(400, "这是你自己的邀请码", "That's your own invite")
     mine = await asyncio.to_thread(social.my_card)
     try:
-        r = await social.signed_post(origin + "/f/hello", {"v": 1, "token": token, "card": mine}, to_kid=social.thumbprint(x))
+        theirs = await social.fetch_card(origin, x)  # 先取对方名片（公开的）：有端到端公钥就把握手封起来（邀请令牌不让中间看到）
+    except HTTPException:
+        theirs = {}
+    try:
+        r = await social.signed_post(origin + "/f/hello", {"v": 1, "token": token, "card": mine}, to_kid=social.thumbprint(x),
+                                     seal_to=theirs.get("enc"))
     except (httpx.HTTPError, HTTPException, OSError) as e:
         raise bad(502, "无法连接对方的服务器。可能是对方尚未开启公网访问（Tailscale Funnel），或服务器未运行；请稍后重试。",
                   "Couldn't reach their server. Their public access (Tailscale Funnel) may not be on yet, or the server isn't running; try again later.") from e
@@ -1062,7 +1056,7 @@ async def accept(body: AcceptIn):
     reach = (r.json() or {}).get("reach")  # 对方试着连回这边的结果（老版本没有 = 不知道）
     if isinstance(reach, bool):
         social.set_setting("reach", json.dumps({"ok": reach, "at": now_iso(), "by": f["name"]}, ensure_ascii=False))
-        _funnel["at"] = 0.0  # Funnel 的状态也重新看
+        relay.recheck()  # Funnel 的状态也重新看
     return {"ok": True, "friend": friend_json(f), "unreachable": reach is False, "publicFix": public_fix()}
 
 

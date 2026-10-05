@@ -41,7 +41,9 @@
 }
 ```
 
-- `url`：对外的根地址，只有 scheme + host（+ 端口），没有路径 = server.json 的 `share.public_url`。社交接口都在 `<url>/f/…`，反向代理不许改写 `/f` 这一段（签名签了路径）。
+- `url`：对外的根地址 = server.json 的 `share.public_url`（scheme + host（+ 端口））；没有公网入口时是中继给的地址，带一段路径前缀 `https://relay.openmousse.ai/u/<kid>`（2026-10-05，见 6.1）。社交接口都在 `<url>/f/…`，反向代理不许改写 `/f` 这一段（签名签了路径）。老版本只认没有路径的地址，带前缀的名片它们验不过。
+- `enc`（2026-10-05）：端到端加密用的 X25519 公钥 `{"kty": "OKP", "crv": "X25519", "x": "<32 字节 base64url>"}`，私钥和签名种子存在同一个 `identity.json`（`enc` 字段）。有它就按 6.1 封信封。
+- `relay`（2026-10-05，可选）：直连之外的备用地址（中继），直连连不上时发件人改用它。
 - `name`：server.json 的 `user_name`。没设称呼不能加朋友（app 先让你设）。
 - `caps`：`chat` 朋友聊天、`ask` 分享能被追问（名片 agent 代答）；第三层上线后加 `a2a`，同时多一个字段 `"a2a": "<url>/f/a2a/agent-card.json"`。
 - 名片里只放字符串、数组、对象，不放数字和小数（规范化见下）。
@@ -184,6 +186,19 @@ Signature: om=:<base64(签名)>:
 主服务（私网 8080）不挂 `/f`：朋友只从公网来。app 用的是 `/api/friends…`、`/api/card`（要令牌）。
 
 **限流**：每个朋友每分钟 30 个请求、每天 500 条；`/f/hello` 全局每小时 30 次（Funnel 后面看到的来源都是 127.0.0.1）；文字上限：`text` 4000 字、`ask` 1000 字、分享正文 60000 字。超了 429，带 `Retry-After`。名片 agent 自己的条数、长度上限在 `cardagent.py`（第三层）。
+
+### 6.1 中继和端到端信封（2026-10-05）
+
+**中继**：没有公网入口（没开 Funnel、Funnel 没开成、在家里的电脑上）的服务器，自己往外连 OpenMousse 中继（默认 `https://relay.openmousse.ai`，代码在 [`relay/`](../relay/)，服务器这边是 `server/relay.py`），用这把 Ed25519 钥匙证明身份（签 `openmousse-relay/1|<kid>|<nonce>`，kid 必须是这把钥匙的指纹，别人冒充不了），保持一条 WebSocket。中继给它一个根地址 `https://relay.openmousse.ai/u/<kid>`；别人往这个地址发的 `/f/…` 请求经那条连接转过来，原样交给对外小服务（路径含前缀，签名照样验得过），回应再送回去。
+- 什么时候用：`share.public_url` 能用就直连；没有，或者是 `*.ts.net` 但 `tailscale funnel status` 里 `/f` 不在公网上，就用中继。连上过中继才写进名片；直连的名片上也带 `relay` 备用地址，发件人直连失败（连不上、502 / 503 / 504）时换它。`server.json` 写 `"relay": false` 关掉，`{"relay": {"url": "…"}}` 换一个中继。
+- 中继的规矩：只转 `/f/` 下面的 GET / POST / HEAD；请求和回应各最多 300 KB；一个地址每分钟最多 240 个请求；回应只放行 JSON 类（名片、A2A、信封），HTML 一律不转，邀请落地页由中继自己画（名字从名片 JSON 里取、转义），别人的服务器借不了这个域名放网页。不存任何东西：对方不在线回 503，发件那边按 7 的规矩重试。
+- 中继看得到的：收件人的 kid、请求大小和时间、公开的名片。看不到的：消息、握手、A2A 的内容（下面的信封）。
+
+**端到端信封** `POST <根地址>/f/sealed`（`Content-Type: application/openmousse-sealed+json`）：对方名片有 `enc` 时，发件人把整个签好名的请求（方法、完整路径、签名头、body）封起来再发，直连和中继都一样。
+1. 发件人生成一把临时 X25519 钥匙 `e`，`shared = X25519(e, enc)`，`k = HKDF-SHA256(shared, salt = epk ‖ enc, info = "openmousse-seal/1")` 取 64 字节：前 32 字节加密请求，后 32 字节加密回应。
+2. 信封 = `{"v": 1, "epk": b64url(e 的公钥), "n": b64url(12 字节随机数), "ct": b64url(ChaCha20-Poly1305(k_req, n, 原文, aad = epk))}`，原文 = `{"m": "POST", "p": "<签名时的完整路径>", "h": {签名头…}, "b": b64url(body)}`。
+3. 收件人拆开，检查路径前缀和信封进来的路径一致、里面只能是 `/f/msg`、`/f/hello`、`/f/a2a`、`/f/a2a/push`，然后把这个请求原样交给自己处理（签名、nonce、限流照常验），回应 `{"s": 状态码, "h": {"content-type": …}, "b": b64url(body)}` 用 `k_res` 封回去：`{"v": 1, "n", "ct"}`（aad = `"response"`）。
+4. 收件人看不出信封的人是谁之前不处理；中继和路上的人只看得到密文。封过的请求不会退回明文重发。兑换邀请码（`/f/hello`）前先取对方名片拿 `enc`，所以邀请令牌也在信封里。没有 `enc` 的老服务器照旧明文。
 
 ## 7. 消息 `POST /f/msg`
 

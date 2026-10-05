@@ -41,7 +41,9 @@ The card agent calls a model only through `cardagent.py`, **never through the cl
 }
 ```
 
-- `url`: the public origin, scheme + host (+ port) with no path, i.e. server.json's `share.public_url`. Social endpoints live at `<url>/f/…`; a reverse proxy must not rewrite the `/f` prefix (the path is signed).
+- `url`: the public root address, i.e. server.json's `share.public_url` (scheme + host (+ port)); without a public entry point it's the address the relay gives, with a path prefix `https://relay.openmousse.ai/u/<kid>` (2026-10-05, see 6.1). Social endpoints live at `<url>/f/…`; a reverse proxy must not rewrite the `/f` prefix (the path is signed). Older versions only accept addresses without a path and reject such cards.
+- `enc` (2026-10-05): the X25519 public key for end-to-end encryption, `{"kty": "OKP", "crv": "X25519", "x": "<32 bytes base64url>"}`; its private key sits in the same `identity.json` (`enc`). When present, requests are sealed as in 6.1.
+- `relay` (2026-10-05, optional): a fallback address (the relay) next to a direct one; senders switch to it when the direct address can't be reached.
 - `name`: server.json's `user_name`. You can't add friends until you have one (the app asks first).
 - `caps`: `chat` friend chat, `ask` shares can take follow-up questions (the card agent answers). Layer ③ adds `a2a` together with a field `"a2a": "<url>/f/a2a/agent-card.json"`.
 - Only strings, arrays and objects go into the card: no numbers (see canonicalization below).
@@ -184,6 +186,19 @@ One more public path: Tailscale Funnel (or a reverse proxy) `/f` → `http://127
 The main server (the private 8080) doesn't mount `/f`: friends only come in from the public side. The app uses `/api/friends…` and `/api/card` (token required).
 
 **Limits**: per friend 30 requests a minute and 500 messages a day; `/f/hello` 30 an hour in total (behind Funnel every request comes from 127.0.0.1); `text` 4,000 characters, `ask` 1,000, a shared body 60,000. Over a limit: 429 with `Retry-After`. The card agent's own caps (count and length per friend per day) live in `cardagent.py` (layer ③).
+
+### 6.1 Relay and end-to-end envelopes (2026-10-05)
+
+**Relay**: a server with no public entry point (no Funnel, Funnel that didn't come up, a computer at home) connects out to the OpenMousse relay (default `https://relay.openmousse.ai`; code in [`relay/`](../relay/), the server side is `server/relay.py`), proves its identity with this Ed25519 key (it signs `openmousse-relay/1|<kid>|<nonce>`, and the kid must be that key's thumbprint, so nobody can claim someone else's address) and keeps a WebSocket open. The relay gives it the root address `https://relay.openmousse.ai/u/<kid>`; `/f/…` requests sent there come down that connection and are handed to the public app unchanged (the path includes the prefix, so signatures still verify), and the response goes back up.
+- When: a usable `share.public_url` is used directly; with none, or with a `*.ts.net` address whose `/f` isn't public in `tailscale funnel status`, the relay is used. The relay address goes on the card only after a successful connection; a direct card also carries it as `relay`, and senders switch to it when the direct address fails (unreachable, 502 / 503 / 504). `"relay": false` in server.json turns it off; `{"relay": {"url": "…"}}` points at another relay.
+- Relay rules: only GET / POST / HEAD under `/f/`; requests and responses up to 300 KB each; 240 requests a minute per address; only JSON-like responses pass (cards, A2A, envelopes), never HTML, and the relay draws invite landing pages itself (the name comes from the card JSON, escaped), so nobody can serve pages under its domain. It stores nothing: an offline server gets a 503 and the sender retries per section 7.
+- What the relay sees: the recipient's kid, request sizes and times, public cards. What it can't see: the content of messages, the handshake and A2A (the envelope below).
+
+**End-to-end envelope** `POST <root>/f/sealed` (`Content-Type: application/openmousse-sealed+json`): when the recipient's card has `enc`, the sender seals the whole signed request (method, full path, signature headers, body), directly or through the relay alike.
+1. The sender makes an ephemeral X25519 key `e`; `shared = X25519(e, enc)`; `k = HKDF-SHA256(shared, salt = epk ‖ enc, info = "openmousse-seal/1")`, 64 bytes: the first 32 encrypt the request, the last 32 the response.
+2. Envelope = `{"v": 1, "epk": b64url(e's public key), "n": b64url(12 random bytes), "ct": b64url(ChaCha20-Poly1305(k_req, n, plaintext, aad = epk))}`, plaintext = `{"m": "POST", "p": "<full path as signed>", "h": {signature headers…}, "b": b64url(body)}`.
+3. The recipient opens it, checks the path prefix matches the one the envelope came in on and that the inner path is `/f/msg`, `/f/hello`, `/f/a2a` or `/f/a2a/push`, hands the request to itself unchanged (signature, nonce and rate limits are checked as usual), and seals the response `{"s": status, "h": {"content-type": …}, "b": b64url(body)}` with `k_res`: `{"v": 1, "n", "ct"}` (aad = `"response"`).
+4. The relay and anyone on the path see only ciphertext. A sealed request is never retried in plaintext. Before redeeming an invite (`/f/hello`) the sender fetches the card to get `enc`, so the invite token travels sealed too. Old servers without `enc` keep getting plaintext.
 
 ## 7. Messages `POST /f/msg`
 

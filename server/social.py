@@ -9,6 +9,11 @@
 - 表都在 grava.db：friends / friend_invites / friend_messages / social_nonces / social_settings（第一次用到时建）。
 - 档位：close 亲近 / friend 朋友 / mate 同学 / stranger 陌生（表里没有的都算陌生），每档能问到什么存 social_settings.tiers。
   健康和世界树不是档位里的键：没有能打开的开关。
+- 地址（2026-10-05）：根地址可以带一段路径前缀，中继给的地址就是 https://relay.openmousse.ai/u/<kid>（见 relay.py）。
+  签名里的 @path 是发件人发往的完整路径（含前缀），中继原样转过来，所以照样验得过。
+- 端到端（2026-10-05）：名片里多一把 X25519 公钥（enc）。对方名片有 enc 时，signed_post 把整个签好名的请求封进信封
+  POST <根地址>/f/sealed（ECDH + HKDF-SHA256 + ChaCha20-Poly1305，每次一把临时钥匙），回应用同一次协商出的另一把钥匙封回来；
+  中继和路上的人只看得到密文。没有 enc 的老服务器照旧明文。
 第三层（a2a.py、cardagent.py）用这里的 identity / sign_jws / verify_jws / authenticate / signed_post / tier_scopes / friend / card_status，
 不另起一套。邀请码、加好友、朋友聊天在 friends.py。
 """
@@ -35,8 +40,12 @@ from urllib.parse import urlsplit
 import httpx
 from cryptography.exceptions import InvalidSignature
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey, Ed25519PublicKey
+from cryptography.hazmat.primitives.asymmetric.x25519 import X25519PrivateKey, X25519PublicKey
+from cryptography.hazmat.primitives.ciphers.aead import ChaCha20Poly1305
+from cryptography.hazmat.primitives.hashes import SHA256
+from cryptography.hazmat.primitives.kdf.hkdf import HKDF
 from fastapi import APIRouter, HTTPException, Request
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, Response
 
 from chat import _lock, db, now_iso
 from config import raw, settings
@@ -82,10 +91,15 @@ def allow_http() -> bool:
 
 
 def my_url() -> str | None:
-    """对外的根地址（= share.public_url），没有就是 None：朋友打不回来，不能加朋友。"""
+    """对外的根地址：share.public_url（Funnel / 自己的域名）能用就用它；没有、或者 Funnel 没开 /f，就用中继给的地址（relay.py，
+    连上过才算）；都没有是 None：朋友打不回来，不能加朋友。"""
+    import relay
     import share
     u = share.public_url()
-    return origin_of(u) if u else None
+    direct = origin_of(u) if u else None
+    if direct and not relay.direct_broken(direct):
+        return direct
+    return relay.my_base() or direct
 
 
 def my_name() -> str:
@@ -136,6 +150,39 @@ def private_key() -> Ed25519PrivateKey:
         data = json.loads(path.read_text(encoding="utf8"))
         _key = Ed25519PrivateKey.from_private_bytes(unb64u(data["seed"]))
         return _key
+
+
+_enc: X25519PrivateKey | None = None
+
+
+def enc_key() -> X25519PrivateKey:
+    """端到端加密用的 X25519 钥匙，和签名钥匙存在同一个 identity.json（enc 字段，第一次用到时补上，临时文件 + 改名）。"""
+    global _enc
+    if _enc is not None:
+        return _enc
+    private_key()  # 先保证 identity.json 在
+    with _key_lock:
+        if _enc is None:
+            path = identity_file()
+            data = json.loads(path.read_text(encoding="utf8"))
+            if not data.get("enc"):
+                data["enc"] = b64u(secrets.token_bytes(32))
+                tmp = path.with_name(f".{path.name}.tmp")
+                fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+                with os.fdopen(fd, "w", encoding="utf8") as f:
+                    f.write(json.dumps(data) + "\n")
+                tmp.replace(path)
+            _enc = X25519PrivateKey.from_private_bytes(unb64u(data["enc"]))
+    return _enc
+
+
+def raw_x25519(k: X25519PublicKey) -> bytes:
+    from cryptography.hazmat.primitives import serialization
+    return k.public_bytes(serialization.Encoding.Raw, serialization.PublicFormat.Raw)
+
+
+def enc_x() -> str:
+    return b64u(raw_x25519(enc_key().public_key()))
 
 
 def public_x(key: Ed25519PrivateKey | None = None) -> str:
@@ -242,15 +289,20 @@ def verify_jws(obj: dict, x: str) -> bool:
 
 # —— 地址 ——
 
+BASE_PATH = re.compile(r"(?:/[A-Za-z0-9._~-]{1,64}){1,4}")
+
+
 def origin_of(url: str) -> str | None:
-    """规范成根地址（scheme://host[:port]，小写，没有路径）；不像根地址的回 None。"""
+    """规范成根地址：scheme://host[:port]（主机小写），可以带一段路径前缀（中继的 /u/<kid>，最多 4 段），去掉结尾的斜杠；
+    不像根地址的回 None。"""
     try:
         u = urlsplit(str(url).strip())
     except ValueError:
         return None
     if u.scheme not in ("https", "http") or not u.hostname or u.username or u.password or u.query or u.fragment:
         return None
-    if u.path not in ("", "/"):
+    path = u.path.rstrip("/")
+    if path and (not BASE_PATH.fullmatch(path) or "/f/" in path + "/" or "/s/" in path + "/"):
         return None
     host = u.hostname.lower()
     if ":" in host:
@@ -260,7 +312,7 @@ def origin_of(url: str) -> str | None:
         port = u.port
     except ValueError:
         return None
-    return f"{u.scheme}://{host}" + (f":{port}" if port and port != default else "")
+    return f"{u.scheme}://{host}" + (f":{port}" if port and port != default else "") + path
 
 
 def url_ok(origin: str) -> bool:
@@ -420,7 +472,12 @@ def card_body() -> dict | None:
         caps += [str(c) for c in more.get("caps") or [] if str(c) not in caps]
         if isinstance(more.get("a2a"), str):
             extra["a2a"] = more["a2a"]
-    body = {"openmousse": "1", "kid": ident["kid"], "key": ident["jwk"], "url": url, "name": name, "caps": caps, **extra}
+    import relay
+    alt = relay.my_base()
+    if alt and alt != url:  # 直连之外，中继也能找到我：对方直连失败时换这条
+        extra["relay"] = alt
+    body = {"openmousse": "1", "kid": ident["kid"], "key": ident["jwk"], "url": url, "name": name, "caps": caps,
+            "enc": {"kty": "OKP", "crv": "X25519", "x": enc_x()}, **extra}
     digest = hashlib.sha256(jcs(body)).hexdigest()
     meta = {}
     try:
@@ -488,7 +545,34 @@ def verify_card(card: Any, x: str | None = None) -> dict:
     caps = [str(c)[:32] for c in caps[:20]] if isinstance(caps, list) else []
     a2a = card.get("a2a")
     a2a = a2a if isinstance(a2a, str) and a2a.startswith(url + "/") else None   # 只认同一个根地址下的 A2A 名片
-    return {"kid": kid, "x": kx, "url": url, "name": name, "caps": caps, "a2a": a2a, "card": card}
+    return {"kid": kid, "x": kx, "url": url, "name": name, "caps": caps, "a2a": a2a, "card": card,
+            "enc": card_enc(card), "relay": card_relay(card)}
+
+
+def card_enc(card: Any) -> str | None:
+    """名片上的端到端公钥（X25519，32 字节）；没有或不像就是 None（老版本，照旧明文）。"""
+    e = card.get("enc") if isinstance(card, dict) else None
+    if not isinstance(e, dict) or e.get("kty") != "OKP" or e.get("crv") != "X25519" or not isinstance(e.get("x"), str):
+        return None
+    try:
+        return e["x"] if len(unb64u(e["x"])) == 32 else None
+    except ValueError:
+        return None
+
+
+def card_relay(card: Any) -> str | None:
+    """名片上的备用地址（中继），直连连不上时用。"""
+    r = origin_of(card.get("relay") or "") if isinstance(card, dict) else None
+    return r if r and url_ok(r) else None
+
+
+def friend_card(f: dict | None) -> dict:
+    """好友表里存的对方名片（JSON），读不出就空 dict。"""
+    try:
+        c = json.loads((f or {}).get("card") or "{}")
+    except ValueError:
+        return {}
+    return c if isinstance(c, dict) else {}
 
 
 async def fetch_card(origin: str, x: str | None = None) -> dict:
@@ -845,14 +929,115 @@ async def authenticate(request: Request, limit: int = BODY_MAX) -> tuple[bytes, 
     return body, verify_signed(request, body)
 
 
-async def signed_post(url: str, payload: dict | bytes, *, to_kid: str, headers: dict | None = None, timeout: float = 15.0) -> httpx.Response:
-    """往别的服务器发一个签过名的 POST（url 是完整地址，比如 <根地址>/f/msg）。不跟随跳转。"""
+# —— 端到端信封（2026-10-05）——
+
+SEAL_TYPE = "application/openmousse-sealed+json"
+SEAL_INFO = b"openmousse-seal/1"
+SEALED_PATHS = ("/f/msg", "/f/hello", "/f/a2a", "/f/a2a/push")  # 信封里只能装这几个请求
+
+
+def _seal_keys(shared: bytes, epk: bytes, rpk: bytes) -> tuple[bytes, bytes]:
+    """一次协商出两把钥匙：请求用前一把，回应用后一把。"""
+    k = HKDF(algorithm=SHA256(), length=64, salt=epk + rpk, info=SEAL_INFO).derive(shared)
+    return k[:32], k[32:]
+
+
+def seal_request(rx: str, plain: bytes) -> tuple[bytes, bytes]:
+    """封给公钥 rx（对方名片上的 enc）：每次一把临时 X25519 钥匙。→ (信封, 回应要用的钥匙)。"""
+    rpk = unb64u(rx)
+    eph = X25519PrivateKey.generate()
+    epk = raw_x25519(eph.public_key())
+    k_req, k_res = _seal_keys(eph.exchange(X25519PublicKey.from_public_bytes(rpk)), epk, rpk)
+    n = secrets.token_bytes(12)
+    ct = ChaCha20Poly1305(k_req).encrypt(n, plain, epk)
+    return json.dumps({"v": 1, "epk": b64u(epk), "n": b64u(n), "ct": b64u(ct)}, separators=(",", ":")).encode(), k_res
+
+
+def open_request(env: bytes) -> tuple[bytes, bytes]:
+    """拆开封给我的信封 → (原文, 回应要用的钥匙)。不对就 ValueError。"""
+    from cryptography.exceptions import InvalidTag
+    try:
+        d = json.loads(env)
+        epk, n, ct = unb64u(d["epk"]), unb64u(d["n"]), unb64u(d["ct"])
+        if d.get("v") != 1 or len(epk) != 32 or len(n) != 12:
+            raise ValueError("bad envelope")
+        me = enc_key()
+        k_req, k_res = _seal_keys(me.exchange(X25519PublicKey.from_public_bytes(epk)), epk, raw_x25519(me.public_key()))
+        return ChaCha20Poly1305(k_req).decrypt(n, ct, epk), k_res
+    except (KeyError, TypeError, InvalidTag) as e:
+        raise ValueError("bad envelope") from e
+
+
+def seal_response(k_res: bytes, plain: bytes) -> bytes:
+    n = secrets.token_bytes(12)
+    return json.dumps({"v": 1, "n": b64u(n), "ct": b64u(ChaCha20Poly1305(k_res).encrypt(n, plain, b"response"))}, separators=(",", ":")).encode()
+
+
+def open_response(k_res: bytes, env: bytes) -> bytes:
+    from cryptography.exceptions import InvalidTag
+    try:
+        d = json.loads(env)
+        return ChaCha20Poly1305(k_res).decrypt(unb64u(d["n"]), unb64u(d["ct"]), b"response")
+    except (KeyError, TypeError, ValueError, InvalidTag) as e:
+        raise ValueError("bad sealed response") from e
+
+
+def enc_of_kid(kid: str) -> str | None:
+    """好友表里这个 kid 的名片上有没有端到端公钥。"""
+    return card_enc(friend_card(friend_by_kid(kid)))
+
+
+@public_router.post("/f/sealed")
+async def sealed_route(request: Request):
+    """拆信封，把里面那个签好名的请求原样交给这个小服务自己处理（路径、签名头、body 一个字不改），回应再封回去。
+    信封里只能装 SEALED_PATHS 这几个，而且前缀要和信封进来的路径一致（直连是空，中继是 /u/<kid>）。"""
+    env = await read_body(request, BODY_MAX + 4096)
+    try:
+        plain, k_res = await asyncio.to_thread(open_request, env)
+        d = json.loads(plain)
+        method, path, hdrs, body = str(d["m"]), str(d["p"]), d["h"], unb64u(d["b"])
+        if method != "POST" or not isinstance(hdrs, dict):
+            raise ValueError("bad inner request")
+    except (ValueError, KeyError, TypeError):
+        return err(400, "bad_envelope")
+    rawp = request.scope.get("raw_path")
+    here = rawp.decode("latin-1") if isinstance(rawp, bytes) else request.url.path
+    prefix = here[: -len("/f/sealed")] if here.endswith("/f/sealed") else None
+    if prefix is None or not path.startswith(prefix) or path[len(prefix):] not in SEALED_PATHS:
+        return err(400, "bad_envelope")
+    transport = httpx.ASGITransport(app=request.app, root_path=prefix)
+    async with httpx.AsyncClient(transport=transport, base_url="http://sealed.local", timeout=120) as c:
+        r = await c.request("POST", path, content=body, headers={str(k): str(v) for k, v in hdrs.items()})
+    out = json.dumps({"s": r.status_code, "h": {"content-type": r.headers.get("content-type", "")}, "b": b64u(r.content)},
+                     separators=(",", ":")).encode()
+    return Response(content=seal_response(k_res, out), media_type=SEAL_TYPE, headers={"Cache-Control": "no-store"})
+
+
+async def signed_post(url: str, payload: dict | bytes, *, to_kid: str, headers: dict | None = None, timeout: float = 15.0,
+                      seal_to: str | None = None) -> httpx.Response:
+    """往别的服务器发一个签过名的 POST（url 是完整地址，比如 <根地址>/f/msg）。不跟随跳转。
+    对方名片有端到端公钥（seal_to，不给就按 to_kid 查好友表）时整个请求封进信封发往 <根地址>/f/sealed，回应拆开后
+    照样是一个 httpx.Response（调用的地方不用管）。封过的不会退回明文重发。"""
     body = payload if isinstance(payload, bytes) else json.dumps(payload, ensure_ascii=False, separators=(",", ":")).encode()
     await check_host(url)
-    h = sign_headers("POST", urlsplit(url).path or "/", body, to_kid)
+    path = urlsplit(url).path or "/"
+    h = sign_headers("POST", path, body, to_kid)
     h.update(headers or {})
+    enc = seal_to or await asyncio.to_thread(enc_of_kid, to_kid)
     async with httpx.AsyncClient(timeout=timeout, follow_redirects=False) as c:
-        return await c.post(url, content=body, headers=h)
+        if not enc or "/f/" not in path:
+            return await c.post(url, content=body, headers=h)
+        inner = json.dumps({"m": "POST", "p": path, "h": h, "b": b64u(body)}, separators=(",", ":")).encode()
+        env, k_res = seal_request(enc, inner)
+        r = await c.post(url[: url.rindex("/f/")] + "/f/sealed", content=env, headers={"Content-Type": SEAL_TYPE})
+        if r.status_code != 200 or not r.headers.get("content-type", "").startswith(SEAL_TYPE):
+            return r  # 对方或中间报的错（拆不开、连不上对方）：原样交回去
+        try:
+            d = json.loads(open_response(k_res, r.content))
+            return httpx.Response(int(d["s"]), headers={"content-type": str((d.get("h") or {}).get("content-type") or "")},
+                                  content=unb64u(d["b"]), request=r.request)
+        except (ValueError, KeyError, TypeError):
+            return httpx.Response(502, json={"ok": False, "error": "bad_sealed_response"}, request=r.request)
 
 
 def err(code: int, error: str, **extra: Any) -> JSONResponse:
