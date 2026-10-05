@@ -225,15 +225,26 @@ function mergeMsgs(prev: FriendMsg[], more: FriendMsg[]): FriendMsg[] {
   return [...byId.values()].sort((a, b) => a.id - b.id);
 }
 
+/** 试过、没送到、还在自动重试的那几条（服务器给了上一次的原因） */
+const retrying = (m: FriendMsg) => m.dir === 'out' && m.status === 'queued' && !!m.error;
+
 function StatusLine({ m, onRetry }: { m: FriendMsg; onRetry: () => void }) {
   const t = useTheme();
   if (m.dir !== 'out') return null;
+  if (retrying(m)) {
+    return (
+      <Pressable onPress={onRetry} accessibilityRole="button" style={{ alignSelf: 'flex-end', flexDirection: 'row', alignItems: 'center', gap: 4 }}>
+        <RotateCw size={12} color={t.warn} />
+        <T v="caption" color={t.warn}>{L('未送达，将自动重试 · 立即重试', 'Not delivered yet; retrying automatically · Retry now')}</T>
+      </Pressable>
+    );
+  }
   if (m.status === 'queued') return <T v="caption" color={t.ink3} style={{ alignSelf: 'flex-end' }}>{L('发送中…', 'Sending…')}</T>;
   if (m.status === 'failed') {
     return (
       <Pressable onPress={onRetry} accessibilityRole="button" style={{ alignSelf: 'flex-end', flexDirection: 'row', alignItems: 'center', gap: 4 }}>
         <RotateCw size={12} color={t.bad} />
-        <T v="caption" color={t.bad}>{L('没送到 · 点这里重发', 'Not delivered · tap to retry')}</T>
+        <T v="caption" color={t.bad}>{L('未送达 · 点按重发', 'Not delivered · Tap to retry')}</T>
       </Pressable>
     );
   }
@@ -571,6 +582,8 @@ export function FriendChatScreen() {
 
   const active = friend?.status === 'active';
   const canAgent = !!friend && active && hasA2A;
+  // 连不上对方服务器（网络错误，不是对方拒收）：聊天顶上说一句原因，别让人以为一直在「发送中」
+  const unreachable = active && msgs.some((m) => retrying(m) && /^network\b/.test(m.error ?? ''));
   const lines = timeline(msgs, outs);
   const openAgents = () => { if (friend) nav.navigate('FriendAgents', { id: friend.id }); };
   const sub = friend ? [friend.tierName, friend.agent ? L(`有 agent · 能追问 ${friend.name} 分享的东西`, `Has an agent · you can ask about ${friend.name}'s shares`) : ''].filter(Boolean).join(' · ') : undefined;
@@ -578,10 +591,19 @@ export function FriendChatScreen() {
     <Screen>
       <NavHeader title={friend?.name ?? L('朋友', 'Friend')} sub={sub} onBack={() => nav.goBack()}
         right={friend ? <Pressable onPress={openSheet} hitSlop={10} accessibilityRole="button" accessibilityLabel={L('这个朋友的设置', 'Settings for this friend')} style={{ padding: 6 }}><Ellipsis size={22} color={t.ink} /></Pressable> : undefined} />
-      <View ref={root} style={{ flex: 1 }} onLayout={bottom.onLayout}>
+      <View ref={root} style={{ flex: 1, paddingBottom: bottom.home }} onLayout={bottom.onLayout}>
         <ChatScroll ref={scroller} offset={bottom.offset} style={{ flex: 1 }} contentContainerStyle={{ padding: space.lg, gap: space.lg }}
           keyboardShouldPersistTaps="handled" keyboardDismissMode={dismissMode} refreshControl={<PullRefresh onRefresh={load} />}>
           {err ? <Card><T v="callout" color={t.bad}>{L(`读不到：${err}`, `Couldn't load: ${err}`)}</T></Card> : null}
+          {friend && unreachable ? (
+            <View style={[styles.notice, { backgroundColor: t.surface, borderColor: t.line }]}>
+              <TriangleAlert size={16} color={t.warn} />
+              <T v="callout" color={t.ink2} style={{ flex: 1 }}>
+                {L(`暂时无法连接 ${friend.name} 的服务器，消息尚未送达。常见原因是对方的公网访问（Tailscale Funnel）尚未开启；连通后会自动送达，最多保留 3 天。`,
+                  `${friend.name}'s server can't be reached right now, so your messages haven't been delivered. Usually their public access (Tailscale Funnel) isn't on yet; messages go through automatically once it is, and are kept for up to 3 days.`)}
+              </T>
+            </View>
+          ) : null}
           {!friend && !err ? <ActivityIndicator color={t.gold} style={{ marginTop: space.xl }} /> : null}
           {friend && !msgs.some((m) => m.kind !== 'system') && !outs.length ? (
             <T v="callout" color={t.ink3} style={{ textAlign: 'center' }}>
@@ -629,6 +651,7 @@ export function FriendChatScreen() {
                     </Pressable>
                   ) : null}
                   <TextInput ref={input} value={draft} onChangeText={setDraft} multiline numberOfLines={1} onKeyPress={webEnter}
+                    onSubmitEditing={submit} submitBehavior="submit" returnKeyType="send" enablesReturnKeyAutomatically
                     placeholder={agentAsk ? (agentAsk.prev ? L('比如：那周五晚上呢？', 'e.g. How about Friday evening?') : L(`比如：${friend.name} 这周哪天晚上有空？`, `e.g. Which evenings is ${friend.name} free this week?`))
                       : askOf ? L('问点什么…', 'Ask something…') : L(`发给 ${friend.name}`, `Message ${friend.name}`)} placeholderTextColor={t.ink3}
                     accessibilityLabel={agentAsk ? L('要名片 agent 去问的话', 'What your card agent should ask') : L('消息输入框', 'Message')}
@@ -960,6 +983,7 @@ const styles = StyleSheet.create({
   review: { borderWidth: 1, borderStyle: 'dashed', borderRadius: 14, padding: space.md, gap: space.sm },
   mini: { flexDirection: 'row', alignItems: 'center', gap: 4, height: 32, paddingHorizontal: 12, borderRadius: 16 },
   composerWrap: { borderTopWidth: StyleSheet.hairlineWidth },
+  notice: { flexDirection: 'row', alignItems: 'flex-start', gap: space.sm, borderWidth: StyleSheet.hairlineWidth, borderRadius: radius.md, padding: space.md },
   composer: { flexDirection: 'row', alignItems: 'flex-end', gap: space.sm, paddingHorizontal: space.md, paddingVertical: space.sm },
   input: { flex: 1, minHeight: 40, maxHeight: 120, borderRadius: 20, paddingHorizontal: 16, paddingTop: 9, paddingBottom: 9 },
   send: { width: 40, height: 40, borderRadius: 20, alignItems: 'center', justifyContent: 'center' },

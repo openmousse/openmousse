@@ -306,6 +306,9 @@ def msg_json(r) -> dict:
                                "via": str(d["sentinel"].get("via") or "")}
     if r["dir"] == "out" and r["status"] == "failed":
         out["error"] = r["error"]
+    elif r["dir"] == "out" and r["status"] == "queued" and r["tries"]:  # 试过没送到、还在按间隔重试：app 不再只写「发送中…」
+        out["error"] = r["error"]
+        out["nextTry"] = r["next_try"]
     return out
 
 
@@ -1192,6 +1195,11 @@ async def revoke_message(rid: int):
 @router.post("/api/friends/messages/{rid}/retry")
 async def retry(rid: int):
     r = message_row(rid)
+    if r["dir"] == "out" and r["status"] == "queued" and r["tries"]:  # 还在等下一次重试：现在就试（次数、时间照旧算）
+        _set(rid, next_try=None)
+        kick()
+        await asyncio.sleep(1.5)  # 多半一两秒就有结果：回去的就是这次试过的样子
+        return {"ok": True, "message": msg_json(message_row(rid))}
     if r["dir"] != "out" or r["status"] != "failed":
         raise bad(400, "这条不用重发", "Nothing to retry")
     _set(rid, status="queued", tries=0, next_try=None, error=None, ts=now_iso())

@@ -38,6 +38,8 @@ export interface FriendMsg {
   review: 'pending' | 'ok' | 'edited' | 'revoked' | null;
   ts: string; edited: boolean;
   share?: SharedSnapshot; about?: string | null; used?: string[]; usedLabel?: string; defer?: boolean; outcome?: string; error?: string | null;
+  /** 发出去试过、没送到、还在自动重试（status 仍是 queued）：下一次什么时候试；error 是上一次的原因 */
+  nextTry?: string | null;
   /** 我的名片 agent 的代答过 Doorman 的结论（只在我这边） */
   sentinel?: SentinelVerdict;
 }

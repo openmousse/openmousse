@@ -445,7 +445,7 @@ export function FriendAgentsScreen() {
   return (
     <Screen>
       <NavHeader title={L(`${name} · agent 之间`, `${name} · Agents`)} sub={L('A2A · 对方身份已核对', 'A2A · identity verified')} onBack={() => nav.goBack()} />
-      <View ref={root} style={{ flex: 1 }} onLayout={bottom.onLayout}>
+      <View ref={root} style={{ flex: 1, paddingBottom: bottom.home }} onLayout={bottom.onLayout}>
       <ChatScroll ref={scroller} offset={bottom.offset} style={{ flex: 1 }} contentContainerStyle={{ padding: space.lg, paddingBottom: space.xxl, gap: space.lg }}
         keyboardShouldPersistTaps="handled" keyboardDismissMode={dismissMode} refreshControl={<PullRefresh onRefresh={load} />}>
         {err ? <Card><T v="callout" color={t.bad}>{L(`读不到：${err}`, `Couldn't load: ${err}`)}</T></Card> : null}
@@ -502,6 +502,7 @@ export function FriendAgentsScreen() {
           </View>
           <View style={styles.composer}>
             <TextInput ref={input} value={draft} onChangeText={setDraft} multiline numberOfLines={1} onKeyPress={webEnter}
+              onSubmitEditing={ask} submitBehavior="submit" returnKeyType="send" enablesReturnKeyAutomatically
               placeholder={prev ? L('比如：那周五晚上呢？', 'e.g. How about Friday evening?') : L(`比如：${name} 这周哪天晚上有空？`, `e.g. Which evenings is ${name} free this week?`)}
               placeholderTextColor={t.ink3} accessibilityLabel={L('要名片 agent 去问的话', 'What your card agent should ask')}
               style={[type.body, styles.input, { backgroundColor: t.surface, color: t.ink }]} />
