@@ -2,20 +2,24 @@
 import React, { useCallback, useEffect, useState } from 'react';
 import { Linking, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
 import { useFocusEffect, useNavigation, useRoute } from '@react-navigation/native';
-import { CalendarDays, ChevronLeft, ChevronRight, Clock, Hash, Lightbulb, NotebookText, Search, X } from '../components/icons';
+import { CalendarDays, ChevronLeft, ChevronRight, Clock, Hash, Lightbulb, NotebookText, Search, Trash2, Undo2, X } from '../components/icons';
+import { ConfirmDelete, SwipeRow, type SwipeAction } from '../components/ChatParts';
+import { HeatCalendar } from '../components/viz';
 import Reanimated from 'react-native-reanimated';
 import { dismissMode, useBottomInset } from '../components/keyboard';
 import { useSheet } from '../components/Sheet';
 import { PullRefresh, Screen, SectionLabel, T, showError } from '../components/ui';
 import * as thinkApi from '../api/think';
-import type { DayItem, Fragment, KeywordPage, SearchResult } from '../api/think';
+import type { DayItem, FinishedItem, Fragment, KeywordPage, SaveItem, SearchResult } from '../api/think';
+import { supports } from '../api/version';
 import { loadDraft, saveDraft } from '../drafts';
 import { L } from '../i18n';
 import { radius, space, type, useTheme } from '../theme';
 import { CaptureBar } from '../think/CaptureBar';
 import { FragmentSheet } from '../think/FragmentSheet';
 import { FloatBtn, FloatClose, Floater, FragmentCard, Highlight, SaveRow, TopicRow, TypeTile, dayLabel, previewFiles } from '../think/parts';
-import { useThink } from '../think/ThinkStore';
+import { Row } from '../think/Home';
+import { itemId, useThink } from '../think/ThinkStore';
 
 const RECENT = 'think:recent-searches';
 const readRecent = (): string[] => { try { const v = JSON.parse(loadDraft(RECENT) || '[]'); return Array.isArray(v) ? v.filter((x) => typeof x === 'string') : []; } catch { return []; } };
@@ -43,6 +47,7 @@ export function ThinkSearchScreen() {
   const { keywords, stream, refreshKeywords } = useThink();
   const [q, setQ] = useState<string>(route.params?.q ?? '');
   const [scope, setScope] = useState('all');
+  const [filter, setFilter] = useState<Filter>('all');  // 没输入时：收藏的筛选（全部 = 热力日历 + 关键词 + 最近搜索）
   const [res, setRes] = useState<SearchResult | null>(null);
   const [recent, setRecent] = useState(readRecent);
   useEffect(() => { refreshKeywords(); }, [refreshKeywords]);
@@ -76,6 +81,8 @@ export function ThinkSearchScreen() {
       <ScrollView contentContainerStyle={{ padding: space.lg, paddingTop: space.sm, gap: space.md, paddingBottom: space.xxl }} keyboardShouldPersistTaps="handled" keyboardDismissMode="on-drag">
         {!q.trim() ? (
           <>
+            {supports('think.home') ? <Browse filter={filter} onFilter={setFilter} onOpenIdea={openIdea} /> : null}
+            {supports('think.home') && filter !== 'all' ? null : <>
             <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'baseline' }}>
               <T v="label" color={t.ink3} style={{ textTransform: 'uppercase' }}>{L('关键词 · 按使用频率排序', 'Keywords · most used first')}</T>
               <T v="caption" color={t.ink3}>{L(`共 ${keywords.length} 个`, `${keywords.length} total`)}</T>
@@ -102,15 +109,18 @@ export function ThinkSearchScreen() {
                 ))}
               </View>
             ) : null}
-            <Pressable onPress={() => nav.navigate('ThinkHistory')} accessibilityRole="button" style={({ pressed }) => [styles.cal, { backgroundColor: t.surface, opacity: pressed ? 0.8 : 1 }]}>
-              <View style={[styles.tile, { backgroundColor: t.goldSoft }]}><CalendarDays size={19} color={t.gold} /></View>
-              <View style={{ flex: 1 }}>
-                <T v="headline" style={{ fontSize: 15 }}>{L('按日期浏览', 'Browse by date')}</T>
-                <T v="caption" color={t.ink3}>{L('包含想法和收藏', 'Thoughts and saved items together')}</T>
-              </View>
-              <ChevronRight size={16} color={t.ink3} />
-            </Pressable>
+            {supports('think.home') ? null : (
+              <Pressable onPress={() => nav.navigate('ThinkHistory')} accessibilityRole="button" style={({ pressed }) => [styles.cal, { backgroundColor: t.surface, opacity: pressed ? 0.8 : 1 }]}>
+                <View style={[styles.tile, { backgroundColor: t.goldSoft }]}><CalendarDays size={19} color={t.gold} /></View>
+                <View style={{ flex: 1 }}>
+                  <T v="headline" style={{ fontSize: 15 }}>{L('按日期浏览', 'Browse by date')}</T>
+                  <T v="caption" color={t.ink3}>{L('包含想法和收藏', 'Thoughts and saved items together')}</T>
+                </View>
+                <ChevronRight size={16} color={t.ink3} />
+              </Pressable>
+            )}
             <T v="caption" color={t.ink3} style={{ textAlign: 'center', lineHeight: 18 }}>{L('直接在服务器上搜索，不调用模型。范围包括语音转写、文件和长文中的文字，以及已完成思考的想法。', "Searched on your server, no model involved. Covers transcripts, file text, long pieces and finished thoughts.")}</T>
+            </>}
           </>
         ) : (
           <>
@@ -183,6 +193,152 @@ export function ThinkSearchScreen() {
             {shown?.total ? <T v="caption" color={t.ink3} style={{ textAlign: 'center' }}>{L('措辞不同的内容，可在「讨论」中提问「我以前想过类似的吗」', 'For things worded differently, ask in a talk: "have I thought about something like this?"')}</T> : null}
           </>
         )}
+      </ScrollView>
+    </Screen>
+  );
+}
+
+type Filter = 'all' | 'new' | 'file' | 'link' | 'image';
+const errText = (e: unknown) => (e instanceof Error ? e.message : String(e));
+
+/** 搜索页没输入时（2026-10-13，supports('think.home')）：收藏的筛选（未读 / 文件 / 链接 / 图片，原来在收藏栏里）和
+ * 近 6 周的热力日历（每天记下了几条，点一天在下面列出那天的）。更早的日期去「按日期浏览」。 */
+function Browse({ filter, onFilter, onOpenIdea }: { filter: Filter; onFilter: (f: Filter) => void; onOpenIdea: (f: Fragment) => void }) {
+  const t = useTheme();
+  const nav = useNavigation<any>();
+  const [heat, setHeat] = useState<{ today: string; days: { day: string; n: number }[] } | null>(null);
+  const [heatErr, setHeatErr] = useState<string | null>(null);
+  const [day, setDay] = useState<string | null>(null);
+  const [items, setItems] = useState<DayItem[] | null>(null);
+  const [saves, setSaves] = useState<{ filter: Filter; list: SaveItem[] } | null>(null);
+  useEffect(() => { thinkApi.heat(6).then(setHeat).catch((e) => setHeatErr(errText(e))); }, []);
+  useEffect(() => {
+    if (!day) return undefined;
+    let live = true;
+    thinkApi.day(day).then((v) => { if (live) setItems(v); }).catch((e) => showError(L('无法加载', "Couldn't load"), e));
+    return () => { live = false; };
+  }, [day]);
+  useEffect(() => {
+    if (filter === 'all') return undefined;
+    let live = true;
+    thinkApi.saves(filter).then((r) => { if (live) setSaves({ filter, list: r.saves }); }).catch((e) => showError(L('无法加载', "Couldn't load"), e));
+    return () => { live = false; };
+  }, [filter]);
+  const chips: [Filter, string][] = [['all', L('全部', 'All')], ['new', L('未读', 'Unread')], ['file', L('文件', 'Files')], ['link', L('链接', 'Links')], ['image', L('图片', 'Images')]];
+  const shown = saves?.filter === filter ? saves.list : null;
+  const openItem = (x: DayItem) => (x.type === 'save' ? nav.navigate('Save', { id: x.save.id }) : onOpenIdea(x.idea));
+  return (
+    <View style={{ gap: space.md }}>
+      <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: 8 }} keyboardShouldPersistTaps="handled">
+        {chips.map(([k, label]) => (
+          <Pressable key={k} onPress={() => onFilter(k)} accessibilityRole="button" accessibilityState={{ selected: filter === k }}
+            style={[styles.chip, { backgroundColor: filter === k ? t.ink : t.surface, borderColor: filter === k ? t.ink : t.line }]}>
+            <Text style={[type.callout, { fontWeight: '600', color: filter === k ? t.bg : t.ink2 }]}>{label}</Text>
+          </Pressable>
+        ))}
+      </ScrollView>
+      {filter === 'all' ? (
+        <>
+          <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'baseline' }}>
+            <T v="label" color={t.ink3} style={{ textTransform: 'uppercase' }}>{L('按日期 · 近 6 周', 'By date · last 6 weeks')}</T>
+            <T v="caption" color={t.ink3} style={{ fontWeight: '400' }}>{L('每天记下的条数', 'Noted per day')}</T>
+          </View>
+          <View style={[styles.heatCard, { backgroundColor: t.surface }]}>
+            <HeatCalendar days={(heat?.days ?? []).map((d) => ({ date: d.day, value: d.n || null, text: L(`${d.n} 条`, `${d.n}`) }))} today={heat?.today} bins={[2, 4, 7]}
+              name={L('记下', 'noted')} fmt={(v) => String(Math.round(v))} loading={!heat && !heatErr} error={heatErr ?? undefined}
+              emptyText={L('近 6 周还没有记下的。', 'Nothing noted in the last 6 weeks.')}
+              onPressDay={(d) => { setItems(null); setDay(d.date === day ? null : d.date); }} />
+          </View>
+          {day ? (
+            <View style={{ gap: 6 }}>
+              <T v="caption" color={t.ink3} style={{ fontWeight: '600', paddingHorizontal: 4 }}>{dayLabel(day)}{items ? L(` · ${items.length} 条`, ` · ${items.length}`) : ''}</T>
+              {items === null ? <T v="callout" color={t.ink3}>{L('正在加载…', 'Loading…')}</T> : (
+                <View style={[styles.box, { backgroundColor: t.surface }]}>
+                  {items.map((x, i) => <Row key={itemId(x)} x={x} first={i === 0} selecting={false} on={false} onPress={() => openItem(x)} />)}
+                </View>
+              )}
+            </View>
+          ) : null}
+          <Pressable onPress={() => nav.navigate('ThinkHistory')} accessibilityRole="button" style={({ pressed }) => [styles.more, { opacity: pressed ? 0.6 : 1 }]}>
+            <CalendarDays size={16} color={t.ink3} />
+            <T v="callout" color={t.ink2} style={{ flex: 1 }}>{L('更早的日期', 'Earlier dates')}</T>
+            <ChevronRight size={15} color={t.ink3} />
+          </Pressable>
+        </>
+      ) : shown === null ? <T v="callout" color={t.ink3}>{L('正在加载…', 'Loading…')}</T> : shown.length ? (
+        <View style={{ gap: 8 }}>{shown.map((sv) => <SaveRow key={sv.id} s={sv} onPress={() => nav.navigate('Save', { id: sv.id })} />)}</View>
+      ) : <T v="callout" color={t.ink3}>{L('暂无内容。', 'Nothing here yet.')}</T>}
+    </View>
+  );
+}
+
+const monthLabel = (ym: string) => {
+  const [y, m] = ym.split('-');
+  return L(`${y} 年 ${Number(m)} 月`, new Date(`${ym}-15T12:00:00`).toLocaleDateString('en-GB', { month: 'long', year: 'numeric' }));
+};
+
+/** 已想完（2026-10-13）：写成笔记的主题、单独完成的想法、完成的收藏，按月分组，新的在前。想法和收藏左滑能恢复（回到「记下的」）或删除。 */
+export function ThinkFinishedScreen() {
+  const t = useTheme();
+  const nav = useNavigation<any>();
+  const sheet = useSheet();
+  const { finish, removeFragment, removeSave } = useThink();
+  const [items, setItems] = useState<FinishedItem[] | null>(null);
+  const [err, setErr] = useState<string | null>(null);
+  const load = useCallback(() => { thinkApi.finished().then((v) => { setItems(v); setErr(null); }).catch((e) => setErr(errText(e))); }, []);
+  useFocusEffect(useCallback(() => { load(); }, [load]));
+  const months: [string, FinishedItem[]][] = [];
+  for (const x of items ?? []) {
+    const m = (x.at ?? '').slice(0, 7);
+    const last = months[months.length - 1];
+    if (last && last[0] === m) last[1].push(x); else months.push([m, [x]]);
+  }
+  const restore = (x: DayItem) => finish([itemId(x)], true).then(load).catch((e) => showError(L('恢复失败', "Couldn't restore"), e));
+  const remove = (x: DayItem) => sheet.open({
+    title: L('删除这一条？', 'Delete this?'),
+    content: (close) => (
+      <ConfirmDelete close={close} label={L('删除', 'Delete')}
+        body={x.type === 'idea' ? L('这条想法会移入库的回收站（Obsidian 的 .trash）。', "This thought goes to the vault's trash (Obsidian's .trash).") : L('这条收藏会从列表中移除。', 'This saved item is removed from the list.')}
+        run={async () => { await (x.type === 'idea' ? removeFragment(x.idea.id) : removeSave(x.save.id)); load(); }} />
+    ),
+  });
+  const swipe = (x: DayItem): SwipeAction[] => [
+    { key: 'restore', label: L('恢复', 'Restore'), icon: <Undo2 size={18} color={t.ink} />, tone: 'plain', onPress: () => { restore(x); } },
+    { key: 'delete', label: L('删除', 'Delete'), icon: <Trash2 size={18} color="#FFFFFF" />, tone: 'danger', onPress: () => remove(x) },
+  ];
+  const open = (x: DayItem) => {
+    if (x.type === 'save') { nav.navigate('Save', { id: x.save.id }); return; }
+    const f = x.idea;
+    sheet.open({ title: f.title || L('想法', 'Thought'), content: (close) => <FragmentSheet id={f.id} initial={f} close={close} /> });
+  };
+  return (
+    <Screen>
+      <BackBar title={L('已想完', 'Done thinking')} sub={items?.length ? L(`${items.length} 条 · 左滑可恢复`, `${items.length} · swipe left to restore`) : undefined} onBack={() => nav.goBack()} />
+      <ScrollView contentContainerStyle={{ padding: space.lg, paddingTop: space.sm, paddingBottom: space.xxl }} refreshControl={<PullRefresh onRefresh={load} />}>
+        {months.map(([m, list]) => (
+          <View key={m}>
+            <T v="caption" color={t.ink3} style={{ fontWeight: '600', paddingHorizontal: 4, paddingTop: 12, paddingBottom: 6 }}>{monthLabel(m)}</T>
+            <View style={[styles.box, { backgroundColor: t.surface }]}>
+              {list.map((x, i) => (x.type === 'topic' ? (
+                <Pressable key={x.topic.id} onPress={() => nav.navigate('ThinkTalk', { id: x.topic.id })} accessibilityRole="button"
+                  style={({ pressed }) => [styles.doneTopic, { borderTopColor: i ? t.line : 'transparent', opacity: pressed ? 0.8 : 1 }]}>
+                  <View style={[styles.tile34, { backgroundColor: t.tints.gold.soft }]}><NotebookText size={17} color={t.tints.gold.fg} /></View>
+                  <View style={{ flex: 1, minWidth: 0, gap: 2 }}>
+                    <T v="body" numberOfLines={1} style={{ fontSize: 15, fontWeight: '600' }}>{x.topic.title}</T>
+                    <T v="caption" color={t.ink3} numberOfLines={1} style={{ fontSize: 12.5, fontWeight: '400' }}>{L(`写成笔记 · ${x.topic.count} 条想法`, `Written up · ${x.topic.count} thoughts`)}</T>
+                  </View>
+                  <ChevronRight size={15} color={t.ink3} />
+                </Pressable>
+              ) : (
+                <SwipeRow key={itemId(x)} actions={swipe(x)}>
+                  <Row x={x} first={i === 0} selecting={false} on={false} onPress={() => open(x)} />
+                </SwipeRow>
+              )))}
+            </View>
+          </View>
+        ))}
+        {err ? <T v="callout" color={t.warn} style={{ paddingVertical: space.lg }}>{err}</T> : items === null ? <T v="callout" color={t.ink3} style={{ paddingVertical: space.lg }}>{L('正在加载…', 'Loading…')}</T>
+          : !items.length ? <T v="callout" color={t.ink3} style={{ textAlign: 'center', paddingVertical: space.xxl }}>{L('还没有想完的。左滑「记下的」一条可完成，或写成笔记。', 'Nothing finished yet. Swipe a noted item left to finish it, or write it up.')}</T> : null}
       </ScrollView>
     </Screen>
   );
@@ -396,4 +552,9 @@ const styles = StyleSheet.create({
   week: { flexDirection: 'row', gap: 4 },
   wd: { flex: 1, textAlign: 'center', paddingVertical: 4, fontWeight: '700' },
   cell: { flex: 1, height: 48, borderRadius: 12, alignItems: 'center', justifyContent: 'center', gap: 4 },
+  heatCard: { borderRadius: radius.lg - 2, padding: 12 },
+  box: { borderRadius: 14, overflow: 'hidden' },
+  more: { flexDirection: 'row', alignItems: 'center', gap: 8, height: 40, paddingHorizontal: 4 },
+  doneTopic: { flexDirection: 'row', alignItems: 'center', gap: 12, paddingHorizontal: 14, paddingVertical: 10, borderTopWidth: StyleSheet.hairlineWidth },
+  tile34: { width: 34, height: 34, borderRadius: 11, alignItems: 'center', justifyContent: 'center' },
 });

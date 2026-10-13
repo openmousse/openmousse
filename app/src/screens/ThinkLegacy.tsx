@@ -1,4 +1,6 @@
-// 「思考」tab：想法（AI 不看，等你叫）、收藏（别人的东西，先存着）和播客（说出来，录完帮你理成笔记，见 ../think/Podcast.tsx）。顶上一个搜索框（想法、收藏、聊过的、库里的笔记一起搜）和按天翻的日历。
+// 老服务器（没有 supports('think.home')）上的 Zen：想法 / 收藏 / 播客三栏（2026-10-13 之前的样子）。新的两边版本在 ThinkScreen.tsx；
+// 大家的服务器都升上来以后删掉这个文件。
+// 「思考」tab（旧）：想法（AI 不看，等你叫）、收藏（别人的东西，先存着）和播客（说出来，录完帮你理成笔记，见 ../think/Podcast.tsx）。顶上一个搜索框（想法、收藏、聊过的、库里的笔记一起搜）和按天翻的日历。
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { Platform, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
 import * as Clipboard from 'expo-clipboard';
@@ -27,7 +29,7 @@ import { podcastSupported } from '../api/podcast';
 type Tab = 'ideas' | 'saves' | 'podcast';
 const TABS: readonly Tab[] = ['ideas', 'saves', 'podcast'];
 
-export function ThinkScreen() {
+export function ThinkLegacy() {
   const t = useTheme();
   const nav = useNavigation<any>();
   const route = useRoute<any>();
