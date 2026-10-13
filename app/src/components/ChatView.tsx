@@ -18,6 +18,7 @@ import { PullRefresh, T } from './ui';
 import { Markdown } from './Markdown';
 import { InboxCard } from './InboxCard';
 import { CourseChip, HandoffChip, HandoffFrom, ProjectChip, ScheduleChip, TaskCardView, modelLabel } from './ChatCards';
+import { OutputCard } from './outputs/OutputCard';
 import { MAX_FILES, pickDocuments, pickMedia } from './chatInput';
 import { saveMessage } from '../api/think';
 import { isRemote } from '../api/files';
@@ -102,7 +103,7 @@ const ChatTasks = React.memo(function ChatTasks({ cards, onRevise, thread }: { c
   return <>{cards.map((c) => (
     <View key={c.id} style={{ paddingLeft: 36 }}>
       {c.kind === 'task' ? <TaskCardView card={c} onRevise={onRevise} /> : c.kind === 'schedule' ? <ScheduleChip card={c} /> : c.kind === 'project' ? <ProjectChip card={c} here={thread} />
-        : c.kind === 'course' ? <CourseChip card={c} /> : <HandoffChip card={c} />}
+        : c.kind === 'course' ? <CourseChip card={c} /> : c.kind === 'output' ? <OutputCard card={c} /> : <HandoffChip card={c} />}
     </View>
   ))}</>;
 });

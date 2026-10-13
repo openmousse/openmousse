@@ -104,6 +104,9 @@ function normalizeCard(raw: any): ChatCard | null {
       lines: Array.isArray(raw.lines) ? raw.lines.map(String) : [], status: raw.status === 'undone' ? 'undone' : 'done', createdAt: str(raw.createdAt),
       session: raw.session && typeof raw.session.course === 'string' ? raw.session : null } as ChatCard;
   }
+  if (raw.kind === 'output' && raw.output && typeof raw.output.board === 'object') {  // Agent 在回复里出的产出（server/outputs.py）
+    return { ...raw, messageId: msgNum(raw.messageId), createdAt: str(raw.createdAt), thread: str(raw.thread), status: raw.output.replaced ? 'replaced' : 'done' } as ChatCard;
+  }
   if (raw.kind === 'schedule' && typeof raw.logId === 'number') {  // Agent 在回复里改了日程（server/schedule.py）
     return { ...raw, messageId: msgNum(raw.messageId), title: str(raw.title), summary: str(raw.summary), action: str(raw.action), actor: str(raw.actor),
       area: raw.area === 'remember' ? 'remember' : 'schedule', status: raw.status === 'undone' ? 'undone' : 'done', createdAt: str(raw.createdAt) } as ChatCard;

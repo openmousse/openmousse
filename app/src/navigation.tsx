@@ -17,6 +17,7 @@ import { EditGroupScreen } from './screens/EditGroupScreen';
 import { TaskScreen, TasksScreen } from './screens/TasksScreen';
 import { ScheduleFeedScreen } from './screens/ScheduleFeedScreen';
 import { TodayScreen } from './screens/TodayScreen';
+import { OutputsTabBar } from './components/outputs/FloatTab';
 import { HistoryDayScreen, HistoryScreen } from './screens/HistoryScreen';
 import { ConnectScreen } from './screens/ConnectScreen';
 import { ClawScreen } from './screens/ClawScreen';
@@ -53,6 +54,8 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useTheme } from './theme';
 
 const Tab = createBottomTabNavigator();
+// 标签栏上方是新产出的浮动标签（有新产出时才出来，见 components/outputs/FloatTab.tsx）
+const renderTabBar = (props: React.ComponentProps<typeof OutputsTabBar>) => <OutputsTabBar {...props} />;
 const Stack = createNativeStackNavigator();
 
 function Tabs() {
@@ -66,6 +69,7 @@ function Tabs() {
   // Tab 的 name 是路由标识（深链 ?screen=今天、navigate 都用它），不翻译；界面上显示的是 tabBarLabel。
   return (
     <Tab.Navigator
+      tabBar={renderTabBar}
       screenOptions={{
         headerShown: false,
         tabBarActiveTintColor: t.gold,

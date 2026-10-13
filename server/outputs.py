@@ -5,7 +5,8 @@
   app 把它们放在标签栏上方的浮动标签里；点开小板子、或下滑关掉浮动标签，就 POST /api/feed/seen（data.py）标成看过，哪台设备上看过都算。
 - 小板子（board）按 kind 套模板，要画的数都在这里算好、按请求的语言写好，app 只画（和看板积木一样）：
   training_review 练后报告 / meal_plan 饮食建议 / sleep_report 睡眠报告 / training_plan 训练计划；别的 kind 是 text（标题 + 正文）。
-  练后报告的 data 由健身 Agent 按 workspace skills/training 写（scripts/training_review.py 先算好本次和上次）；老卡只有正文，按小标题拆。
+  练后报告的 data（session / minutes / sets / last / main / moves / skipped / verdict / next_24h / next）格式见 review_board，Agent 照着写；
+  作者的实例里健身 Agent 用 workspace 的 scripts/training_review.py 从训练记录算好本次和上次。没有 data 的老卡按正文的小标题拆。
   饮食建议的蛋白质目标：data.targets.protein → server.json 的 nutrition_targets → 饮食看板那天的目标（/api/diet/day 的 targets；最多等 3 秒，读到了留 30 分钟）。
   睡眠报告的近 7 天恢复分读健康数据源（apple_health.recovery_series，留 5 分钟）；报告写的时候健康数据没同步、现在同步了，带上 updated。
 - 对话里的产出卡片：Agent 在哪一次回复里写的卡，就挂在那条回复下面（feed_items.thread / message_id；回复结束时 cards.on_run_end → link_run，
@@ -434,7 +435,7 @@ def sleep_board(r: sqlite3.Row, d: dict) -> tuple[dict, str, dict | None]:
     if live and not synced and num(live.get("score")) is not None:
         live_sleep = num(((live.get("components") or {}).get("sleep") or {}).get("minutes"))
         updated = {"score": fmt(num(live["score"])), "label": str(live.get("label") or ""), "tone": BAND_TONE.get(live.get("band") or "", "neutral"),
-                   "sleep": duration(live_sleep) if live_sleep is not None else None}
+                   "sleep": duration(live_sleep) if live_sleep is not None else None, "minutes": nv(live_sleep)}
     stages = [{"label": n, "minutes": nv(d.get(k)), "text": duration(num(d.get(k)))} for k, n in
               (("deep_min", L("深睡", "Deep")), ("rem_min", "REM"), ("core_min", L("核心", "Core"))) if num(d.get(k)) is not None]
     vitals = [x for x in (
@@ -458,7 +459,7 @@ def sleep_board(r: sqlite3.Row, d: dict) -> tuple[dict, str, dict | None]:
     if updated:
         line = L(f"已同步 · 恢复分 {updated['score']}" + (f"（{updated['label']}）" if updated["label"] else ""), f"Synced · recovery {updated['score']}")
     elif synced:
-        line = " · ".join(x for x in (L(f"睡了 {duration(sleep_min)}", f"Slept {duration(sleep_min)}") if sleep_min is not None else "",
+        line = " · ".join(x for x in (L(f"睡眠 {duration(sleep_min)}", f"Sleep {duration(sleep_min)}") if sleep_min is not None else "",
                                       L(f"恢复分 {fmt(score)}", f"Recovery {fmt(score)}") if score is not None else "") if x)
     else:
         line = L("健康数据未同步", "Health data not synced") + (L(f" · 恢复分 {fmt(score)}（暂估）", f" · recovery {fmt(score)} (estimate)") if score is not None else "")

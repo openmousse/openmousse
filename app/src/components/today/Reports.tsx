@@ -1,5 +1,5 @@
 // 「今天」页 · 报告（要阅读的）：Agent 的报告卡和邮件摘要，横向滑动的小卡片，每张一个小图。
-// 点开 = useOpenReport：现在是弹层里的全文；产出小板子（output-boards 分支）合进来后换成同一块小板子。
+// 点开 = useOpenReport：服务器有产出小板子（supports('outputs')）时打开同一块小板子，老服务器是弹层里的全文。
 import React, { useState } from 'react';
 import { Linking, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import * as todayApi from '../../api/today';
@@ -13,6 +13,7 @@ import { Check, ChevronRight } from '../icons';
 import { GroupBadge } from '../GroupIcon';
 import { MealPlanCard } from '../LiveBoards';
 import { Markdown } from '../Markdown';
+import { useOutputBoard } from '../outputs/Board';
 import { useSheet } from '../Sheet';
 import { useSourceName } from '../SourceBadge';
 import { supports } from '../../api/version';
@@ -187,18 +188,20 @@ function PlainCard({ r, fresh, onPress }: { r: CardReport; fresh: boolean; onPre
 // —— 点开 ————————————————————————————————————————————————————————————
 
 /**
- * 点开一份报告。产出小板子（output-boards 分支）合进来后：卡片类在 supports('outputs') 时换成 useOutputBoard()(r.id)
- *（components/outputs/Board.tsx，打开时它自己标看过）；邮件摘要留在这里。
+ * 点开一份报告。卡片类在 supports('outputs') 时打开产出小板子 useOutputBoard()(r.id)
+ *（components/outputs/Board.tsx，打开时它自己标看过），老服务器是下面的全文弹层；邮件摘要留在这里。
  */
 export function useOpenReport() {
   const sheet = useSheet();
   const { markFeedSeen } = useStore();
   const name = useSourceName();
+  const openBoard = useOutputBoard();
   return (r: Report) => {
     if (r.type === 'mail') {
       sheet.open({ title: r.title, content: () => <MailDigest r={r} /> });
       return;
     }
+    if (supports('outputs')) { openBoard(r.id); return; }
     if (r.unseen) markFeedSeen([r.id]);
     sheet.open({ title: r.title, content: (close) => <ReportBody r={r} agent={name(r.agent)} close={close} /> });
   };

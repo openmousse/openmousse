@@ -1,5 +1,6 @@
 // app 里的数据类型。2026-09-23 起全部对应服务器上的真实来源（server/data.py 的表格写了每一项的真源）。
 import type { ForwardCard } from '../api/forward';
+import type { Output } from '../api/outputs';
 
 export type Billing = '订阅' | 'API' | '免费';
 export type CostTier = '省' | '中' | '贵';
@@ -273,7 +274,9 @@ export interface CourseChangeCard {
   lines: string[];
   session: { course: string; session: string; n: number; page: string | null } | null;
 }
-export type ChatCard = HandoffCard | TaskCardInfo | ScheduleChangeCard | ProjectChangeCard | CourseChangeCard;
+/** Agent 在这条回复里出的产出（建议卡，server/outputs.py）：对话里的产出卡片，点开是小板子。 */
+export interface OutputChatCard { kind: 'output'; id: string; thread: string; messageId: number | null; createdAt: string; status: 'done' | 'replaced'; output: Output }
+export type ChatCard = HandoffCard | TaskCardInfo | ScheduleChangeCard | ProjectChangeCard | CourseChangeCard | OutputChatCard;
 /** 一个对话里的卡片（GET /api/chat/cards）：它自己转出去、派出去的，加上别的对话转给它的（incoming）。 */
 export interface ThreadCards { cards: ChatCard[]; incoming: HandoffCard[] }
 
