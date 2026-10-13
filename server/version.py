@@ -39,6 +39,8 @@ FEATURES = (
     "boards.views",     # 看板积木 type collection（集合块：表格 / 看板 / 日历 / 时间线 / 图表）；POST /api/boards/{agent}/view 按排序、筛选、月份、翻页重算一个视图
     "outputs",  # GET /api/outputs（新产出 + 小板子）、/api/outputs/{id}；/api/chat/cards 带 kind output（对话里的产出卡片）
     "meetings",         # /api/meetings…：Agent 会议（发起、按发言人分段的流、纪要确认写进日程和看板、保留为群聊）；对话卡 kind meeting / minutes
+    "think.home",       # Zen 重排：GET /api/think/home（在想 + 记下的）、POST /api/think/done（完成 / 恢复，不调模型）、GET /api/think/finished、GET /api/think/heat；收藏带 done
+    "podcast.stage",    # /api/podcast 的每一期带 stage（进度四格走到第几格）/ state（一句状态）/ waiting（等你处理）
 )
 
 

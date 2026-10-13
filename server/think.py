@@ -11,6 +11,10 @@
 - 想完的挪进「已想完」（不删）；删除 = 挪进库的 .trash/（Obsidian 自己的回收站）。
 - 关键词：属性 keywords + 正文里的 #xxx。点一个关键词看所有带它的想法和收藏（saves.py），还有常一起出现的词。
 
+Zen 首页（2026-10-13）
+- 想法和收藏放在一起（/api/think/home）：在想的主题 + 记下的（按时间，新的在前）+ 已想完几条。每条都能「完成」（/api/think/done，
+  想法挪进已想完、收藏记 done_at，都能恢复），不调模型；已想完的列表在 /api/think/finished，搜索页的热力日历用 /api/think/heat。
+
 主题（聊聊 / 想完了）
 - 勾几条碎片点「聊聊」或「想完了」= 建一个主题（grava.db think_topics，id tp-xxxxxxxx 也是对话线程 id，会话 agent:main:grava:tp-…）。
 - 聊聊：先发一句「【自动触发】聊聊」让它先问；每天第一句话、主题里的碎片变了以后，chat.start_run 调 context_for 把碎片和
@@ -309,6 +313,8 @@ def frag_from_file(path: Path, st: os.stat_result) -> dict:
         "duration": meta.get("duration") if isinstance(meta.get("duration"), (int, float)) else None,
         "source": str(meta.get("source") or ("app" if meta.get("id") else "obsidian")), "save": str(meta.get("save") or ""),
         "bad": bad, "mtime": st.st_mtime, "chars": len(text),
+        "doneAt": as_iso(meta.get("done_at")) or (datetime.fromtimestamp(st.st_mtime, TZ).isoformat(timespec="seconds") if in_done else None),
+        "notePath": str(meta.get("note_path") or ""),
     }
 
 
@@ -371,7 +377,7 @@ def frag_json(f: dict, full: bool = True) -> dict:
         "day": d.strftime("%Y-%m-%d"), "time": d.strftime("%H:%M"), "status": f["status"], "topics": f["topics"], "note": f["note"],
         "files": [{"name": x["name"], "kind": x["kind"], "size": x["size"], "url": file_url(f["id"], i)} for i, x in enumerate(f["files"])],
         "url": f["url"], "linkTitle": f["linkTitle"], "duration": f["duration"], "source": f["source"], "save": f["save"] or None,
-        "chars": f["chars"], "bad": f["bad"], "path": f["path"],
+        "chars": f["chars"], "bad": f["bad"], "path": f["path"], "doneAt": f.get("doneAt") if f["status"] == "done" else None,
     }
 
 
@@ -764,9 +770,12 @@ def topic_brief(r: sqlite3.Row, notes: set[str] | None = None) -> dict:
     with _lock, db() as conn:
         last = conn.execute("SELECT text, ts FROM messages WHERE thread=? AND role='grava' ORDER BY id DESC LIMIT 1", (r["id"],)).fetchone()
         n = conn.execute("SELECT COUNT(*) FROM messages WHERE thread=? AND role='grava'", (r["id"],)).fetchone()[0]
+        who = conn.execute("SELECT role FROM messages WHERE thread=? AND role IN ('user', 'grava') ORDER BY id DESC LIMIT 1", (r["id"],)).fetchone()
     return {"id": r["id"], "title": r["title"], "count": len(ids) - len(mine), "notes": len(mine), "status": r["status"], "createdAt": r["created_at"], "updatedAt": r["updated_at"],
             "talked": n, "lastLine": (last["text"].strip().replace("\n", " ")[:80] if last else ""), "lastAt": last["ts"] if last else None,
-            "draftStatus": r["draft_status"], "notePath": r["note_path"]}
+            "draftStatus": r["draft_status"], "notePath": r["note_path"], "doneAt": r["done_at"],
+            # 谁最后说的（user / grava）：Zen 首页「在想」的卡上，它问了你还没回 = 等你回答
+            "lastRole": who["role"] if who else None}
 
 
 def topic_title_for(frags: list[dict]) -> str:
@@ -1437,6 +1446,149 @@ async def day(day: str):
     if not re.match(r"^\d{4}-\d{2}-\d{2}$", day or ""):
         raise HTTPException(400, L("day 要写成 YYYY-MM-DD", "day must be YYYY-MM-DD"))
     return {"ok": True, "day": day, "items": await asyncio.to_thread(day_sync, day)}
+
+
+# —— Zen 首页（2026-10-13 重排）——————————————————————————————————————————
+# 想法和收藏不再分栏：一张「记下的」按天排，新的在前；上面是在想的主题，末尾一行「已想完」。
+# 每条都有不经模型的出口：完成（想法挪进已想完，收藏记 done_at，都能恢复）、删除、归入主题（PATCH 主题的 add；归进去的不再单列）。
+# 「放进思考」变成的那条碎片（属性 save 指着收藏）出现以后，那条收藏就不再单列：一件事只出现一次。
+
+def topic_stage(b: dict) -> dict:
+    """在想的主题：进度四格（记下 → 讨论 → 草稿 → 存入）走到第几格、一句状态、是不是在等你（卡上一个琥珀点）。"""
+    ds = b.get("draftStatus")
+    if ds == "ready":
+        return {"stage": 3, "state": L("草稿待确认", "Draft to review"), "waiting": True}
+    if ds == "running":
+        return {"stage": 3, "state": L("正在写草稿", "Drafting"), "waiting": False}
+    if ds == "error":
+        return {"stage": 2, "state": L("草稿未生成", "Draft failed"), "waiting": True}
+    if b.get("talked"):
+        asked = b.get("lastRole") == "grava"
+        return {"stage": 2, "state": L("等你回答", "Your turn") if asked else L("讨论中", "In discussion"), "waiting": asked}
+    return {"stage": 1, "state": L("尚未讨论", "Not discussed"), "waiting": False}
+
+
+def finish_fragment(f: dict) -> dict:
+    """完成一条想法：挪进已想完，属性记 status: done 和 done_at。不调模型。"""
+    p = move_to(f, done_dir())
+
+    def change(meta: dict, body: str) -> str:
+        meta["status"] = "done"
+        meta["done_at"] = now_iso()
+        return body
+    return rewrite({**f, "path": rel(p)}, change)
+
+
+def reopen_fragment(f: dict) -> dict:
+    """恢复：挪回收件箱，去掉 status / done_at（写成笔记时记的 note_path 留着）。"""
+    p = move_to(f, inbox_dir())
+
+    def change(meta: dict, body: str) -> str:
+        meta.pop("status", None)
+        meta.pop("done_at", None)
+        return body
+    return rewrite({**f, "path": rel(p)}, change)
+
+
+def home_sync(before: str | None, limit: int) -> dict:
+    import saves
+    frags = scan()
+    claimed = {f["save"] for f in frags if f["save"]}   # 放进过思考的收藏：由那条碎片代表
+    with _lock, tdb() as conn:  # 归进了主题的碎片由「在想」那张卡代表（删掉的主题会把碎片放回来）
+        live = {r["id"] for r in conn.execute("SELECT id FROM think_topics WHERE status!='deleted'").fetchall()}
+    items = [{"type": "idea", "at": f["createdAt"], "idea": frag_json(f, full=False)} for f in frags
+             if f["status"] == "open" and not f["note"] and not live.intersection(f["topics"])]
+    items += [{"type": "save", "at": r["created_at"], "save": saves.save_json(r)} for r in saves.all_rows()
+              if not saves.done_of(r) and r["id"] not in claimed]
+    items.sort(key=lambda x: x["at"], reverse=True)
+    total = len(items)
+    if before:
+        items = [x for x in items if x["at"] < before]
+    page = items[: max(1, min(limit, 300))]
+    thinking = [{**b, **topic_stage(b)} for b in topics_open()]
+    return {"thinking": thinking, "items": page, "count": total, "more": len(items) > len(page), "finished": len(finished_sync())}
+
+
+@router.get("/api/think/home")
+async def home(before: str | None = None, limit: int = 150):
+    """Zen 首页（想法一边）：thinking = 在想的主题（带 stage / state / waiting）；items = 记下的（没完成的想法和收藏，新的在前）；
+    count = 记下的一共几条；finished = 已想完几条。"""
+    import saves
+    out = await asyncio.to_thread(home_sync, before, limit)
+    return {"ok": True, **out, "savesNew": await asyncio.to_thread(saves.new_count), "vault": vault() is not None, "folder": rel(inbox_dir()),
+            "obsidianVault": cfg().get("obsidian_vault") or None}
+
+
+class DoneIn(BaseModel):
+    ids: list[str]
+    undo: bool = False
+
+
+@router.post("/api/think/done")
+async def mark_done(body: DoneIn):
+    """完成几条（想法 th-… / 收藏 sv-…），undo = 恢复。不调模型；左滑和多选都走这里。"""
+    import saves
+    ids = list(dict.fromkeys(body.ids))[:200]
+    if not ids:
+        raise HTTPException(400, L("没有选中的", "Nothing selected"))
+    done = 0
+    for i in ids:
+        if ID_RE.match(i):
+            f = await asyncio.to_thread(frag_by_id, i)
+            if (f["status"] == "done") == (not body.undo):
+                continue
+            await asyncio.to_thread(reopen_fragment if body.undo else finish_fragment, f)
+        elif saves.SAVE_RE.match(i):
+            await asyncio.to_thread(saves.set_done, i, not body.undo)
+        else:
+            raise HTTPException(400, L("不认识的条目", "Unknown item"))
+        done += 1
+    if done:
+        log_activity(L(f"{'恢复' if body.undo else '完成'}了 {done} 条想法或收藏", f"{'Restored' if body.undo else 'Finished'} {done} thoughts or saved items"), "edit")
+    return {"ok": True, "count": done}
+
+
+def finished_sync() -> list[dict]:
+    """已想完：写成笔记的主题（一件一行，用到的碎片不再单列）、单独完成的想法、完成的收藏，按完成时间新的在前。"""
+    import saves
+    frags = scan()
+    claimed = {f["save"] for f in frags if f["save"]}
+    out = [{"type": "idea", "at": f.get("doneAt") or f["createdAt"], "idea": frag_json(f, full=False)} for f in frags
+           if f["status"] == "done" and not f["note"] and not f.get("notePath")]
+    out += [{"type": "save", "at": saves.done_of(r), "save": saves.save_json(r)} for r in saves.all_rows()
+            if saves.done_of(r) and r["id"] not in claimed]
+    with _lock, tdb() as conn:
+        rows = conn.execute("SELECT * FROM think_topics WHERE status='done' ORDER BY done_at DESC LIMIT 300").fetchall()
+    notes = {f["id"] for f in frags if f["note"]}
+    out += [{"type": "topic", "at": r["done_at"] or r["updated_at"], "topic": topic_brief(r, notes)} for r in rows]
+    out.sort(key=lambda x: x["at"] or "", reverse=True)
+    return out
+
+
+@router.get("/api/think/finished")
+async def finished():
+    items = await asyncio.to_thread(finished_sync)
+    return {"ok": True, "items": items, "count": len(items)}
+
+
+def heat_sync(weeks: int) -> dict:
+    """近几周每天记下了几条（想法 + 收藏，完成了的也算）：从 weeks 周前的周一到今天，没记的天是 0。"""
+    import saves
+    today = datetime.now(TZ).date()
+    start = today - timedelta(days=today.weekday() + 7 * (weeks - 1))
+    counts: dict[str, int] = {}
+    stamps = [f["createdAt"] for f in scan() if not f["note"]] + [r["created_at"] for r in saves.all_rows()]
+    for ts in stamps:
+        d = local(ts).date()
+        if start <= d <= today:
+            counts[d.isoformat()] = counts.get(d.isoformat(), 0) + 1
+    days = [(start + timedelta(days=i)).isoformat() for i in range((today - start).days + 1)]
+    return {"today": today.isoformat(), "start": start.isoformat(), "days": [{"day": d, "n": counts.get(d, 0)} for d in days]}
+
+
+@router.get("/api/think/heat")
+async def heat(weeks: int = 6):
+    return {"ok": True, **await asyncio.to_thread(heat_sync, max(1, min(weeks, 26)))}
 
 
 # —— 冥想时间 ————————————————————————————————————————————————————————
