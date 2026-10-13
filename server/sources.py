@@ -3,7 +3,8 @@
 脚本在就加载，不在就是 None，对应接口回「还没接数据源」（HTTP 200，ok=false，missing_source=<类型>），
 其它功能照常。/api/health 的 `sources` 告诉 app 哪些类型接上了，没接的看板显示空状态而不是报错。
 
-  workouts / meals / body   ← scripts/xunji.py（作者用的训记；换别的软件就写一个同名接口的适配器）
+  workouts / body           ← scripts/xunji.py（作者用的训记；换别的软件就写一个同名接口的适配器）
+  meals                     ← 服务自己的饮食记录（diet.py，一直有）；server.json 的 diet.source = "xunji" 时还从训记读
   calendar                  ← scripts/calendar_ics.py（ICS 链接）
   health                    ← scripts/apple_health.py（恢复分、热量缺口、体能趋势；原始数据由手机推到 /api/health/daily，不需要脚本）
   tree                      ← scripts/memory_tree.py（作者的世界树：Obsidian 库里的笔记，有枝）；没有它就用安装器装的开源版世界树
@@ -51,7 +52,7 @@ if memory_tree is None:
 
 AVAILABLE: dict[str, bool] = {
     "workouts": xunji is not None,
-    "meals": xunji is not None,
+    "meals": True,  # 饮食记录在服务自己的库里（diet.py）；训记只是可选来源
     "body": xunji is not None,
     "calendar": calendar_ics is not None,
     "health": apple_health is not None,

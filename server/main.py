@@ -1,7 +1,7 @@
 """Grava API：只读的真实数据接口（第一档）+ 真实对话（第二档，见 chat.py）+ 托管 app 的网页版。
 
 - 监听地址、路径、认证都在 server.json（见 config.py）。/api/* 要令牌（Authorization: Bearer），或来源是 Tailscale 白名单里的设备。
-- 第一档只读：训练 / 饮食 / 身体数据、日历（可选数据源，见 sources.py）。第二档对话经 Gateway 的 OpenAI 兼容接口，只在 loopback。
+- 第一档只读：训练 / 身体数据、日历（可选数据源，见 sources.py）；饮食记录在服务自己的库里（diet.py）。第二档对话经 Gateway 的 OpenAI 兼容接口，只在 loopback。
 - app 其余页面（Groups、独立空间、目标、审批、定时任务、任务、活动、档案、记忆、模型、安全）：见 data.py，全部是真实来源。
 - Apple 健康：原生 app 读 HealthKit 后按天推上来，存 grava.db 的 health_daily（见 health.py）。
 - 附件：/api/chat/upload 存盘 + 抽文字 / 转写，/api/chat/send 带附件 id，/api/files/{id} 回放，/api/chat/transcribe 语音输入（见 files.py）；/api/files/{id}/preview、/page/{n} 在 app 里预览（见 preview.py）。
@@ -10,7 +10,8 @@
 - 未读：/api/unread，各线程的未读回复、新卡片、角标（见 unread.py）。
 - 对话列表：/api/chats，Agent 栏和主对话、会议、项目各一行，排序只算你的话和给你的回复，置顶 / 免打扰（见 chats.py）。
 - 对话里的转交卡、任务卡：/api/chat/cards；后台任务额度 /api/tasks/quota；后台任务做完静默推一条（见 cards.py）。
-- 训记数据不落库：训记是真源，这里只有短时缓存（由 xunji.py / calendar_ics.py 管）。
+- 训记数据不落库：训练和身体数据以训记为真源，这里只有短时缓存（由 xunji.py / calendar_ics.py 管）。
+- 饮食记录：/api/diet/*（2026-10-13 起记在服务自己的库里：吃了什么、个人食物库、营养目标；查营养 个人食物库 → Open Food Facts → CoFID → USDA。见 diet.py、nutrition.py）。
 - 学习台：/study 网页 + /api/study/*，课件和学习页按课程 / 模块浏览，问答走同一条对话通道（见 study.py）。
 - 思考空间和收藏：/api/think/*（碎片是库里收件箱的笔记，AI 不碰，等你叫它；收藏存原件和抽出来的正文；冥想时间压住推送。见 think.py、saves.py）。
 - 日程和「要记得的」：/api/schedule（课表 + 自己的日程 + 当天的截止，能改）、/api/remember（作业、邮件、求职的 ddl，打勾），iPhone 日历订阅 /cal/<令牌>.ics（见 schedule.py）。
@@ -95,23 +96,15 @@ import friends  # noqa: E402 — 朋友（社交第二层）：/api/friends…�
 from forward import router as forward_router  # noqa: E402 — 合并转发：几条消息合成一份，发给朋友或转给自己的 Agent
 from a2a import router as a2a_router  # noqa: E402 — agent 之间（社交第三层）：/api/a2a…、/api/card…，顺带挂上收件箱 social 类的钩子
 from egress import router as egress_router  # noqa: E402 — Doorman 出口（第 9 步）：代办沙箱的出网判断 /api/egress…，顺带挂上收件箱 egress 类的钩子
+from diet import router as diet_router  # noqa: E402 — 饮食记录、个人食物库、营养目标、查营养（diet.py + nutrition.py）
 
 DIST = settings.dist
 settings.db.parent.mkdir(parents=True, exist_ok=True)  # 新实例第一次启动：数据目录还不存在
-# 训记的 meal_type → 餐次键（排序、分组用）；显示名按请求的语言给（meal_label），app 只显示不比较。
-MEALS = {"morning": "breakfast", "breakfast": "breakfast", "lunch": "lunch", "noon": "lunch", "dinner": "dinner", "evening": "dinner",
-         "night": "dinner", "preworkout": "preworkout", "postworkout": "postworkout", "snack": "snack", "snacks": "snack", "extra": "snack"}
-MEAL_ORDER = ["breakfast", "lunch", "preworkout", "postworkout", "dinner", "snack"]
 
 
 def weekday_name(i: int) -> str:
     """周几（0 = 周一）：中文一个字（app 拼成「周一」），英文 Mon。"""
     return L("一二三四五六日"[i], ("Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun")[i])
-
-
-def meal_label(key: str) -> str:
-    return {"breakfast": L("早餐", "Breakfast"), "lunch": L("午餐", "Lunch"), "dinner": L("晚餐", "Dinner"), "preworkout": L("练前", "Pre-workout"),
-            "postworkout": L("练后", "Post-workout"), "snack": L("加餐", "Snack")}.get(key) or L("其他", "Other")
 
 
 @asynccontextmanager
@@ -170,6 +163,7 @@ app.include_router(friends.router)  # 在 share 之后注册也行：/api/shares
 app.include_router(forward_router)  # /api/forward/basket 在 /api/forward/{fid} 之前定义（同一个 router 里按顺序）
 app.include_router(a2a_router)
 app.include_router(egress_router)
+app.include_router(diet_router)
 if apps is not None:
     app.include_router(apps.router)
 app.add_exception_handler(sources.NoSource, sources.no_source_handler)
@@ -346,65 +340,6 @@ def fitness_week(offset: int = 0):
             "sessions": sum(len(x["trains"]) for x in days), "active_days": len(done),
             "total_minutes": sum(x["minutes"] for x in days), "total_sets": sum(tr["sets_done"] for x in days for tr in x["trains"]),
             "days": days}
-
-
-def targets_of(day: dict | None) -> dict | None:
-    """训记把当天的营养目标放在 foods.limits 里（蛋白质 / 碳水 / 脂肪，克）。
-    训记不存热量目标，这里按 4/4/9 从三大营养素换算。配置文件里的 nutrition_targets 可以覆盖。"""
-    override = settings.nutrition_targets()
-    if override:
-        return {**override, "source": L("手动设定", "Set manually")}
-    lim = ((day or {}).get("foods") or {}).get("limits") or {}
-    try:
-        p, c, f = float(lim.get("protein") or 0), float(lim.get("carb") or 0), float(lim.get("fat") or 0)
-    except (TypeError, ValueError):
-        return None
-    if not (p and c and f):
-        return None
-    return {"kcal": round(p * 4 + c * 4 + f * 9), "protein": round(p), "carb": round(c), "fat": round(f), "source": xunji_name(), "kcal_derived": True}
-
-
-def grams_of(rec: dict) -> float | None:
-    amount = rec.get("amount")
-    try:
-        amount = float(amount)
-    except (TypeError, ValueError):
-        return None
-    unit = (rec.get("unit") or "g").strip()
-    if unit in ("g", "克", "ml", "毫升"):
-        return amount
-    for u in (rec.get("ntr") or {}).get("foodUnit") or []:
-        if u.get("unit") == unit and u.get("gram"):
-            return amount * float(u["gram"])
-    return None
-
-
-@app.get("/api/diet/day")
-def diet_day(date_: str | None = None):
-    d = date.fromisoformat(date_) if date_ else today()
-    sources.require("meals")
-    try:
-        with _lock:
-            data = xunji.call("food_query", {"start_date": d.isoformat(), "end_date": d.isoformat(), "include_detail": True}, ttl=ttl_for(d))
-    except xunji.XunjiError as exc:
-        raise HTTPException(502, L(f"训记读取失败：{exc}", f"Couldn't read Xunji: {exc}")) from exc
-    day = next((x for x in (data.get("res") or {}).get("days") or [] if x.get("datestr") == d.isoformat()), None)
-    totals = (day or {}).get("totals") or {}
-    meals: dict[str, dict] = {}
-    for rec in ((day or {}).get("foods") or {}).get("records") or []:
-        key = MEALS.get(str(rec.get("meal_type") or "").lower(), "other")
-        g, ntr = grams_of(rec), rec.get("ntr") or {}
-        kcal = round(float(ntr.get("cal") or 0) * g / 100) if g is not None else None
-        protein = round(float(ntr.get("protein") or 0) * g / 100, 1) if g is not None else None
-        meal = meals.setdefault(key, {"label": meal_label(key), "kcal": 0, "protein": 0.0, "items": []})
-        meal["items"].append({"name": rec.get("name"), "amount": rec.get("amount"), "unit": rec.get("unit") or "g", "kcal": kcal})
-        meal["kcal"] += kcal or 0
-        meal["protein"] = round(meal["protein"] + (protein or 0), 1)
-    ordered = [meals[k] for k in sorted(meals, key=lambda k: MEAL_ORDER.index(k) if k in MEAL_ORDER else 99)]
-    return {"ok": True, "source": xunji_name(), "date": d.isoformat(),
-            "totals": {"kcal": round(totals.get("totalCal") or 0), "protein": round(totals.get("totalProtein") or 0),
-                       "carb": round(totals.get("totalCarb") or 0), "fat": round(totals.get("totalFat") or 0)},
-            "targets": targets_of(day), "item_count": (day or {}).get("item_count") or 0, "meals": ordered}
 
 
 @app.get("/api/body/latest")

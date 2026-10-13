@@ -31,6 +31,9 @@ FEATURES = (
     "friends.search",   # GET /api/friends/search；/api/search 不限线程时带好友聊天（kind friend）
     "chats.list",       # GET /api/chats（Agent 栏 + 主对话、会议、项目，带未读、置顶、免打扰、状态）；PATCH / DELETE /api/chats/{thread}
     "friends.clear",    # POST /api/friends/{id}/clear：删除与这位好友的聊天记录（只在本机）
+    "diet.log",       # 饮食记录在服务自己的库里：/api/diet/day 的 meals 带 key / time / carb / fat、每样带 id；/api/diet/entries · /days · /undo · /targets
+    "diet.log_meal",  # POST /api/diet/log-plan：按饮食建议卡一键「记录这一餐」（份量可改，同一餐不重复记，返回 batch 可撤销）
+    "diet.foods",     # 个人食物库 /api/diet/foods、查营养 /api/diet/lookup（个人食物库 → Open Food Facts → CoFID → USDA）
 )
 
 
