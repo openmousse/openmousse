@@ -74,7 +74,7 @@ def clock(v: str | None) -> str:
 # —— 待处理 ——————————————————————————————————————————————————————————
 
 def from_label(badge: str) -> str:
-    """邮件条目从哪来：来自邮件 / 来自 NYU。"""
+    """邮件条目从哪来：来自邮件 / 来自转发进来的那个邮箱（badge，比如「来自 Work」）。"""
     if not badge or badge in ("邮件", "Mail"):
         return L("来自邮件", "From email")
     return L(f"来自 {badge}", f"From {badge}")
@@ -118,7 +118,7 @@ def chip(e: dict, d0: date) -> tuple[str, str]:
 
 def pending_row(e: dict, d0: date, status: dict[str, str], other_day: bool = False) -> dict:
     title = e["title"]
-    if e["origin"] == "apply":  # 「Point72 · Point72 Academy …」：岗位名里已经有机构名就不重复
+    if e["origin"] == "apply":  # 「Northwind · Northwind Analyst Program」：岗位名里已经有机构名就不重复
         org, _, role = title.partition(" · ")
         if role.lower().startswith(org.lower()):
             title = role
@@ -238,7 +238,7 @@ def core(e: dict) -> str:
 
 def same_activity(a: dict, b: dict) -> bool:
     """同一活动：同一天，同一个链接；或者同一时刻、标题相近（字面重合过半，或者一边标题里的名字都出现在另一边的标题和正文里）。
-    例：「Monolith AI 创始人炉边谈已购票」和「已有票：Richard Ahlfeld 炉边对话」都是 17:00，前者正文写着 Richard Ahlfeld。"""
+    例：「Acme AI 创始人炉边谈已购票」和「已有票：Sam Lee 炉边对话」都是 17:00，前者正文写着 Sam Lee。"""
     if a["date"] != b["date"]:
         return False
     if a.get("link") and a.get("link") == b.get("link"):

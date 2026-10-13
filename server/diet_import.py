@@ -3,7 +3,7 @@
 
   python3 diet_import.py export [--from 2025-10-13] [--to 今天] [--out 文件]      # 只读：按月拉训记的饮食记录（含营养目标），存成一个 JSON
   python3 diet_import.py import --file 导出的文件 [--commit] [--report 报告.md]
-        [--current-target 136/240/80[/2224] --current-from 2026-09-27 --current-note "…"]
+        [--current-target 120/250/70[/2110] --current-from 2026-01-01 --current-note "…"]
   python3 diet_import.py verify --file 导出的文件 [--report 报告.md]             # 只核对：训记每天的合计 vs 这里的
 
 训记的 Open API 只给过去一年到未来三个月（2025-10-13 起）；更早的要在训记 App 里自己导出。导出文件放在 <data_dir>/diet/（不进 git）。
@@ -405,7 +405,7 @@ def parse_target(s: str | None) -> dict | None:
         return None
     parts = [diet.num(x) for x in re.split(r"[/,\s]+", s.strip()) if x]
     if len(parts) not in (3, 4) or any(p is None for p in parts):
-        sys.exit(L("--current-target 写成 蛋白质/碳水/脂肪[/热量]，比如 136/240/80", "--current-target is protein/carb/fat[/kcal], e.g. 136/240/80"))
+        sys.exit(L("--current-target 写成 蛋白质/碳水/脂肪[/热量]，比如 120/250/70", "--current-target is protein/carb/fat[/kcal], e.g. 120/250/70"))
     return {"protein": parts[0], "carb": parts[1], "fat": parts[2], "kcal": parts[3] if len(parts) == 4 else None}
 
 

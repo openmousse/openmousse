@@ -35,8 +35,8 @@
   python3 diet_ctl.py undo <批号>
 
 营养目标（可以分训练日 / 休息日：碳循环）
-  python3 diet_ctl.py targets set --protein 136 --carb 240 --fat 80 [--kcal 2224] [--from 2026-10-13] [--note …]
-  python3 diet_ctl.py targets set --day-type train --protein 136 --carb 280 --fat 60 --kcal 2200 [--from …]   # 只改训练日那一套
+  python3 diet_ctl.py targets set --protein 120 --carb 250 --fat 70 [--kcal 2110] [--from 2026-10-13] [--note …]
+  python3 diet_ctl.py targets set --day-type train --protein 120 --carb 300 --fat 60 --kcal 2220 [--from …]   # 只改训练日那一套
   python3 diet_ctl.py day-type train|rest|auto [--date …]   # 标这一天是训练日 / 休息日；auto = 去掉标记（日程里排了训练算训练日，否则休息日）
 
 不给 --by：当前目录在哪个 Agent 的工作区里就算它记的，否则是 main。服务地址按 server.json 的 bind（MOUSSE_SERVER_CONFIG 换一份就指向别的服务，测试用）。
@@ -93,8 +93,8 @@ Log (preview by default: nutrition worked out and shown, nothing written; add --
   python3 diet_ctl.py undo <batch id>
 
 Targets (training-day / rest-day sets for carb cycling are optional)
-  python3 diet_ctl.py targets set --protein 136 --carb 240 --fat 80 [--kcal 2224] [--from 2026-10-13] [--note …]
-  python3 diet_ctl.py targets set --day-type train --protein 136 --carb 280 --fat 60 --kcal 2200 [--from …]   # only the training-day set
+  python3 diet_ctl.py targets set --protein 120 --carb 250 --fat 70 [--kcal 2110] [--from 2026-10-13] [--note …]
+  python3 diet_ctl.py targets set --day-type train --protein 120 --carb 300 --fat 60 --kcal 2220 [--from …]   # only the training-day set
   python3 diet_ctl.py day-type train|rest|auto [--date …]   # mark a day as a training or rest day; auto = remove the mark (a training session in the schedule makes it a training day, otherwise rest)
 
 Without --by: the Agent whose workspace contains the current directory, otherwise main. The server address comes from bind in server.json

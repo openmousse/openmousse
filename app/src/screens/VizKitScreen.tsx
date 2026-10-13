@@ -1,5 +1,5 @@
 // 可视化素材库展示页（设置 → 关于 → 可视化素材库；网页版 ?screen=VizKit）：每个组件一张卡，下面一句用法。
-// 示例数据都是 10/12 的真实数据（vizKitData.ts）；顶上可以直接切浅色 / 深色对照。
+// 示例数据是虚构的（vizKitData.ts），日期按 10/12 那一天排；顶上可以直接切浅色 / 深色对照。
 import React, { useState } from 'react';
 import { ScrollView, StyleSheet, View } from 'react-native';
 import { useNavigation } from '@react-navigation/native';
@@ -145,7 +145,7 @@ export function VizKitScreen() {
   const lastRec = D.recovery[D.recovery.length - 1];
   return (
     <Screen>
-      <NavHeader title={L('可视化素材库', 'Chart kit')} sub={L('示例数据：10/12', 'Sample data: 12 Oct')} onBack={() => nav.goBack()} />
+      <NavHeader title={L('可视化素材库', 'Chart kit')} sub={L('示例数据（虚构）', 'Sample data (fictional)')} onBack={() => nav.goBack()} />
       <ScrollView contentContainerStyle={{ padding: space.lg, paddingBottom: space.xxl * 2 }}>
         <T v="callout" color={t.ink2}>{L('看板、今天页、小板子和 app 内所有图表共用的组件。点按柱子、折线、图例查看数值；表头可排序。',
           'The components behind every chart in the app: boards, Today and output boards. Tap bars, lines or legend rows for values; table headers sort.')}</T>
@@ -161,13 +161,13 @@ export function VizKitScreen() {
 
         <Section title={L('数值', 'Numbers')}>
           <Item title={L('数字卡', 'Stat tile')} rule={L('一个主数字，配说明与至多两项次要数字；一个数能说清的事不画图。', 'One headline number with its label and up to two secondary figures. If one number says it, skip the chart.')}>
-            <StatTile size="hero" value="63" label={L('可投岗位', 'Open roles')} minor={[{ value: '10', label: L('本周截止', 'due this week') }, { value: '13', label: L('下周截止', 'due next week') }]} />
+            <StatTile size="hero" value="39" label={L('可投岗位', 'Open roles')} minor={[{ value: '6', label: L('本周截止', 'due this week') }, { value: '9', label: L('下周截止', 'due next week') }]} />
           </Item>
           <Item title={L('数字行（带变化值）', 'Stat row with change')} rule={L('变化值写明对比的时段，颜色 = 方向 × 好坏，配箭头；迷你趋势末端是当前值。', 'A change names its comparison period; colour = direction × whether that is good, always with an arrow. The sparkline ends on the current value.')}>
             <StatRow items={[
               { label: L('恢复分', 'Recovery'), value: String(lastRec.score), delta: { text: L('比昨天 −5', '−5 vs yesterday'), dir: 'down', good: false }, trend: D.recovery.slice(-7).map((d) => d.score) },
-              { label: L('睡眠', 'Sleep'), value: '8:56', sub: L('目标 7–9 小时', 'Target 7–9 h') },
-              { label: L('训练', 'Workout'), value: '36', unit: L('分钟', 'min'), sub: 'Pull A · 10 ' + L('组', 'sets') },
+              { label: L('睡眠', 'Sleep'), value: '7:15', sub: L('目标 7–9 小时', 'Target 7–9 h') },
+              { label: L('训练', 'Workout'), value: '42', unit: L('分钟', 'min'), sub: 'Pull A · 10 ' + L('组', 'sets') },
             ]} />
           </Item>
           <Item title={L('进度：环形与分段', 'Progress: ring and segments')} rule={L('环形用于单一目标；分段条用于逐项完成情况。示例：10/12 Pull A。', 'A ring for one goal; segments for item-by-item completion. Example: Pull A on 12 Oct.')}>
@@ -187,8 +187,8 @@ export function VizKitScreen() {
               <T style={{ fontSize: 34, lineHeight: 40, fontWeight: '700' }}>{String(lastRec.score)}</T>
               <T v="callout" color={t.ink2}>{L('恢复分', 'Recovery score')}</T>
             </View>
-            <Sparkline values={D.recovery.map((d) => d.score)} height={50} min label={L('近 20 天恢复分，最低 40（10/3），当前 66', 'Recovery score over 20 days: low 40 on 3 Oct, now 66')} />
-            <T v="caption" color={t.ink3} style={{ fontWeight: '400' }}>{L('近 20 天 · 最低 40（10/3）', 'Last 20 days · low 40 (3 Oct)')}</T>
+            <Sparkline values={D.recovery.map((d) => d.score)} height={50} min label={L('近 20 天恢复分，最低 44（10/3），当前 68', 'Recovery score over 20 days: low 44 on 3 Oct, now 68')} />
+            <T v="caption" color={t.ink3} style={{ fontWeight: '400' }}>{L('近 20 天 · 最低 44（10/3）', 'Last 20 days · low 44 (3 Oct)')}</T>
           </Item>
           <Item title={L('折线 + 目标范围', 'Line with target range')} rule={L('2px 线，目标范围用浅色带；点按或拖动显示当天数值。示例：睡眠时长（小时）。', '2px line, the target range is a light band; tap or drag for that day. Example: hours slept.')}>
             <LineChart current="2026-10-12" band={{ low: 7, high: 9, label: L('目标 7–9 小时', 'Target 7–9 h') }} fmt={(v) => L(`${v} 小时`, `${v} h`)}
@@ -211,7 +211,7 @@ export function VizKitScreen() {
             table={<DataTable columns={weekCols} rows={weeks} rowKey={(r) => r.key} />}>
             <BarChart data={weeks} />
           </Item>
-          <Item title={L('堆叠柱', 'Stacked bars')} caption={L('有截止日期的 56 个', '56 with a deadline')} rule={L('两个及以上系列必须有图例；段与段之间留 2px；点按显示每段数值。', 'Two or more series always get a legend; 2px between segments; tap a column for its values.')}>
+          <Item title={L('堆叠柱', 'Stacked bars')} caption={L('有截止日期的 39 个', '39 with a deadline')} rule={L('两个及以上系列必须有图例；段与段之间留 2px；点按显示每段数值。', 'Two or more series always get a legend; 2px between segments; tap a column for its values.')}>
             <StackedBar categories={weeks.map((w) => ({ key: w.key, label: w.label, current: w.current }))}
               series={[{ key: 'intern', label: L('实习', 'Internship'), values: D.deadlineByType.internship }, { key: 'full', label: L('全职', 'Full-time'), values: D.deadlineByType.fullTime }]} />
           </Item>
@@ -227,25 +227,25 @@ export function VizKitScreen() {
                 <View style={{ flex: 1, gap: 4 }}>
                   <T v="caption" color={t.ink2} style={{ fontWeight: '400' }}>{L('硬拉', 'Deadlift')}</T>
                   <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
-                    <T style={{ fontSize: 26, lineHeight: 30, fontWeight: '700' }}>85 kg</T>
+                    <T style={{ fontSize: 26, lineHeight: 30, fontWeight: '700' }}>70 kg</T>
                     <ChangeTag dir="up" text="5 kg" good />
                   </View>
-                  <T v="caption" color={t.ink3} style={{ fontWeight: '400' }}>{L('估算最大重量 96 → 99 kg', 'Estimated 1RM 96 → 99 kg')}</T>
+                  <T v="caption" color={t.ink3} style={{ fontWeight: '400' }}>{L('估算最大重量 78 → 82 kg', 'Estimated 1RM 78 → 82 kg')}</T>
                 </View>
-                <BeforeAfter before={{ label: '9/29', value: 80 }} after={{ label: '10/12', value: 85 }} label={L('硬拉工作重量：9/29 80 kg，10/12 85 kg', 'Deadlift working weight: 80 kg on 29 Sep, 85 kg on 12 Oct')} />
+                <BeforeAfter before={{ label: '9/29', value: 65 }} after={{ label: '10/12', value: 70 }} label={L('硬拉工作重量：9/29 65 kg，10/12 70 kg', 'Deadlift working weight: 65 kg on 29 Sep, 70 kg on 12 Oct')} />
               </View>
             </VizSurface>
             <CompareList title={L('与 9/29 相比', 'Compared with 29 Sep')} items={D.pullCompare()} />
           </Item>
           <Item title={L('目标条', 'Target bar')} rule={L('实际对目标：竖线是目标，条可以超过它；超过不好时（热量）用注意色并写明「超出」。', 'Actual against target: the tick is the target and the bar may pass it; when going over is bad (calories) it turns amber and says so.')}>
             <TargetBar label={L('蛋白质', 'Protein')} value={D.dinner.protein} target={D.dinner.proteinTarget} text={String(D.dinner.protein)} targetText={`${D.dinner.proteinTarget} g`}
-              note={L('今晚两顿合计；训练日目标 136 g。白天的饮食尚未记录。', "Tonight's two meals; the training-day target is 136 g. Daytime meals aren't logged yet.")} />
+              note={L('今晚两顿合计；训练日目标 120 g。白天的饮食尚未记录。', "Tonight's two meals; the training-day target is 120 g. Daytime meals aren't logged yet.")} />
           </Item>
         </Section>
 
         <Section title={L('占比', 'Part to whole')}>
           <Item title={L('环形', 'Donut')} rule={L('只用于 3–6 份的占比，段间留 2px；只有两份时改用百分比条或数字。点按图例突出一份。', 'Only for 3–6 parts, 2px between them; with two parts use a percent bar or the numbers. Tap a legend row to pick a part out.')}>
-            <Donut data={D.regions()} center={{ value: '63', label: L('个岗位', 'roles') }} pct />
+            <Donut data={D.regions()} center={{ value: '39', label: L('个岗位', 'roles') }} pct />
           </Item>
           <Item title={L('营养环', 'Macro ring')} rule={L('三大营养素按热量算比例（蛋白质、碳水 4 kcal/g，脂肪 9 kcal/g），中间写总热量。示例：10/12 晚餐建议。', 'Macros by calories (protein and carbs 4 kcal/g, fat 9 kcal/g) with the total in the middle. Example: the 12 Oct dinner plan.')}>
             <NutritionRing protein={D.dinner.protein} carbs={D.dinner.carbs} fat={D.dinner.fat} kcal={D.dinner.kcal} centerLabel={L('kcal · 两顿', 'kcal · 2 meals')} />
@@ -256,7 +256,7 @@ export function VizKitScreen() {
         </Section>
 
         <Section title={L('健康', 'Health')}>
-          <Item title={L('睡眠分期', 'Sleep stages')} rule={L('一行一期，越往下越深，颜色同一色相由浅到深，清醒用灰；点按某一段查看起止。示例：10/12 03:03–13:21。', 'One row per stage, deeper rows lower and darker in one hue, awake in grey; tap a stretch for its times. Example: 12 Oct, 03:03–13:21.')}>
+          <Item title={L('睡眠分期', 'Sleep stages')} rule={L('一行一期，越往下越深，颜色同一色相由浅到深，清醒用灰；点按某一段查看起止。示例：一晚 23:40–07:10。', 'One row per stage, deeper rows lower and darker in one hue, awake in grey; tap a stretch for its times. Example: one night, 23:40–07:10.')}>
             <SleepStages segments={D.sleepNight} totals={D.sleepTotals} />
           </Item>
           <Item title={L('连续打卡', 'Streak')} rule={L('最近 N 天一格一天：做了上色，没做是轨道色，今天描金边。示例：9/29–10/12 训练。', 'One cell per day for the last N days: done is coloured, missed is the track, today has a gold edge. Example: workouts, 29 Sep–12 Oct.')}>
