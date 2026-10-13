@@ -301,12 +301,9 @@ schedule.TRAINS_ON = trains_on  # 过去的训练日程用训练记录补实际�
 
 
 def meals_logged(d: date) -> dict:
-    """某天记了几条饮食、多少千卡（「今天」页饮食卡上的「今日尚未记录饮食」）。"""
-    sources.require("meals")
-    with _lock:
-        data = xunji.call("food_query", {"start_date": d.isoformat(), "end_date": d.isoformat(), "include_detail": False}, ttl=ttl_for(d))
-    day = next((x for x in (data.get("res") or {}).get("days") or [] if x.get("datestr") == d.isoformat()), None) or {}
-    return {"count": int(day.get("item_count") or 0), "kcal": round(float((day.get("totals") or {}).get("totalCal") or 0))}
+    """某天记了几条饮食、多少千卡（「今天」页饮食卡上的「今日尚未记录饮食」）。走 diet_day：饮食记录换了真源也跟着换。"""
+    day = diet_day(d.isoformat())
+    return {"count": int(day.get("item_count") or 0), "kcal": int((day.get("totals") or {}).get("kcal") or 0)}
 
 
 today_page.MEALS_ON = meals_logged
