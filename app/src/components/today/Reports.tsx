@@ -15,6 +15,7 @@ import { MealPlanCard } from '../LiveBoards';
 import { Markdown } from '../Markdown';
 import { useSheet } from '../Sheet';
 import { useSourceName } from '../SourceBadge';
+import { supports } from '../../api/version';
 import { T, showError } from '../ui';
 import { Legend, Sparkline, seriesColor } from '../viz';
 import { BlockHeader } from './parts';
@@ -116,6 +117,8 @@ function MealCard({ r, fresh, onPress }: { r: CardReport; fresh: boolean; onPres
   ].map((x) => ({ ...x, pct: Math.round((x.v / sum) * 100) })) : [];
   const logged = m?.logged;
   const foot = [tot?.kcal ? `${tot.kcal} kcal` : '', logged ? (logged.count ? L(`今日已记录 ${logged.count} 项`, `${logged.count} logged today`) : L('今日尚未记录饮食', 'Nothing logged today')) : ''].filter(Boolean).join(' · ');
+  // 「记录」：服务器能按建议卡记一餐时才有（diet.log_meal）；点开的是同一份报告，在里面选记哪一顿、份量
+  const canLog = supports('diet.log_meal') && !!logged && logged.count === 0;
   return (
     <Shell onPress={onPress} label={`${m?.heading ?? r.title}，${m?.dishes ?? ''}`}>
       <Head r={r} fresh={fresh} />
@@ -135,7 +138,16 @@ function MealCard({ r, fresh, onPress }: { r: CardReport; fresh: boolean; onPres
           <Legend items={parts.map((p) => ({ label: p.label, slot: p.slot, value: `${p.pct}%` }))} style={{ columnGap: 10, rowGap: 0 }} />
         </View>
       ) : null}
-      {foot ? <T v="caption" color={t.ink3} style={{ fontWeight: '400' }} numberOfLines={1}>{foot}</T> : null}
+      {foot || canLog ? (
+        <View style={styles.foot}>
+          <T v="caption" color={t.ink3} style={{ fontWeight: '400', flex: 1 }} numberOfLines={1}>{foot}</T>
+          {canLog ? (
+            <Pressable onPress={onPress} accessibilityRole="button" hitSlop={6} style={({ pressed }) => [styles.logBtn, { backgroundColor: t.surface2, opacity: pressed ? 0.7 : 1 }]}>
+              <T v="caption" style={{ fontSize: 13, fontWeight: '600' }}>{L('记录', 'Log')}</T>
+            </Pressable>
+          ) : null}
+        </View>
+      ) : null}
     </Shell>
   );
 }
@@ -174,7 +186,10 @@ function PlainCard({ r, fresh, onPress }: { r: CardReport; fresh: boolean; onPre
 
 // —— 点开 ————————————————————————————————————————————————————————————
 
-/** 点开一份报告。产出小板子（output-boards 分支）合进来后，卡片类的换成它的小板子；邮件摘要留在这里。 */
+/**
+ * 点开一份报告。产出小板子（output-boards 分支）合进来后：卡片类在 supports('outputs') 时换成 useOutputBoard()(r.id)
+ *（components/outputs/Board.tsx，打开时它自己标看过）；邮件摘要留在这里。
+ */
 export function useOpenReport() {
   const sheet = useSheet();
   const { markFeedSeen } = useStore();
@@ -268,13 +283,15 @@ function MailDigest({ r }: { r: MailReport }) {
 const styles = StyleSheet.create({
   strip: { marginHorizontal: -space.lg },
   stripIn: { paddingHorizontal: space.lg, gap: 10 },
-  card: { width: CARD_W, height: CARD_H, borderRadius: 16, paddingHorizontal: 14, paddingVertical: 12, gap: 6 },
+  card: { width: CARD_W, height: CARD_H, borderRadius: 16, paddingHorizontal: 14, paddingVertical: 12, gap: 5 },
   head: { flexDirection: 'row', alignItems: 'center', gap: 8 },
   when: { flexDirection: 'row', alignItems: 'center', gap: 4 },
   newDot: { width: 7, height: 7, borderRadius: 4 },
   big: { flexDirection: 'row', alignItems: 'baseline', gap: 6 },
   bigNum: { fontSize: 28, fontWeight: '700', fontVariant: ['tabular-nums'] },
   split: { flexDirection: 'row', gap: vizMark.gap },
+  foot: { flexDirection: 'row', alignItems: 'center', gap: 8, minHeight: 20 },
+  logBtn: { height: 24, paddingHorizontal: 12, borderRadius: 12, alignItems: 'center', justifyContent: 'center' },
   chips: { flexDirection: 'row', flexWrap: 'wrap', gap: 6 },
   cat: { borderRadius: 7, paddingHorizontal: 8, paddingVertical: 3 },
   catText: { fontSize: 12 },
