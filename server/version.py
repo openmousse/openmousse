@@ -35,6 +35,7 @@ FEATURES = (
     "diet.log_meal",  # POST /api/diet/log-plan：按饮食建议卡一键「记录这一餐」（份量可改，同一餐不重复记，返回 batch 可撤销）
     "diet.foods",     # 个人食物库 /api/diet/foods、查营养 /api/diet/lookup（个人食物库 → Open Food Facts → CoFID → USDA）
     "today",            # GET /api/today（待处理 / 日程 / 报告三块）、/api/today/range（周 / 月）、POST /api/today/snooze；/api/schedule/mark 收 mail:
+    "boards.views",     # 看板积木 type collection（集合块：表格 / 看板 / 日历 / 时间线 / 图表）；POST /api/boards/{agent}/view 按排序、筛选、月份、翻页重算一个视图
 )
 
 

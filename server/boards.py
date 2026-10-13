@@ -11,6 +11,7 @@
 - 谁能改：用户在对话里让加的，Agent 直接 apply（看板顶上出撤回条）；Agent 自己想到的 propose → 收件箱 kind block，
   同意时这里把草稿换成 live（inbox.HOOKS）。积木只显示、只让用户自己点（改、删、打勾、按钮），不推送、不写外面的系统。
 - Agent 用 server/board_ctl.py 走这些接口；用户在 app 里的改动 by=user。
+- 集合块（type collection：一张表、几种视图，表格 / 看板 / 日历 / 时间线 / 图表）在 views.py，经 EXTRA 接进来。
 """
 from __future__ import annotations
 
@@ -33,6 +34,9 @@ from i18n import L, lang
 router = APIRouter()
 
 TYPES = ("stat", "progress", "chart", "list", "checklist", "text", "action")
+# 别的模块加的积木种类（views.py 的 collection 集合块）：type → (校验, 算数据)。
+# 校验拿到原始配置和已经填好 id / title / after 这些公共字段的 b，返回填完的 b；算数据和 resolve 一样，出错只影响这一块。
+EXTRA: dict[str, tuple[Callable[[sqlite3.Connection, str, dict, dict], dict], Callable[[sqlite3.Connection, str, dict], dict]]] = {}
 FIELD_TYPES = ("text", "number", "money", "date", "datetime", "bool", "choice", "photo", "link")
 OPS = ("=", "!=", ">", ">=", "<", "<=", "in", "not_in", "contains", "empty", "not_empty")
 AGGS = ("sum", "avg", "count", "min", "max", "last")
@@ -173,7 +177,7 @@ HEALTH_DAILY = (("sleep_min", "睡了多久", "Sleep", "min"), ("deep_min", "深
                 ("core_min", "核心睡眠", "Core sleep", "min"), ("awake_min", "醒着", "Awake", "min"), ("hrv_ms", "HRV", "HRV", "ms"),
                 ("rhr_bpm", "静息心率", "Resting HR", "bpm"), ("resp_rate", "呼吸频率", "Respiratory rate", "/min"),
                 ("wrist_temp_c", "手腕温度", "Wrist temp", "°C"))
-METRIC = re.compile(r"^[A-Za-z][A-Za-z0-9_]{1,80}$")
+METRIC = re.compile(r"^[A-Za-z][A-Za-z0-9_.]{1,80}$")  # Apple 健康的训练按类型存成 Workout.traditionalStrengthTraining
 
 
 def virtual(conn: sqlite3.Connection, name: str) -> tuple[dict, str, list] | None:
@@ -201,6 +205,8 @@ def virtual(conn: sqlite3.Connection, name: str) -> tuple[dict, str, list] | Non
         fields = [date_f] + [{"key": k, "label": lab, "type": "number", **({"unit": unit} if unit and k != "count" else {})}
                              for k, lab in (("sum", L("合计", "Total")), ("avg", L("平均", "Average")), ("min", L("最低", "Min")),
                                             ("max", L("最高", "Max")), ("count", L("次数", "Count")))]
+        if conn.execute("SELECT 1 FROM health_metrics WHERE metric=? AND minutes IS NOT NULL LIMIT 1", (metric,)).fetchone():
+            fields.append({"key": "minutes", "label": L("时长", "Duration"), "type": "number", "unit": "min"})  # 训练、站立这类有时长的
         cols = ", ".join(f"'{f['key']}', {f['key']}" for f in fields)
         sub = f"(SELECT {shape.format(cols)} FROM health_metrics WHERE metric=?)"
         params = [metric]
@@ -672,6 +678,18 @@ def clean_row_spec(raw: Any) -> dict:
     return out
 
 
+def clean_row_actions(coll: dict, acts: Any) -> list[dict]:
+    """行上的快捷按钮（「用掉 1 份」「加进申请」）：最多 3 个，set 里的字段要在表里。列表和集合块共用。"""
+    out = []
+    for a in (acts if isinstance(acts, list) else [])[:3]:
+        if not isinstance(a, dict) or not a.get("label") or not isinstance(a.get("set"), dict):
+            raise bad("rowActions 写成 {label, set: {字段: 值 或 +1 / -1 / today / now}}", "rowActions is {label, set: {field: value, +1, -1, today or now}}")
+        for k in a["set"]:
+            field_of(coll, k)
+        out.append({"label": str(a["label"])[:16], "set": a["set"]})
+    return out
+
+
 def clean_block(conn: sqlite3.Connection, agent: str, raw: Any, anchors: tuple[str, ...]) -> dict:
     if not isinstance(raw, dict):
         raise bad("每一块写成 {id, type, title, …}", "Each block is {id, type, title, …}")
@@ -683,8 +701,8 @@ def clean_block(conn: sqlite3.Connection, agent: str, raw: Any, anchors: tuple[s
         return {"id": bid, "type": "builtin", **({"hidden": True} if raw.get("hidden") else {})}
     if not BLOCK_ID.match(bid):
         raise bad(f"积木 id「{bid}」不行：小写字母或数字开头，只用 a-z 0-9 _ -", f'Bad block id "{bid}": a-z 0-9 _ - only')
-    if typ not in TYPES:
-        raise bad(f"积木「{bid}」的 type 只能是 {' / '.join(TYPES)}", f'Block "{bid}": type must be one of {", ".join(TYPES)}')
+    if typ not in TYPES and typ not in EXTRA:
+        raise bad(f"积木「{bid}」的 type 只能是 {' / '.join((*TYPES, *EXTRA))}", f'Block "{bid}": type must be one of {", ".join((*TYPES, *EXTRA))}')
     b: dict[str, Any] = {"id": bid, "type": typ, "title": str(raw.get("title") or "").strip()[:40]}
     for k in ("after", "caption", "empty"):
         if raw.get(k):
@@ -693,6 +711,8 @@ def clean_block(conn: sqlite3.Connection, agent: str, raw: Any, anchors: tuple[s
         b["hidden"] = True
     if raw.get("pack") and KEY.match(str(raw["pack"])):
         b["pack"] = str(raw["pack"])  # 哪个功能包装的（重装、卸载认它）
+    if typ in EXTRA:
+        return EXTRA[typ][0](conn, agent, raw, b)
     if typ == "stat":
         items = raw.get("items") or []
         if not isinstance(items, list) or not 1 <= len(items) <= 4:
@@ -753,14 +773,7 @@ def clean_block(conn: sqlite3.Connection, agent: str, raw: Any, anchors: tuple[s
             b["edit"] = bool(raw["edit"])
         if typ == "list":
             b["style"] = "chips" if raw.get("style") == "chips" else "rows"
-            acts = raw.get("rowActions") or []
-            b["rowActions"] = []
-            for a in acts[:3]:
-                if not isinstance(a, dict) or not a.get("label") or not isinstance(a.get("set"), dict):
-                    raise bad("rowActions 写成 {label, set: {字段: 值 或 +1 / -1 / today / now}}", "rowActions is {label, set: {field: value, +1, -1, today or now}}")
-                for k in a["set"]:
-                    field_of(coll, k)
-                b["rowActions"].append({"label": str(a["label"])[:16], "set": a["set"]})
+            b["rowActions"] = clean_row_actions(coll, raw.get("rowActions"))
         else:
             chk = str(raw.get("check") or "")
             _, f = field_of(coll, chk)
@@ -889,6 +902,8 @@ def resolve(conn: sqlite3.Connection, agent: str, b: dict) -> dict:
     """一块积木要显示的数据。出错只影响这一块（error），不影响整个看板。"""
     typ = b["type"]
     try:
+        if typ in EXTRA:
+            return EXTRA[typ][1](conn, agent, b)
         if typ == "stat":
             items = []
             for it in b["items"]:

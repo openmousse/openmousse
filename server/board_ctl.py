@@ -17,6 +17,10 @@
   python3 board_ctl.py apply --file board.json --note "按你说的加了 4 块"          # 用户明确让你加的：直接换上
   python3 board_ctl.py propose --file board.json --title "在饮食看板加一块「快过期」" --why "…" --change "…" [--dedupe 键]
   python3 board_ctl.py history | revert <版本>
+  python3 board_ctl.py view list | view show <集合块> [<视图>] [--month 2026-11]     # 集合块（一张表、几种视图）的视图
+  python3 board_ctl.py view add <集合块> --json '{"id": "cal", "type": "calendar", "date": "deadline"}' [--default] [--check]
+  python3 board_ctl.py view update <集合块> <视图> --json '{"sort": ["-score"]}' | view remove <集合块> <视图> | view default <集合块> <视图>
+                                                          # 改视图：用户让改的直接改（--note），自己想到的 --propose --title … --why …
   python3 board_ctl.py check --plan 方案.json             # 建 Agent 之前：方案（表 + 积木，表可以带 rows 示例行）画出来什么样
   python3 board_ctl.py pack list | pack show pantry | pack guide pantry      # 功能包：有哪些、装了会怎样、怎么用
   python3 board_ctl.py pack install pantry [--check] [--propose --why "…"]   # 用户让装的直接装；你自己想到的 --propose
@@ -65,6 +69,10 @@ Goes through the server's HTTP API (/api/boards, /api/collections, /api/rows).
   python3 board_ctl.py apply --file board.json --note "Added 4 blocks as you asked"   # the user explicitly asked: switch to it now
   python3 board_ctl.py propose --file board.json --title "Add an 'Expiring soon' block to the diet board" --why "…" --change "…" [--dedupe KEY]
   python3 board_ctl.py history | revert <version>
+  python3 board_ctl.py view list | view show <collection> [<view>] [--month 2026-11]   # a collection block's views (one table, several views)
+  python3 board_ctl.py view add <collection> --json '{"id": "cal", "type": "calendar", "date": "deadline"}' [--default] [--check]
+  python3 board_ctl.py view update <collection> <view> --json '{"sort": ["-score"]}' | view remove <collection> <view> | view default <collection> <view>
+                                                          # the user asked: change it (--note); your own idea: --propose --title … --why …
   python3 board_ctl.py check --plan plan.json            # before an Agent exists: how its plan (tables + blocks, tables may carry sample rows) looks
   python3 board_ctl.py pack list | pack show pantry | pack guide pantry      # feature packs: what exists, what installing does, how to use it
   python3 board_ctl.py pack install pantry [--check] [--propose --why "…"]   # the user asked: install; your own idea: --propose
@@ -205,7 +213,38 @@ def summary(b: dict) -> str:
         return head + ("\n" + "\n".join(lines) if lines else "")
     if t == "text":
         return (d.get("text") or b.get("text") or "")[:80]
+    if t == "collection":
+        return L(f"{d.get('total', 0)} 行（{d.get('collection')}），默认视图 {b.get('view')}", f"{d.get('total', 0)} rows ({d.get('collection')}), default view {b.get('view')}") \
+            + "".join("\n" + view_line(vid, x, vid == b.get("view")) for vid, x in (d.get("views") or {}).items())
     return " / ".join(f"[{a['label']}]" for a in b.get("actions", []))
+
+
+def view_line(vid: str, x: dict, default: bool = False) -> str:
+    """集合块的一个视图现在显示什么（一行）。"""
+    head = f"    {'*' if default else '-'} {vid} [{x.get('type')}] {x.get('label') or ''}: "
+    if x.get("error"):
+        return head + L(f"出错：{x['error']}", f"error: {x['error']}")
+    t = x.get("type")
+    if t == "board":
+        what = " / ".join(f"{c['label']} {c['count']}" for c in x.get("columns", []))
+        if x.get("hidden"):
+            what += L(f"（另有 {x['hidden']} 行不在这些列里）", f" ({x['hidden']} more not in these columns)")
+    elif t == "table":
+        what = L(f"{x.get('total', 0)} 行，列：", f"{x.get('total', 0)} rows, columns: ") + ", ".join(c["label"] for c in x.get("columns", []))
+    elif t == "calendar":
+        what = f"{x.get('title')} · {x.get('count', 0)}" + (L(f"（另有 {x['undated']} 行没有日期）", f" ({x['undated']} undated)") if x.get("undated") else "")
+    elif t == "timeline":
+        what = " · ".join(f"{i['title'][:24]} {i['endText']}" for i in x.get("items", [])[:5]) or L("（窗口里没有）", "(nothing in the window)")
+    elif t == "chart":
+        parts = []
+        for c in x.get("charts", []):
+            vals = c.get("bars") or c.get("slices") or c.get("points") or []
+            body = c.get("error") or (" ".join(f"{y['label']}:{y['text'] or '-'}" for y in vals[:8]) if vals else (c.get("text") or ""))
+            parts.append(f"{c.get('title') or c.get('kind')}: {body}")
+        what = " | ".join(parts)
+    else:
+        what = L("（这个服务器不认识的视图）", "(a view type this server doesn't know)")
+    return head + what
 
 
 def show_board(r: dict, preview: bool = False) -> None:
@@ -279,6 +318,102 @@ def pack_install(a: argparse.Namespace, agent: str) -> None:
             print(L(f"包里的 {len(r['alertCards'])} 条提醒各出了一张卡，用户同意才开：{', '.join(r['alertCards'])}",
                     f"The pack's {len(r['alertCards'])} reminder(s) each got a card; they're on only if the user says yes: {', '.join(r['alertCards'])}"))
         print(L("用法：board_ctl.py pack guide " + a.name, "How to use it: board_ctl.py pack guide " + a.name))
+
+
+def view_cmd(a: argparse.Namespace, agent: str) -> None:
+    """集合块的视图：看（list / show）、改（add / update / remove / default，整份配置交回去，和 apply / propose 一样）。"""
+    r = call("GET", f"/api/boards/{q(agent)}")
+    colls = [b for b in r["blocks"] if b.get("type") == "collection"]
+    if a.action == "list":
+        if not colls:
+            print(L("看板上没有集合块。在看板配置里加一块 type collection（写法见 board skill「集合块」）", "No collection blocks. Add one with type collection to the board config (see the board skill)"))
+        for b in colls:
+            print(f"{b['id']}\t{b.get('title') or ''}\t{b['source']['from']}\t" + L("默认 ", "default ") + str(b.get("view")))
+            for v in b["views"]:
+                extra = v.get("group") or v.get("date") or ", ".join(c.get("title") or c["kind"] for c in v.get("charts", [])) or ", ".join(v.get("fields", []))
+                print(f"    {v['id']}\t{v['type']}\t{v.get('title') or ''}\t{extra}")
+        return
+    if not a.block:
+        sys.exit(L("要写集合块的 id（view list 能看到）", "Give the collection block id (see view list)"))
+    b = next((x for x in colls if x["id"] == a.block), None)
+    if not b:
+        sys.exit(L(f"看板上没有集合块「{a.block}」；有的是 {', '.join(x['id'] for x in colls) or '（没有）'}",
+                   f'No collection block "{a.block}"; there are {", ".join(x["id"] for x in colls) or "none"}'))
+    if a.action == "show":
+        if not a.view:
+            print(summary(b))
+            return
+        body = {"block": a.block, "view": a.view, "full": True, **({"month": a.month} if a.month else {})}
+        x = call("POST", f"/api/boards/{q(agent)}/view", body)["view"]
+        print(view_line(a.view, x, a.view == b.get("view")))
+        if x.get("type") == "board":
+            for c in x["columns"]:
+                print(f"      {c['label']}: " + " · ".join(k["title"][:30] for k in c["cards"][:5]) + (L(f" …另有 {c['more']} 条", f" …{c['more']} more") if c.get("more") else ""))
+        elif x.get("type") in ("table", "timeline"):
+            for row in (x.get("rows") or x.get("items") or [])[:10]:
+                print("      " + (" | ".join(str(v) for v in row["cells"].values()) if row.get("cells") else f"{row['title']} → {row.get('endText', '')}"))
+        elif x.get("type") == "calendar":
+            for w in x["weeks"]:
+                for d in w:
+                    if d["items"] and d["inMonth"]:
+                        print(f"      {d['date'][5:]}: " + " · ".join(i["title"][:24] for i in d["items"][:4]))
+        return
+    blocks = [{k: v for k, v in x.items() if k != "data"} for x in r["blocks"]]
+    blk = next(x for x in blocks if x["id"] == a.block)
+    views = blk["views"]
+    if a.action in ("update", "remove", "default") and not any(v["id"] == a.view for v in views):
+        sys.exit(L(f"「{a.block}」没有视图「{a.view}」；有的是 {', '.join(v['id'] for v in views)}", f'"{a.block}" has no view "{a.view}"; it has {", ".join(v["id"] for v in views)}'))
+    titles = {"table": L("表格", "Table"), "board": L("看板", "Board"), "calendar": L("日历", "Calendar"), "timeline": L("时间线", "Timeline"), "chart": L("图表", "Charts")}
+    name = next((v.get("title") or titles.get(v.get("type"), v["id"]) for v in views if v["id"] == a.view), a.view)
+    if a.action == "add":
+        spec = read_json(a.file, a.inline)
+        if not isinstance(spec, dict) or not spec.get("id"):
+            sys.exit(L('视图写成 {"id": …, "type": …}', 'A view is {"id": …, "type": …}'))
+        if any(v["id"] == spec["id"] for v in views):
+            sys.exit(L(f"已经有视图「{spec['id']}」了：改用 view update", f'View "{spec["id"]}" already exists: use view update'))
+        views.insert(0, spec) if a.first else views.append(spec)
+        if a.default:
+            blk["view"] = spec["id"]
+        added = spec.get("title") or titles.get(spec.get("type"), spec["id"])
+        note = L(f"「{blk.get('title') or a.block}」加了视图「{added}」", f'Added the "{added}" view to "{blk.get("title") or a.block}"')
+    elif a.action == "update":
+        patch = read_json(a.file, a.inline)
+        if not isinstance(patch, dict):
+            sys.exit(L("--json 写成要改的几项，比如 {\"sort\": [\"-score\"]}（null = 去掉这一项）", '--json is the keys to change, e.g. {"sort": ["-score"]} (null removes a key)'))
+        v = next(v for v in views if v["id"] == a.view)
+        for k, val in patch.items():
+            if k == "id":
+                continue
+            if val is None:
+                v.pop(k, None)
+            else:
+                v[k] = val
+        note = L(f"改了「{blk.get('title') or a.block}」的视图「{name}」", f'Changed the "{name}" view of "{blk.get("title") or a.block}"')
+    elif a.action == "remove":
+        if len(views) == 1:
+            sys.exit(L("集合块至少要有一个视图：整块不要了就从看板配置里删掉这一块", "A collection needs at least one view; to drop it, remove the block from the board config"))
+        blk["views"] = [v for v in views if v["id"] != a.view]
+        if blk.get("view") == a.view:
+            blk["view"] = blk["views"][0]["id"]
+        note = L(f"去掉了「{blk.get('title') or a.block}」的视图「{name}」", f'Removed the "{name}" view from "{blk.get("title") or a.block}"')
+    else:
+        blk["view"] = a.view
+        note = L(f"「{blk.get('title') or a.block}」默认显示「{name}」", f'"{blk.get("title") or a.block}" now opens on "{name}"')
+    extra = {"sections": [{"id": x["id"], **({"hidden": True} if x.get("hidden") else {})} for x in r["sections"]]} if r.get("sections") else {}
+    if a.check:
+        res = call("PUT", f"/api/boards/{q(agent)}", {"blocks": blocks, "dryRun": True, **extra})
+        print(L("没问题，会显示成这样：", "Looks fine. It would show:"))
+        print(summary(next(x for x in res["blocks"] if x["id"] == a.block)))
+    elif a.propose:
+        if not a.title:
+            sys.exit(L("--propose 要写 --title（收件箱卡的标题）", "--propose needs --title (the inbox card title)"))
+        res = call("PUT", f"/api/boards/{q(agent)}", {"blocks": blocks, "mode": "propose", "note": a.note or note, "title": a.title, "why": a.why,
+                                                      "changes": a.change or [note], "dedupe": a.dedupe, **extra})
+        print(res["inboxId"])
+    else:
+        res = call("PUT", f"/api/boards/{q(agent)}", {"blocks": blocks, "mode": "apply", "note": a.note or note, **extra})
+        print(L(f"改好了，看板第 {res['version']} 版。app 看板顶上有「撤回」；对话里告诉用户改了什么。",
+                f"Done, board version {res['version']}. The app shows an undo strip; tell the user what changed."))
 
 
 def alert_cmd(a: argparse.Namespace, agent: str) -> None:
@@ -366,6 +501,22 @@ def main() -> None:
     al.add_argument("--file", help=L("提醒文件（一条规则的 JSON）", "reminder file (one rule as JSON)"))
     al.add_argument("--why", default="", help=L("为什么：证据", "why: the evidence"))
     al.add_argument("--title", default="", help=L("收件箱卡的标题（不给就用默认的）", "the inbox card title (optional)"))
+    vw = sub.add_parser("view", help=L("集合块的视图：list / show / add / update / remove / default", "a collection block's views: list / show / add / update / remove / default"))
+    vw.add_argument("action", choices=("list", "show", "add", "update", "remove", "default"))
+    vw.add_argument("block", nargs="?", help=L("集合块的 id", "the collection block's id"))
+    vw.add_argument("view", nargs="?", help=L("视图的 id（show / update / remove / default）", "the view id (show / update / remove / default)"))
+    vw.add_argument("--json", dest="inline", help=L("add：整个视图；update：要改的几项（null = 去掉）", "add: the whole view; update: the keys to change (null removes)"))
+    vw.add_argument("--file", help=L("从文件读 JSON，- 是标准输入", "read JSON from a file, - for stdin"))
+    vw.add_argument("--month", help=L("show 日历：哪个月（YYYY-MM）", "show a calendar: which month (YYYY-MM)"))
+    vw.add_argument("--first", action="store_true", help=L("add：放在最前面", "add: put it first"))
+    vw.add_argument("--default", action="store_true", help=L("add：设成默认视图", "add: make it the default view"))
+    vw.add_argument("--check", action="store_true", help=L("只校验，打印会显示什么，不存", "validate only and print what it would show"))
+    vw.add_argument("--note", default="", help=L("这一版改了什么，一句话（不写就自动写）", "what changed, one line (written for you if left out)"))
+    vw.add_argument("--propose", action="store_true", help=L("交收件箱等用户点头（你自己想到的）", "submit to the inbox for the user's OK (your own idea)"))
+    vw.add_argument("--title", default="", help=L("--propose：收件箱卡的标题", "--propose: the inbox card title"))
+    vw.add_argument("--why", default="", help=L("--propose：为什么（证据）", "--propose: why (the evidence)"))
+    vw.add_argument("--change", action="append", default=[], help=L("--propose：会改变的一件事", "--propose: one thing that will change"))
+    vw.add_argument("--dedupe", default="", help=L("--propose：同一个提案的固定键", "--propose: a stable key"))
     sub.add_parser("history", help=L("看板的每一版", "every version of the board"))
     rv = sub.add_parser("revert", help=L("回到某一版（0 = 空看板）", "go back to a version (0 = empty board)"))
     rv.add_argument("version", type=int)
@@ -473,6 +624,8 @@ def main() -> None:
         pack_install(a, agent)
     elif a.cmd == "alert":
         alert_cmd(a, agent)
+    elif a.cmd == "view":
+        view_cmd(a, agent)
     elif a.cmd in ("check", "apply", "propose"):
         blocks, sections = board_file(a.file)
         extra = {"sections": sections} if sections is not None else {}
