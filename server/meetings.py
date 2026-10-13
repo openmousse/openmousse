@@ -1327,3 +1327,48 @@ def tracked(conn) -> list[str]:
 def busy() -> list[str]:
     """正在进行的一轮（safe_restart 等它们说完再重启）。"""
     return [mid for mid, lv in LIVE.items() if not lv.done]
+
+
+# —— 给对话列表（chats.py，对话页那条线）——————————————————————————————————————————
+
+def chat_rows() -> list[dict]:
+    """对话列表里的会议行：{id, kind: meeting | room（保留下来的 Agent 群）, title, members, ended, state, line, lineRole, at, unread}。
+    state：working = 一轮正在进行；waiting = 纪要等你确认（列表上是琥珀点）。line：待确认时写「纪要待确认 · N 项待办」，
+    正在进行时写谁在发言，否则最后一条（「谁：说了什么」）。at（排序）和 unread 算你的话、成员的发言和纪要，系统行不算。"""
+    with _lock, mdb() as conn:
+        ag = agent_rows(conn)
+        marks = {}
+        if conn.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='read_marks'").fetchone():
+            marks = {r["thread"]: r["last_read"] for r in conn.execute("SELECT thread, last_read FROM read_marks WHERE thread LIKE 'grp-%'")}
+        out = []
+        for r in conn.execute("SELECT * FROM meetings ORDER BY created_at"):
+            r = repair(conn, r)
+            last = conn.execute("SELECT id, role, text, ts, speaker, meta FROM messages WHERE thread=? AND role IN ('user','grava') ORDER BY id DESC LIMIT 1",
+                                (r["id"],)).fetchone()
+            unread = conn.execute("SELECT COUNT(*) FROM messages WHERE thread=? AND role='grava' AND id>?", (r["id"], marks.get(r["id"]) or 0)).fetchone()[0]
+            lv = running(r["id"])
+            mn = loads(r["minutes"]) or {}
+            if needs_you(r):
+                n = len(mn.get("todos") or [])
+                line = L(f"纪要待确认 · {n} 项待办", f"Minutes to confirm · {n} to-do{'' if n == 1 else 's'}") if n else L("纪要待确认", "Minutes to confirm")
+            elif lv and lv.phase == "minutes":
+                line = L(f"{settings.app_name} 正在整理纪要", f"{settings.app_name} is writing the minutes")
+            elif lv and lv.speaker:
+                line = L(f"{name_of(lv.speaker, ag)} 正在发言", f"{name_of(lv.speaker, ag)} is speaking")
+            elif last is not None:
+                meta = loads(last["meta"], {}) or {}
+                who = L("你", "You") if last["role"] == "user" else name_of(last["speaker"], ag)
+                text = L("纪要", "Minutes") if meta.get("kind") == "minutes" else " ".join((last["text"] or "").split())[:80]
+                line = f"{who}{L('：', ': ')}{text}"
+            else:
+                line = r["topic"][:80]
+            out.append({"id": r["id"], "kind": "room" if r["status"] == "group" else "meeting", "title": r["title"], "members": loads(r["members"], []),
+                        "ended": r["status"] == "ended", "state": "working" if lv else "waiting" if needs_you(r) else None, "line": line,
+                        "lineRole": last["role"] if last is not None else None, "at": last["ts"] if last is not None else r["created_at"],
+                        "unread": 0 if r["status"] == "ended" else unread})  # 结束的不算未读（和 unread.tracked 一致）
+    return out
+
+
+async def delete_meeting(mid: str) -> None:
+    """对话列表左滑「删除」（chats.py）：和 DELETE /api/meetings/{id} 一样，找不到抛 404。"""
+    await delete(mid)
