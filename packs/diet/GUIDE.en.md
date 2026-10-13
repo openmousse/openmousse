@@ -30,7 +30,7 @@ $D library --days 30   # usual foods: times, usual amount, per 100 g, food libra
 
 ## Nutrition targets
 
-`$D targets` shows the current targets and their history. When the user asks for a change: `$D targets set --protein 136 --carb 240 --fat 80 [--kcal 2224] [--from date]` (without kcal it's derived as 4/4/9). Do what the user says directly.
+`$D targets` shows the current targets and their history. When the user asks for a change: `$D targets set --protein 120 --carb 250 --fat 70 [--kcal 2110] [--from date]` (without kcal it's derived as 4/4/9). Do what the user says directly.
 
 **Carb cycling** (separate training-day and rest-day targets): set one with `$D targets set --day-type train …` and one with `--day-type rest …`. Which kind a day is: a mark (`$D day-type train|rest [--date]`, `auto` removes it) > a training session in the schedule (an Agent schedule key containing `:training:`) > rest day. `$D day` and `/api/diet/day` already give that day's targets; check today is right before planning meals, and change the mark when the user adds or skips a session.
 
