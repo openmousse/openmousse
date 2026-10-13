@@ -3,7 +3,7 @@ import React from 'react';
 import { Image, Linking, Platform, Pressable, StyleSheet, Text, TextInput, View, type TextInputProps } from 'react-native';
 import { setAudioModeAsync, useAudioPlayer, useAudioPlayerStatus } from 'expo-audio';
 import {
-  FileAudio as AudioLines, Bookmark, Check, ChevronRight, FileText, Hash, ImageIcon, Lightbulb, Link2, MessageCircle, Pencil, Play, Square, TextIcon, X,
+  FileAudio as AudioLines, Bookmark, Check, ChevronRight, FileText, Hash, ImageIcon, Lightbulb, Link2, MessageCircle, Mic, Pencil, Play, Square, TextIcon, X,
 } from '../components/icons';
 import { fragmentFiles, type Fragment, type FragmentKind, type Parts, type SaveItem, type TopicBrief } from '../api/think';
 import { supports } from '../api/version';
@@ -289,6 +289,57 @@ export function SaveRow({ s, onPress, parts }: { s: SaveItem; onPress: () => voi
   );
 }
 
+/** Zen 首页一块的标题行：左边「记下的 · 12」，右边一句这块怎么排（或一个按钮）。 */
+export function ZenHead({ title, right }: { title: string; right?: React.ReactNode }) {
+  const t = useTheme();
+  return (
+    <View style={styles.zenHead}>
+      <T v="callout" color={t.ink2} style={{ fontSize: 13, fontWeight: '700' }}>{title}</T>
+      {typeof right === 'string' ? <T v="caption" color={t.ink3} style={{ fontWeight: '400' }}>{right}</T> : right}
+    </View>
+  );
+}
+
+/** 进度四格：走过的金色，没走到的灰。 */
+export function Pips({ n, total = 4 }: { n: number; total?: number }) {
+  const t = useTheme();
+  return (
+    <View style={{ flexDirection: 'row', gap: 3 }}>
+      {Array.from({ length: total }, (_, i) => <View key={i} style={{ width: 9, height: 4, borderRadius: 2, backgroundColor: i < n ? t.goldFill : t.line }} />)}
+    </View>
+  );
+}
+
+/**
+ * 「在想」（讨论中的主题）和「制作中」（还没存入的播客）的一张卡：横排，156 宽。左上图标（等你处理 = 右上角琥珀点），
+ * 右上日期，标题最多两行，底下进度四格 + 一句状态（等你处理时是琥珀色）。
+ */
+export function ShelfCard({ title, date, Icon, tint, stage, state, waiting, steps, onPress, onLongPress }: {
+  title: string; date: string; Icon: typeof Mic; tint: { soft: string; fg: string }; stage: number; state: string; waiting: boolean;
+  /** 读屏念的四格：「讨论、录制、整理、存入」 */ steps: string;
+  onPress: () => void; onLongPress?: () => void;
+}) {
+  const t = useTheme();
+  return (
+    <Pressable onPress={onPress} onLongPress={onLongPress} delayLongPress={400} accessibilityRole="button"
+      accessibilityLabel={`${title}，${state}${waiting ? L('，等你处理', ', waiting for you') : ''}，${L(`进度 ${stage}/4（${steps}）`, `step ${stage} of 4 (${steps})`)}`}
+      style={({ pressed }) => [styles.shelf, { backgroundColor: t.surface, opacity: pressed ? 0.8 : 1 }]}>
+      <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
+        <View>
+          <View style={[styles.tile30, { backgroundColor: tint.soft }]}><Icon size={16} color={tint.fg} /></View>
+          {waiting ? <View style={[styles.wait, { backgroundColor: t.warn, borderColor: t.surface }]} /> : null}
+        </View>
+        <T v="caption" color={t.ink3} style={{ fontWeight: '400' }}>{date}</T>
+      </View>
+      <T v="callout" numberOfLines={2} style={{ fontWeight: '600', minHeight: 38 }}>{title}</T>
+      <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+        <Pips n={stage} />
+        <T v="caption" color={waiting ? t.warn : t.ink3} numberOfLines={1} style={{ flex: 1, fontWeight: '400', fontSize: 11.5 }}>{state}</T>
+      </View>
+    </Pressable>
+  );
+}
+
 /** 底上浮着的一条（勾了几条之后）：深色，按钮在右边。 */
 export function Floater({ children, bottom }: { children: React.ReactNode; bottom: number }) {
   return <View style={[styles.floater, { bottom }]}>{children}</View>;
@@ -324,4 +375,8 @@ const styles = StyleSheet.create({
   tile34: { width: 34, height: 34, borderRadius: 10, alignItems: 'center', justifyContent: 'center' },
   floater: { position: 'absolute', left: space.md, right: space.md, backgroundColor: '#12151A', borderRadius: radius.lg - 2, paddingLeft: space.lg, paddingRight: 6, paddingVertical: 8, flexDirection: 'row', alignItems: 'center', gap: space.sm, shadowColor: '#000', shadowOpacity: 0.25, shadowRadius: 12, shadowOffset: { width: 0, height: 6 }, elevation: 8 },
   floatBtn: { flexDirection: 'row', alignItems: 'center', gap: 6, height: 40, borderRadius: radius.md, paddingHorizontal: 14 },
+  zenHead: { flexDirection: 'row', alignItems: 'baseline', justifyContent: 'space-between', paddingHorizontal: 4, paddingTop: 16, paddingBottom: 8 },
+  shelf: { width: 156, borderRadius: 14, padding: 12, gap: 8 },
+  tile30: { width: 30, height: 30, borderRadius: 9, alignItems: 'center', justifyContent: 'center' },
+  wait: { position: 'absolute', right: -3, top: -3, width: 10, height: 10, borderRadius: 5, borderWidth: 2 },
 });

@@ -215,9 +215,10 @@ export function SwipeRow({ children, actions }: { children: React.ReactNode; act
   );
 }
 
-/** 设计稿里的分段（对话页 Grava | 好友、资料页 看板 | 记忆 | 设置）：深色底上选中的一格浅一点；count 是青色的未读数。 */
+/** 设计稿里的分段（对话页 Grava | 好友、资料页 看板 | 记忆 | 设置、Zen 想法 | 播客）：深色底上选中的一格浅一点；count 是青色的未读数，
+ * dot 是琥珀点（那一边有等你处理的）。 */
 export function PillTabs<V extends string>({ options, value, onChange, style }: {
-  options: { value: V; label: string; count?: number }[]; value: V; onChange: (v: V) => void; style?: object;
+  options: { value: V; label: string; count?: number; dot?: boolean; dotLabel?: string }[]; value: V; onChange: (v: V) => void; style?: object;
 }) {
   const t = useTheme();
   const dark = t.mode === 'dark';
@@ -228,10 +229,11 @@ export function PillTabs<V extends string>({ options, value, onChange, style }: 
         const n = o.count ?? 0;
         return (
           <Pressable key={o.value} onPress={() => onChange(o.value)} accessibilityRole="tab" accessibilityState={{ selected: on }}
-            accessibilityLabel={n ? L(`${o.label}，${n} 条未读`, `${o.label}, ${n} unread`) : o.label}
+            accessibilityLabel={[o.label, n ? L(`${n} 条未读`, `${n} unread`) : '', o.dot ? o.dotLabel ?? L('有等你处理的', 'something is waiting for you') : ''].filter(Boolean).join(L('，', ', '))}
             style={[styles.tab, on && { backgroundColor: dark ? t.line : t.surface }]}>
             <T v="callout" color={on ? t.ink : t.ink2} style={{ fontWeight: '600' }} numberOfLines={1}>{o.label}</T>
             {n ? <T v="caption" color={t.cyan} style={{ fontWeight: '700' }}>{n > 99 ? '99+' : String(n)}</T> : null}
+            {o.dot ? <View style={{ width: 7, height: 7, borderRadius: 4, backgroundColor: t.warn }} /> : null}
           </Pressable>
         );
       })}

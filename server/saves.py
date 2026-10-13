@@ -5,7 +5,8 @@
   抓不到（服务器 IP 被挡、要登录、要跑脚本的页面）就记下原因，原链接还在。
 - 怎么进来：app 里粘贴链接或一段文字、选照片 / 文件、对话里长按一条消息「收藏」；以后的分享扩展（下次出包）也走这里（source 写来自哪个 App）。
 - 处理：问 Grava（app 把这条带进主对话，chat.py 的 save 字段把正文给模型）、交给某个 Agent（在它的线程里开一轮，回完静默推）、
-  放进思考（变成一条 kind=save 的碎片）、提炼进库（app：放进思考 → 主题 → 想完了）、删（软删，deleted_at，能恢复）。
+  放进思考（变成一条 kind=save 的碎片）、提炼进库（app：放进思考 → 主题 → 想完了）、删（软删，deleted_at，能恢复）、
+  完成（done_at，进 Zen 的「已想完」，能恢复；2026-10-13）。
 - 关键词和想法共用（think.py 的 keyword 页一起列）。
 - 看原件：app 里点开就预览（…/preview、…/page/{n}），和对话附件同一套（preview.py）；页图存在原件旁边。
 """
@@ -67,6 +68,8 @@ def sdb() -> sqlite3.Connection:
             thread TEXT, message_id INTEGER, given_to TEXT, created_at TEXT NOT NULL, updated_at TEXT NOT NULL, seen_at TEXT, deleted_at TEXT);
         CREATE INDEX IF NOT EXISTS think_saves_created ON think_saves(created_at);
         """)
+        if "done_at" not in {r[1] for r in conn.execute("PRAGMA table_info(think_saves)")}:  # 2026-10-13：Zen 里「完成」一条收藏（进已想完）
+            conn.execute("ALTER TABLE think_saves ADD COLUMN done_at TEXT")
         _ready = True
     return conn
 
@@ -130,6 +133,10 @@ def source_of(url: str) -> str:
     return host.removeprefix("www.")
 
 
+def done_of(r: sqlite3.Row) -> str | None:
+    return r["done_at"] if "done_at" in r.keys() else None
+
+
 def save_json(r: sqlite3.Row) -> dict:
     d = think.local(r["created_at"])
     has_file = bool(r["file"])
@@ -138,6 +145,7 @@ def save_json(r: sqlite3.Row) -> dict:
             "name": r["name"], "mime": r["mime"], "size": r["size"], "textStatus": r["text_status"], "textLen": r["text_len"],
             "textNote": r["text_note"], "keywords": json.loads(r["keywords"] or "[]"), "createdAt": r["created_at"], "day": d.strftime("%Y-%m-%d"),
             "time": d.strftime("%H:%M"), "seen": bool(r["seen_at"]), "givenTo": r["given_to"], "thread": r["thread"],
+            "done": bool(done_of(r)), "doneAt": done_of(r),
             "fileUrl": f"/api/think/saves/{r['id']}/file" if has_file else None,
             "thumbUrl": f"/api/think/saves/{r['id']}/file?thumb=1" if has_file and kind == "image" else None}
 
@@ -154,6 +162,17 @@ def insert(kind: str, *, title: str = "", url: str = "", source: str = "", note:
                      (sid, kind, title[:200], url or None, source[:40], note.strip()[:2000], file, name, mime, size, json.dumps(kws, ensure_ascii=False),
                       thread, message_id, ts, ts))
     return sid
+
+
+def set_done(sid: str, done: bool) -> None:
+    """完成一条收藏（进已想完，顺带算看过了）；done=False 是恢复。不调模型。"""
+    row(sid)
+    with _lock, sdb() as conn:
+        if done:
+            conn.execute("UPDATE think_saves SET done_at=COALESCE(done_at, ?), seen_at=COALESCE(seen_at, ?), updated_at=? WHERE id=?",
+                         (now_iso(), now_iso(), now_iso(), sid))
+        else:
+            conn.execute("UPDATE think_saves SET done_at=NULL, updated_at=? WHERE id=?", (now_iso(), sid))
 
 
 def set_text(sid: str, status: str, text: str = "", note: str | None = None, title: str | None = None) -> None:

@@ -10,7 +10,11 @@ export type PodMode = 'solo' | 'host' | 'feynman' | 'friends';
 export type PodStatus = 'prep' | 'recording' | 'processing' | 'naming' | 'ready' | 'saved' | 'failed';
 export interface PodSource { kind?: 'open' | 'study' | 'deadline' | 'tree' | 'own' | 'person'; label?: string; course?: string; page?: string; person?: string; name?: string }
 export interface PodChip { text: string; tone: 'gold' | 'cyan' | 'red' | 'gray' }
-export interface PodBrief { id: string; title: string; mode: PodMode; status: PodStatus; duration: number; createdAt: string; updatedAt: string; source: PodSource; chip: PodChip | null }
+export interface PodBrief {
+  id: string; title: string; mode: PodMode; status: PodStatus; duration: number; createdAt: string; updatedAt: string; source: PodSource; chip: PodChip | null;
+  /** Zen 播客一边的卡（supports('podcast.stage')）：进度四格（讨论 → 录制 → 整理 → 存入）走到第几格、一句状态、是不是在等你（琥珀点） */
+  stage?: number; state?: string; waiting?: boolean;
+}
 export interface PodSentence { i: number; t0: number; t1: number; text: string; flag?: string; fixed?: [string, string][]; edited?: boolean; speaker?: string }
 export interface PodSegment { idx: number; offset: number; duration: number; status: 'transcribing' | 'done' | 'failed'; error: string | null; url: string; sentences: PodSentence[] }
 export interface PodTurn { id: number; phase: 'prep' | 'rec'; role: 'host' | 'me'; text: string; at: number | null; voice: number | null; status: string | null; createdAt: string }

@@ -11,10 +11,12 @@ export interface Fragment {
   id: string; kind: FragmentKind; text: string; title: string; keywords: string[]; createdAt: string; day: string; time: string;
   status: 'open' | 'done'; topics: string[]; note: boolean; files: ThinkFile[]; url: string; linkTitle: string; duration: number | null;
   source: string; save: string | null; chars: number; bad: boolean; path: string;
+  /** 完成的时间（已想完的才有；老服务器没有） */ doneAt?: string | null;
 }
 export interface TopicBrief {
   id: string; title: string; count: number; /** 聊的时候「只记下」的几句（不算在 count 里） */ notes: number; status: 'open' | 'done' | 'deleted'; createdAt: string; updatedAt: string; talked: number; lastLine: string;
   lastAt: string | null; draftStatus: string | null; notePath: string | null;
+  /** 谁最后说的（user / grava）、写成笔记的时间：老服务器没有 */ lastRole?: string | null; doneAt?: string | null;
 }
 export interface DraftPoint { text: string; from: string[] }
 export interface Draft {
@@ -32,6 +34,7 @@ export interface SaveItem {
   id: string; kind: SaveKind; title: string; url: string; source: string; note: string; name: string | null; mime: string | null; size: number | null;
   textStatus: 'none' | 'fetching' | 'ok' | 'empty' | 'blocked' | 'failed'; textLen: number; textNote: string | null; keywords: string[];
   createdAt: string; day: string; time: string; seen: boolean; givenTo: string | null; thread: string | null; fileUrl: string | null; thumbUrl: string | null;
+  /** 完成了（进已想完）：老服务器没有 */ done?: boolean; doneAt?: string | null;
 }
 /** 搜索结果里的一段：[文字, 是不是命中]，命中的高亮。 */
 export type Parts = [string, boolean][];
@@ -42,6 +45,14 @@ export interface SearchResult {
   counts: { ideas: number; saves: number; topics: number; notes: number }; total: number;
 }
 export type DayItem = { type: 'idea'; at: string; idea: Fragment } | { type: 'save'; at: string; save: SaveItem };
+/** Zen 首页「在想」的一张卡：进度四格（记下 → 讨论 → 草稿 → 存入）走到第几格、一句状态、是不是在等你（琥珀点）。由服务器算。 */
+export interface TopicCard extends TopicBrief { stage: number; state: string; waiting: boolean }
+/** Zen 首页（想法一边，supports('think.home')）：在想 + 记下的（想法和收藏放在一起，新的在前）+ 已想完几条。 */
+export interface ThinkHome {
+  thinking: TopicCard[]; items: DayItem[]; count: number; more: boolean; finished: number; savesNew: number; vault: boolean; folder: string; obsidianVault?: string | null;
+}
+/** 已想完的一条：写成笔记的主题、单独完成的想法、完成的收藏。 */
+export type FinishedItem = DayItem | { type: 'topic'; at: string; topic: TopicBrief };
 export interface KeywordPage { k: string; ideas: number; saves: number; since: string | null; items: DayItem[]; co: { k: string; n: number }[]; topics: TopicBrief[] }
 export interface Focus { id: number; startedAt: string; endsAt: string; minutes: number; endedAt: string | null; held: number; until: string }
 export interface HeadsUp { title: string; time: string; kind: string; location: string }
@@ -98,6 +109,14 @@ export const keywords = () => request<{ keywords: KeywordStat[] }>('/api/think/k
 export const keyword = (k: string) => request<KeywordPage>(`/api/think/keyword?k=${encodeURIComponent(k)}`).then((p) => ({ ...p, items: p.items.map(fixItem) }));
 export const days = (month: string) => request<{ month: string; days: { day: string; ideas: number; saves: number }[]; total: number }>(`/api/think/days?month=${month}`);
 export const day = (d: string) => request<{ items: DayItem[] }>(`/api/think/day?day=${d}`).then((j) => j.items.map(fixItem));
+export const home = (before?: string) => request<ThinkHome & { ok: boolean }>(`/api/think/home${before ? `?before=${encodeURIComponent(before)}` : ''}`)
+  .then((h) => ({ ...h, items: h.items.map(fixItem) }));
+/** 完成几条（想法 th-… / 收藏 sv-…），undo = 恢复。不调模型。 */
+export const markDone = (ids: string[], undo = false) => request<{ count: number }>('/api/think/done', { method: 'POST', body: { ids, undo } });
+export const finished = () => request<{ items: FinishedItem[] }>('/api/think/finished')
+  .then((j) => j.items.map((x) => (x.type === 'topic' ? x : fixItem(x))));
+/** 搜索页的热力日历：从 weeks 周前的周一到今天，每天记下了几条。 */
+export const heat = (weeks = 6) => request<{ today: string; start: string; days: { day: string; n: number }[] }>(`/api/think/heat?weeks=${weeks}`);
 const fixItem = (x: DayItem): DayItem => (x.type === 'idea' ? { ...x, idea: withUrls(x.idea) } : { ...x, save: saveUrls(x.save) });
 
 /** 按文件名和类型猜附件的种类（FilePreview 只靠它认图片、挑图标；怎么显示由服务器的预览接口定）。 */

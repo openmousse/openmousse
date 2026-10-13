@@ -572,9 +572,53 @@ def chip_of(r: sqlite3.Row) -> dict | None:
     return None
 
 
-def brief(r: sqlite3.Row) -> dict:
+def mode_label(m: str) -> str:
+    return {"solo": L("独白", "Solo"), "host": L("主持人", "Host"), "friends": L("多人对谈", "With friends"), "feynman": L("费曼", "Feynman")}.get(m, m)
+
+
+def stage_of(r: sqlite3.Row, last_prep: str | None) -> dict:
+    """Zen 播客一边「制作中」的卡：进度四格（讨论 → 录制 → 整理 → 存入）走到第几格、一句状态、是不是在等你（琥珀点）。
+    last_prep：录前讨论最后一句是谁说的（host = 主持人问了还没回）。等你 = 它那边做完了，下一步只能你来：回答、认人、存入、重试。"""
+    st = r["status"]
+    fy = jload(r["feynman"], {})
+    if st == "saved":
+        return {"stage": 4, "state": L("已存入", "Saved"), "waiting": False}
+    if st == "ready":
+        wrong, missed = len(fy.get("wrong") or []), len(fy.get("missed") or [])
+        if wrong:
+            return {"stage": 3, "state": L(f"讲错 {wrong} 处 · 待存入", f"{wrong} wrong · to save"), "waiting": True}
+        if missed:
+            return {"stage": 3, "state": L(f"漏了 {missed} 处 · 待存入", f"{missed} missed · to save"), "waiting": True}
+        return {"stage": 3, "state": L("待存入库", "Ready to save"), "waiting": True}
+    if st == "naming":
+        return {"stage": 3, "state": L("待确认说话人", "Who's who?"), "waiting": True}
+    if st == "failed":
+        return {"stage": 3, "state": L("整理失败", "Didn't finish"), "waiting": True}
+    if st == "processing":
+        return {"stage": 3, "state": L("正在整理", "Organizing"), "waiting": False}
+    if st == "recording":
+        return {"stage": 2, "state": L("录到一半", "Half recorded"), "waiting": False}
+    if last_prep == "host":
+        return {"stage": 1, "state": L("等你回答", "Your turn"), "waiting": True}
+    if jload(r["outline"], []):
+        return {"stage": 1, "state": L("提纲已就绪", "Outline ready"), "waiting": True}
+    return {"stage": 1, "state": L(f"{mode_label(r['mode'])} · 未开始", f"{mode_label(r['mode'])} · not started"), "waiting": False}
+
+
+def last_prep_roles(ids: list[str]) -> dict[str, str]:
+    """每一期录前讨论最后一句是谁说的。"""
+    if not ids:
+        return {}
+    with _lock, pdb() as conn:
+        rows = conn.execute(f"""SELECT t.episode, t.role FROM pod_turns t JOIN (SELECT episode, MAX(id) AS id FROM pod_turns
+                                WHERE phase='prep' AND episode IN ({','.join('?' * len(ids))}) GROUP BY episode) m ON t.id = m.id""", ids).fetchall()
+    return {x["episode"]: x["role"] for x in rows}
+
+
+def brief(r: sqlite3.Row, last_prep: str | None = None) -> dict:
     return {"id": r["id"], "title": r["title"], "mode": r["mode"], "status": r["status"], "duration": round(r["duration"] or 0, 1),
-            "createdAt": r["created_at"], "updatedAt": r["updated_at"], "source": jload(r["source"], {}), "chip": chip_of(r)}
+            "createdAt": r["created_at"], "updatedAt": r["updated_at"], "source": jload(r["source"], {}), "chip": chip_of(r),
+            **stage_of(r, last_prep)}
 
 
 def present_people(r: sqlite3.Row) -> list[str]:
@@ -587,7 +631,8 @@ def episode_json(eid: str) -> dict:
     with _lock, pdb() as conn:
         turns = conn.execute("SELECT * FROM pod_turns WHERE episode=? ORDER BY id", (eid,)).fetchall()
     who = people.names(present_people(r))
-    return {**brief(r), "outline": jload(r["outline"], []), "cur": r["cur"], "error": r["error"],
+    prep = [t for t in turns if t["phase"] == "prep"]
+    return {**brief(r, prep[-1]["role"] if prep else None), "outline": jload(r["outline"], []), "cur": r["cur"], "error": r["error"],
             "people": [{"id": k, "name": v} for k, v in who.items()], "speakerPeople": jload(r["speaker_people"], {}),
             "segments": segments_of(eid), "speakers": jload(r["speakers"], {}),
             "turns": [{"id": t["id"], "phase": t["phase"], "role": t["role"], "text": t["text"], "at": t["at"], "voice": t["voice"],
@@ -757,8 +802,9 @@ async def home():
         s = conn.execute("SELECT items, created_at FROM pod_suggest WHERE day=?", (day,)).fetchone()
         eps = conn.execute("SELECT * FROM pod_episodes ORDER BY created_at DESC LIMIT 40").fetchall()
     import study
+    last = await asyncio.to_thread(last_prep_roles, [r["id"] for r in eps if r["status"] == "prep"])
     return {"ok": True, "suggestions": jload(s["items"], []) if s else None, "suggestedAt": s["created_at"] if s else None,
-            "episodes": [brief(r) for r in eps], "study": bool(study.courses()),
+            "episodes": [brief(r, last.get(r["id"])) for r in eps], "study": bool(study.courses()),
             "materials": True, "people": True}  # app 看这两个决定显不显示长按「放进播客」、我 → 朋友画像（老服务器没有）
 
 

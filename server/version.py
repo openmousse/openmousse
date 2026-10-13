@@ -22,7 +22,7 @@ from pathlib import Path
 
 from config import REPO, settings
 
-VERSION = "2026.10.13-2"
+VERSION = "2026.10.13-3"
 API = 1
 FEATURES = (
     "card.name",  # PATCH /api/card {name}：在 app 里设好友看到的名字
@@ -40,6 +40,8 @@ FEATURES = (
     "outputs",  # GET /api/outputs（新产出 + 小板子）、/api/outputs/{id}；/api/chat/cards 带 kind output（对话里的产出卡片）
     "meetings",         # /api/meetings…：Agent 会议（发起、按发言人分段的流、纪要确认写进日程和看板、保留为群聊）；对话卡 kind meeting / minutes
     "pages",            # /api/pages…：Agent 写的页面（盒子里的网页、读数据要你同意、钉到看板）；对话卡 kind page，看板积木 type page
+    "think.home",       # Zen 重排：GET /api/think/home（在想 + 记下的）、POST /api/think/done（完成 / 恢复，不调模型）、GET /api/think/finished、GET /api/think/heat；收藏带 done
+    "podcast.stage",    # /api/podcast 的每一期带 stage（进度四格走到第几格）/ state（一句状态）/ waiting（等你处理）
 )
 
 

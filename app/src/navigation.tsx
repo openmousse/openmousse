@@ -34,7 +34,7 @@ import { ConnectorsScreen } from './screens/ConnectorsScreen';
 import { ThinkScreen } from './screens/ThinkScreen';
 import { ThinkDoneScreen, ThinkTalkScreen } from './screens/ThinkTalkScreen';
 import { ThinkWriteScreen, ZenEndScreen } from './screens/ThinkWriteScreen';
-import { ThinkHistoryScreen, ThinkKeywordScreen, ThinkSearchScreen } from './screens/ThinkFindScreens';
+import { ThinkFinishedScreen, ThinkHistoryScreen, ThinkKeywordScreen, ThinkSearchScreen } from './screens/ThinkFindScreens';
 import { PodDoneScreen, PodFriendsScreen, PodPrepScreen, PodRecScreen } from './screens/PodcastScreens';
 import { PeopleScreen, PersonScreen } from './screens/PeopleScreens';
 import { SaveScreen } from './screens/SaveScreen';
@@ -282,6 +282,7 @@ export function RootNavigator() {
         <Stack.Screen name="ThinkSearch" component={ThinkSearchScreen} options={{ animation: 'fade' }} />
         <Stack.Screen name="ThinkKeyword" component={ThinkKeywordScreen} />
         <Stack.Screen name="ThinkHistory" component={ThinkHistoryScreen} />
+        <Stack.Screen name="ThinkFinished" component={ThinkFinishedScreen} />
         <Stack.Screen name="PodPrep" component={PodPrepScreen} />
         <Stack.Screen name="PodRec" component={PodRecScreen} options={{ gestureEnabled: false, animation: 'slide_from_bottom' }} />
         <Stack.Screen name="PodDone" component={PodDoneScreen} />

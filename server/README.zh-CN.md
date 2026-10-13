@@ -496,12 +496,17 @@ app 的「思考」tab（2026-09-28 起界面上叫 **Zen**，代码和接口仍
 - **关键词** = 属性 `keywords` + 正文里的 `#词`（跟在中文后面也算）。关键词页列出带它的全部想法和收藏、用过它的主题、常一起出现的词。
 - **主题**（`think_topics`，id `tp-…`，也是对话线程和 OpenClaw 会话 `agent:main:grava:tp-…`）：「聊聊」先发一句「【自动触发】聊聊」，让模型先问、不急着下结论；每天第一句话、主题里的碎片变了以后，`chat.start_run` 把碎片和「陪你想」的规矩拼在消息前面（对话里不显示）。聊的时候「只记下」的一句不给模型看（`note: true`，对话里一行虚线，不发给 Gateway），想完了时一起用。「想完了」在另一个会话里后台整理草稿（标题、一句话、要点和出处、还没想清的、下一步、关键词、记进世界树的一句），你改完「存进库」：写进笔记或写作文件夹，碎片挪进已想完，要记的经 workspace 的 `memory_tree.py` 写一片世界树叶子。
 - **收藏**（`think_saves`，原件在 `<data_dir>/saves/`，`think.saves_dir` 可改）：原件不进库。存的时候抽一份正文（网页在后台抓，公众号文章也行，原文删了也还在；PDF / Word / 表格抽文字），抓不到就把原因记在链接旁边。之后你决定：带进主对话问（`/api/chat/send` 的 `save` 把正文给模型）、交给某个 Agent（在它的线程里安静地跑一轮）、放进思考变成一条想法、提炼成笔记、删掉（软删，能恢复）。
-- **搜索**在内存里按字面找想法、收藏、聊过的主题和存进库的笔记（中文两个字就能搜），结果带高亮分段，不调模型。**历史**按天数想法和收藏。
+- **Zen 首页**（2026-10-13）：app 顶上分「想法 | 播客」两边。想法一边不再分想法 / 收藏两栏：`GET /api/think/home` 给在想的主题（带进度四格 `stage`、一句 `state`、等你处理的 `waiting`）和「记下的」（没完成的想法和收藏放在一起，新的在前；归进主题的碎片、放进过思考的收藏不再单列）。每条都有不经模型的出口：**完成**（`POST /api/think/done`：想法挪进已想完、属性记 `status: done` 和 `done_at`；收藏记 `done_at`；`undo` 恢复），已想完的列表按完成时间排（写成笔记的主题一件一行）。
+- **搜索**在内存里按字面找想法、收藏、聊过的主题和存进库的笔记（中文两个字就能搜），结果带高亮分段，不调模型。**历史**按天数想法和收藏；搜索页的热力日历用 `GET /api/think/heat`（近几周每天记下几条）。
 - **冥想时间**（`think_focus`，25 / 45 / 90 分钟或不限 = 3 小时）：开始前 app 先列出这段时间里的日程；期间 `push.send_push` 一律不推，记进 `think_focus_held`；结束（点结束或到点）给小结：压住的按去处合并（同一个对话只留最新一条），加上等你点头的和接下来的日程。没人看过的小结，下次 `GET /api/think/focus` 还会给。
 
 | 接口 | 做什么 |
 |---|---|
-| `GET /api/think/stream?before=&limit=` | 想法（新的在前，只记下的不列）、在想的 `topics`（`count` = 碎片数，`notes` = 只记下的句数）、`savesNew`、`vault`、`folder`、`obsidianVault` |
+| `GET /api/think/home?before=&limit=` | Zen 首页（想法一边）：`thinking`（在想的主题 + `stage` / `state` / `waiting`）、`items`（记下的：`{type: idea \| save, at, idea \| save}`，新的在前）、`count`、`more`、`finished`（已想完几条）、`savesNew`、`vault`、`folder`、`obsidianVault` |
+| `POST /api/think/done` | `{ids: [th-… / sv-…], undo?}`：完成（undo = 恢复）几条想法或收藏，不调模型 |
+| `GET /api/think/finished` | 已想完：写成笔记的主题（`type: topic`）、单独完成的想法、完成的收藏，按完成时间新的在前 |
+| `GET /api/think/heat?weeks=6` | 从 weeks 周前的周一到今天，每天记下几条（想法 + 收藏） |
+| `GET /api/think/stream?before=&limit=` | 想法（新的在前，只记下的不列）、在想的 `topics`（`count` = 碎片数，`notes` = 只记下的句数）、`savesNew`、`vault`、`folder`、`obsidianVault`（老的三栏用） |
 | `POST /api/think/fragments` | `{kind?, text?, title?, keywords?, url?, topic?}`；带 `topic` = 在这个主题里只记下 |
 | `POST /api/think/fragments/upload` | multipart：最多 10 个 `files`、`text`、`kind`（voice 转文字、原声留着）、`keywords`（JSON 数组）、`duration`、`title` |
 | `GET` / `PATCH` / `DELETE /api/think/fragments/{id}` | 一条想法；`{text?, title?, keywords?}` 改笔记本身；删 = 挪进库的回收站 |
@@ -544,7 +549,7 @@ app 的「思考」tab（2026-09-28 起界面上叫 **Zen**，代码和接口仍
 
 | 接口 | 做什么 |
 |---|---|
-| `GET /api/podcast` | 今天挑好的话题（还没挑是 `null`；`mode: friends` + `source.person` = 约某个朋友聊）、最近 40 期（`chip` = 列表上那个小标签）、`study`（配了学习台没有）、`materials` / `people`（这台服务器有素材、朋友画像） |
+| `GET /api/podcast` | 今天挑好的话题（还没挑是 `null`；`mode: friends` + `source.person` = 约某个朋友聊）、最近 40 期（`chip` = 列表上那个小标签；`stage` / `state` / `waiting` = Zen 播客一边「制作中」卡上的进度四格（讨论 → 录制 → 整理 → 存入）、一句状态、是不是在等你）、`study`（配了学习台没有）、`materials` / `people`（这台服务器有素材、朋友画像） |
 | `POST /api/podcast/suggest` | `{exclude?}` 挑 4 个（换一批时把现在的传进来） |
 | `POST /api/podcast/episodes` | `{title, mode: solo / host / feynman / friends, source?, people?}` 建一期（约朋友：谁在，`[{id} \| {friend} \| {name}]`） |
 | `GET` / `PATCH` / `DELETE /api/podcast/episodes/{id}` | 一期的全部（提纲、每段的句子和时间、问过的、整理结果（带 `people` 画像多了几条）、费曼、存到哪、`materials` 素材条数、`people` / `speakerPeople`）/ `{title?, mode?, outline?, done?, cur?, speakers?, people?}`（坐一起录的认人：`{"A": "@me", "B": "小林"}`；`people: {"B": {id} \| {friend} \| {name} \| {name, skip}}` 给声音对上人，名字跟着人走）/ 删原声、逐字稿、素材和这一期记的画像（存进库的笔记、你改过的画像还在） |
