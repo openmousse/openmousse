@@ -8,6 +8,7 @@
 | 编辑 Agent（`PATCH /api/groups/{id}`：名字 / 图标 / 颜色 / 职责 / 模型） | grava.db `groups`（color：NULL = 默认色）+ `threads.model`；名字、职责同时换掉 Agent 工作区 IDENTITY.md 里 `<!-- mousse:role -->` 那一段，模型同时写 openclaw.json 的 `agents.entries.<id>.model`（见 agents.py） |
 | 等你点头（收件箱） | grava.db `inbox`（各 Agent 经 `server/inbox_ctl.py` 写：要你同意才做的事、它们自己的提议；见 inbox.py）+ OpenClaw 执行审批队列（`openclaw approvals pending / resolve`，旧的 /api/approvals 仍在） |
 | 未读、「今天」页的新卡片、app 角标 | grava.db `read_marks` + `messages.origin` + `feed_items.seen_at`（见 unread.py） |
+| Agent 的产出（标签栏上方的浮动标签、按 kind 套模板的小板子、对话里的产出卡片） | grava.db `feed_items`（kind + data；`thread` / `message_id` = 挂在哪条回复下）+ 饮食看板的营养目标 + 健康数据源的恢复分（见 outputs.py） |
 | 推送 | Expo Push，三档 ring / quiet / none + server.json 的 `push.quiet_hours`（见 push.py） |
 | 日程、要记得的 | 课表（calendar 数据源）+ grava.db `schedule_items` / `schedule_marks` / `schedule_log` + 课程 ddl（study.deadlines_cmd）+ 邮件条目（server.json 的 remember.mail）+ `applications`（见 schedule.py） |
 | 「今天」页（待处理 / 日程 / 报告，周 / 月） | 上面「日程、要记得的」的同一批来源 + 收件箱 + `feed_items`（归到日程的计划和复盘、报告卡）+ Apple 健康的恢复分；推迟记在 grava.db `today_snooze`（见 today.py） |

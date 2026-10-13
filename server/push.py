@@ -413,10 +413,11 @@ def run_level(run: Run) -> str:
 
 
 def card_label(kind: str | None) -> str:
-    """卡片推送的副标题。"""
-    return {"meal_plan": L("三餐建议", "Meal plan"), "training_plan": L("训练建议", "Training plan"),
-            "training_review": L("练后总结", "Workout review"), "sleep_report": L("睡眠", "Sleep"),
-            "reminder": L("提醒", "Reminder")}.get(kind or "", L("新卡片", "New card"))
+    """卡片推送的副标题：产出的几种和 app 里的小板子同名（outputs.kind_label）。"""
+    if kind in ("meal_plan", "training_plan", "training_review", "sleep_report"):
+        import outputs  # 延迟导入：outputs 依赖 data / chat
+        return outputs.kind_label(kind)
+    return {"reminder": L("提醒", "Reminder")}.get(kind or "", L("新卡片", "New card"))
 
 
 def first_line(body: str) -> str:

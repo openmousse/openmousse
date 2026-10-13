@@ -100,6 +100,7 @@ from a2a import router as a2a_router  # noqa: E402 — agent 之间（社交第�
 from egress import router as egress_router  # noqa: E402 — Doorman 出口（第 9 步）：代办沙箱的出网判断 /api/egress…，顺带挂上收件箱 egress 类的钩子
 import diet  # noqa: E402
 from diet import router as diet_router  # noqa: E402 — 饮食记录、个人食物库、营养目标、查营养（diet.py + nutrition.py）
+from outputs import router as outputs_router  # noqa: E402 — Agent 的产出：浮动标签、小板子、对话里的产出卡片（2026-10-13）
 
 DIST = settings.dist
 settings.db.parent.mkdir(parents=True, exist_ok=True)  # 新实例第一次启动：数据目录还不存在
@@ -169,6 +170,7 @@ app.include_router(forward_router)  # /api/forward/basket 在 /api/forward/{fid}
 app.include_router(a2a_router)
 app.include_router(egress_router)
 app.include_router(diet_router)
+app.include_router(outputs_router)
 if apps is not None:
     app.include_router(apps.router)
 app.add_exception_handler(sources.NoSource, sources.no_source_handler)
