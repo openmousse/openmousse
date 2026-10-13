@@ -108,7 +108,10 @@ def dietdb() -> sqlite3.Connection:
         CREATE TABLE IF NOT EXISTS diet_targets (
             id INTEGER PRIMARY KEY AUTOINCREMENT, effective_from TEXT NOT NULL, kcal REAL, protein REAL, carb REAL, fat REAL, water_ml REAL,
             kcal_derived INTEGER NOT NULL DEFAULT 0, source TEXT NOT NULL, note TEXT, created_by TEXT, created_at TEXT NOT NULL);
+        CREATE TABLE IF NOT EXISTS diet_day_types (date TEXT PRIMARY KEY, day_type TEXT NOT NULL, source TEXT, updated_at TEXT NOT NULL);
         """)
+        if "day_type" not in {r[1] for r in conn.execute("PRAGMA table_info(diet_targets)")}:
+            conn.execute("ALTER TABLE diet_targets ADD COLUMN day_type TEXT")  # 碳循环（10/13）：NULL = 每天一样，train / rest = 训练日 / 休息日
         _ready = True
     return conn
 
@@ -369,16 +372,55 @@ def target_out(r: sqlite3.Row | None) -> dict | None:
     src = r["source"]
     label = sources.xunji_name() if src == "xunji" else (L("手动设定", "Set manually") if src in ("leo", "app", "manual") else
                                                          L("档案", "Profile") if src == "profile" else L("Agent 设定", "Set by an Agent"))
-    return {"kcal": round(kcal), "protein": round(p), "carb": round(c), "fat": round(f), "water_ml": round(r["water_ml"]) if r["water_ml"] else None,
-            "source": label, "kcal_derived": bool(r["kcal_derived"]), "since": r["effective_from"]}
+    out = {"kcal": round(kcal), "protein": round(p), "carb": round(c), "fat": round(f), "water_ml": round(r["water_ml"]) if r["water_ml"] else None,
+           "source": label, "kcal_derived": bool(r["kcal_derived"]), "since": r["effective_from"]}
+    if "day_type" in r.keys() and r["day_type"] in DAY_TYPES:
+        out["for"] = r["day_type"]
+    return out
+
+
+DAY_TYPES = ("train", "rest")
+
+
+def day_type_label(t: str | None) -> str:
+    return {"train": L("训练日", "Training day"), "rest": L("休息日", "Rest day")}.get(t or "", "")
+
+
+def day_type_of(conn: sqlite3.Connection, d: str) -> tuple[str, str]:
+    """碳循环里这一天算训练日还是休息日，和怎么定的：标过的（Agent 或用户，diet_day_types）> 日程里排了训练
+    （Agent 的幂等键带 :training:，比如健身 Agent 的 fitness:training:<日期>，没删、没标「没去」）> 休息日。"""
+    r = conn.execute("SELECT day_type FROM diet_day_types WHERE date=?", (d,)).fetchone()
+    if r and r["day_type"] in DAY_TYPES:
+        return r["day_type"], "set"
+    try:
+        if conn.execute("""SELECT 1 FROM schedule_items WHERE date=? AND deleted_at IS NULL AND key LIKE '%:training:%'
+                AND IFNULL(attended, 1) != 0 LIMIT 1""", (d,)).fetchone():
+            return "train", "schedule"
+    except sqlite3.Error:  # 没有日程表的实例
+        pass
+    return "rest", "default"
 
 
 def targets_on(conn: sqlite3.Connection, d: str) -> dict | None:
+    """某天的目标：server.json 的 nutrition_targets（整个盖掉）> 那天及以前最近的一组（同一个生效日期的几行）。
+    那一组分了训练日 / 休息日（碳循环）就按这一天的类型取，并带上 day_type、day_type_by（set / schedule / default）和 cycle（两套都给）。"""
     override = settings.nutrition_targets()
     if override:
         return {**override, "source": L("手动设定", "Set manually")}
-    r = conn.execute("SELECT * FROM diet_targets WHERE effective_from <= ? ORDER BY effective_from DESC, id DESC LIMIT 1", (d,)).fetchone()
-    return target_out(r)
+    head = conn.execute("SELECT effective_from FROM diet_targets WHERE effective_from <= ? ORDER BY effective_from DESC, id DESC LIMIT 1", (d,)).fetchone()
+    if not head:
+        return None
+    by: dict[str | None, sqlite3.Row] = {}
+    for r in conn.execute("SELECT * FROM diet_targets WHERE effective_from=? ORDER BY id", (head[0],)):
+        by[r["day_type"] if r["day_type"] in DAY_TYPES else None] = r  # 同一类后写的算
+    if not any(k in by for k in DAY_TYPES):
+        return target_out(by.get(None))
+    t, how = day_type_of(conn, d)
+    out = target_out(by.get(t) or by.get(None) or by.get("rest" if t == "train" else "train"))
+    if out is None:
+        return None
+    return {**out, "day_type": t, "day_type_label": day_type_label(t), "day_type_by": how,
+            "cycle": {k: target_out(by[k]) for k in DAY_TYPES if k in by}}
 
 
 # —— 记录 ——————————————————————————————————————————————————————————————
@@ -1155,10 +1197,12 @@ def targets(date_: str | None = Query(None, alias="date")):
         cur = targets_on(conn, d)
         hist = conn.execute("SELECT * FROM diet_targets ORDER BY effective_from DESC, id DESC LIMIT 50").fetchall()
     return {"ok": True, "date": d, "current": cur, "history": [{"from": r["effective_from"], **(target_out(r) or {"cleared": True}), "note": r["note"],
-                                                                "by": r["created_by"], "at": r["created_at"]} for r in hist]}
+                                                                "by": r["created_by"], "at": r["created_at"],
+                                                                **({"for": r["day_type"]} if r["day_type"] in DAY_TYPES else {})} for r in hist]}
 
 
 class TargetsIn(BaseModel):
+    day_type: str | None = None   # 碳循环：train / rest 只改训练日或休息日那一套；不给 = 每天一样
     protein: float | None = None
     carb: float | None = None
     fat: float | None = None
@@ -1174,8 +1218,12 @@ class TargetsIn(BaseModel):
 
 @router.put("/api/diet/targets")
 def set_targets(body: TargetsIn):
+    """从某天起的目标。day_type = train / rest：碳循环里那一套；同一天没写另一套就把之前的另一套抄过来（两套总是成对）。"""
     d = day_arg(body.from_)
     by = actor_of(body.by)
+    dt = (body.day_type or "").strip().lower() or None
+    if dt not in (None, *DAY_TYPES):
+        raise bad("day_type 只能是 train（训练日）或 rest（休息日）", "day_type must be train or rest")
     if body.clear:
         vals: dict[str, Any] = {"kcal": None, "protein": None, "carb": None, "fat": None, "water_ml": None, "kcal_derived": 0}
     else:
@@ -1187,12 +1235,47 @@ def set_targets(body: TargetsIn):
         kcal = body.kcal if body.kcal is not None else body.protein * 4 + body.carb * 4 + body.fat * 9  # type: ignore[operator]
         vals = {"kcal": kcal, "protein": body.protein, "carb": body.carb, "fat": body.fat, "water_ml": body.water_ml, "kcal_derived": 1 if derived else 0}
     with _lock, dietdb() as conn:
-        conn.execute("INSERT INTO diet_targets(effective_from, kcal, protein, carb, fat, water_ml, kcal_derived, source, note, created_by, created_at) "
-                     "VALUES(?,?,?,?,?,?,?,?,?,?,?)", (d, vals["kcal"], vals["protein"], vals["carb"], vals["fat"], vals["water_ml"], vals["kcal_derived"],
-                                                      "leo" if by == "leo" else "agent", (body.note or "").strip()[:200] or None, by, now_iso()))
+        conn.execute("INSERT INTO diet_targets(effective_from, kcal, protein, carb, fat, water_ml, kcal_derived, source, note, created_by, created_at, day_type) "
+                     "VALUES(?,?,?,?,?,?,?,?,?,?,?,?)", (d, vals["kcal"], vals["protein"], vals["carb"], vals["fat"], vals["water_ml"], vals["kcal_derived"],
+                                                        "leo" if by == "leo" else "agent", (body.note or "").strip()[:200] or None, by, now_iso(),
+                                                        None if body.clear else dt))
+        if dt and not body.clear:
+            other = "rest" if dt == "train" else "train"
+            if not conn.execute("SELECT 1 FROM diet_targets WHERE effective_from=? AND day_type=?", (d, other)).fetchone():
+                prev = conn.execute("SELECT * FROM diet_targets WHERE effective_from < ? AND day_type=? ORDER BY effective_from DESC, id DESC LIMIT 1",
+                                    (d, other)).fetchone()
+                if prev:
+                    conn.execute("INSERT INTO diet_targets(effective_from, kcal, protein, carb, fat, water_ml, kcal_derived, source, note, created_by, created_at, day_type) "
+                                 "VALUES(?,?,?,?,?,?,?,?,?,?,?,?)", (d, prev["kcal"], prev["protein"], prev["carb"], prev["fat"], prev["water_ml"], prev["kcal_derived"],
+                                                                    prev["source"], prev["note"], prev["created_by"], now_iso(), other))
         cur = targets_on(conn, today().isoformat())
-    log_activity(L(f"营养目标从 {d} 起改了", f"Nutrition targets changed from {d}"), "diet", None if by == "leo" else by)
+    log_activity(L(f"营养目标从 {d} 起改了{('（' + day_type_label(dt) + '）') if dt else ''}", f"Nutrition targets changed from {d}"),
+                 "diet", None if by == "leo" else by)
     return {"ok": True, "from": d, "current": cur}
+
+
+class DayTypeIn(BaseModel):
+    date: str | None = None
+    day_type: str | None = None   # train / rest；null = 不标，按日程推断
+    by: str | None = None
+
+
+@router.put("/api/diet/day-type")
+def set_day_type(body: DayTypeIn):
+    """碳循环：标这一天是训练日还是休息日（饮食 Agent 配餐前、临时加练或取消训练时）。null = 去掉标记，按日程推断。"""
+    d = day_arg(body.date)
+    t = (body.day_type or "").strip().lower() or None
+    if t not in (None, *DAY_TYPES):
+        raise bad("day_type 只能是 train（训练日）或 rest（休息日）", "day_type must be train or rest")
+    with _lock, dietdb() as conn:
+        if t:
+            conn.execute("INSERT INTO diet_day_types(date, day_type, source, updated_at) VALUES(?,?,?,?) ON CONFLICT(date) DO UPDATE SET "
+                         "day_type=excluded.day_type, source=excluded.source, updated_at=excluded.updated_at", (d, t, actor_of(body.by), now_iso()))
+        else:
+            conn.execute("DELETE FROM diet_day_types WHERE date=?", (d,))
+        cur = targets_on(conn, d)
+        t2, how = day_type_of(conn, d)
+    return {"ok": True, "date": d, "day_type": t2, "day_type_by": how, "targets": cur}
 
 
 # —— 一天（看板、今天页）—————————————————————————————————————————————————————

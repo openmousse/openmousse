@@ -285,7 +285,8 @@ python3 nutrition.py cofid-import [--file 本地的 xlsx]
 | `GET /api/diet/foods?q=&recent=` · `POST` · `PATCH` / `DELETE /api/diet/foods/{id}` | 个人食物库；`POST {from: {source: off \| cofid \| usda, ref}}` 直接存 lookup 的结果 |
 | `GET /api/diet/lookup?q=&en=&barcode=&packaged=&sources=&all=` | `{best, results, tried, estimate}`：按顺序查，`tried` 说每个来源查了没有、为什么跳过 |
 | `GET /api/diet/library?days=` | 常吃的：次数、常用份量、常在哪餐 |
-| `GET` / `PUT /api/diet/targets` | 现在的目标和历史；`PUT {protein, carb, fat, kcal?, water_ml?, from?, note?}` 或 `{clear: true}` |
+| `GET` / `PUT /api/diet/targets` | 现在的目标和历史；`PUT {protein, carb, fat, kcal?, water_ml?, from?, note?, day_type?}` 或 `{clear: true}`。`day_type` = train / rest：碳循环里训练日 / 休息日那一套（同一天没写另一套就沿用之前的另一套）；那天的目标带 `day_type`、`day_type_by`（set / schedule / default）、`cycle` |
+| `PUT /api/diet/day-type` | `{date?, day_type: train \| rest \| null}`：标某天是训练日还是休息日；不标就看日程里有没有排训练（键带 `:training:`），没有算休息日 |
 | `GET /api/diet/nutrition-sources` | 各来源的状态（CoFID 导没导、缓存了多少、USDA 有没有 key） |
 
 ## 看板、功能包和提醒

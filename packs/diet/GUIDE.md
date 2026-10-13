@@ -32,6 +32,8 @@ $D library --days 30   # 常吃的：次数、常用份量、每 100 g 营养、
 
 `$D targets` 看现在的和改过的。用户说要改：`$D targets set --protein 136 --carb 240 --fat 80 [--kcal 2224] [--from 日期]`（不给 kcal 按 4/4/9 换算）。用户说的直接改。
 
+**碳循环**（训练日、休息日两套目标）：`$D targets set --day-type train …` 和 `--day-type rest …` 各设一套。某天算哪种：标过的（`$D day-type train|rest [--date]`，`auto` 去掉标记）> 日程里排了训练（Agent 的日程键带 `:training:`）> 休息日。`$D day` 和 `/api/diet/day` 的目标已经是那一天那一种的；配餐前看一眼今天算对了没有，临时加练或不练就改标记。
+
 ## 和库存（pantry 包）一起用
 
 - 小票进库存时把营养补进食物库（按上面的顺序查），库存的 `protein_g` 按食物库算；查不到的在 note 里写「营养待查」。

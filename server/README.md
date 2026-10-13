@@ -286,7 +286,8 @@ python3 nutrition.py cofid-import [--file local.xlsx]
 | `GET /api/diet/foods?q=&recent=` · `POST` · `PATCH` / `DELETE /api/diet/foods/{id}` | The food library; `POST {from: {source: off \| cofid \| usda, ref}}` saves a lookup result as is |
 | `GET /api/diet/lookup?q=&en=&barcode=&packaged=&sources=&all=` | `{best, results, tried, estimate}`: follows the order; `tried` says which sources were asked and why any were skipped |
 | `GET /api/diet/library?days=` | Usual foods: times, usual amount, which meals |
-| `GET` / `PUT /api/diet/targets` | Current targets and history; `PUT {protein, carb, fat, kcal?, water_ml?, from?, note?}` or `{clear: true}` |
+| `GET` / `PUT /api/diet/targets` | Current targets and history; `PUT {protein, carb, fat, kcal?, water_ml?, from?, note?, day_type?}` or `{clear: true}`. `day_type` = train / rest: the training-day or rest-day set for carb cycling (if that date has no set of the other kind, the previous one is carried over); a day's targets carry `day_type`, `day_type_by` (set / schedule / default) and `cycle` |
+| `PUT /api/diet/day-type` | `{date?, day_type: train \| rest \| null}`: mark a day as a training or rest day; unmarked days are training days when the schedule has a session (key containing `:training:`), otherwise rest days |
 | `GET /api/diet/nutrition-sources` | Status of each source (CoFID imported, cache size, USDA key present) |
 
 ## Boards, feature packs and reminders

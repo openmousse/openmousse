@@ -34,8 +34,10 @@
   python3 diet_ctl.py rm <记录 id>
   python3 diet_ctl.py undo <批号>
 
-营养目标
+营养目标（可以分训练日 / 休息日：碳循环）
   python3 diet_ctl.py targets set --protein 136 --carb 240 --fat 80 [--kcal 2224] [--from 2026-10-13] [--note …]
+  python3 diet_ctl.py targets set --day-type train --protein 136 --carb 280 --fat 60 --kcal 2200 [--from …]   # 只改训练日那一套
+  python3 diet_ctl.py day-type train|rest|auto [--date …]   # 标这一天是训练日 / 休息日；auto = 去掉标记（日程里排了训练算训练日，否则休息日）
 
 不给 --by：当前目录在哪个 Agent 的工作区里就算它记的，否则是 main。服务地址按 server.json 的 bind（MOUSSE_SERVER_CONFIG 换一份就指向别的服务，测试用）。
 """
@@ -90,8 +92,10 @@ Log (preview by default: nutrition worked out and shown, nothing written; add --
   python3 diet_ctl.py rm <entry id>
   python3 diet_ctl.py undo <batch id>
 
-Targets
+Targets (training-day / rest-day sets for carb cycling are optional)
   python3 diet_ctl.py targets set --protein 136 --carb 240 --fat 80 [--kcal 2224] [--from 2026-10-13] [--note …]
+  python3 diet_ctl.py targets set --day-type train --protein 136 --carb 280 --fat 60 --kcal 2200 [--from …]   # only the training-day set
+  python3 diet_ctl.py day-type train|rest|auto [--date …]   # mark a day as a training or rest day; auto = remove the mark (a training session in the schedule makes it a training day, otherwise rest)
 
 Without --by: the Agent whose workspace contains the current directory, otherwise main. The server address comes from bind in server.json
 (point MOUSSE_SERVER_CONFIG at another server.json to use another server, e.g. for tests).
@@ -140,7 +144,9 @@ def cmd_day(a) -> None:
     print("\n" + L("合计：", "Total: ") + macro_line(t))
     tg = d.get("targets")
     if tg:
-        print(L("目标：", "Target: ") + macro_line(tg) + f"  ({tg.get('source')})")
+        kind = f"{tg['day_type_label']}，" if tg.get("day_type_label") else ""
+        how = {"set": L("标过的", "marked"), "schedule": L("日程里排了训练", "training in the schedule"), "default": L("没排训练", "no training planned")}.get(tg.get("day_type_by") or "", "")
+        print(L("目标：", "Target: ") + macro_line(tg) + f"  ({kind}{how + '，' if how else ''}{tg.get('source')})")
         print(L("还差：", "Left: ") + macro_line({k: tg[k] - t.get(k, 0) for k in MACROS}))
     else:
         print(L("目标：没设", "Target: none set"))
@@ -367,12 +373,21 @@ def cmd_undo(a) -> None:
     print(L(f"撤销了 {d['undone']} 样。这天合计：", f"Undid {d['undone']} item(s). Day total: ") + macro_line(d["day"]["totals"]))
 
 
+def cmd_day_type(a) -> None:
+    body = {"date": a.date, "day_type": None if a.type == "auto" else a.type, "by": a.by or guess_source()}
+    d = call("PUT", "/api/diet/day-type", body)
+    how = {"set": L("标过的", "marked"), "schedule": L("日程里排了训练", "training in the schedule"), "default": L("没排训练", "no training planned")}.get(d["day_type_by"], "")
+    tg = d.get("targets")
+    print(f"{d['date']}：" + (L("训练日", "training day") if d["day_type"] == "train" else L("休息日", "rest day")) + f"（{how}）"
+          + (L("，目标 ", ", target ") + macro_line(tg) if tg else ""))
+
+
 def cmd_targets(a) -> None:
     if a.action == "set":
         if None in (a.protein, a.carb, a.fat) and not a.clear:
             sys.exit(L("targets set 要 --protein --carb --fat（或 --clear）", "targets set needs --protein --carb --fat (or --clear)"))
         body = {"protein": a.protein, "carb": a.carb, "fat": a.fat, "kcal": a.kcal, "water_ml": a.water, "from": a.lo, "note": a.note, "clear": a.clear,
-                "by": a.by or guess_source()}
+                "day_type": a.day_type, "by": a.by or guess_source()}
         d = call("PUT", "/api/diet/targets", {k: v for k, v in body.items() if v is not None})
         cur = d.get("current")
         print(L(f"从 {d['from']} 起：", f"From {d['from']}: ") + (macro_line(cur) if cur else L("不设目标", "no target")))
@@ -381,9 +396,13 @@ def cmd_targets(a) -> None:
     if a.json:
         return show_json(d)
     cur = d.get("current")
-    print(L("现在：", "Now: ") + (macro_line(cur) + f"（{cur.get('source')}，{cur.get('since') or ''} 起）" if cur else L("没设", "none")))
+    print(L("今天：", "Today: ") + (macro_line(cur) + f"（{(cur['day_type_label'] + '，') if cur.get('day_type_label') else ''}{cur.get('source')}，{cur.get('since') or ''} 起）"
+                                    if cur else L("没设", "none")))
+    for k, v in ((cur or {}).get("cycle") or {}).items():
+        print(f"  {L('训练日', 'training day') if k == 'train' else L('休息日', 'rest day')}：{macro_line(v)}")
     for h in d["history"][:12]:
-        print(f"  {h['from']}  " + (L("不设目标", "cleared") if h.get("cleared") else macro_line(h)) + (f"  {h['note']}" if h.get("note") else ""))
+        kind = {"train": L("训练日 ", "training "), "rest": L("休息日 ", "rest ")}.get(h.get("for") or "", "")
+        print(f"  {h['from']}  {kind}" + (L("不设目标", "cleared") if h.get("cleared") else macro_line(h)) + (f"  {h['note']}" if h.get("note") else ""))
 
 
 def main() -> int:
@@ -497,8 +516,13 @@ def main() -> int:
     s.add_argument("--from", dest="lo")
     s.add_argument("--note")
     s.add_argument("--clear", action="store_true")
+    s.add_argument("--day-type", choices=["train", "rest"], help=L("碳循环：只改训练日 / 休息日那一套", "carb cycling: only the training-day or rest-day set"))
     s.add_argument("--json", action="store_true")
     s.set_defaults(fn=cmd_targets)
+    s = sub.add_parser("day-type")
+    s.add_argument("type", choices=["train", "rest", "auto"])
+    s.add_argument("--date")
+    s.set_defaults(fn=cmd_day_type)
     a = p.parse_args()
     a.fn(a)
     return 0
