@@ -7,7 +7,9 @@ export interface LiveTrain { title: string; minutes: number; kcal: number | null
   movements: { name: string; type: string; sets_done: number; sets_total: number; top_set: string }[] }
 export interface LiveDay { date: string; d: string; minutes: number; label: string; future: boolean; trains: LiveTrain[] }
 export interface LiveWeek { source: string; week_start: string; today_index: number; sessions: number; active_days: number; total_minutes: number; total_sets: number; days: LiveDay[] }
-export interface LiveMeal { label: string; kcal: number; protein: number; items: { name: string; amount: number; unit: string; kcal: number | null }[] }
+/** 饮食记录在服务器上的（supports('diet.log')）多给 key / time / carb / fat，每一样多给 id、三大营养素、来源和估算；训记来的没有这些。 */
+export interface LiveMeal { label: string; kcal: number; protein: number; key?: string; time?: string | null; carb?: number; fat?: number;
+  items: { name: string; amount: number; unit: string; kcal: number | null; id?: string; protein?: number; carb?: number; fat?: number; source?: string; estimated?: boolean }[] }
 export interface LiveDiet { source: string; date: string; totals: { kcal: number; protein: number; carb: number; fat: number };
   targets: { kcal: number; protein: number; carb: number; fat: number; source?: string; kcal_derived?: boolean } | null; item_count: number; meals: LiveMeal[] }
 export interface LiveMetric { type: string; label: string; value: number; unit: string; date: string }

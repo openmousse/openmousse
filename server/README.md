@@ -254,6 +254,40 @@ python3 goals_ctl.py undo 12
 | `POST /api/goals/seen` | `{ids}`: dismiss changes from the top of the Goals page |
 | `GET /api/goals/trend?metric=weight&days=180&fresh=` | `{series: [{date, value, source: body / health}], summary: {latest, avg7, change30: {value, since}, check}, sources}`; nothing connected = an empty series, not an error |
 
+## Meal log
+
+What you eat is logged in the server's own database (since 2026-10-13; it used to be read from Xunji). See [`diet.py`](diet.py) and [`nutrition.py`](nutrition.py); Agents use [`diet_ctl.py`](diet_ctl.py) (or the MCP `diet` tool without a shell), with usage in [`../packs/diet/GUIDE.en.md`](../packs/diet/GUIDE.en.md).
+
+- **Three tables**: `diet_foods`, the personal food library (per 100 g, drinks per 100 ml; usual portions like "1 egg (shelled) = 65 g"; source xunji / off / cofid / usda / label / manual / estimate and where exactly it came from); `diet_entries`, one row per item eaten (date, meal, time, amount, this item's nutrition plus a per-100 g snapshot from when it was logged, `source` = plan / chat / photo / manual / xunji, `estimated`, and a `batch` shared by one write); `diet_targets`, nutrition targets by effective date (a day's target is the latest row on or before it). Deletes are soft.
+- **Lookup order** (`/api/diet/lookup`): the food library → packaged food on Open Food Facts (API v3 by barcode, Search-a-licious by name, UK products first; or the user's photo of the label) → the UK's CoFID 2021 (2,887 generic foods, imported from the GOV.UK spreadsheet on first use) → USDA FoodData Central (only with `USDA_FDC_API_KEY` in `.env`); otherwise the Agent estimates and marks it. External results are cached in `<data_dir>/nutrition.db` (safe to delete). Open Food Facts data is ODbL: lookups are cached on this machine only, the library records the source, and the merged library is never shared (shares, the card agent and A2A never include it); the User-Agent carries only the project name and URL.
+- **Log this meal in one tap** (`POST /api/diet/log-plan`): logs a meal plan card's `data.meals` (`feed_items` of kind `meal_plan`); `meals` picks which, `scale` scales the whole meal, `items` changes single amounts; the same meal from the same card is never logged twice (409). For older cards whose items only have calories and protein, the meal's carbs and fat are split across items by the ratios of similar foods in the library (never more than the item weighs), so the meal totals match the card.
+- **Source**: `diet.source` in `server.json` is `local` (default) or `xunji` (still read from Xunji, for the author's migration). `/api/diet/day` has the same shape either way (boards and Today are unchanged); writes always go to these tables. History from Xunji comes in once through [`diet_import.py`](diet_import.py): a read-only export → import (Xunji's `record_id` is the food id and not unique, so the key is date:meal:record_id#occurrence) → a day-by-day check of totals → a migration report.
+
+```bash
+python3 diet_ctl.py day
+python3 diet_ctl.py lookup banana --en "bananas flesh only"
+python3 diet_ctl.py food-save --from cofid:14-318 --name Banana --portion "1 banana=120"
+python3 diet_ctl.py add --meal breakfast --item "Banana=120" --item "Egg:1 egg (shelled)×2" --commit
+python3 diet_ctl.py log-plan --meal dinner --set 0.1=100 --commit
+python3 diet_import.py export && python3 diet_import.py import --file <export> --commit
+python3 nutrition.py cofid-import [--file local.xlsx]
+```
+
+| Endpoint | What it does |
+|---|---|
+| `GET /api/diet/day?date=` | `{source, date, totals, targets, item_count, meals: [{label, key, time, kcal, protein, carb, fat, items: [{id, name, amount, unit, kcal, protein, carb, fat, time, source, estimated}]}]}` (Xunji mode has nothing after key) |
+| `GET /api/diet/days?from=&to=` | Daily totals (days with entries) and that day's targets |
+| `GET /api/diet/entries?date=` (or `from` / `to`) | Every row with id, per-100 g snapshot, source and batch |
+| `POST /api/diet/entries` | `{date?, meal, time?, source, items: [{food \| name, amount, unit, portion, count, per100, kcal/protein/carb/fat, estimated}], commit}`; `commit: false` = preview |
+| `PATCH` / `DELETE /api/diet/entries/{id}` | Change the amount (recomputed from the snapshot) / meal / time / date; delete |
+| `POST /api/diet/undo` | `{batch}`: undo one write |
+| `POST /api/diet/log-plan` | `{card?, meals?, scale?, items?: [{meal, item, amount}], date?, time?, again?, commit?}`; returns `batch`, `entries` and `day` (totals and what's left) |
+| `GET /api/diet/foods?q=&recent=` · `POST` · `PATCH` / `DELETE /api/diet/foods/{id}` | The food library; `POST {from: {source: off \| cofid \| usda, ref}}` saves a lookup result as is |
+| `GET /api/diet/lookup?q=&en=&barcode=&packaged=&sources=&all=` | `{best, results, tried, estimate}`: follows the order; `tried` says which sources were asked and why any were skipped |
+| `GET /api/diet/library?days=` | Usual foods: times, usual amount, which meals |
+| `GET` / `PUT /api/diet/targets` | Current targets and history; `PUT {protein, carb, fat, kcal?, water_ml?, from?, note?}` or `{clear: true}` |
+| `GET /api/diet/nutrition-sources` | Status of each source (CoFID imported, cache size, USDA key present) |
+
 ## Boards, feature packs and reminders
 
 Each Agent has its own tables and a dashboard of blocks it lays out itself; the app draws seven block types from the server-computed data and never computes. See [`boards.py`](boards.py), [`packs.py`](packs.py), [`alerts.py`](alerts.py); Agents use [`board_ctl.py`](board_ctl.py).
@@ -564,6 +598,6 @@ An agent that runs errands outside for you (research, forms, mail, bookings) fro
 
 ## Data sources are optional
 
-The boards need workouts / meals / body / calendar / derived health metrics, each provided by one script in the `scripts` directory named in `server.json` (default `<workspace>/scripts`): `xunji.py` (workouts / meals / body), `calendar_ics.py` (calendar), `apple_health.py` (recovery score, energy balance, fitness trend, and whether you are up yet: `/api/health/wake` reads the raw sleep segments the phone pushes to `/api/health/sleep` and the wake signals posted to `/api/health/signal`). `memory_tree.py` provides the memory tree (Me → Memory tree). A script that is present gets loaded; a missing one means "not connected": `/api/health` reports `sources` so the app knows, the affected endpoints answer `ok=false` + `missing_source`, boards show an empty state, everything else works. See [`sources.py`](sources.py).
+The boards need workouts / meals / body / calendar / derived health metrics, each provided by one script in the `scripts` directory named in `server.json` (default `<workspace>/scripts`): `xunji.py` (workouts / body; meals only when `diet.source` is `xunji`, otherwise they live in the server's own meal log, see Meal log), `calendar_ics.py` (calendar), `apple_health.py` (recovery score, energy balance, fitness trend, and whether you are up yet: `/api/health/wake` reads the raw sleep segments the phone pushes to `/api/health/sleep` and the wake signals posted to `/api/health/signal`). `memory_tree.py` provides the memory tree (Me → Memory tree). A script that is present gets loaded; a missing one means "not connected": `/api/health` reports `sources` so the app knows, the affected endpoints answer `ok=false` + `missing_source`, boards show an empty state, everything else works. See [`sources.py`](sources.py).
 
 Today these three scripts still have the shape of the author's own sources (the Xunji training app, an ICS calendar, Apple Health). They are being split into optional packs (`packs/`): each pack declares the data types it needs and you map the sources.

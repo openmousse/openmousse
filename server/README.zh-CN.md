@@ -253,6 +253,40 @@ python3 goals_ctl.py undo 12
 | `POST /api/goals/seen` | `{ids}`：目标页顶上那条点了「知道了」 |
 | `GET /api/goals/trend?metric=weight&days=180&fresh=` | `{series: [{date, value, source: body / health}], summary: {latest, avg7, change30: {value, since}, check}, sources}`；哪边都没接 = series 为空，不算错 |
 
+## 饮食记录
+
+吃了什么记在服务自己的库里（2026-10-13 起；以前从训记读）。见 [`diet.py`](diet.py)、[`nutrition.py`](nutrition.py)，Agent 用 [`diet_ctl.py`](diet_ctl.py)（没有 shell 的走 MCP 的 `diet` 工具），用法在 [`../packs/diet/GUIDE.md`](../packs/diet/GUIDE.md)。
+
+- **三张表**：`diet_foods` 个人食物库（每 100 g，饮品每 100 ml；常用份量「1 个（去壳）= 65 g」；来源 xunji / off / cofid / usda / label / manual / estimate 和出处）、`diet_entries` 吃下去的一样一行（日期、餐次、时间、份量、这一样的营养和记下时的每 100 g 快照、`source` = plan 按建议 / chat 对话 / photo 照片 / manual 手动 / xunji 导入、`estimated`、同一次写入共用的 `batch`）、`diet_targets` 营养目标（按生效日期一行；某天的目标 = 那天及以前最近的一行）。删一律是软删。
+- **查营养的顺序**（`/api/diet/lookup`）：个人食物库 → 包装食品查 Open Food Facts（条码走 API v3，名字走 Search-a-licious，优先英国在售的；或用户拍营养标签）→ 英国 CoFID 2021（2,887 种通用食物，第一次查时从 GOV.UK 下载 Excel 导入本地表）→ USDA FoodData Central（`.env` 里有 `USDA_FDC_API_KEY` 才查）；都没有由 Agent 估算并标「估算」。外部来源的结果缓存在 `<data_dir>/nutrition.db`（删了能重建）。Open Food Facts 是 ODbL：查过的只缓存在本机、食物库里记着出处，不对外分发合并后的库（分享、名片 Agent、A2A 都不带它）；User-Agent 只写项目名和网址。
+- **一键「记录这一餐」**（`POST /api/diet/log-plan`）：按饮食建议卡（`feed_items` 的 `meal_plan`）的 `data.meals` 记，`meals` 选第几餐、`scale` 整餐按比例、`items` 单样改份量；同一张卡的同一餐不重复记（409）。老卡每一样只有热量和蛋白质时，整餐的碳水 / 脂肪按食物库里同类的比例分到每一样（不超过它自己的重量），整餐合计和卡片一样。
+- **数据源**：`server.json` 的 `diet.source` = `local`（默认）或 `xunji`（还从训记读，迁移前用）。`/api/diet/day` 两种都给同一个结构（看板、今天页不用改）；写入只写这里的表。训记里的历史用 [`diet_import.py`](diet_import.py) 一次性导进来：只读导出 → 导入（训记的 `record_id` 是食物编号、不唯一，键用 日期:餐次:record_id#第几次）→ 逐天核对合计 → 迁移报告。
+
+```bash
+python3 diet_ctl.py day
+python3 diet_ctl.py lookup 香蕉 --en "bananas flesh only"
+python3 diet_ctl.py food-save --from cofid:14-318 --name 香蕉 --portion "1 根=120"
+python3 diet_ctl.py add --meal 早餐 --item "香蕉=120" --item "鸡蛋:1 个（去壳）×2" --commit
+python3 diet_ctl.py log-plan --meal 晚餐 --set 0.1=100 --commit
+python3 diet_import.py export && python3 diet_import.py import --file <导出的文件> --commit
+python3 nutrition.py cofid-import [--file 本地的 xlsx]
+```
+
+| 接口 | 做什么 |
+|---|---|
+| `GET /api/diet/day?date=` | `{source, date, totals, targets, item_count, meals: [{label, key, time, kcal, protein, carb, fat, items: [{id, name, amount, unit, kcal, protein, carb, fat, time, source, estimated}]}]}`（训记模式没有 key 之后的那些） |
+| `GET /api/diet/days?from=&to=` | 逐天合计（有记录的天）和那天的目标 |
+| `GET /api/diet/entries?date=`（或 `from` / `to`） | 每一行，带 id、每 100 g 快照、来源、批号 |
+| `POST /api/diet/entries` | `{date?, meal, time?, source, items: [{food \| name, amount, unit, portion, count, per100, kcal/protein/carb/fat, estimated}], commit}`；`commit: false` = 预览 |
+| `PATCH` / `DELETE /api/diet/entries/{id}` | 改份量（按快照重算）/ 餐次 / 时间 / 日期；删 |
+| `POST /api/diet/undo` | `{batch}`：撤销同一次写入的几样 |
+| `POST /api/diet/log-plan` | `{card?, meals?, scale?, items?: [{meal, item, amount}], date?, time?, again?, commit?}`；返回 `batch`、`entries`、`day`（合计和还差多少） |
+| `GET /api/diet/foods?q=&recent=` · `POST` · `PATCH` / `DELETE /api/diet/foods/{id}` | 个人食物库；`POST {from: {source: off \| cofid \| usda, ref}}` 直接存 lookup 的结果 |
+| `GET /api/diet/lookup?q=&en=&barcode=&packaged=&sources=&all=` | `{best, results, tried, estimate}`：按顺序查，`tried` 说每个来源查了没有、为什么跳过 |
+| `GET /api/diet/library?days=` | 常吃的：次数、常用份量、常在哪餐 |
+| `GET` / `PUT /api/diet/targets` | 现在的目标和历史；`PUT {protein, carb, fat, kcal?, water_ml?, from?, note?}` 或 `{clear: true}` |
+| `GET /api/diet/nutrition-sources` | 各来源的状态（CoFID 导没导、缓存了多少、USDA 有没有 key） |
+
 ## 看板、功能包和提醒
 
 每个 Agent 有自己的表，看板上的积木由它自己摆；app 只按服务端算好的数据画七种积木，不自己算。见 [`boards.py`](boards.py)、[`packs.py`](packs.py)、[`alerts.py`](alerts.py)，Agent 用 [`board_ctl.py`](board_ctl.py)。
@@ -563,6 +597,6 @@ Doorman 在 2026-10 之前叫 Sentinel；内部名字沿用旧词（服务 `open
 
 ## 数据源是可选的
 
-看板要的训练 / 餐食 / 身体 / 日历 / 健康派生指标，各来自 `server.json` 的 `scripts` 目录（默认 `<workspace>/scripts`）里的一个脚本：`xunji.py`（训练 / 餐食 / 身体）、`calendar_ics.py`（日历）、`apple_health.py`（恢复分、热量缺口、体能趋势，还有起没起床：`/api/health/wake` 看手机推到 `/api/health/sleep` 的睡眠分段和 `/api/health/signal` 收到的起床信号）。`memory_tree.py` 提供世界树（「我 → 世界树」）。脚本在就加载，不在就是「还没接」：`/api/health` 的 `sources` 告诉 app 哪些接了，没接的接口回 `ok=false` + `missing_source`，app 的看板显示空状态，其它功能照常。见 [`sources.py`](sources.py)。
+看板要的训练 / 餐食 / 身体 / 日历 / 健康派生指标，各来自 `server.json` 的 `scripts` 目录（默认 `<workspace>/scripts`）里的一个脚本：`xunji.py`（训练 / 身体；餐食只在 `diet.source` 设成 `xunji` 时从它读，平时记在服务自己的库里，见「饮食记录」）、`calendar_ics.py`（日历）、`apple_health.py`（恢复分、热量缺口、体能趋势，还有起没起床：`/api/health/wake` 看手机推到 `/api/health/sleep` 的睡眠分段和 `/api/health/signal` 收到的起床信号）。`memory_tree.py` 提供世界树（「我 → 世界树」）。脚本在就加载，不在就是「还没接」：`/api/health` 的 `sources` 告诉 app 哪些接了，没接的接口回 `ok=false` + `missing_source`，app 的看板显示空状态，其它功能照常。见 [`sources.py`](sources.py)。
 
 这三个脚本目前还是作者自己的数据源（训记、IC 日历、Apple 健康）的形状，正在拆成可选的功能包（packs/）：每个包只声明需要的数据类型，来源由你映射。
