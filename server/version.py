@@ -22,7 +22,7 @@ from pathlib import Path
 
 from config import REPO, settings
 
-VERSION = "2026.10.13-2"
+VERSION = "2026.10.13-3"
 API = 1
 FEATURES = (
     "card.name",  # PATCH /api/card {name}：在 app 里设好友看到的名字
