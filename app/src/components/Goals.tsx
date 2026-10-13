@@ -175,7 +175,7 @@ function WeightBody({ trend, band }: { trend: GoalTrend; band?: { targetLow: num
   const hasBand = band && (band.targetLow != null || band.targetHigh != null);
   return (
     <View style={{ gap: 6 }}>
-      <TrendLine points={main} secondary={others} from={from} to={trend.to} label={label}
+      <TrendLine points={main} secondary={others} from={from} to={trend.to} label={label} unit={trend.unit} sourceName={name(s.source)} secondaryName={name('health')}
         band={hasBand ? { low: band.targetLow, high: band.targetHigh } : null} />
       <View style={styles.axis}>
         <T v="caption" color={t.ink3} style={styles.axisText}>{shortDate(from)}</T>

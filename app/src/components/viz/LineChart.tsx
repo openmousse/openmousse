@@ -42,20 +42,24 @@ export interface LineChartProps extends VizStateProps {
   dates?: { from: string; to: string };
   /** 对照来源：空心圈（和主线同一天同一个数就套在点外面） */
   secondary?: { label: string; points: { key: string; value: number; text?: string }[] } | null;
-  /** 横轴写几个字 */
+  /** 横轴写几个字（0 = 不写，调用方自己写起止） */
   xLabels?: number;
+  /** 末端（当前）的点用强调色 */
+  emphasis?: boolean;
   /** 单条线时线下铺 10% 的浅色 */
   area?: boolean;
   /** 每个读数画一个小点（读数稀疏时，看得出哪天量过） */
   markers?: boolean;
   /** 纵轴刻度和网格线（小卡片里可以关掉） */
   axis?: boolean;
+  /** 图例：不给 = 两条及以上（或有对照来源）时画；调用方自己写了图例就给 false */
+  legend?: boolean;
   fmt?: (v: number) => string;
   label?: string;
   style?: StyleProp<ViewStyle>;
 }
 
-export function LineChart({ series, band, height = 140, ticks = 3, zero, minSpan, current, dates, secondary, xLabels = 4, area, markers, axis = true, fmt = plain, label, style, ...state }: LineChartProps) {
+export function LineChart({ series, band, height = 140, ticks = 3, zero, minSpan, current, dates, secondary, xLabels = 4, emphasis, area, markers, axis = true, legend: showLegend, fmt = plain, label, style, ...state }: LineChartProps) {
   const t = useTheme();
   const surface = useSurface();
   const fs = useFontScale();
@@ -114,7 +118,7 @@ export function LineChart({ series, band, height = 140, ticks = 3, zero, minSpan
   const hasValue = (k: string) => secByKey.has(k) || drawn.some((d) => d.byKey.get(k)?.value != null);
 
   const fsLine = Math.round(14 * fs);
-  const xb = fsLine + 6;
+  const xb = xLabels > 0 ? fsLine + 6 : 0;
   const onTouch = (e: GestureResponderEvent, first: boolean) => {
     const x = e.nativeEvent.locationX + gw;
     let best: string | null = null;
@@ -132,11 +136,13 @@ export function LineChart({ series, band, height = 140, ticks = 3, zero, minSpan
   const pickFrom = dates ? withData : keys;
   const shown = new Set<string>();
   const step = Math.max(1, Math.ceil((pickFrom.length - 1) / Math.max(1, xLabels - 1)));
-  for (let i = pickFrom.length - 1; i >= 0; i -= step) shown.add(pickFrom[i]);
-  if (current && names.has(current)) shown.add(current);
+  if (xLabels > 0) {
+    for (let i = pickFrom.length - 1; i >= 0; i -= step) shown.add(pickFrom[i]);
+    if (current && names.has(current)) shown.add(current);
+  }
   const lw = Math.round(44 * fs);
 
-  const legend: LegendItem[] | null = series.length > 1 || secondary
+  const legend: LegendItem[] | null = showLegend ?? (series.length > 1 || !!secondary)
     ? [...drawn.map((d) => ({ label: d.s.label, color: d.color, shape: 'line' as const })), ...(secondary ? [{ label: secondary.label, color: t.ink3, shape: 'ring' as const }] : [])]
     : null;
 
@@ -166,7 +172,7 @@ export function LineChart({ series, band, height = 140, ticks = 3, zero, minSpan
         {w > 0 ? (
           <>
             <Svg width={w} height={height} style={{ position: 'absolute', left: 0, top: 0 }}>
-              {hasBand ? <Rect x={gw} y={bandTop} width={plotW} height={Math.max(2, bandBottom - bandTop)} fill={band?.color ?? seriesColor(t, 0)} fillOpacity={band?.color ? 1 : vizMark.band} /> : null}
+              {hasBand ? <Rect x={gw} y={bandTop} width={plotW} height={Math.max(2, bandBottom - bandTop)} rx={4} fill={band?.color ?? seriesColor(t, 0)} fillOpacity={band?.color ? 1 : vizMark.band} /> : null}
               {tickVals.map((v) => <Line key={v} x1={gw} x2={w} y1={yOf(v)} y2={yOf(v)} stroke={t.viz.grid} strokeWidth={1} />)}
               {area && drawn.length === 1 ? drawn[0].segs.map((sg, i) => (sg.length > 1 ? (
                 <Path key={`a${i}`} d={`M${sg[0].x},${yOf(min)} ${sg.map((p) => `L${p.x},${p.y}`).join(' ')} L${sg[sg.length - 1].x},${yOf(min)} Z`} fill={drawn[0].color} fillOpacity={vizMark.area} />
@@ -177,7 +183,7 @@ export function LineChart({ series, band, height = 140, ticks = 3, zero, minSpan
               ) : null)))}
               {markers ? drawn.map((d) => d.ordered.map((p) => (p.value != null && p !== d.last ? <Circle key={`m${d.s.key}${p.key}`} cx={xOf(p.key)} cy={yOf(p.value)} r={3} fill={d.color} /> : null))) : null}
               {sel ? <Line x1={xOf(sel)} x2={xOf(sel)} y1={0} y2={height} stroke={t.ink3} strokeWidth={1} /> : null}
-              {drawn.map((d) => (d.last?.value != null ? <Circle key={`e${d.s.key}`} cx={xOf(d.last.key)} cy={yOf(d.last.value)} {...dotProps(d.color, surface)} /> : null))}
+              {drawn.map((d) => (d.last?.value != null ? <Circle key={`e${d.s.key}`} cx={xOf(d.last.key)} cy={yOf(d.last.value)} {...dotProps(emphasis ? t.viz.emph : d.color, surface)} /> : null))}
               {sel ? drawn.map((d) => { const p = d.byKey.get(sel); return p?.value != null ? <Circle key={`h${d.s.key}`} cx={xOf(sel)} cy={yOf(p.value)} {...dotProps(d.color, surface)} /> : null; }) : null}
             </Svg>
             {tickVals.map((v) => (

@@ -2,12 +2,12 @@
 // 数据和文字都是服务器按配置算好、按语言格式化好的，这里只管画和你自己点的改动。不认识的种类显示「要新版 app」。
 import React, { useState } from 'react';
 import { ActivityIndicator, Pressable, StyleSheet, Text, View } from 'react-native';
-import Svg, { Circle, Polyline } from 'react-native-svg';
-import { boardsApi, type Block, type BoardAction, type BoardRow, type ChartPoint, type Tone } from '../../api/boards';
+import { boardsApi, type Block, type BoardAction, type BoardRow, type ChartPoint } from '../../api/boards';
 import { L } from '../../i18n';
 import { useStore } from '../../store';
-import { radius, space, type, useTheme, type Theme } from '../../theme';
-import { Bar, Ring, weekdayShort } from '../charts';
+import { radius, space, type, useTheme } from '../../theme';
+import { weekdayShort } from '../charts';
+import { BarChart, LineChart, ProgressBar, ProgressRing, StatRow, toneColors, type StatTileProps } from '../viz';
 import { Camera, Check, ChevronRight, FileText, ImageIcon, Plus, Sparkles } from '../icons';
 import { Markdown } from '../Markdown';
 import { useSheet } from '../Sheet';
@@ -19,10 +19,8 @@ import { openForm, openRow } from './RowSheet';
 const WEEKDAYS = ['日', '一', '二', '三', '四', '五', '六'];
 const MONTHS_EN = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
 
-export const toneColors = (t: Theme, tone?: Tone): [string, string] => ({
-  good: [t.goodSoft, t.good], warn: [t.warnSoft, t.warn], bad: [t.badSoft, t.bad], cyan: [t.cyanSoft, t.cyan], gold: [t.goldSoft, t.gold],
-  neutral: [t.surface2, t.ink2],
-} as Record<Tone, [string, string]>)[tone ?? 'neutral'] ?? [t.surface2, t.ink2];
+// 标签的底色和字色（搬到了可视化素材库，这里转出去给老的引用）
+export { toneColors };
 
 /** 小标题一行：标题（刚加的带「新」）+ 右边一行小字。按钮块没有标题就不画。 */
 function BlockHeader({ block }: { block: Block }) {
@@ -65,28 +63,18 @@ export function BlockView({ block }: { block: Block }) {
   );
 }
 
-// —— 数字 ——
+// —— 数字 ——（素材库的数字卡；变化值的颜色用服务器给的 tone）
 
 function StatBody({ block }: { block: Block }) {
-  const t = useTheme();
-  const items = block.data.items ?? [];
-  const cols = items.length === 4 ? 2 : Math.max(1, items.length);
-  const big = cols === 1 ? 32 : cols === 2 ? 26 : 22;
-  return (
-    <Card style={{ flexDirection: 'row', flexWrap: 'wrap', rowGap: 14 }}>
-      {items.map((it, i) => (
-        <View key={`${i}-${it.label}`} style={{ width: `${100 / cols}%`, gap: 2, paddingRight: space.sm }} accessible accessibilityLabel={`${it.label} ${it.text}${it.deltaText ? `，${it.deltaText}` : ''}`}>
-          <T v="largeTitle" numberOfLines={1} adjustsFontSizeToFit style={{ fontSize: big, fontWeight: '800', letterSpacing: -0.3, fontVariant: ['tabular-nums'] }}>{it.text}</T>
-          <T v="caption" color={t.ink2} style={{ fontWeight: '400' }}>{it.label}</T>
-          {it.deltaText ? <T v="caption" color={toneColors(t, it.tone)[1]} style={{ fontWeight: '600' }}>{it.deltaText}</T>
-            : it.sub ? <T v="caption" color={t.ink3} style={{ fontWeight: '400' }}>{it.sub}</T> : null}
-        </View>
-      ))}
-    </Card>
-  );
+  const items: StatTileProps[] = (block.data.items ?? []).map((it) => ({
+    label: it.label, value: it.text,
+    delta: it.deltaText ? { text: it.deltaText, dir: it.delta == null || it.delta === 0 ? 'flat' : it.delta > 0 ? 'up' : 'down', tone: it.tone } : null,
+    sub: it.sub,
+  }));
+  return <Card><StatRow items={items} /></Card>;
 }
 
-// —— 进度 ——
+// —— 进度 ——（素材库的进度条 / 进度环）
 
 function ProgressBody({ block }: { block: Block }) {
   const t = useTheme();
@@ -94,6 +82,7 @@ function ProgressBody({ block }: { block: Block }) {
   const ratio = d.ratio ?? 0;
   const pct = Math.round(ratio * 100);
   const left = d.leftText ? (d.over ? L(`超出 ${d.leftText}`, `${d.leftText} over`) : L(`剩余 ${d.leftText}`, `${d.leftText} left`)) : '';
+  const a11y = `${block.title || ''} ${d.text ?? ''} / ${d.targetText ?? ''}${left ? `，${left}` : ''}`.trim();
   if (block.style === 'bar') {
     return (
       <Card style={{ gap: 10 }}>
@@ -103,15 +92,15 @@ function ProgressBody({ block }: { block: Block }) {
           <View style={{ flex: 1 }} />
           {left ? <T v="caption" color={d.over ? t.warn : t.ink3} style={{ fontWeight: d.over ? '600' : '400' }}>{left}</T> : null}
         </View>
-        <Bar value={d.value ?? 0} target={d.target ?? 0} height={10} />
+        <ProgressBar value={d.value ?? 0} target={d.target ?? 0} height={10} color={d.over ? t.warn : undefined} label={a11y} />
       </Card>
     );
   }
   return (
     <Card style={{ flexDirection: 'row', alignItems: 'center', gap: 14 }}>
-      <Ring size={64} stroke={7} value={d.value ?? 0} target={d.target ?? 0} color={d.over ? t.warn : t.chartA}>
+      <ProgressRing size={64} stroke={7} value={d.value ?? 0} target={d.target ?? 0} color={d.over ? t.warn : undefined} label={a11y}>
         <T v="headline" style={{ fontSize: 15, fontWeight: '800', fontVariant: ['tabular-nums'] }}>{`${pct}%`}</T>
-      </Ring>
+      </ProgressRing>
       <View style={{ flex: 1, gap: 4 }}>
         <T v="headline" style={{ fontSize: 20, fontWeight: '800', fontVariant: ['tabular-nums'] }}>{d.text}<T v="callout" color={t.ink2} style={{ fontSize: 15 }}>{` / ${d.targetText}`}</T></T>
         {left ? <T v="callout" color={d.over ? t.warn : t.ink2} style={{ fontSize: 13 }}>{left}</T> : null}
@@ -130,51 +119,22 @@ function pointLabel(p: ChartPoint, by: string, n: number): string {
   return L(`${d.getMonth() + 1}/${d.getDate()}`, `${d.getDate()} ${MONTHS_EN[d.getMonth()]}`);
 }
 
+/** 趋势积木：柱状（流量：分钟、千卡、花费）或折线（水平值：体重）。当前这一段用强调色、横轴的字加粗；点按显示数值。 */
 function ChartBody({ block }: { block: Block }) {
   const t = useTheme();
   const pts = block.data.points ?? [];
   const by = block.data.by ?? 'day';
-  const vals = pts.map((p) => p.value).filter((v): v is number => v != null);
-  const H = 64;
-  const gap = pts.length > 20 ? 2 : 5;
-  const every = pts.length > 10 ? Math.ceil(pts.length / 7) : 1;  // 标签太挤就隔几个标一个
-  const [w, setW] = useState(0);
-  // 柱子从 0 画；折线（体重这类）按数据自己的高低画，上下留一点，没数据的那几段跳过不连
-  const lo = block.chart === 'line' ? Math.min(...vals) : 0;
-  const hi = Math.max(...vals, 0);
-  const span = block.chart === 'line' ? (hi - lo || Math.abs(hi) || 1) : (hi || 1);
-  const yOf = (v: number) => (block.chart === 'line' ? 6 + (1 - (v - lo) / span) * (H - 12) : H - (v / span) * H);
-  const xOf = (i: number) => (pts.length > 1 ? (i / (pts.length - 1)) * (w - 12) + 6 : w / 2);
-  const line = pts.map((p, i) => (p.value != null ? `${xOf(i)},${yOf(p.value)}` : null)).filter(Boolean).join(' ');
+  const label = `${block.title || ''}${L('：', ': ')}${pts.map((p) => `${pointLabel(p, by, pts.length)} ${p.text || '0'}`).join(L('，', ', '))}`;
   return (
     <Card style={{ gap: 10 }}>
       {block.chart === 'line' ? (
-        <View style={{ height: H }} onLayout={(e) => setW(e.nativeEvent.layout.width)}>
-          {w > 0 && vals.length ? (
-            <Svg width={w} height={H}>
-              {vals.length > 1 ? <Polyline points={line} fill="none" stroke={t.chartA} strokeWidth={2.5} strokeLinejoin="round" strokeLinecap="round" /> : null}
-              {pts.map((p, i) => (p.value != null ? <Circle key={p.key} cx={xOf(i)} cy={yOf(p.value)} r={p.current ? 4.5 : 3} fill={p.current ? t.cyan : t.chartA} /> : null))}
-            </Svg>
-          ) : null}
-        </View>
+        <LineChart height={64} axis={false} markers emphasis xLabels={Math.min(7, pts.length)} label={label}
+          current={pts.find((p) => p.current)?.key}
+          series={[{ key: block.id, label: block.title || '', points: pts.map((p) => ({ key: p.key, value: p.value, label: pointLabel(p, by, pts.length), text: p.text })) }]} />
       ) : (
-        <View style={{ flexDirection: 'row', alignItems: 'flex-end', height: H, gap }}>
-          {pts.map((p) => {
-            const h = p.value ? Math.max(3, Math.round((p.value / span) * H)) : 2;
-            return (
-              <View key={p.key} style={{ flex: 1, height: h, borderRadius: pts.length > 20 ? 2 : 4, backgroundColor: p.value ? (p.current ? t.cyan : t.chartA) : t.track }}
-                accessible accessibilityLabel={`${pointLabel(p, by, pts.length)} ${p.text || '0'}`} />
-            );
-          })}
-        </View>
+        <BarChart height={64} axis={false} values="key" emphasis label={label}
+          data={pts.map((p) => ({ key: p.key, label: pointLabel(p, by, pts.length), value: p.value, text: p.text || undefined, current: p.current }))} />
       )}
-      <View style={{ flexDirection: 'row', gap }}>
-        {pts.map((p, i) => (
-          <Text key={p.key} numberOfLines={1} style={[type.caption, { flex: 1, fontSize: 10, textAlign: 'center', color: p.current ? t.ink : t.ink3, fontWeight: p.current ? '700' : '500' }]}>
-            {i % every === 0 || p.current ? pointLabel(p, by, pts.length) : ''}
-          </Text>
-        ))}
-      </View>
       {block.data.summary ? <T v="callout" color={t.ink2}>{block.data.summary}</T> : null}
     </Card>
   );

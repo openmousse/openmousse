@@ -76,6 +76,8 @@ export interface BarChartProps extends VizStateProps {
   ticks?: number;
   /** 柱子宽度（默认按位置的 58%，最粗 24） */
   barWidth?: number;
+  /** 满格至少是多少（例：一周每天练了几分钟，至少按 60 画，练 20 分钟别顶满） */
+  max?: number;
   /** 点了某根柱子（同时会显示它的数值） */
   onPress?: (d: BarDatum) => void;
   fmt?: (v: number) => string;
@@ -83,17 +85,17 @@ export interface BarChartProps extends VizStateProps {
   style?: StyleProp<ViewStyle>;
 }
 
-export function BarChart({ data, height = 140, slot = 0, color, values = 'key', emphasis, axis = true, ticks = 2, barWidth, onPress, fmt = plain, label, style, ...state }: BarChartProps) {
+export function BarChart({ data, height = 140, slot = 0, color, values = 'key', emphasis, axis = true, ticks = 2, barWidth, max: floor, onPress, fmt = plain, label, style, ...state }: BarChartProps) {
   const t = useTheme();
   const fs = useFontScale();
   const gutter = useScaledWidth(26);
   const gw = axis ? gutter : 0;
   const [sel, setSel] = useState<string | null>(null);
   const max = Math.max(0, ...data.map((d) => d.value ?? 0));
-  const sc = niceScale(0, max || 1, ticks);
-  const top = axis ? sc.max || 1 : max || 1;
+  const sc = niceScale(0, Math.max(max, floor ?? 0) || 1, ticks);
+  const top = axis ? sc.max || 1 : Math.max(max, floor ?? 0) || 1;
   const fsLine = Math.round(14 * fs);
-  const head = values === 'none' && !onPress ? 4 : fsLine + 4;  // 最高那根上面写数值的地方
+  const head = fsLine + 4;  // 最高那根上面写数值（标出来的、点按出来的）的地方
   const peak = max > 0 ? data.findIndex((d) => d.value === max) : -1;
   const c = color ?? seriesColor(t, slot);
   const text = (d: BarDatum) => d.text ?? (d.value != null ? fmt(d.value) : '—');
