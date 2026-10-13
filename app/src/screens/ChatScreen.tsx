@@ -27,8 +27,10 @@ import { initialsOf } from '../api/account';
 
 /** Grava 一边的列表：服务器那份（或老服务器上拼的）叠上本机更新的状态和已读。 */
 export function useChatList(): ChatList {
-  const { chats, groups, sideChats, unread, typing, inbox } = useStore();
-  return useMemo(() => overlay(chats ?? fallbackList(groups, sideChats, unread), typing, inbox, unread), [chats, groups, sideChats, unread, typing, inbox]);
+  const { chats, groups, sideChats, unread, typing, inbox, threads } = useStore();
+  // 老服务器才用得上 threads（拼最后一句）：有服务器那份时不跟着 threads 重算
+  const local = chats ? null : threads;
+  return useMemo(() => overlay(chats ?? fallbackList(groups, sideChats, unread, local ?? {}), typing, inbox, unread), [chats, groups, sideChats, unread, typing, inbox, local]);
 }
 
 /** 「对话」tab 角标：Grava 一边没免打扰的未读 + 好友发来没看的（免打扰的不算）。 */

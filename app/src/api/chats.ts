@@ -1,6 +1,6 @@
 // 对话列表（2026-10-13，../../server/chats.py）：「对话」tab 的 Grava 一边 = 顶上一排 Agent + 主对话、会议 / Agent 群、项目。
 // 排序和未读服务器算好（只算你的话和给你的回复）；老服务器没有 /api/chats，就用 /api/groups、/api/sidechats、/api/unread 拼一份（不能置顶 / 免打扰）。
-import type { Group, InboxItem, SideChat, UnreadSummary } from '../data/types';
+import type { Group, InboxItem, Message, SideChat, UnreadSummary } from '../data/types';
 import { request } from './base';
 
 /** 外圈状态：在做（正在回复、后台任务在跑）= 青色弧；等你点头（收件箱里有它的）= 琥珀点。 */
@@ -62,10 +62,11 @@ export const chatsApi = {
 
 const iso = (ms: number) => (ms ? new Date(ms).toISOString() : null);
 
-/** 老服务器：用已有的几样拼出同样的形状。Agent 按原来的顺序，项目按最近活动。 */
-export function fallbackList(groups: Group[], sideChats: SideChat[], unread: UnreadSummary): ChatList {
+/** 老服务器：用已有的几样拼出同样的形状（最后一句：未读里带的，或今天读回来的最后一条，再不行用列表给的）。Agent 按原来的顺序，项目按最近活动。 */
+export function fallbackList(groups: Group[], sideChats: SideChat[], unread: UnreadSummary, threads: Record<string, Message[]>): ChatList {
   const n = (id: string) => unread.threads[id]?.n ?? 0;
-  const last = (id: string, fb: string) => unread.threads[id]?.last?.text || fb;
+  const today = (id: string) => { const m = threads[id]?.[threads[id].length - 1]; return m ? m.body.text.replace(/\s+/g, ' ').trim() : ''; };
+  const last = (id: string, fb: string) => unread.threads[id]?.last?.text || today(id) || fb;
   const agents: ChatAgent[] = groups.map((g) => ({
     id: g.id, name: g.name, icon: g.icon, color: g.color ?? null, purpose: g.purpose, line: last(g.id, g.lastLine), lineRole: 'grava',
     at: unread.threads[g.id]?.last?.ts ?? null, unread: n(g.id), pinned: false, muted: false, state: null,
