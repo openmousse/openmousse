@@ -308,11 +308,14 @@ python3 nutrition.py cofid-import [--file 本地的 xlsx]
 
 每个 Agent 有自己的表，看板上的积木由它自己摆；app 只按服务端算好的数据画七种积木，不自己算。见 [`boards.py`](boards.py)、[`packs.py`](packs.py)、[`alerts.py`](alerts.py)，Agent 用 [`board_ctl.py`](board_ctl.py)。
 
+**集合块**（积木 type `collection`，2026-10-13，[`views.py`](views.py)）：参照 Notion「同一份数据，多种视图」，一张表配几个视图，app 顶上一条切换条：表格（列、排序、筛选）、看板（按 choice / bool / text 字段分列，卡片拖到别的列 = 改这个字段）、日历（按日期字段放进月格，点的颜色按 `group`）、时间线（从开始到日期的条，窗口和刻度服务端算好）、图表（`charts` 里 1–6 个：数字、柱状、横条、折线、环形）。视图的写法沿用查询 Q 的词：`where` / `sort` / `group` / `date` / `field` / `agg`（也认 `group_by` / `filter` / `date_field` / `value_field`）；卡片 `card {title, meta, tags}` 用模板。视图存在看板配置里，所以按版本、提案 → 预览 → 确认、撤回、改动记录都照旧；Agent 用 `board_ctl.py view list / show / add / update / remove / default`（`--check`、`--propose`）。不认识的视图种类 app 显示「需要更新 app」。
+
 | 接口 | 做什么 |
 |---|---|
 | `GET /api/boards/{agent}` | 现在的看板：`blocks`（Agent 的积木和数据）、`sections`（内置看板各节的显示顺序，`{id, title, hidden}`）、`collections`、`strip`（Agent 改过、用户还没点「知道了」时的撤回条） |
 | `PUT /api/boards/{agent}` | 整份换一版 `{blocks, sections?, note, mode: apply / propose, by}`。`sections`（内置小节的顺序、藏没藏）不给就沿用现在的，Agent 加一块不会把用户挪过、藏过的冲掉 |
 | `GET /api/boards/proposal/{inboxId}` | 看板提案（kind `block`）的预览：改了的块，用现在的数据画 |
+| `POST /api/boards/{agent}/view` | 集合块的一个视图按你点的重算（只读，feature `boards.views`）：`{block, view, sort?, where?, month?, column?, offset?, limit?, full?}`；带 `chart` + `bucket` 返回图表上点开的那一段有哪些行 |
 | `POST /api/boards/plan`，`PUT` / `GET /api/boards/plan/{inboxId}` | 新 Agent 的方案 `{tables（可以带示例行）, blocks}`：在内存里校验、画出来，建 Agent 的卡在 Agent 还没建时就能看看板（`inbox_ctl.py add --board-file`） |
 | `GET /api/packs`，`GET /api/packs/{name}` | 功能包（`packs/<名字>/pack.json`：表 + 积木 + 提醒 + `GUIDE.md`），以及装在哪些 Agent 上 |
 | `POST /api/packs/{name}/install` | `{agent, mode: apply / propose / check}`：没有的表建上，已有的只补缺的字段和选项，看板上已经有的块不重复加；propose 走收件箱，预览是装好以后的看板。包里的提醒另外各出一张卡 |

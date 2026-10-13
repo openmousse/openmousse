@@ -1,6 +1,6 @@
 ---
 name: board
-description: 你自己的数据表和看板（app 里你那一页的「看板」tab）。用户想长期记、想一眼看到的东西（库存、花费、个人最好成绩、读了几页……）记进你自己的表，用积木摆到看板上：数字、进度、趋势、列表、清单、文字、按钮七种。用户在对话里让你加的，直接加（看板顶上会出「撤回」）；你自己想到的，交提案等他点头（收件箱卡里带预览）。收到用户从看板按钮发来的消息（比如「这是今天的小票，记进库存」带一张照片）也按这里做。现成的一整套（表 + 积木 + 用法，比如「家里的库存」）是功能包，pack install 装上；到点查表推一条的提醒（比如周六提醒补货）也在这里提，用户点了同意才开。命令：python3 ~/.openmousse/repo/server/board_ctl.py。
+description: 你自己的数据表和看板（app 里你那一页的「看板」tab）。用户想长期记、想一眼看到的东西（库存、花费、个人最好成绩、读了几页……）记进你自己的表，用积木摆到看板上：数字、进度、趋势、列表、清单、文字、按钮七种，外加集合块（一张表的表格 / 看板 / 日历 / 时间线 / 图表视图，像 Notion）。用户在对话里让你加的，直接加（看板顶上会出「撤回」）；你自己想到的，交提案等他点头（收件箱卡里带预览）。收到用户从看板按钮发来的消息（比如「这是今天的小票，记进库存」带一张照片）也按这里做。现成的一整套（表 + 积木 + 用法，比如「家里的库存」）是功能包，pack install 装上；到点查表推一条的提醒（比如周六提醒补货）也在这里提，用户点了同意才开。命令：python3 ~/.openmousse/repo/server/board_ctl.py。
 ---
 
 # 看板：你自己的表 + 积木
@@ -67,6 +67,51 @@ $B rows delete r-1a2b3c                        # 30 天内 rows restore 能找�
 - `text` 也可以取某张表最新一行的某个字段：`"source": {"from": "notes", "sort": ["-_created"]}, "field": "body"`（每周小结这种，写一行新的就换）。
 - `action`：`upload` 让用户拍照 / 选相册 / 选文件，连同 message 发给你；`form` 按表的字段出小表单，直接写一行；`ask` 发一句话给你。
 - 看板排序按用户想知道的顺序：现在该做什么 → 今天 → 这周 → 长期。最多 30 块。不认识的 type 在旧版 app 上显示「要新版 app」，别发明新的 type。
+
+## 集合块：一张表、几种视图
+
+用户想「像 Notion 那样」看一张表（按状态分列、拖着改，按日期看日历，几个图一起看），用集合块（type `collection`）：同一张表，顶上一条切换条（表格 · 看板 · 日历 · 时间线 · 图表），右上角进全屏页；看板视图里长按卡片拖到别的列，就改了那一行的分列字段。
+
+```json
+{"id": "jobs", "type": "collection", "title": "岗位", "after": "apply.list",
+ "source": {"from": "job_postings", "sort": ["-score", "deadline"]},
+ "card": {"title": "{role}", "meta": "{org}", "tags": [
+   {"text": "{deadline} 截止", "tone": "warn", "when": [["deadline", ">=", "today"], ["deadline", "<=", "+7d"]]},
+   {"text": "匹配 {score}", "tone": "cyan"}]},
+ "views": [
+   {"id": "board", "type": "board", "group": "stage", "groups": ["新岗位", "撰写中", "已投递"]},
+   {"id": "table", "type": "table", "fields": ["org", "role", "stage", "deadline"], "sort": ["deadline"]},
+   {"id": "calendar", "type": "calendar", "date": "deadline", "group": "stage"},
+   {"id": "timeline", "type": "timeline", "date": "deadline", "range": "+5w", "card": {"title": "{org}"}},
+   {"id": "charts", "type": "chart", "charts": [
+     {"kind": "number", "title": "本周截止", "where": [["deadline", ">=", "today"], ["deadline", "<", "nextweek"]]},
+     {"kind": "number", "title": "实习 / 全职", "group": "track"},
+     {"kind": "bar", "title": "按截止周", "group": "deadline", "by": "week", "range": "+4w"},
+     {"kind": "hbar", "title": "按地区", "group": "region"}]}],
+ "view": "board",
+ "rowActions": [{"label": "加进申请", "set": {"decision": "加进申请", "decided": "now"}}], "edit": false}
+```
+
+- `source`：哪张表、整块共用的筛选和默认排序（查询 Q 的写法）。每个视图还可以有自己的 `where`、`sort`、`card`，叠在 source 上。最多 8 个视图，`view` 是默认显示哪个。
+- `card`：一行画成卡片（看板、日历当天、图表点开的明细都用它）。`title` / `meta`（标题上面一行小字）/ `tags` 都是模板，写法和列表的 `row` 一样；`tags` 每个对上的都显示（不是只显示第一个），`when` 是条件（where 的写法，最多 4 条，全对上才显示），tone 同 badge。
+- 看板 `board`：`group` 要是 choice / bool / text 字段；写了 `groups` 就只列这几列、按这个顺序（`""` = 没填的那一列），别的行在页底写「另有 N 条不在以上各列」。用户拖卡片 = 改这一行的 group 字段：读表以表为准，别拿你记得的覆盖。
+- 日历 `calendar`：`date` 是日期字段；`group`（choice / bool）给点上色、出图例。
+- 时间线 `timeline`：`date` 是终点（截止、到期），`start` 是起点字段（不写 = 今天），`range` 是窗口（默认 `+5w`：本周一起往后 5 周；`-8w` 往前看）。
+- 图表 `chart`：`charts` 里 1–6 个，`kind` 是 number / bar / hbar / line / donut。`group` 按哪个字段分（日期字段再加 `by` day / week / month 和 `range`：`+4w` 往后看、`-8w` 往前看；数字字段可加 `bins: [90, 80, 70]` 分段），`agg` + `field` 算什么（默认数行数）。规矩：单系列只用一种颜色；环形只给 3–6 份的占比（只有两份就用 number 加 group，比如「实习 / 全职 37 / 25」）；横条默认按数值从大到小（`order: group` 按选项顺序）；多于 6 类自动并成「其他」；时长、金额这类有离谱值的（忘了结束的训练记成十几个小时）改数次数。
+- 也认 `group_by` / `filter` / `date_field` / `value_field` / `start_field` 这几种写法。只读来源（`health:`）也能做视图，但不能拖、不能加 rowActions。
+
+改视图用 `view` 命令（整份配置的读、改、交回它替你做）：用户让改的直接改，你自己想到的加 `--propose`。
+
+```bash
+$B view list                                   # 每个集合块和它的视图
+$B view show jobs board                        # 这个视图现在显示什么（服务器算好的）；日历加 --month 2026-11
+$B view add jobs --json '{"id": "timeline", "type": "timeline", "date": "deadline"}' --check   # 只校验，看会显示什么
+$B view add jobs --json '{…}' --note "加了截止时间线"            # 用户让加的：直接加（看板顶上有撤回）
+$B view update jobs board --json '{"groups": ["新岗位", "撰写中"]}'   # 改几项；写 null 去掉一项
+$B view default jobs calendar                  # 默认显示哪个视图
+$B view remove jobs timeline
+$B view add jobs --json '{…}' --propose --title "求职看板加一个截止时间线" --why "这周有 10 个岗位截止"
+```
 
 ## 查询 Q
 

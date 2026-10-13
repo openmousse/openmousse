@@ -61,18 +61,19 @@ export function BarChart({ c, onDrill }: { c: ChartData; onDrill?: Drill }) {
   const bars = c.bars ?? [];
   const max = c.max || 1;
   const H = 150;
-  const yw = useScaledWidth(24);
+  const TOP = 20;  // 柱子顶上留出写数值的地方（满格的那根也不压到标题）
+  const yw = useScaledWidth(Math.max(24, ...(c.axis ?? []).map((a) => a.text.length * 7 + 4)));  // 「2h30」「£500」这类刻度要宽一些
   const picked = bars.find((b) => b.key === sel) ?? null;
   const wide = bars.length > 7;
   return (
     <ChartCard title={c.title} caption={c.unitLabel} picked={picked} onDrill={onDrill} label={c.title}>
       <View style={{ flexDirection: 'row' }}>
-        <View style={{ width: yw, height: H }}>
+        <View style={{ width: yw, height: H + TOP }}>
           {(c.axis ?? []).map((a) => (
             <Text key={a.value} style={[type.caption, styles.axis, { color: t.ink3, bottom: (a.value / max) * H - 7, width: yw - 6 }]}>{a.text}</Text>
           ))}
         </View>
-        <View style={{ flex: 1, height: H }}>
+        <View style={{ flex: 1, height: H + TOP }}>
           {(c.axis ?? []).map((a) => <View key={a.value} style={[styles.grid, { bottom: (a.value / max) * H, borderTopColor: t.line }]} />)}
           <View style={[StyleSheet.absoluteFill, { flexDirection: 'row', alignItems: 'flex-end', justifyContent: 'space-around' }]}>
             {bars.map((b) => {
@@ -80,7 +81,7 @@ export function BarChart({ c, onDrill }: { c: ChartData; onDrill?: Drill }) {
               const h = b.value > 0 ? Math.max(3, (b.value / max) * H) : 2;
               return (
                 <Pressable key={b.key} onPress={() => setSel(on ? null : b.key)} accessibilityRole="button" accessibilityState={{ selected: on }}
-                  accessibilityLabel={`${b.label}：${b.text}`} style={{ alignItems: 'center', justifyContent: 'flex-end', height: '100%', flex: 1, maxWidth: 52 }}>
+                  accessibilityLabel={`${b.label}：${b.text}`} style={{ alignItems: 'center', justifyContent: 'flex-end', height: '100%', flex: 1 }}>
                   {b.show || on ? <Text style={[type.caption, { color: t.ink, fontWeight: '700', marginBottom: 4, fontVariant: ['tabular-nums'] }]}>{b.text}</Text> : null}
                   <View style={{ width: wide ? '70%' : 36, maxWidth: 36, height: h, borderTopLeftRadius: 4, borderTopRightRadius: 4,
                     backgroundColor: b.value > 0 ? seriesColor(t, 0) : t.track, opacity: sel && !on ? 0.45 : 1 }} />
@@ -92,7 +93,7 @@ export function BarChart({ c, onDrill }: { c: ChartData; onDrill?: Drill }) {
       </View>
       <View style={{ flexDirection: 'row', justifyContent: 'space-around', marginLeft: yw }}>
         {bars.map((b) => (
-          <Text key={b.key} numberOfLines={1} style={[type.caption, { flex: 1, maxWidth: 52, textAlign: 'center', fontSize: 11, color: b.current ? t.ink : t.ink3, fontWeight: b.current ? '700' : '400' }]}>
+          <Text key={b.key} numberOfLines={1} style={[type.caption, { flex: 1, textAlign: 'center', fontSize: 11, color: b.current ? t.ink : t.ink3, fontWeight: b.current ? '700' : '400' }]}>
             {b.label}
           </Text>
         ))}

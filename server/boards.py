@@ -202,9 +202,10 @@ def virtual(conn: sqlite3.Connection, name: str) -> tuple[dict, str, list] | Non
         if not r:
             raise bad(f"Apple 健康里没有「{metric}」这个指标的数据", f'No Apple Health data for "{metric}"', 404)
         unit = r["unit"] if r["unit"] and r["unit"] != "count" else None  # 步数这类「count」不当单位写出来
+        workout = metric.startswith("Workout.")  # 训练按类型一天一行：sum 是消耗的热量，count 是练了几次
         fields = [date_f] + [{"key": k, "label": lab, "type": "number", **({"unit": unit} if unit and k != "count" else {})}
-                             for k, lab in (("sum", L("合计", "Total")), ("avg", L("平均", "Average")), ("min", L("最低", "Min")),
-                                            ("max", L("最高", "Max")), ("count", L("次数", "Count")))]
+                             for k, lab in (("sum", L("热量", "Energy") if workout else L("合计", "Total")), ("avg", L("平均", "Average")),
+                                            ("min", L("最低", "Min")), ("max", L("最高", "Max")), ("count", L("次数", "Count")))]
         if conn.execute("SELECT 1 FROM health_metrics WHERE metric=? AND minutes IS NOT NULL LIMIT 1", (metric,)).fetchone():
             fields.append({"key": "minutes", "label": L("时长", "Duration"), "type": "number", "unit": "min"})  # 训练、站立这类有时长的
         cols = ", ".join(f"'{f['key']}', {f['key']}" for f in fields)

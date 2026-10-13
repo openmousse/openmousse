@@ -351,8 +351,12 @@ def field_def(fields: dict[str, dict], key: str) -> dict:
     return {"key": key, "type": "text", "label": key}
 
 
+REL_DAY = re.compile(r"(今天|明天|昨天) (?=[\u4e00-\u9fff])")
+
+
 def shown(s: str) -> str:
-    return "" if s in ("", "—") else s
+    """模板渲染的结果：空的、只有「—」的算没有；「今天 截止」这种去掉中间的空格（日期是「10/16 截止」，保留空格）。"""
+    return "" if s in ("", "—") else REL_DAY.sub(r"\1", s)
 
 
 def conds_ok(d: dict, conds: list, fields: dict[str, dict]) -> bool:
@@ -419,9 +423,10 @@ def md(d: date) -> str:
     return f"{d.month}/{d.day}" if lang() == "zh" else f"{d.day} {MONTHS_EN[d.month - 1]}"
 
 
-def bucket_label(d: date, by: str) -> str:
+def bucket_label(d: date, by: str, short: bool = False) -> str:
+    """short：段数多（> 6）时柱子窄，周只写开头那天（10/12），不写「周」。"""
     if by == "week":
-        return L(f"{d.month}/{d.day} 周", f"w/c {d.day} {MONTHS_EN[d.month - 1]}")
+        return md(d) if short else L(f"{d.month}/{d.day} 周", f"{d.day} {MONTHS_EN[d.month - 1]}")
     if by == "month":
         if d.year != boards.today().year:
             return L(f"{d.year}年{d.month}月", f"{MONTHS_EN[d.month - 1]} {d.year}")
@@ -492,7 +497,7 @@ def date_buckets(f: dict, rows: list[dict], c: dict) -> list[dict]:
         forward = sum(1 for d, _ in dated if d >= t) * 2 >= len(dated) > 0
         n = 5 if forward else {"day": 14, "week": 8, "month": 6}[by]
     starts = [step(cur, by, i) for i in range(n)] if forward else [step(cur, by, i - n + 1) for i in range(n)]
-    out = [{"key": s.isoformat(), "label": bucket_label(s, by), "rows": [], "current": s == cur} for s in starts]
+    out = [{"key": s.isoformat(), "label": bucket_label(s, by, n > 6), "rows": [], "current": s == cur} for s in starts]
     index = {s: i for i, s in enumerate(starts)}
     before = {"key": BEFORE, "label": L("之前", "Earlier"), "rows": []}
     after = {"key": AFTER, "label": L("之后", "Later"), "rows": []}
@@ -607,11 +612,12 @@ def fmt_of(c: dict, fields: dict[str, dict]) -> tuple[str | None, str | None, st
 
 
 def nice_max(x: float) -> float:
+    """纵轴的顶：1、2、4、6、8、10 × 10ⁿ（中间那条线是一半，数次数时也是整数：0 / 3 / 6）。"""
     if x <= 0:
         return 1.0
     e = 10 ** math.floor(math.log10(x))
     m = x / e
-    return (1 if m <= 1 else 2 if m <= 2 else 5 if m <= 5 else 10) * e
+    return next(k for k in (1, 2, 4, 6, 8, 10) if m <= k) * e
 
 
 def axis_text(x: float) -> str:
@@ -852,8 +858,10 @@ def compute_chart(conn: sqlite3.Connection, agent: str, b: dict, v: dict, coll: 
     top = nice_max(peak)
     res = {**out, "bars": bars, "max": top}
     if c["kind"] == "bar":
-        res["axis"] = [{"value": x, "text": axis_text(x)} for x in (0, top / 2, top)]
-        res["unitLabel"] = L("单位：个", "Count") if c.get("agg", "count") == "count" and not unit else (L(f"单位：{unit}", unit) if unit else "")
+        # 刻度：数行数的写纯数字、右上角注明「单位：个」；时长、金额这类带单位的数，刻度和柱子上的写法一样（2h30、£50）
+        plain = c.get("agg", "count") == "count" and not unit
+        res["axis"] = [{"value": x, "text": axis_text(x) if plain or fmt == "percent" else text(x)} for x in (0, top / 2, top)]
+        res["unitLabel"] = L("单位：个", "Count") if plain else ""
     return res
 
 

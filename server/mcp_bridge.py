@@ -51,8 +51,8 @@ PARALLEL = asyncio.Semaphore(4)
 
 # 工具名 → (脚本, 中文说明, English, 超时)。说明只写它管什么；子命令和写法在对应的 skill 里。
 BRIDGES: dict[str, tuple[str, str, str, int]] = {
-    "board": ("server/board_ctl.py", "你自己的数据表和看板（board_ctl.py）：show、table、rows、check、apply、propose、pack、alert、history、revert。写法见 board skill。",
-              "Your own data tables and board (board_ctl.py): show, table, rows, check, apply, propose, pack, alert, history, revert. See the board skill.", TIMEOUT),
+    "board": ("server/board_ctl.py", "你自己的数据表和看板（board_ctl.py）：show、table、rows、check、apply、propose、view（集合块的视图）、pack、alert、history、revert。写法见 board skill。",
+              "Your own data tables and board (board_ctl.py): show, table, rows, check, apply, propose, view (a collection's views), pack, alert, history, revert. See the board skill.", TIMEOUT),
     "inbox": ("server/inbox_ctl.py", "收件箱，要用户点头的事（inbox_ctl.py）：add、update、done、fail、withdraw、list、get。什么时候交、怎么写见 inbox skill。",
               "The inbox, things that need the user's OK (inbox_ctl.py): add, update, done, fail, withdraw, list, get. When and how: the inbox skill.", TIMEOUT),
     "goals": ("server/goals_ctl.py", "用户的长期目标（goals_ctl.py）：list、trend、log、add、update、done、drop、reopen、undo。见 goals skill。",
