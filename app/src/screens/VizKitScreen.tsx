@@ -7,8 +7,9 @@ import { L } from '../i18n';
 import { space, useAppearance, useTheme, vizMark, type Appearance } from '../theme';
 import { NavHeader, Screen, SectionLabel, Segmented, T } from '../components/ui';
 import {
-  BarChart, ChartCard, DataTable, Donut, HBarChart, LineChart, PercentBar, ProgressRing, RangeSwitch, SegmentBars, Sparkline, StackedBar,
-  StatRow, StatTile, StatusTag, SwatchMark, VizEmpty, VizError, VizLoading, type RangeDays, type TableColumn,
+  BarChart, BeforeAfter, ChangeTag, ChartCard, CompareList, DataTable, DayGrid, Donut, HBarChart, HeatCalendar, Kanban, LineChart, MonthCalendar,
+  NutritionRing, PercentBar, ProgressRing, RangeSwitch, SegmentBars, SleepStages, Sparkline, StackedBar, StatRow, StatTile, StatusTag, Streak,
+  SwatchMark, TargetBar, Timeline, VizEmpty, VizError, VizLoading, VizSurface, type RangeDays, type TableColumn,
 } from '../components/viz';
 import * as D from './vizKitData';
 
@@ -196,6 +197,15 @@ export function VizKitScreen() {
           <RecoveryRange />
         </Section>
 
+        <Section title={L('时间', 'Time')}>
+          <Item title={L('热力日历', 'Heat calendar')} rule={L('一格一天，颜色越深 / 越亮数值越高（单一色相）；空格表示无数据，金框为今天；点按查看当天数值。示例：9/23–10/12 恢复分。', 'One cell per day, darker or brighter means higher (one hue); outlined cells have no data, gold marks today; tap for the value. Example: recovery score, 23 Sep–12 Oct.')}>
+            <HeatCalendar days={D.recovery.map((d) => ({ date: d.date, value: d.score }))} today="2026-10-12" bins={[50, 60, 70]} name={L('恢复分', 'Recovery')} />
+          </Item>
+          <Item title={L('日时间格', 'Day grid')} rule={L('方块高度对应时长；连续两小时以上的空闲收成一行；金线标出现在。示例：10/12 日程。', 'Block height follows duration; two or more free hours fold into one row; the gold line is now. Example: 12 Oct.')}>
+            <DayGrid items={D.todayBlocks()} from="08:00" to="21:00" now="20:10" />
+          </Item>
+        </Section>
+
         <Section title={L('比较', 'Comparison')}>
           <Item title={L('柱状', 'Bars')} caption={L('单位：个', 'Unit: roles')} rule={L('单系列只用 1 号色；柱顶 4px 圆角；只标关键数值（本周、最高）。示例：岗位按截止周。', 'One series takes colour 1; 4px rounded tips; label only key values (this week, the peak). Example: roles by deadline week.')}
             table={<DataTable columns={weekCols} rows={weeks} rowKey={(r) => r.key} />}>
@@ -210,18 +220,62 @@ export function VizKitScreen() {
           </Item>
         </Section>
 
+        <Section title={L('对比', 'Before and after')}>
+          <Item title={L('前后对比与变化标签', 'Before / after and change tags')} rule={L('上次空心、这次实心；变化标签 = 方向箭头 + 文字，颜色表示好坏，持平为灰。示例：10/12 练后报告。', 'Last time hollow, this time solid; a change tag is an arrow plus words, coloured by whether it is good, grey when level. Example: the 12 Oct workout report.')}>
+            <VizSurface color={t.bg}>
+              <View style={[styles.inner, { backgroundColor: t.bg, flexDirection: 'row', alignItems: 'center', gap: space.md }]}>
+                <View style={{ flex: 1, gap: 4 }}>
+                  <T v="caption" color={t.ink2} style={{ fontWeight: '400' }}>{L('硬拉', 'Deadlift')}</T>
+                  <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+                    <T style={{ fontSize: 26, lineHeight: 30, fontWeight: '700' }}>85 kg</T>
+                    <ChangeTag dir="up" text="5 kg" good />
+                  </View>
+                  <T v="caption" color={t.ink3} style={{ fontWeight: '400' }}>{L('估算最大重量 96 → 99 kg', 'Estimated 1RM 96 → 99 kg')}</T>
+                </View>
+                <BeforeAfter before={{ label: '9/29', value: 80 }} after={{ label: '10/12', value: 85 }} label={L('硬拉工作重量：9/29 80 kg，10/12 85 kg', 'Deadlift working weight: 80 kg on 29 Sep, 85 kg on 12 Oct')} />
+              </View>
+            </VizSurface>
+            <CompareList title={L('与 9/29 相比', 'Compared with 29 Sep')} items={D.pullCompare()} />
+          </Item>
+          <Item title={L('目标条', 'Target bar')} rule={L('实际对目标：竖线是目标，条可以超过它；超过不好时（热量）用注意色并写明「超出」。', 'Actual against target: the tick is the target and the bar may pass it; when going over is bad (calories) it turns amber and says so.')}>
+            <TargetBar label={L('蛋白质', 'Protein')} value={D.dinner.protein} target={D.dinner.proteinTarget} text={String(D.dinner.protein)} targetText={`${D.dinner.proteinTarget} g`}
+              note={L('今晚两顿合计；训练日目标 136 g。白天的饮食尚未记录。', "Tonight's two meals; the training-day target is 136 g. Daytime meals aren't logged yet.")} />
+          </Item>
+        </Section>
+
         <Section title={L('占比', 'Part to whole')}>
           <Item title={L('环形', 'Donut')} rule={L('只用于 3–6 份的占比，段间留 2px；只有两份时改用百分比条或数字。点按图例突出一份。', 'Only for 3–6 parts, 2px between them; with two parts use a percent bar or the numbers. Tap a legend row to pick a part out.')}>
             <Donut data={D.regions()} center={{ value: '63', label: L('个岗位', 'roles') }} pct />
+          </Item>
+          <Item title={L('营养环', 'Macro ring')} rule={L('三大营养素按热量算比例（蛋白质、碳水 4 kcal/g，脂肪 9 kcal/g），中间写总热量。示例：10/12 晚餐建议。', 'Macros by calories (protein and carbs 4 kcal/g, fat 9 kcal/g) with the total in the middle. Example: the 12 Oct dinner plan.')}>
+            <NutritionRing protein={D.dinner.protein} carbs={D.dinner.carbs} fat={D.dinner.fat} kcal={D.dinner.kcal} centerLabel={L('kcal · 两顿', 'kcal · 2 meals')} />
           </Item>
           <Item title={L('百分比条', 'Percent bar')} rule={L('两份的占比用一条，左右两端各标数值与比例。', 'Two parts in one bar, each end labelled with its value and share.')}>
             <PercentBar parts={D.jobTypes()} />
           </Item>
         </Section>
 
+        <Section title={L('健康', 'Health')}>
+          <Item title={L('睡眠分期', 'Sleep stages')} rule={L('一行一期，越往下越深，颜色同一色相由浅到深，清醒用灰；点按某一段查看起止。示例：10/12 03:03–13:21。', 'One row per stage, deeper rows lower and darker in one hue, awake in grey; tap a stretch for its times. Example: 12 Oct, 03:03–13:21.')}>
+            <SleepStages segments={D.sleepNight} totals={D.sleepTotals} />
+          </Item>
+          <Item title={L('连续打卡', 'Streak')} rule={L('最近 N 天一格一天：做了上色，没做是轨道色，今天描金边。示例：9/29–10/12 训练。', 'One cell per day for the last N days: done is coloured, missed is the track, today has a gold edge. Example: workouts, 29 Sep–12 Oct.')}>
+            <Streak days={D.trainingDays} today="2026-10-12" value={L('7 次', '7')} title={L('近 14 天训练', 'workouts in 14 days')} sub={L('连续 2 天（10/11–10/12）', '2 days in a row (11–12 Oct)')} />
+          </Item>
+        </Section>
+
         <Section title={L('视图', 'Views')}>
           <Item title={L('表格', 'Table')} rule={L('表头点按排序；状态用标签；行点开查看详情。', 'Tap a header to sort; status as a tag; tap a row for details.')}>
             <DataTable columns={appCols} rows={apps} rowKey={(r) => r.id} sort={{ key: 'due', dir: 'asc' }} />
+          </Item>
+          <Item title={L('看板', 'Board')} rule={L('按任一字段分列；长按卡片移到其他列（即改这个字段）；列头色点按列的身份取色。', 'Columns by any field; long-press a card to move it to another column (which changes that field); each column keeps its own colour.')}>
+            <Kanban columns={D.jobBoard()} limit={2} onMove={() => {}} />
+          </Item>
+          <Item title={L('日历', 'Calendar')} rule={L('日程、截止、待办用颜色加形状（圆点、菱形、方块）区分，并配图例；今天金底。', 'Events, deadlines and to-dos differ by colour and shape (dot, diamond, square), with a legend; today is gold.')}>
+            <MonthCalendar month="2026-10" marks={D.octoberMarks} kinds={D.calendarKinds()} today="2026-10-12" />
+          </Item>
+          <Item title={L('时间线', 'Timeline')} rule={L('条表示剩余时间，菱形表示截止；金线为今天；点按一行查看还剩几天。', 'Bars are time left, diamonds are deadlines, the gold line is today; tap a row for days left.')}>
+            <Timeline rows={D.deadlines()} from="2026-10-12" to="2026-11-10" today="2026-10-12" />
           </Item>
         </Section>
 
@@ -240,6 +294,7 @@ export function VizKitScreen() {
 }
 
 const styles = StyleSheet.create({
+  inner: { borderRadius: 14, padding: 12 },
   swatches: { flexDirection: 'row', gap: 10 },
   swatch: { flex: 1, gap: 4 },
   hex: { fontSize: 11, fontWeight: '400', fontVariant: ['tabular-nums'] },

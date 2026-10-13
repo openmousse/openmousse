@@ -21,3 +21,16 @@ export { Donut, PercentBar, foldOther } from './Share';
 export type { DonutProps, ShareDatum } from './Share';
 export { DataTable } from './DataTable';
 export type { DataTableProps, TableColumn } from './DataTable';
+// 第二批
+export { CalMark, HeatCalendar, MonthCalendar, isoOfDay, weekdayLetters } from './Calendars';
+export type { CalKind, HeatCalendarProps, HeatDay, MarkShape, MonthCalendarProps } from './Calendars';
+export { DayGrid, withAlpha } from './DayGrid';
+export type { DayBlock, DayGridProps } from './DayGrid';
+export { Timeline } from './Timeline';
+export type { TimelineProps, TimelineRow } from './Timeline';
+export { Kanban } from './Kanban';
+export type { KanbanCard, KanbanCol, KanbanProps } from './Kanban';
+export { BeforeAfter, CompareList, TargetBar } from './Compare';
+export type { CompareItem, ComparePoint } from './Compare';
+export { NutritionRing, SleepStages, Streak, durText } from './Health';
+export type { SleepSeg, SleepStage, StreakDay } from './Health';
