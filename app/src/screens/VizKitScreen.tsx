@@ -272,7 +272,7 @@ export function VizKitScreen() {
             <Kanban columns={D.jobBoard()} limit={2} onMove={() => {}} />
           </Item>
           <Item title={L('全屏看板', 'Full-screen board')} rule={L('集合块的全屏页用：每列竖着滚，长按卡片拖到其他列（即改这个字段），靠近边缘自动横滚，落点那一列描金边。', "For a collection's full screen: each column scrolls, long-press a card and drag it to another column (which changes that field); it scrolls sideways near the edges and the column under the card gets a gold outline.")}>
-            <View style={{ height: 340, paddingHorizontal: space.lg }}><KanbanBoard columns={D.jobBoard()} onMove={() => {}} /></View>
+            <View style={{ height: 340, paddingHorizontal: space.lg, paddingVertical: space.sm, backgroundColor: t.bg, borderRadius: 14 }}><KanbanBoard columns={D.jobBoard()} onMove={() => {}} /></View>
           </Item>
           <Item title={L('日历', 'Calendar')} rule={L('日程、截止、待办用颜色加形状（圆点、菱形、方块）区分，并配图例；今天金底。', 'Events, deadlines and to-dos differ by colour and shape (dot, diamond, square), with a legend; today is gold.')}>
             <MonthCalendar month="2026-10" marks={D.octoberMarks} kinds={D.calendarKinds()} today="2026-10-12" />
