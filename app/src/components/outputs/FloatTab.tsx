@@ -2,7 +2,7 @@
 // 多份时右边是 +N（点一下换下一份），左右滑也换，下滑关掉（全部标成看过）。点开是小板子（Board.tsx）。
 // 放在标签栏的位置里（OutputsTabBar），不盖在页面上：对话页的输入栏、Zen 的记录栏都在它上面，不会被挡住。
 import React, { useEffect, useState } from 'react';
-import { Animated, PanResponder, Platform, Pressable, StyleSheet, View, type AccessibilityActionEvent } from 'react-native';
+import { Animated, AppState, PanResponder, Platform, Pressable, StyleSheet, View, type AccessibilityActionEvent } from 'react-native';
 import { BottomTabBar, type BottomTabBarProps } from '@react-navigation/bottom-tabs';
 import { currentOutputs, dropOutputs, refreshOutputs, resetOutputs, useFreshOutputs, type Output } from '../../api/outputs';
 import { L } from '../../i18n';
@@ -15,6 +15,8 @@ import { Donut, PairChart, Sparkline } from './vizlite';
 const HEIGHT = 66;
 const SPACE = HEIGHT + 10;  // 标签加上它和标签栏之间的空
 const SLIDE = 480;  // 左右换一份时滑出去的距离（比手机屏宽一点就行）
+// 网页上用鼠标拖：按下和松开都在标签里，浏览器还会补一个 click，拖完别再当成点开（手机上手势接管后不会有这一下）
+let pannedAt = 0;
 
 /** 标签栏：上面一条浮动标签（有新产出时），下面是原来的标签栏。 */
 export function OutputsTabBar(props: BottomTabBarProps) {
@@ -46,6 +48,12 @@ export function FloatTab() {
     if (!connected) { resetOutputs(); return; }
     refreshOutputs().catch(() => {});
   }, [connected, feedKey]);
+  // 回到前台也读一次：过了 04:00（新的一天）昨天的就该收起来，这时未读不一定变
+  useEffect(() => {
+    if (!connected) return undefined;
+    const sub = AppState.addEventListener('change', (st) => { if (st === 'active') refreshOutputs().catch(() => {}); });
+    return () => sub.remove();
+  }, [connected]);
 
   // 新的一份到了就显示最新那份（列表变了才换，左右滑过的不被轮询打断）
   const key = items.map((o) => o.id).join(',');
@@ -85,11 +93,13 @@ export function FloatTab() {
   };
   const [pan] = useState(() => PanResponder.create({
     onMoveShouldSetPanResponder: (_e, g) => Math.abs(g.dx) > 10 || g.dy > 10,
+    onPanResponderGrant: () => { pannedAt = Date.now(); },
     onPanResponderMove: (_e, g) => {
       if (Math.abs(g.dx) > Math.abs(g.dy)) drag.setValue({ x: g.dx, y: 0 });
       else drag.setValue({ x: 0, y: Math.max(0, g.dy) });
     },
     onPanResponderRelease: (_e, g) => {
+      pannedAt = Date.now();
       if (g.dy > 36 && g.dy > Math.abs(g.dx)) dismiss();
       else if (Math.abs(g.dx) > 56 && Math.abs(g.dx) > g.dy) step(g.dx < 0 ? 1 : -1);
       else Animated.spring(drag, { toValue: { x: 0, y: 0 }, useNativeDriver: false, bounciness: 6 }).start();
@@ -110,7 +120,7 @@ export function FloatTab() {
       <Animated.View {...pan.panHandlers}
         style={[styles.wrap, { opacity: Animated.multiply(show, drag.y.interpolate({ inputRange: [0, SPACE], outputRange: [1, 0], extrapolate: 'clamp' })),
           transform: [{ translateX: drag.x }, { translateY: Animated.add(drag.y, show.interpolate({ inputRange: [0, 1], outputRange: [24, 0] })) }] }]}>
-        <Pressable onPress={() => open(cur)} accessibilityRole="button" accessibilityLabel={`${cur.label}${L('：', ': ')}${cur.line}`}
+        <Pressable onPress={() => { if (Date.now() - pannedAt > 350) open(cur); }} accessibilityRole="button" accessibilityLabel={`${cur.label}${L('：', ': ')}${cur.line}`}
           accessibilityHint={L('打开小板子；下滑关闭', 'Opens the report; swipe down to dismiss')}
           accessibilityActions={[{ name: 'activate' }, { name: 'dismiss', label: L('关闭', 'Dismiss') }, ...(more ? [{ name: 'next', label: L('下一份', 'Next') }] : [])]}
           onAccessibilityAction={onAction}
