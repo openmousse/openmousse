@@ -281,6 +281,7 @@ python3 nutrition.py cofid-import [--file 本地的 xlsx]
 | `PATCH` / `DELETE /api/diet/entries/{id}` | 改份量（按快照重算）/ 餐次 / 时间 / 日期；删 |
 | `POST /api/diet/undo` | `{batch}`：撤销同一次写入的几样 |
 | `POST /api/diet/log-plan` | `{card?, meals?, scale?, items?: [{meal, item, amount}], date?, time?, again?, commit?}`；返回 `batch`、`entries`、`day`（合计和还差多少） |
+| `POST /api/diet/log` | `{feed, meal?}`：同上的简写（产出小板子用），记这张卡的第几顿（从 0 数，不给 = 第一顿还没记的） |
 | `GET /api/diet/foods?q=&recent=` · `POST` · `PATCH` / `DELETE /api/diet/foods/{id}` | 个人食物库；`POST {from: {source: off \| cofid \| usda, ref}}` 直接存 lookup 的结果 |
 | `GET /api/diet/lookup?q=&en=&barcode=&packaged=&sources=&all=` | `{best, results, tried, estimate}`：按顺序查，`tried` 说每个来源查了没有、为什么跳过 |
 | `GET /api/diet/library?days=` | 常吃的：次数、常用份量、常在哪餐 |

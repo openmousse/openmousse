@@ -29,6 +29,7 @@
   DELETE /api/diet/entries/{id}
   POST   /api/diet/undo {batch}            撤销同一次写入的几行
   POST   /api/diet/log-plan                一键「记录这一餐」：按饮食建议卡（feed_items 的 meal_plan）的 data 记，份量能改
+  POST   /api/diet/log {feed, meal}        同上的简写（产出小板子用）：记这张卡的第几顿
   GET    /api/diet/foods?q=&recent=        个人食物库
   POST   /api/diet/foods                   加一样（或 {from: {source, ref}} 从 Open Food Facts / CoFID 的结果存进来）
   PATCH  /api/diet/foods/{id}  ·  DELETE /api/diet/foods/{id}
@@ -935,6 +936,19 @@ def log_plan(body: PlanLogIn):
     log_activity(L(f"按建议记了{labels}：{add['kcal']} kcal", f"Logged {labels} as planned: {add['kcal']} kcal"), "diet", None if by == "leo" else by)
     return {"ok": True, "preview": False, "card": card["id"], "batch": batch, "meals": per_meal, "already": [meals[i].get("label") for i in already],
             "entries": out, "adds": add, "warnings": warnings, "day": day_summary(d)}
+
+
+class LogIn(BaseModel):
+    feed: str
+    meal: int | None = None
+    by: str | None = None
+
+
+@router.post("/api/diet/log")
+def log_short(body: LogIn):
+    """「记录这一餐」的简写（产出小板子按这个约定调）：{feed: 建议卡 id, meal: 第几顿（从 0 数；不给 = 第一顿还没记的）}，
+    和 log-plan 记这一顿一样（返回 ok、batch、day…；记过了 409）。"""
+    return log_plan(PlanLogIn(card=body.feed, meals=[body.meal] if body.meal is not None else None, by=body.by))
 
 
 # —— 食物库接口 ——————————————————————————————————————————————————————————

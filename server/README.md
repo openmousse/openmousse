@@ -282,6 +282,7 @@ python3 nutrition.py cofid-import [--file local.xlsx]
 | `PATCH` / `DELETE /api/diet/entries/{id}` | Change the amount (recomputed from the snapshot) / meal / time / date; delete |
 | `POST /api/diet/undo` | `{batch}`: undo one write |
 | `POST /api/diet/log-plan` | `{card?, meals?, scale?, items?: [{meal, item, amount}], date?, time?, again?, commit?}`; returns `batch`, `entries` and `day` (totals and what's left) |
+| `POST /api/diet/log` | `{feed, meal?}`: the same in short (used by the output mini board): log that card's meal by index (from 0; none = the first one not logged yet) |
 | `GET /api/diet/foods?q=&recent=` · `POST` · `PATCH` / `DELETE /api/diet/foods/{id}` | The food library; `POST {from: {source: off \| cofid \| usda, ref}}` saves a lookup result as is |
 | `GET /api/diet/lookup?q=&en=&barcode=&packaged=&sources=&all=` | `{best, results, tried, estimate}`: follows the order; `tried` says which sources were asked and why any were skipped |
 | `GET /api/diet/library?days=` | Usual foods: times, usual amount, which meals |
