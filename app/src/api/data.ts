@@ -107,6 +107,11 @@ function normalizeCard(raw: any): ChatCard | null {
   if (raw.kind === 'output' && raw.output && typeof raw.output.board === 'object') {  // Agent 在回复里出的产出（server/outputs.py）
     return { ...raw, messageId: msgNum(raw.messageId), createdAt: str(raw.createdAt), thread: str(raw.thread), status: raw.output.replaced ? 'replaced' : 'done' } as ChatCard;
   }
+  if (raw.kind === 'page' && typeof raw.page === 'string') {  // Agent 在回复里发布的页面（server/pages.py）
+    return { ...raw, messageId: msgNum(raw.messageId), title: str(raw.title), summary: str(raw.summary), note: str(raw.note), agent: str(raw.agent),
+      version: num(raw.version) ?? 1, latest: num(raw.latest) ?? 1, reads: Array.isArray(raw.reads) ? raw.reads.map(String) : [], deleted: !!raw.deleted, status: raw.deleted ? 'deleted' : 'done',
+      thread: str(raw.thread), createdAt: str(raw.createdAt) } as ChatCard;
+  }
   if (raw.kind === 'schedule' && typeof raw.logId === 'number') {  // Agent 在回复里改了日程（server/schedule.py）
     return { ...raw, messageId: msgNum(raw.messageId), title: str(raw.title), summary: str(raw.summary), action: str(raw.action), actor: str(raw.actor),
       area: raw.area === 'remember' ? 'remember' : 'schedule', status: raw.status === 'undone' ? 'undone' : 'done', createdAt: str(raw.createdAt) } as ChatCard;

@@ -17,7 +17,10 @@ let html = readFileSync(file, 'utf8');
 
 // 末尾的小脚本让 <html lang> 跟界面语言走（读屏的发音、浏览器的翻译提示看它）：
 // 「我 → 语言」存的选择（localStorage mousse.lang）优先，否则看系统语言，和 src/lang.ts 同一规则。
+// 页面（Agent 写的网页，src/screens/PageScreen.tsx）在 sandbox iframe（srcdoc）里跑：frame-src 'none' 让它没法把自己导航到别的网址
+// （带着读到的数据跳走）。srcdoc 不经网络、不受它管；app 自己不嵌任何别的 iframe。
 const head = `
+    <meta http-equiv="Content-Security-Policy" content="frame-src 'none'" />
     <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no" />
     <meta name="apple-mobile-web-app-capable" content="yes" />
     <meta name="mobile-web-app-capable" content="yes" />

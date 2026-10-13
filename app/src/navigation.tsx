@@ -13,6 +13,7 @@ import { ActivityScreen, AvatarScreen, IdentityScreen, JournalScreen, MemoryScre
 import { NewGroupScreen } from './screens/NewGroupScreen';
 import { BoardHistoryScreen } from './screens/BoardHistoryScreen';
 import { CollectionScreen } from './screens/CollectionScreen';
+import { PageScreen } from './screens/PageScreen';
 import { EditGroupScreen } from './screens/EditGroupScreen';
 import { TaskScreen, TasksScreen } from './screens/TasksScreen';
 import { ScheduleFeedScreen } from './screens/ScheduleFeedScreen';
@@ -113,7 +114,7 @@ export const hasRoute = (name: string) => !!navigationRef.getRootState()?.routeN
  * 输入框上面的引用：从收件箱「去对话里说」带过来的（inboxId：显示「回复：标题」，发出去时带上；follow：「已处理」里点「跟进」，显示「跟进：标题」），
  * 或者任务卡上点了「改一下」（taskId：显示「改：标题」，发出去的话直接交给做这件事的子会话，不进这个对话）。
  */
-export interface ChatQuote { inboxId?: string; /** 和 inboxId 一起：跟进一件已经处理过的事（「已处理」里点的），不是「改一下」 */ follow?: boolean; /** 长按「引用」的那条消息（"db<id>"）：发出去时带上，模型看到原话 */ replyTo?: string; taskId?: string; title: string; model?: string | null; /** 日程或「要记得的」里的一条（schedule.py 的 id）：发出去时带上，模型知道说的是哪一条 */ ref?: string; /** 收藏里的一条（问问、翻译）：发出去时带上，模型看到它的正文 */ saveId?: string }
+export interface ChatQuote { inboxId?: string; /** 和 inboxId 一起：跟进一件已经处理过的事（「已处理」里点的），不是「改一下」 */ follow?: boolean; /** 长按「引用」的那条消息（"db<id>"）：发出去时带上，模型看到原话 */ replyTo?: string; taskId?: string; title: string; model?: string | null; /** 日程或「要记得的」里的一条（schedule.py 的 id）：发出去时带上，模型知道说的是哪一条 */ ref?: string; /** 收藏里的一条（问问、翻译）：发出去时带上，模型看到它的正文 */ saveId?: string; /** 只往输入框里放这段文字（页面的「在对话里问」），title 为空时不显示引用条 */ fill?: string }
 
 // 冷启动时点通知，那一下可能比导航器准备好还早（RootNavigator 要等本机配置读完才渲染）：先记下来，onReady 时补上。
 let queued: { target: PushTarget; isGroup: boolean; quote?: ChatQuote; focus?: string } | null = null;
@@ -254,6 +255,8 @@ export function RootNavigator() {
         <Stack.Screen name="BoardHistory" component={BoardHistoryScreen} />
         {/* 集合块全屏（2026-10-13）：表格 / 看板 / 日历 / 时间线 / 图表，看板能拖卡片 */}
         <Stack.Screen name="Collection" component={CollectionScreen} />
+        {/* 页面（2026-10-13）：Agent 写的网页放进盒子里显示，网页版 ?screen=Page&id=pg-… */}
+        <Stack.Screen name="Page" component={PageScreen} getId={({ params }: { params?: { id?: string } }) => params?.id} />
         <Stack.Screen name="HistoryDay" component={HistoryDayScreen} />
         <Stack.Screen name="Inbox" component={InboxScreen} />
         <Stack.Screen name="NewGroup" component={NewGroupScreen} options={{ presentation: 'modal' }} />

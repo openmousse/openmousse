@@ -1,7 +1,7 @@
 // 积木看板（server/boards.py）：每个 Agent 自己的表 + 看板配置。服务器按配置算好每块的数据、按语言格式化好，这里只管显示和你自己点的改动。
 import { request } from './base';
 
-export type BlockType = 'stat' | 'progress' | 'chart' | 'list' | 'checklist' | 'text' | 'action' | 'collection';
+export type BlockType = 'stat' | 'progress' | 'chart' | 'list' | 'checklist' | 'text' | 'action' | 'collection' | 'page';
 export type Tone = 'neutral' | 'good' | 'warn' | 'bad' | 'cyan' | 'gold';
 export type FieldType = 'text' | 'number' | 'money' | 'date' | 'datetime' | 'bool' | 'choice' | 'photo' | 'link';
 

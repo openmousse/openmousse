@@ -310,7 +310,9 @@ export interface MinutesCardInfo {
   open: string[];
   confirmed: MeetingConfirmed | null;
 }
-export type ChatCard = HandoffCard | TaskCardInfo | ScheduleChangeCard | ProjectChangeCard | CourseChangeCard | OutputChatCard | MeetingCardInfo | MinutesCardInfo;
+/** Agent 在这条回复里发布的页面（server/pages.py）：version = 这次发的第几版，latest = 现在最新一版；reads = 它要读的表（只读）。 */
+export interface PageChatCard { kind: 'page'; id: string; page: string; version: number; latest: number; title: string; summary: string; note: string; agent: string; reads: string[]; deleted: boolean; status: 'done' | 'deleted'; thread: string; messageId: number | null; createdAt: string }
+export type ChatCard = HandoffCard | TaskCardInfo | ScheduleChangeCard | ProjectChangeCard | CourseChangeCard | OutputChatCard | MeetingCardInfo | MinutesCardInfo | PageChatCard;
 /** 一个对话里的卡片（GET /api/chat/cards）：它自己转出去、派出去的，加上别的对话转给它的（incoming）。 */
 export interface ThreadCards { cards: ChatCard[]; incoming: HandoffCard[] }
 

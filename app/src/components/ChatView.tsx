@@ -19,6 +19,7 @@ import { Markdown } from './Markdown';
 import { InboxCard } from './InboxCard';
 import { CourseChip, HandoffChip, HandoffFrom, ProjectChip, ScheduleChip, TaskCardView, modelLabel } from './ChatCards';
 import { OutputCard } from './outputs/OutputCard';
+import { PageChip } from './PageCards';
 import { MAX_FILES, pickDocuments, pickMedia } from './chatInput';
 import { saveMessage } from '../api/think';
 import { isRemote } from '../api/files';
@@ -104,7 +105,8 @@ const ChatTasks = React.memo(function ChatTasks({ cards, onRevise, thread }: { c
   return <>{cards.map((c) => (
     <View key={c.id} style={{ paddingLeft: 36 }}>
       {c.kind === 'task' ? <TaskCardView card={c} onRevise={onRevise} /> : c.kind === 'schedule' ? <ScheduleChip card={c} /> : c.kind === 'project' ? <ProjectChip card={c} here={thread} />
-        : c.kind === 'course' ? <CourseChip card={c} /> : c.kind === 'output' ? <OutputCard card={c} /> : c.kind === 'meeting' ? <MeetingChip card={c} /> : c.kind === 'minutes' ? <MinutesChip card={c} /> : <HandoffChip card={c} />}
+        : c.kind === 'course' ? <CourseChip card={c} /> : c.kind === 'output' ? <OutputCard card={c} /> : c.kind === 'meeting' ? <MeetingChip card={c} /> : c.kind === 'minutes' ? <MinutesChip card={c} />
+          : c.kind === 'page' ? <PageChip card={c} /> : <HandoffChip card={c} />}
     </View>
   ))}</>;
 });
@@ -385,13 +387,17 @@ export function ChatView({ threadId, placeholder, empty, welcome, quote: quotePr
   const cardCount = allCards.length;
   const cardState = allCards.map((c) => `${c.id}:${c.status}:${c.kind === 'task' ? `${c.round}${c.roundStatus}` : ''}`).join(',');
   // 引用：跳转带来的新引用替换旧的；发出去或点 × 就没了
-  const [quote, setQuote] = useState<ChatQuote | null>(() => quoteProp ?? quotes.get(threadId) ?? null);
+  const [quote, setQuote] = useState<ChatQuote | null>(() => (quoteProp?.title ? quoteProp : null) ?? quotes.get(threadId) ?? null);
   const [quoteSeen, setQuoteSeen] = useState(quoteAt);
   if (quoteAt !== quoteSeen) {
     setQuoteSeen(quoteAt);
-    if (quoteProp) setQuote(quoteProp);
+    if (quoteProp?.title) setQuote(quoteProp);  // 只带 fill（页面的「在对话里问」）的不出引用条
   }
   const composer = useRef<ComposerHandle>(null);
+  const fill = quoteProp?.fill;
+  useEffect(() => {  // 跳转带来的文字放进输入框（不发送，你看过、改过再发）
+    if (fill && quoteAt) composer.current?.fill(fill);
+  }, [fill, quoteAt]);
   useEffect(() => {
     if (quote) quotes.set(threadId, quote); else quotes.delete(threadId);
   }, [threadId, quote]);

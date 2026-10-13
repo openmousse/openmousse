@@ -15,6 +15,7 @@ import { useSheet } from '../Sheet';
 import { Card, Disclosure, Pill, showError, T } from '../ui';
 import { pickDocuments, pickMedia } from '../chatInput';
 import { CollectionBody } from '../views/Collection';
+import { PageBlockBody } from '../PageCards';
 import { useBoard } from './ctx';
 import { openForm, openRow } from './RowSheet';
 
@@ -57,6 +58,7 @@ export function BlockView({ block }: { block: Block }) {
   else if (block.type === 'text') body = <Card><Markdown text={d.text || block.data.text || ''} compact /></Card>;
   else if (block.type === 'action') body = <ActionBody block={block} />;
   else if (block.type === 'collection') body = <CollectionBody block={block} />;
+  else if (block.type === 'page') body = <PageBlockBody block={block} />;
   else body = <Card><T v="callout" color={t.ink2}>{L('此区块需要更新 app 后才能显示。', 'This block needs a newer version of the app.')}</T></Card>;
   return (
     <Pressable onLongPress={onLong} delayLongPress={450} disabled={!onLong}>
