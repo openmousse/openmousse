@@ -457,6 +457,11 @@ def on_run_end(run: chat.Run) -> None:
         outputs_mod.link_run(run)
     except Exception:  # noqa: BLE001
         pass
+    try:  # 这次回复里发起的会议（会议卡，见 meetings.py）
+        import meetings as meetings_mod  # 延迟导入
+        meetings_mod.link_run(run)
+    except Exception:  # noqa: BLE001
+        pass
     row = None
     with _lock, cdb() as conn:
         conn.execute("UPDATE handoffs SET message_id=? WHERE from_thread=? AND message_id IS NULL AND rowid>?",
@@ -566,6 +571,8 @@ async def cards(thread: str = "main", day: str | None = None):
     out += await asyncio.to_thread(courses_mod.changes_for, thread, lo, hi)  # 学习 Agent 改的课（课程改动卡）
     import outputs as outputs_mod  # 延迟导入
     out += await asyncio.to_thread(outputs_mod.changes_for, thread, lo, hi)  # 这个线程的回复里出的产出（产出卡片）
+    import meetings as meetings_mod  # 延迟导入
+    out += await asyncio.to_thread(meetings_mod.cards_for, thread, lo, hi)  # 这里发起的会议（会议卡）和纪要通知下面的纪要卡
     out.sort(key=lambda c: c["createdAt"] or "")
     return {"ok": True, "thread": thread, "day": day, "cards": out, "incoming": incoming, "tasksAvailable": rows is not None}
 

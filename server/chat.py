@@ -698,6 +698,8 @@ def start_run(thread: str, text: str, model: str | None, key: str | None = None,
     level：回完推送的档位（ring / quiet / none），不给按 origin 定：user 响铃、relay 不推、auto 静默（见 push.run_level）。"""
     if (cur := RUNS.get(thread)) and not cur.done:
         raise HTTPException(409, L("上一条还没回完，等它结束或先接回去看。", "The last reply isn't finished yet. Wait for it, or reconnect to see it."))
+    if thread.startswith("grp-"):  # 会议的线程：成员各有各的会话，走 /api/meetings（meetings.py），不在这里发给主对话的 agent
+        raise HTTPException(400, L("会议消息请用 /api/meetings/{id}/send", "Send meeting messages with /api/meetings/{id}/send"))
     token = gateway_token() if claw.is_openclaw() else ""
     import files as files_mod  # 延迟导入：files.py 依赖本模块
     rows = files_mod.load_pending(thread, attachment_ids or [])
@@ -736,6 +738,11 @@ def daily_context(thread: str) -> str | None:
         import projects as projects_mod  # 延迟导入：projects.py 依赖本模块
         parts.append(projects_mod.context_for(thread))
     except Exception:  # noqa: BLE001 — 带不上只是模型少看一眼项目卡，消息照发
+        pass
+    try:
+        import meetings as meetings_mod  # 延迟导入：meetings.py 依赖本模块
+        parts.append(meetings_mod.context_for(thread))  # 它发起的会议有了纪要、确认了：没告诉过它的带上
+    except Exception:  # noqa: BLE001
         pass
     if not claw.is_openclaw() and first_today(thread):
         parts += [agent_role(thread), last_digest(thread)]
@@ -1146,6 +1153,11 @@ async def stop(body: StopBody):
 def busy_threads():
     """正在回复的线程和排着的消息数。safe_restart.py 等它们都没了再重启服务（重启会掐断进行中的回复）。"""
     running = [t for t, r in RUNS.items() if not r.done]
+    try:  # 正在进行的会议（成员在发言、在写纪要）
+        import meetings as meetings_mod  # 延迟导入：meetings.py 依赖本模块
+        running += meetings_mod.busy()
+    except Exception:  # noqa: BLE001
+        pass
     queued = {t: len(v) for t, v in QUEUED.items() if v}
     for t, n in RELAY_WAITING.items():  # 排队等着转进去的转交（重启会把它们丢掉）
         if n:

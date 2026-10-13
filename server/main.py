@@ -12,6 +12,7 @@
 - 对话里的转交卡、任务卡：/api/chat/cards；后台任务额度 /api/tasks/quota；后台任务做完静默推一条（见 cards.py）。
 - 训记数据不落库：训练和身体数据以训记为真源，这里只有短时缓存（由 xunji.py / calendar_ics.py 管）。
 - 饮食记录：/api/diet/*（2026-10-13 起记在服务自己的库里：吃了什么、个人食物库、营养目标；查营养 个人食物库 → Open Food Facts → CoFID → USDA。见 diet.py、nutrition.py）。
+- Agent 会议：/api/meetings（几个 Agent 围绕一个议题轮流发言，各用自己的 OpenClaw 会话；Grava 主持、写纪要，确认后待办写进日程和各 Agent 的看板，见 meetings.py）。
 - 学习台：/study 网页 + /api/study/*，课件和学习页按课程 / 模块浏览，问答走同一条对话通道（见 study.py）。
 - 思考空间和收藏：/api/think/*（碎片是库里收件箱的笔记，AI 不碰，等你叫它；收藏存原件和抽出来的正文；冥想时间压住推送。见 think.py、saves.py）。
 - 日程和「要记得的」：/api/schedule（课表 + 自己的日程 + 当天的截止，能改）、/api/remember（作业、邮件、求职的 ddl，打勾），iPhone 日历订阅 /cal/<令牌>.ics（见 schedule.py）。
@@ -101,6 +102,7 @@ from egress import router as egress_router  # noqa: E402 — Doorman 出口（�
 import diet  # noqa: E402
 from diet import router as diet_router  # noqa: E402 — 饮食记录、个人食物库、营养目标、查营养（diet.py + nutrition.py）
 from outputs import router as outputs_router  # noqa: E402 — Agent 的产出：浮动标签、小板子、对话里的产出卡片（2026-10-13）
+from meetings import router as meetings_router  # noqa: E402 — Agent 会议：/api/meetings…（几个 Agent 轮流发言、Grava 写纪要，见 meetings.py）
 
 DIST = settings.dist
 settings.db.parent.mkdir(parents=True, exist_ok=True)  # 新实例第一次启动：数据目录还不存在
@@ -171,6 +173,7 @@ app.include_router(a2a_router)
 app.include_router(egress_router)
 app.include_router(diet_router)
 app.include_router(outputs_router)
+app.include_router(meetings_router)  # /api/meetings/suggest 在 /api/meetings/{mid} 之前定义（同一个 router 里按顺序）
 if apps is not None:
     app.include_router(apps.router)
 app.add_exception_handler(sources.NoSource, sources.no_source_handler)

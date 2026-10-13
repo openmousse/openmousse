@@ -7,7 +7,10 @@ Agent 用自己的 skills 和记忆回答，回复入库、不推送，这里拿
 用法：
   ask_agent.py <agent id> "问题"  [--timeout 180]
   ask_agent.py --list                 # 现在有哪些 Agent（id、名字、职责）
-退出码：0 有答案；2 超时或排队（Agent 还在答 / 在忙、问题排进了它的队列，稍后在它的线程里能看到）；1 其它错误。
+  ask_agent.py --meet "议题" <agent id> <agent id> … [--title 会议名] [--keep]
+                                      # 发起会议（2026-10-13）：几个 Agent 一起商量，每轮每位发言一次，Grava 写纪要；
+                                      # 立刻返回，不等开完。纪要写好后出现在主对话里，等用户确认（见 server/meetings.py）
+退出码：0 有答案（会议：已发起）；2 超时或排队（Agent 还在答 / 在忙、问题排进了它的队列，稍后在它的线程里能看到）；1 其它错误。
 输出给主对话的 agent 读，语言跟 server.json 的 language。
 """
 from __future__ import annotations
@@ -30,13 +33,43 @@ def agents() -> dict[str, str] | None:
         return None
 
 
+def meet(topic: str, members: list[str], title: str | None, keep: bool) -> None:
+    """发起会议：POST /api/meetings（origin main），马上返回。"""
+    try:
+        r = api("/api/meetings", {"topic": topic, "members": members, "title": title, "keep": keep, "origin": "main"}, timeout=30)
+    except urllib.error.HTTPError as exc:
+        detail = exc.read().decode("utf8", "replace")[:300]
+        if exc.code == 404:
+            detail = L("服务器还没有会议功能（要更新 OpenMousse 服务器）", "The server doesn't have meetings yet (update the OpenMousse server)")
+        print(L(f"会议没发起（HTTP {exc.code}）：{detail}", f"Couldn't start the meeting (HTTP {exc.code}): {detail}"))
+        sys.exit(1)
+    except (urllib.error.URLError, TimeoutError) as exc:
+        print(L(f"会议没发起：{exc}", f"Couldn't start the meeting: {exc}"))
+        sys.exit(1)
+    m = r["meeting"]
+    names = L("、", ", ").join(x["name"] for x in m["members"])
+    print(L(f"已发起会议「{m['title']}」（{m['id']}）：{names}。每轮每个 Agent 发言一次，Grava 写纪要；纪要出来后会出现在主对话，等用户确认。"
+            "不用等它开完，也不用转述每个 Agent 的话。",
+            f"Started the meeting \"{m['title']}\" ({m['id']}): {names}. Each Agent speaks once per round and Grava writes the minutes; "
+            "they will appear in the main chat for the user to confirm. Don't wait for it, and don't relay what each Agent says."))
+
+
 def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("agent", nargs="?")
     ap.add_argument("question", nargs="?")
     ap.add_argument("--timeout", type=int, default=150)
     ap.add_argument("--list", action="store_true")
-    a = ap.parse_args()
+    ap.add_argument("--meet", metavar="TOPIC", help="发起会议：后面跟参会的 Agent id")
+    ap.add_argument("--title")
+    ap.add_argument("--keep", action="store_true", help="会后保留为群聊")
+    a, rest = ap.parse_known_args()
+    if a.meet:
+        members = [x for x in [a.agent, a.question, *rest] if x and not x.startswith("-")]
+        meet(a.meet, members, a.title, a.keep)
+        return
+    if rest:
+        ap.error(f"unrecognized arguments: {' '.join(rest)}")
     known = agents()
     if a.list or not a.agent or not a.question:
         if known is None:

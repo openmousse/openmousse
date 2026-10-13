@@ -41,6 +41,11 @@ def tracked(conn: sqlite3.Connection) -> list[str]:
     topics = []
     if conn.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='think_topics'").fetchone():  # 思考主题（think.py）
         topics = [r["id"] for r in conn.execute("SELECT id FROM think_topics WHERE status='open' ORDER BY created_at")]
+    try:  # 没结束的会议和 Agent 群（meetings.py）
+        import meetings  # 延迟导入：meetings 依赖 chat
+        topics += meetings.tracked(conn)
+    except Exception:  # noqa: BLE001
+        pass
     return (["main"] + [r["id"] for r in conn.execute("SELECT id FROM groups ORDER BY position, created_at")]
             + [r["id"] for r in conn.execute("SELECT id FROM side_chats WHERE archived=0 ORDER BY created_at")] + topics)
 
