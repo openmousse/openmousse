@@ -34,6 +34,7 @@ FEATURES = (
     "diet.log",       # 饮食记录在服务自己的库里：/api/diet/day 的 meals 带 key / time / carb / fat、每样带 id；/api/diet/entries · /days · /undo · /targets
     "diet.log_meal",  # POST /api/diet/log-plan：按饮食建议卡一键「记录这一餐」（份量可改，同一餐不重复记，返回 batch 可撤销）
     "diet.foods",     # 个人食物库 /api/diet/foods、查营养 /api/diet/lookup（个人食物库 → Open Food Facts → CoFID → USDA）
+    "today",            # GET /api/today（待处理 / 日程 / 报告三块）、/api/today/range（周 / 月）、POST /api/today/snooze；/api/schedule/mark 收 mail:
 )
 
 

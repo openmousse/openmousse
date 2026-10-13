@@ -448,7 +448,8 @@ def order_key(e: dict) -> tuple:
 
 # —— 时间线 ——————————————————————————————————————————————————————————
 
-def build_timeline(lo: date, days: int) -> dict:
+def build_timeline(lo: date, days: int, actual: bool = True) -> dict:
+    """actual=False：不用训练记录补过去训练的实际时间（「今天」页的周 / 月视图一次几十天，不必逐天查训练记录）。"""
     hi = lo + timedelta(days=days)
     now_dt, lo_s, hi_s = now(), lo.isoformat(), hi.isoformat()
     cls, cal_err = classes(lo, days)
@@ -466,7 +467,8 @@ def build_timeline(lo: date, days: int) -> dict:
     seen = {e["id"] for e in out}
     out += [snapshot_entry(m) for m in mk.values() if m.get("done_at") and m.get("date") and lo_s <= m["date"] < hi_s
             and m["ref"] not in seen and m["ref"].split(":", 1)[0] in SNAP_ORIGIN]
-    fill_training(out)
+    if actual:
+        fill_training(out)
     mark_clashes(out)
     out.sort(key=order_key)
     for e in out:
@@ -833,12 +835,26 @@ def parse_ics_ref(ref: str) -> tuple[str, str | None, str]:
     return m.group(1), m.group(2), m.group(3)
 
 
+def ref_meta(ref: str) -> tuple[str, str | None, str]:
+    """标记的是哪天、几点、叫什么：课表里的一节（ics:…），或邮件里写了时刻的活动（mail:…，「今天」页日程里的已购票、已报名）。"""
+    if ref.startswith("mail:"):
+        x = next((m for m in mail_items() if f"mail:{m['id']}" == ref), None)
+        due = str((x or {}).get("due") or "")
+        if x is None or len(due) < 16:
+            raise HTTPException(404, L("没有这一条带时刻的邮件活动（可能已经过期清掉了）", "No such timed email event (it may have expired)"))
+        return due[:10], due[11:16], short_title(str(x.get("title") or ""))
+    return parse_ics_ref(ref)
+
+
 @router.post("/api/schedule/mark")
 async def mark(body: MarkIn):
-    """课表里那一节：不去 / 照去（series=true 管每周同一节）、改地点、备注、去没去、实际时间。课表本身不动。"""
+    """课表里那一节：不去 / 照去（series=true 管每周同一节）、改地点、备注、去没去、实际时间。课表本身不动。
+    邮件里写了时刻的活动（mail:…）也能标：跳过、备注、去没去、实际时间（没有每周）。"""
     actor = actor_of(body.source)
     sent = body.model_fields_set
-    d, t, title = parse_ics_ref(body.ref)
+    d, t, title = ref_meta(body.ref)
+    if body.series and not body.ref.startswith("ics:"):
+        raise HTTPException(400, L("只有课表里的课能按每周设", "Only timetable classes can repeat weekly"))
     run = run_of(actor)
     changes: list[tuple[str, str, str, dict | None, dict | None]] = []   # (ref, action, summary, before, after)
     ts = now_iso()
@@ -846,7 +862,7 @@ async def mark(body: MarkIn):
         def upsert(ref: str, fields: dict, action: str, summary: str) -> None:
             old = conn.execute("SELECT * FROM schedule_marks WHERE ref=?", (ref,)).fetchone()
             before = row_dict(old)
-            after = {**(before or {c: None for c in MARK_COLS}), **fields, "ref": ref, "title": title, "date": d if ref.startswith("ics:") else None,
+            after = {**(before or {c: None for c in MARK_COLS}), **fields, "ref": ref, "title": title, "date": d if ref.startswith(("ics:", "mail:")) else None,
                      "time": t, "source": actor, "updated_at": ts}
             if before and {k: after.get(k) for k in MARK_COLS if k not in ("updated_at", "source")} == \
                     {k: before.get(k) for k in MARK_COLS if k not in ("updated_at", "source")}:
@@ -866,7 +882,8 @@ async def mark(body: MarkIn):
                     upsert(body.ref, {"skip": None}, "skip" if body.skip else "unskip", "")
             else:
                 upsert(body.ref, {"skip": 1 if body.skip else 0}, "skip" if body.skip else "unskip",
-                       L("这节标了不去", "Skipping this one") if body.skip else L("照常去", "Going after all"))
+                       (L("这节标了不去", "Skipping this one") if body.ref.startswith("ics:") else L("标了不去", "Skipping"))
+                       if body.skip else L("照常去", "Going after all"))
         fields: dict = {}
         if body.location is not None:
             fields["location"] = body.location.strip()[:200] or None

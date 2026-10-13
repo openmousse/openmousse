@@ -184,7 +184,7 @@ python3 schedule_ctl.py undo 42
 | `GET /api/schedule?from=&days=` | The merged timeline (1–14 days from `from`, default today). Each entry: `id` (the ref to change it: `item:` / `ics:` / `canvas:` / `mail:` / `app:`), `kind`, `origin`, `title`, `date`, `start`, `end`, `allDay`, `badge`, `by`, `link`, `done`, `skip`, `series`, `attended`, `actualStart`, `actualEnd`, `clash`, `past` |
 | `POST /api/schedule` | Add `{title, date, start?, end?, kind: event/deadline, location?, note?, key?, source?}` |
 | `PATCH /api/schedule/{id}` / `DELETE` | Change / delete your own (soft delete, undoable) |
-| `POST /api/schedule/mark` | A class: `{ref, skip?, series?, location?, note?, attended?, actualStart?, actualEnd?}` |
+| `POST /api/schedule/mark` | A class: `{ref, skip?, series?, location?, note?, attended?, actualStart?, actualEnd?}`; a timed event from email (`mail:` ref) takes the same, without `series` |
 | `GET /api/remember?all=` | To remember, grouped (`all=1` includes ticked ones) |
 | `POST /api/remember/done` | `{ref, done}`: tick / untick |
 | `POST /api/remember/edit` | `{ref, title?, due?, detail?, type?}`: fix a mail item (or your own deadline) |
@@ -192,6 +192,21 @@ python3 schedule_ctl.py undo 42
 | `GET/POST /api/schedule/feed` | The iPhone subscription: `{path, include}`; `{include}` to switch categories, `{rotate: true}` for a new link |
 
 `server.json` → `remember.mail` (optional): `{"items": "<the JSON the mail extractor writes>", "cmd": ["python3", ".../mail_digest.py"], "sources": {"<key>": "<label>"}, "link": "https://mail.google.com/mail/?authuser=…#all/{thread_id}"}`.
+
+## The Today page
+
+`GET /api/today?day=` sorts one day into three blocks and the app only draws them (2026-10-13; `/api/health` lists the feature `today`, and older servers keep the app's previous page). Each block follows one rule, so a thing shows up in one place only; see [`today.py`](today.py):
+
+- **To do** (needs you to act): items waiting for your OK (the inbox), suspicious security alerts, to-dos and deadlines due within 7 days (overdue ones you haven't ticked stay for 3 days), most urgent first: approvals → security → overdue → by date. Each row has a `chip` (Today / Tomorrow / Wed / Due Fri / Security / Overdue) and a `tone` (bad / warn / gold / neutral). Undated to-dos come separately (`nodate`). Swipe-to-postpone writes `today_snooze`; the item comes back on that day. It only affects this page (pushes and the morning report are unchanged).
+- **Schedule** (needs you there): classes, what you and Agents scheduled, and timed events from email (tickets, registrations). Entries on the same day at the same time with similar titles (more than half the words shared, or every name in one title appearing in the other's title or text) or the same link merge into one; `refs` lists the merged entries and their states become `tags` ("Ticket"). An email that gives only the start but says "17:00–19:00" in its text gets that end. Past entries with an actual time sit at that time (`slotStart` / `slotEnd`; `moved` = differs from the plan). Training plan and review cards (`training_plan`, `training_review`) attach to that day's entry with key `<agent>:training:<date>` (`cards`).
+- **Reports** (to read): Agent cards not attached to the schedule, plus an email digest. The sleep card carries `sleep` (that day's recovery score, time asleep, the last 6 days and the lowest), the meal card `meal` (which meal, what to eat, the totals, how many items were logged that day). The email digest counts money and status items (dated that day; today also the undated ones) by category: bookings, tickets, accounts, charges, refunds, other.
+- Other days: To do lists only what was due that day (done or not), without inbox, security alerts or postponing. Scheduled jobs and background tasks aren't on this page.
+
+| Route | What it does |
+|---|---|
+| `GET /api/today?day=` | `{day, today, weekday, now (today only), pending: {items, nodate}, schedule: {items, allDay, calendar}, reports, errors}`; no `day` = today (in server.json's timezone) |
+| `GET /api/today/range?from=&days=` | Week / month views (1–42 days): `{date, type: event / deadline / todo, title, sub, start, end, allDay, done, skip, …}` per entry, events merged the same way; no actual times |
+| `POST /api/today/snooze` | `{ref, until}` postpones to `until` (YYYY-MM-DD); `until: null` cancels |
 
 ## Projects
 

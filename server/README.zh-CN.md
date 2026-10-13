@@ -183,7 +183,7 @@ python3 schedule_ctl.py undo 42
 | `GET /api/schedule?from=&days=` | 合并后的时间线（从 `from` 起 1–14 天，默认今天）。每条：`id`（改它用的 ref：`item:` / `ics:` / `canvas:` / `mail:` / `app:`）、`kind`、`origin`、`title`、`date`、`start`、`end`、`allDay`、`badge`、`by`、`link`、`done`、`skip`、`series`、`attended`、`actualStart`、`actualEnd`、`clash`、`past` |
 | `POST /api/schedule` | 加一条 `{title, date, start?, end?, kind: event/deadline, location?, note?, key?, source?}` |
 | `PATCH /api/schedule/{id}` / `DELETE` | 改 / 删自己的（软删，能撤销） |
-| `POST /api/schedule/mark` | 课：`{ref, skip?, series?, location?, note?, attended?, actualStart?, actualEnd?}` |
+| `POST /api/schedule/mark` | 课：`{ref, skip?, series?, location?, note?, attended?, actualStart?, actualEnd?}`；邮件里写了时刻的活动（`mail:` ref）也能标，没有 `series` |
 | `GET /api/remember?all=` | 要记得的，分好组（`all=1` 连打过勾的也给） |
 | `POST /api/remember/done` | `{ref, done}`：打勾 / 取消 |
 | `POST /api/remember/edit` | `{ref, title?, due?, detail?, type?}`：改邮件条目（或自己加的截止） |
@@ -191,6 +191,21 @@ python3 schedule_ctl.py undo 42
 | `GET/POST /api/schedule/feed` | iPhone 订阅：`{path, include}`；`{include}` 开关各类，`{rotate: true}` 换链接 |
 
 `server.json` 的 `remember.mail`（可选）：`{"items": "<邮件抽取脚本写的 JSON>", "cmd": ["python3", ".../mail_digest.py"], "sources": {"<键>": "<显示名>"}, "link": "https://mail.google.com/mail/?authuser=…#all/{thread_id}"}`。
+
+## 「今天」页
+
+`GET /api/today?day=` 把一天按三块分好组，app 只画（2026-10-13 起；`/api/health` 的 features 带 `today`，没有的老服务器 app 用以前的页面）。三块各按一条标准，一件事只在一块里，见 [`today.py`](today.py)：
+
+- **待处理**（要动手）：等你点头的（收件箱）、可疑安全提醒、7 天内到期的待办和截止（过了期没勾的留 3 天），按紧急程度排：待确认 → 安全 → 已逾期 → 按日子。每行一枚标签 `chip`（今天 / 明天 / 周三 / 周五截止 / 安全 / 已逾期）和色调 `tone`（bad / warn / gold / neutral）。没日子的待办单独给（`nodate`）。左滑推迟写 `today_snooze`，到那天再出现，只影响这一页（推送和起床报告照旧）。
+- **日程**（要到场）：课、自己和 Agent 排的、邮件里写了时刻的活动（买了票、报了名）。同一天同一时刻、标题相近（字面重合过半，或者一边标题里的名字都在另一边的标题和正文里）或者同一个链接的并成一条，`refs` 是并进来的几条，状态成了标签 `tags`（「已购票」）。邮件只写了开始时刻、正文里写着「17:00–19:00」的用它的结束。过去的有实际时间就放在实际时间（`slotStart` / `slotEnd`，`moved` = 和原定不同）。训练计划、练后复盘的卡（`training_plan`、`training_review`）归到当天 key 为 `<agent>:training:<日期>` 的那条（`cards`）。
+- **报告**（要阅读）：没归到日程的 Agent 卡，加一张邮件摘要。睡眠卡带 `sleep`（那天的恢复分、睡了多久、近 6 天的恢复分和最低的一天），饮食卡带 `meal`（哪一餐的建议、吃什么、营养合计、那天记了几条）。邮件摘要 = 钱和状态类的邮件条目（那天的；今天还加上没日子的），按类别计数：预约与提交、已购票、账户、扣费、退款、其他。
+- 别的日子：待处理只列那天到期的（做没做完都列），没有收件箱、安全提醒和推迟。定时任务和后台任务不在这一页。
+
+| 接口 | 做什么 |
+|---|---|
+| `GET /api/today?day=` | `{day, today, weekday, now（只在今天）, pending: {items, nodate}, schedule: {items, allDay, calendar}, reports, errors}`；不给 `day` = 今天（按 server.json 的时区） |
+| `GET /api/today/range?from=&days=` | 周 / 月视图（1–42 天）：每条 `{date, type: event / deadline / todo, title, sub, start, end, allDay, done, skip, …}`，日程同样去重；不补实际时间 |
+| `POST /api/today/snooze` | `{ref, until}` 推迟到 `until`（YYYY-MM-DD）；`until: null` = 取消 |
 
 ## 项目
 

@@ -75,6 +75,7 @@ from inbox import router as inbox_router  # noqa: E402
 from unread import router as unread_router  # noqa: E402
 from chats import router as chats_router  # noqa: E402 — 对话列表（Grava 一边：Agent 栏、主对话、会议、项目；置顶 / 免打扰）
 from schedule import router as schedule_router  # noqa: E402
+import today as today_page  # noqa: E402 — 本文件有自己的 today()（日期），模块换个名字
 from boards import router as boards_router  # noqa: E402
 from pairing import router as pairing_router  # noqa: E402
 from projects import router as projects_router  # noqa: E402 — 顺带把 kind=project 的收件箱钩子挂上
@@ -145,6 +146,7 @@ app.include_router(inbox_router)
 app.include_router(unread_router)
 app.include_router(chats_router)
 app.include_router(schedule_router)  # 含 /cal/<令牌>.ics（在网页版的静态文件之前注册）
+app.include_router(today_page.router)  # 「今天」页按三块分好组（待处理 / 日程 / 报告），周 / 月视图，推迟（today.py）
 app.include_router(alerts_router)  # 在 boards 之前：/api/alerts/… 和看板的路由互不相干，放前面只是好找
 app.include_router(packs_router)
 app.include_router(boards_router)
@@ -296,6 +298,18 @@ def trains_on(d: date) -> list[dict]:
 
 
 schedule.TRAINS_ON = trains_on  # 过去的训练日程用训练记录补实际时间
+
+
+def meals_logged(d: date) -> dict:
+    """某天记了几条饮食、多少千卡（「今天」页饮食卡上的「今日尚未记录饮食」）。"""
+    sources.require("meals")
+    with _lock:
+        data = xunji.call("food_query", {"start_date": d.isoformat(), "end_date": d.isoformat(), "include_detail": False}, ttl=ttl_for(d))
+    day = next((x for x in (data.get("res") or {}).get("days") or [] if x.get("datestr") == d.isoformat()), None) or {}
+    return {"count": int(day.get("item_count") or 0), "kcal": round(float((day.get("totals") or {}).get("totalCal") or 0))}
+
+
+today_page.MEALS_ON = meals_logged
 
 
 def shared_channels() -> list[str]:

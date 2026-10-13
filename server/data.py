@@ -10,6 +10,7 @@
 | 未读、「今天」页的新卡片、app 角标 | grava.db `read_marks` + `messages.origin` + `feed_items.seen_at`（见 unread.py） |
 | 推送 | Expo Push，三档 ring / quiet / none + server.json 的 `push.quiet_hours`（见 push.py） |
 | 日程、要记得的 | 课表（calendar 数据源）+ grava.db `schedule_items` / `schedule_marks` / `schedule_log` + 课程 ddl（study.deadlines_cmd）+ 邮件条目（server.json 的 remember.mail）+ `applications`（见 schedule.py） |
+| 「今天」页（待处理 / 日程 / 报告，周 / 月） | 上面「日程、要记得的」的同一批来源 + 收件箱 + `feed_items`（归到日程的计划和复盘、报告卡）+ Apple 健康的恢复分；推迟记在 grava.db `today_snooze`（见 today.py） |
 | 接下来会自动做的事 | OpenClaw cron（`cron.list / cron.update`）+ systemd user timer（只读） |
 | 任务 | OpenClaw 子会话：列表读 OpenClaw 的任务台账（`state/openclaw.sqlite`，读不到再走 `tasks.list`）；详情读子会话的 `chat.history`；额度和对话里的任务卡、转交卡见 cards.py |
 | 活动记录 | app 的 activity_log + Gateway 审计（`audit.activity.list`，只有元数据）+ 定时任务的运行记录 |
