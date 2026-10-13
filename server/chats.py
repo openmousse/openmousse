@@ -13,7 +13,7 @@
   免打扰的线程：回复不推送（push.run_level → none），未读不算进 app 图标的角标（unread.badge）。好友的置顶 / 免打扰在 friends 表（friends.py）。
 - DELETE /api/chats/{thread}：项目（同 DELETE /api/sidechats/{id}）、会议（meetings.delete_meeting）。主对话不能删；删 Agent 走 DELETE /api/groups/{id}。
 
-会议 / Agent 群的数据由会议模块（meetings.py，另一条线在做）提供，这里只认两个函数，没有这个模块就没有会议：
+会议 / Agent 群的数据由会议模块（meetings.py）提供，这里只认两个函数，没有这个模块就没有会议：
   meetings.chat_rows() -> list[dict]：每个会议或群一项 {id: "grp-…", kind: "meeting" | "room", title, members: [Agent id 或 "main"],
       ended: bool, state?: "working" | "waiting" | None, line?, lineRole?, at?, unread?}
       line / at / unread 不给就按上面的规则从 messages 表算（thread = id）。
@@ -76,7 +76,7 @@ def activity(conn: sqlite3.Connection, thread: str, mark: int) -> dict:
 def meeting_rows() -> list[dict]:
     """会议模块给的行；没有这个模块（或它出错）就是空。"""
     try:
-        import meetings  # type: ignore[import-not-found]  # 会议（另一条线）：没合进来之前没有这个模块
+        import meetings  # type: ignore[import-not-found]  # 会议（meetings.py）：没有这个模块就没有会议行
     except ImportError:
         return []
     try:

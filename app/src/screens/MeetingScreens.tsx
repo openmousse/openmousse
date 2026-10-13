@@ -2,8 +2,8 @@
 // - Meeting：会议页。每条 Agent 的发言带头像和名字（回复谁、@ 了谁），系统行「由 Grava 发起」「Grava 请 X、Y 回答」，Grava 的纪要卡
 //   （待办 + 确认 / 继续讨论）；一轮进行中接 SSE，按发言人分段出字。输入框：补充一句（待确认时开下一轮），@ 指定 Agent，进行中空着时是「停」。
 // - NewMeeting：发起会议（议题 + 勾选 Agent，Grava 先按议题推荐；会后保留为群聊；写明用量）。
-// - MeetingInfo：会议资料（议题、成员、主持、规则和用量、保留为群聊、结束、删除）。
-// - Meetings：已结束的会议。对话列表里的会议行由对话页做（GET /api/meetings 的字段见 server/meetings.py）。
+// - MeetingInfo：会议资料（议题、成员、主持、规则和用量、保留为群聊、结束、删除），由资料页 Info（kind meeting）显示。
+// 对话列表里的会议行和「已结束的会议」在对话页（/api/chats 的会议行来自 server/meetings.py 的 chat_rows）。
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { AppState, Platform, Pressable, ScrollView, StyleSheet, Switch, TextInput, View, type NativeSyntheticEvent, type TextInputKeyPressEventData } from 'react-native';
 import { useFocusEffect, useNavigation, useRoute } from '@react-navigation/native';
@@ -185,7 +185,7 @@ export function MeetingScreen() {
           <T v="headline" numberOfLines={1}>{meeting.title}</T>
           <T v="caption" color={t.ink3} numberOfLines={1}>{subtitle(meeting)}</T>
         </View>
-        <Pressable onPress={() => nav.navigate('MeetingInfo', { id })} hitSlop={8} accessibilityRole="button" accessibilityLabel={L('会议资料', 'Meeting info')} style={styles.headBtn}>
+        <Pressable onPress={() => nav.navigate('Info', { kind: 'meeting', id })} hitSlop={8} accessibilityRole="button" accessibilityLabel={L('会议资料', 'Meeting info')} style={styles.headBtn}>
           <Info size={22} color={t.ink2} />
         </Pressable>
       </View>
@@ -534,7 +534,7 @@ export function MeetingInfoScreen() {
     );
   }
   const keep = async (v: boolean) => {
-    try { setM(await meetingsApi.patch(id, { keep: v })); } catch (e) { showError(L('保存失败', "Couldn't save"), e); }
+    try { setM(await meetingsApi.patch(id, { keep: v })); reload('chats').catch(() => {}); } catch (e) { showError(L('保存失败', "Couldn't save"), e); }
   };
   const end = () => sheet.open({
     title: m.status === 'group' ? L('解散群聊', 'Close the group') : L('结束会议', 'End the meeting'),
@@ -545,7 +545,7 @@ export function MeetingInfoScreen() {
             : L('会议归入「已结束的会议」，记录保留；没有确认的纪要不写入日程和看板。', 'The meeting moves to Ended meetings and the record stays. Minutes that weren’t confirmed are not added to the schedule or dashboards.')}
         </T>
         <Btn label={m.status === 'group' ? L('解散', 'Close') : L('结束', 'End')} kind="danger" icon={<CircleStop size={16} color={t.bad} />}
-          onPress={() => { close(); meetingsApi.end(id).then((x) => { setM(x); reload('unread').catch(() => {}); }).catch((e) => showError(L('操作失败', "Couldn't complete the action"), e)); }} />
+          onPress={() => { close(); meetingsApi.end(id).then((x) => { setM(x); reload('unread', 'chats').catch(() => {}); }).catch((e) => showError(L('操作失败', "Couldn't complete the action"), e)); }} />
       </View>
     ),
   });
@@ -556,7 +556,7 @@ export function MeetingInfoScreen() {
         <T v="callout" color={t.ink2}>{L('删除会议记录和纪要；已确认的待办保留在日程和看板中。', 'Deletes the meeting’s messages and minutes. Confirmed to-dos stay in your schedule and dashboards.')}</T>
         <Btn label={L('删除', 'Delete')} kind="danger" icon={<Trash2 size={16} color={t.bad} />} onPress={() => {
           close();
-          meetingsApi.remove(id).then(() => { reload('unread').catch(() => {}); nav.pop(2); }).catch((e) => showError(L('删除失败', "Couldn't delete"), e));
+          meetingsApi.remove(id).then(() => { reload('unread', 'chats').catch(() => {}); nav.pop(2); }).catch((e) => showError(L('删除失败', "Couldn't delete"), e));
         }} />
       </View>
     ),
@@ -611,53 +611,6 @@ export function MeetingInfoScreen() {
   );
 }
 
-// —— 会议列表（已结束的会议；对话页没有会议行之前，侧栏也用它） ————————————————————
-
-/** 读会议列表：on 的时候读一次（status 见 GET /api/meetings）。 */
-export function useMeetings(on: boolean, status: 'active' | 'ended' = 'active') {
-  const [rows, setRows] = useState<Meeting[]>([]);
-  const [ended, setEnded] = useState(0);
-  const load = useCallback(() => meetingsApi.list(status).then((r) => { setRows(r.meetings); setEnded(r.endedCount); }).catch(() => {}), [status]);
-  useEffect(() => { if (on) load(); }, [on, load]);
-  return { rows, ended, reload: load };
-}
-
-/** 一行会议：组合头像、名字、最后一句（谁说的）、时间；待确认的标出来。 */
-export function MeetingRow({ m, unread = 0, onPress }: { m: Meeting; unread?: number; onPress: () => void }) {
-  const t = useTheme();
-  const last = m.last ? `${m.last.name ? `${m.last.name}${L('：', ': ')}` : ''}${m.last.text}` : m.topic;
-  return (
-    <Pressable onPress={onPress} accessibilityRole="button" style={({ pressed }) => [styles.listRow, { opacity: pressed ? 0.7 : 1 }]}>
-      <MeetingAvatar members={m.members} size={40} />
-      <View style={{ flex: 1, minWidth: 0, gap: 2 }}>
-        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
-          <T v="headline" numberOfLines={1} style={{ flexShrink: 1, fontSize: 15 }}>{m.title}</T>
-          {m.needsYou ? <StatusPill status="pending" label={m.statusLabel} /> : m.status === 'running' ? <StatusPill status="running" label={m.statusLabel} /> : null}
-        </View>
-        <T v="caption" color={unread ? t.ink2 : t.ink3} numberOfLines={1} style={{ fontWeight: '400' }}>{last}</T>
-      </View>
-      {m.last ? <T v="caption" color={t.ink3}>{m.last.time}</T> : null}
-    </Pressable>
-  );
-}
-
-export function MeetingsScreen() {
-  const t = useTheme();
-  const nav = useNavigation<any>();
-  const { status = 'ended' } = (useRoute<any>().params ?? {}) as { status?: 'active' | 'ended' };
-  const { rows, reload } = useMeetings(true, status);
-  useFocusEffect(useCallback(() => { reload(); }, [reload]));
-  return (
-    <Screen>
-      <NavHeader title={status === 'ended' ? L('已结束的会议', 'Ended meetings') : L('会议', 'Meetings')} onBack={() => nav.goBack()} />
-      <ScrollView contentContainerStyle={{ padding: space.lg, gap: space.xs }} refreshControl={<PullRefresh onRefresh={reload} />}>
-        {rows.length ? rows.map((m) => <MeetingRow key={m.id} m={m} onPress={() => nav.navigate('Meeting', { id: m.id })} />)
-          : <T v="callout" color={t.ink3} style={{ textAlign: 'center', paddingVertical: space.xxl }}>{status === 'ended' ? L('暂无已结束的会议。', 'No ended meetings yet.') : L('暂无会议。', 'No meetings yet.')}</T>}
-      </ScrollView>
-    </Screen>
-  );
-}
-
 const styles = StyleSheet.create({
   head: { flexDirection: 'row', alignItems: 'center', gap: space.sm, paddingVertical: 10, paddingLeft: 4, paddingRight: space.sm, borderBottomWidth: StyleSheet.hairlineWidth },
   headBtn: { width: 40, height: 40, alignItems: 'center', justifyContent: 'center' },
@@ -684,5 +637,4 @@ const styles = StyleSheet.create({
   keepRow: { flexDirection: 'row', alignItems: 'center', gap: space.md, paddingVertical: space.md, paddingHorizontal: 14 },
   rules: { fontSize: 13, lineHeight: 19, fontWeight: '400', paddingHorizontal: space.xs, paddingTop: space.md },
   memberRow: { flexDirection: 'row', alignItems: 'center', gap: space.md, paddingVertical: 10 },
-  listRow: { flexDirection: 'row', alignItems: 'center', gap: space.md, paddingVertical: 10 },
 });

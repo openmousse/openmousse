@@ -1,6 +1,6 @@
 // 资料页（2026-10-13，聊天页头的 ⓘ）：每种对话一页，头上是大头像、名字和一行说明。
-// Agent：看板（第一屏）/ 记忆 / 设置；主对话、项目、好友：一页设置（会议的资料页是会议那边的 MeetingInfo）。置顶 / 免打扰 / 删除和对话列表的左滑、长按是同一套（useChatActions）。
-// params：kind（agent | main | project | friend）、id、tab（Agent 的 board | memory | settings）、at（从推送 / 链接来时换 tab 用）。
+// Agent：看板（第一屏）/ 记忆 / 设置；主对话、项目、好友：一页设置；会议：会议那边的 MeetingInfoScreen（MeetingScreens.tsx）。置顶 / 免打扰 / 删除和对话列表的左滑、长按是同一套（useChatActions）。
+// params：kind（agent | main | project | friend | meeting）、id、tab（Agent 的 board | memory | settings）、at（从推送 / 链接来时换 tab 用）。
 import React, { useCallback, useEffect, useState } from 'react';
 import { ActivityIndicator, Pressable, ScrollView, StyleSheet, Switch, TextInput, View } from 'react-native';
 import { useNavigation, useRoute } from '@react-navigation/native';
@@ -24,8 +24,9 @@ import { radius, space, type, useTheme } from '../theme';
 import { useChatActions, useChatList } from './ChatScreen';
 import { FriendAvatar, FriendClear, FriendInfoBody } from './FriendsScreens';
 import { AgentBoard } from './GroupScreen';
+import { MeetingInfoScreen } from './MeetingScreens';
 
-type Kind = 'agent' | 'main' | 'project' | 'friend';
+type Kind = 'agent' | 'main' | 'project' | 'friend' | 'meeting';
 type AgentTab = 'board' | 'memory' | 'settings';
 
 /** 页头：只有返回（设计稿：资料页不重复名字，名字在下面的大头像旁）。 */
@@ -85,6 +86,7 @@ export function InfoScreen() {
   const back = () => nav.goBack();
   if (kind === 'agent') return <AgentInfo id={id} tab={tab} at={at} onBack={back} />;
   if (kind === 'friend') return <FriendInfo id={id} onBack={back} />;
+  if (kind === 'meeting') return <MeetingInfoScreen />;  // 读同一个 route 的 id
   return <ThreadInfo kind={kind} id={id} onBack={back} />;
 }
 
