@@ -388,7 +388,7 @@ function short(name: string): string {
 
 // —— 弹层：一节课 ————————————————————————————————————————————————————————
 
-function ClassEditor({ e, past, close, onChanged }: { e: ScheduleEntry; past: boolean; close: () => void; onChanged: () => void }) {
+export function ClassEditor({ e, past, close, onChanged }: { e: ScheduleEntry; past: boolean; close: () => void; onChanged: () => void }) {
   const t = useTheme();
   const d = e.date ? parseIso(e.date) : null;
   const [skip, setSkip] = useState(e.skip);
