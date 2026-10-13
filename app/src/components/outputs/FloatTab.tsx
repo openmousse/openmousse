@@ -4,13 +4,14 @@
 import React, { useEffect, useState } from 'react';
 import { Animated, AppState, PanResponder, Platform, Pressable, StyleSheet, View, type AccessibilityActionEvent } from 'react-native';
 import { BottomTabBar, type BottomTabBarProps } from '@react-navigation/bottom-tabs';
+import Svg, { Circle, Line } from 'react-native-svg';
 import { currentOutputs, dropOutputs, refreshOutputs, resetOutputs, useFreshOutputs, type Output } from '../../api/outputs';
 import { L } from '../../i18n';
 import { useStore } from '../../store';
 import { useTheme } from '../../theme';
 import { T } from '../ui';
 import { OutputAvatar, useOutputBoard } from './Board';
-import { Donut, PairChart, Sparkline } from './vizlite';
+import { seriesColor, Sparkline, VizSurface } from '../viz';
 
 const HEIGHT = 66;
 const SPACE = HEIGHT + 10;  // 标签加上它和标签栏之间的空
@@ -28,12 +29,43 @@ export function OutputsTabBar(props: BottomTabBarProps) {
   );
 }
 
+/** 浮动标签上的小图（48 × 30，不写字）：两个点一条线（上次空心、这次实心）、三大营养素的小环、近几天的迷你趋势。
+ * 素材库的 BeforeAfter / Donut 会写日期和图例，这么小放不下，这里只画形状。 */
 function Spark({ o, surface }: { o: Output; surface: string }) {
+  const t = useTheme();
   const s = o.spark;
   if (!s) return null;
-  if (s.type === 'pair' && s.values.length === 2) return <PairChart compact values={[s.values[0], s.values[1]]} width={48} height={30} surface={surface} label={s.a11y} />;
-  if (s.type === 'ring' && s.values.length) return <Donut size={30} thickness={6} surface={surface} label={s.a11y} data={s.values.map((v, i) => ({ key: String(i), label: '', value: v, slot: i }))} />;
-  if (s.type === 'trend' && s.values.length >= 2) return <Sparkline values={s.values} width={48} height={30} surface={surface} label={s.a11y} />;
+  const c = seriesColor(t, 0);
+  if (s.type === 'pair' && s.values.length === 2) {
+    const [a, b] = s.values;
+    const y = (v: number) => (a === b ? 15 : 7 + (1 - (v - Math.min(a, b)) / Math.abs(b - a)) * 16);
+    return (
+      <View accessible accessibilityRole="image" accessibilityLabel={s.a11y}>
+        <Svg width={48} height={30}>
+          <Line x1={6} y1={y(a)} x2={42} y2={y(b)} stroke={c} strokeWidth={2} strokeLinecap="round" />
+          <Circle cx={6} cy={y(a)} r={3.5} fill={surface} stroke={t.ink3} strokeWidth={1.5} />
+          <Circle cx={42} cy={y(b)} r={4} fill={c} stroke={surface} strokeWidth={2} />
+        </Svg>
+      </View>
+    );
+  }
+  if (s.type === 'ring' && s.values.length) {
+    const total = s.values.reduce((x, v) => x + v, 0) || 1;
+    const r = 12;
+    const C = 2 * Math.PI * r;
+    const starts = s.values.map((_, i) => s.values.slice(0, i).reduce((x, v) => x + (v / total) * C, 0));
+    return (
+      <View accessible accessibilityRole="image" accessibilityLabel={s.a11y}>
+        <Svg width={30} height={30}>
+          {s.values.map((v, i) => (
+            <Circle key={i} cx={15} cy={15} r={r} fill="none" stroke={seriesColor(t, i)} strokeWidth={6}
+              strokeDasharray={`${Math.max(0.5, (v / total) * C - 2)} ${C}`} strokeDashoffset={-starts[i]} transform="rotate(-90 15 15)" />
+          ))}
+        </Svg>
+      </View>
+    );
+  }
+  if (s.type === 'trend' && s.values.length >= 2) return <VizSurface color={surface}><Sparkline values={s.values} width={48} height={30} label={s.a11y} /></VizSurface>;
   return null;
 }
 

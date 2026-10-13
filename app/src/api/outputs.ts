@@ -34,9 +34,10 @@ export interface ReviewBoard {
 }
 export interface MealBoard {
   template: 'meal_plan';
-  ring: { total: string; caption: string; parts: { key: 'protein' | 'carb' | 'fat'; label: string; grams: string; pct: number }[]; a11y: string } | null;
-  /** fill / mark：条的填充和目标线的位置（0–1，服务器算好） */
-  protein: { value: string; target: string | null; fill: number; mark: number | null; a11y: string } | null;
+  /** 营养环：总热量和三大营养素的克数（比例由 NutritionRing 按 4 / 4 / 9 算），caption =「kcal · 两顿」 */
+  ring: { total: string; kcal: number | null; protein: number; carb: number; fat: number; caption: string; parts: { key: 'protein' | 'carb' | 'fat'; label: string; grams: string; pct: number }[]; a11y: string } | null;
+  /** 蛋白质对目标：value / target 是写好的字，grams / targetGrams 是数（目标条用） */
+  protein: { value: string; target: string | null; grams: number; targetGrams: number | null; a11y: string } | null;
   note: string | null;
   /** 「大虾和酸奶今天到期」 */
   tag: string | null;
@@ -49,7 +50,8 @@ export interface SleepBoard {
   template: 'sleep_report';
   synced: boolean;
   score: { value: string | null; label: string | null; tone: Tone; provisional: boolean };
-  sleep: { text: string | null; minutes: number | null; low: number; high: number; target: string };
+  /** 睡眠时长对目标：low / high 是目标范围（分钟），range =「7–9 小时」 */
+  sleep: { text: string | null; minutes: number | null; low: number; high: number; target: string; range: string };
   stages: { label: string; minutes: number | null; text: string }[];
   vitals: { label: string; value: string }[];
   trend: { points: { label: string; value: number }[]; caption: string } | null;

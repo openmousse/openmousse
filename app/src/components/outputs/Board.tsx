@@ -15,9 +15,11 @@ import { Markdown } from '../Markdown';
 import { useSheet } from '../Sheet';
 import { SourceBadge, useSourceName } from '../SourceBadge';
 import { Btn, Disclosure, Pill, showError, T } from '../ui';
-import { ChangeTag, Donut, PairChart, RangeBar, seriesColor, Sparkline, TargetBar, type Direction } from './vizlite';
+import { BeforeAfter, ChangeTag, CompareList, NutritionRing, Sparkline, TargetBar, type Direction } from '../viz';
 
 const dirOf = (tr: Trend | null | undefined): Direction => (tr === 'up' ? 'up' : tr === 'down' ? 'down' : 'flat');
+/** 变化标签的颜色：变好绿、变差红、持平和新动作灰（辅助减少也是变好，服务器给的 trend 已经是 up）。 */
+export const goodOf = (tr: Trend | null | undefined) => (tr === 'up' ? true : tr === 'down' ? false : null);
 
 /** Agent 的圆头像（Agent 的图标和颜色；主对话是助手自己的头像）。 */
 export function OutputAvatar({ agent, size }: { agent: string | null; size: number }) {
@@ -154,27 +156,16 @@ function ReviewView({ b }: { b: ReviewBoard }) {
             <T v="caption" color={t.ink2} style={{ fontWeight: '400' }}>{b.main.name}</T>
             <View style={[styles.row, { gap: space.sm, flexWrap: 'wrap' }]}>
               <T style={{ fontSize: 26, fontWeight: '700', fontVariant: ['tabular-nums'], color: t.ink }}>{b.main.value}</T>
-              {b.main.delta ? <ChangeTag dir={dirOf(b.main.trend)} text={b.main.delta.replace(/^[+−-]/, '')} /> : null}
+              {b.main.delta ? <ChangeTag dir={dirOf(b.main.trend)} text={b.main.delta.replace(/^[+−-]/, '')} good={goodOf(b.main.trend)} /> : null}
             </View>
             {b.main.note ? <T v="caption" color={t.ink3} style={{ fontWeight: '400' }}>{b.main.note}</T> : null}
           </View>
-          {p.length === 2 ? <PairChart values={[p[0].value, p[1].value]} labels={[p[0].label, p[1].label]} width={120} height={64} label={b.main.a11y} /> : null}
+          {p.length === 2 ? <BeforeAfter before={{ label: p[0].label, value: p[0].value }} after={{ label: p[1].label, value: p[1].value }} width={120} height={72} label={b.main.a11y} /> : null}
         </View>
       ) : null}
       {b.moves.length ? (
-        <View style={[styles.list, { backgroundColor: t.surface }]}>
-          <T v="caption" color={t.ink3} style={styles.listHead}>{b.compare}</T>
-          {b.moves.map((m) => (
-            <View key={m.name} style={[styles.listRow, { borderTopColor: t.line }]}>
-              <View style={{ flex: 1, minWidth: 0, gap: 2 }}>
-                <T v="callout" style={{ fontWeight: '600' }}>{m.name}</T>
-                <T v="caption" color={t.ink2} style={{ fontWeight: '400', fontVariant: ['tabular-nums'] }}>
-                  {m.now}{m.last ? <T v="caption" color={t.ink3} style={{ fontWeight: '400' }}>{L(` · 上次 ${m.last}`, ` · last ${m.last}`)}</T> : null}
-                </T>
-              </View>
-              {m.trend === 'new' ? <Pill label={m.verdict} /> : <ChangeTag dir={dirOf(m.trend)} text={m.verdict} />}
-            </View>
-          ))}
+        <View style={[styles.block, { backgroundColor: t.surface, paddingVertical: 10 }]}>
+          <CompareList title={b.compare} items={b.moves.map((m) => ({ key: m.name, name: m.name, now: m.now, last: m.last || undefined, dir: dirOf(m.trend), verdict: m.verdict, good: goodOf(m.trend) }))} />
         </View>
       ) : null}
       {b.notes.length ? <View style={[styles.block, { backgroundColor: t.surface }]}><Bullets items={b.notes} /></View> : null}
@@ -207,33 +198,13 @@ function MealView({ b }: { b: MealBoard }) {
   return (
     <>
       {b.ring ? (
-        <View style={[styles.block, styles.row, { backgroundColor: t.surface, gap: space.lg }]}>
-          <Donut size={112} thickness={14} surface={t.surface} label={b.ring.a11y} center={{ value: b.ring.total, label: b.ring.caption }}
-            data={b.ring.parts.map((x, i) => ({ key: x.key, label: x.label, value: x.pct, slot: i }))} />
-          <View style={{ flex: 1, minWidth: 0, gap: 10 }}>
-            {b.ring.parts.map((x, i) => (
-              <View key={x.key} style={[styles.row, { gap: space.sm }]}>
-                <View style={{ width: 10, height: 10, borderRadius: 3, backgroundColor: seriesColor(t, i) }} />
-                <T v="callout" color={t.ink2} style={{ flex: 1, fontSize: 13 }} numberOfLines={1}>{x.label}</T>
-                <T v="callout" style={{ fontSize: 13, fontWeight: '700', fontVariant: ['tabular-nums'] }}>{x.grams}</T>
-                <T v="callout" color={t.ink3} style={{ fontSize: 13, width: 36, textAlign: 'right', fontVariant: ['tabular-nums'] }}>{`${x.pct}%`}</T>
-              </View>
-            ))}
-            <T v="caption" color={t.ink3} style={{ fontSize: 11, fontWeight: '400' }}>{L('比例按热量计算', 'Shares by calories')}</T>
-          </View>
+        <View style={[styles.block, { backgroundColor: t.surface }]}>
+          <NutritionRing protein={b.ring.protein} carbs={b.ring.carb} fat={b.ring.fat} kcal={b.ring.kcal ?? undefined} centerLabel={b.ring.caption} size={112} />
         </View>
       ) : null}
-      {b.protein?.target ? (
-        <View style={[styles.block, { backgroundColor: t.surface, gap: space.sm }]}>
-          <View style={[styles.row, { justifyContent: 'space-between' }]}>
-            <T v="callout" color={t.ink2} style={{ fontSize: 13 }}>{L('蛋白质', 'Protein')}</T>
-            <T v="callout" style={{ fontSize: 13, fontVariant: ['tabular-nums'] }}>
-              <T v="callout" style={{ fontSize: 13, fontWeight: '700' }}>{b.protein.value}</T>
-              <T v="callout" color={t.ink3} style={{ fontSize: 13 }}>{` / ${b.protein.target} g`}</T>
-            </T>
-          </View>
-          <TargetBar fill={b.protein.fill} mark={b.protein.mark} label={b.protein.a11y} />
-          {b.note ? <T v="caption" color={t.ink3} style={{ fontSize: 11, fontWeight: '400', lineHeight: 16 }}>{b.note}</T> : null}
+      {b.protein?.targetGrams ? (
+        <View style={[styles.block, { backgroundColor: t.surface }]}>
+          <TargetBar label={L('蛋白质', 'Protein')} value={b.protein.grams} target={b.protein.targetGrams} text={b.protein.value} targetText={`${b.protein.target} g`} note={b.note ?? undefined} />
         </View>
       ) : b.note ? <T v="caption" color={t.ink3} style={{ fontWeight: '400', paddingHorizontal: space.xs, lineHeight: 17 }}>{b.note}</T> : null}
       {b.meals.length ? (
@@ -260,13 +231,11 @@ function MealView({ b }: { b: MealBoard }) {
 
 function SleepView({ b }: { b: SleepBoard }) {
   const t = useTheme();
-  const [w, setW] = useState(0);
   const u = b.updated;
   const score = u ? u.score : b.score.value ?? '—';
   const scoreLabel = u ? L('恢复分', 'Recovery') : b.score.provisional && b.score.value ? L('恢复分（暂估）', 'Recovery (estimate)') : L('恢复分', 'Recovery');
   const sleepText = u?.sleep ?? b.sleep.text ?? L('待同步', 'Not synced');
   const minutes = u?.minutes ?? b.sleep.minutes;
-  const max = Math.max(b.sleep.high * 1.25, minutes ?? 0, 1);
   const pts = b.trend?.points ?? [];
   return (
     <>
@@ -274,21 +243,17 @@ function SleepView({ b }: { b: SleepBoard }) {
         : b.notice ? <Note tone="warn" text={b.notice} /> : null}
       <Tiles items={[{ value: score, label: scoreLabel }, { value: sleepText, label: L('睡眠', 'Sleep') }]} />
       {minutes != null ? (
-        <View style={[styles.block, { backgroundColor: t.surface, gap: 4 }]}>
-          <View style={[styles.row, { justifyContent: 'space-between' }]}>
-            <T v="callout" color={t.ink2} style={{ fontSize: 13 }}>{L('睡眠时长', 'Sleep')}</T>
-            <T v="caption" color={t.ink3} style={{ fontWeight: '400' }}>{b.sleep.target}</T>
-          </View>
-          <RangeBar value={minutes / max} low={b.sleep.low / max} high={b.sleep.high / max} label={`${sleepText}${L('，', ', ')}${b.sleep.target}`} />
+        <View style={[styles.block, { backgroundColor: t.surface }]}>
+          <TargetBar label={L('睡眠时长', 'Sleep')} value={minutes} target={b.sleep.low} text={sleepText} targetText={b.sleep.range} />
         </View>
       ) : null}
       {pts.length >= 2 ? (
-        <View style={[styles.block, { backgroundColor: t.surface, gap: 6 }]} onLayout={(e) => setW(Math.round(e.nativeEvent.layout.width) - space.md * 2)}>
+        <View style={[styles.block, { backgroundColor: t.surface, gap: 6 }]}>
           <View style={[styles.row, { justifyContent: 'space-between' }]}>
             <T v="callout" color={t.ink2} style={{ fontSize: 13 }}>{b.trend?.caption}</T>
             <T v="callout" style={{ fontSize: 13, fontWeight: '700', fontVariant: ['tabular-nums'] }}>{pts[pts.length - 1].value}</T>
           </View>
-          {w > 0 ? <Sparkline values={pts.map((x) => x.value)} width={w} height={44} label={`${b.trend?.caption}${L('：', ': ')}${pts.map((x) => x.value).join(L('、', ', '))}`} /> : null}
+          <Sparkline values={pts.map((x) => x.value)} height={44} min label={`${b.trend?.caption}${L('：', ': ')}${pts.map((x) => x.value).join(L('、', ', '))}`} />
           <View style={[styles.row, { justifyContent: 'space-between' }]}>
             <T v="caption" color={t.ink3} style={{ fontWeight: '400' }}>{pts[0].label}</T>
             <T v="caption" color={t.ink3} style={{ fontWeight: '400' }}>{pts[pts.length - 1].label}</T>
@@ -376,7 +341,6 @@ const styles = StyleSheet.create({
   tile: { flex: 1, minWidth: 0, borderRadius: radius.md, padding: 10, gap: 2 },
   tileValue: { fontSize: 20, fontWeight: '700', fontVariant: ['tabular-nums'] },
   list: { borderRadius: 14, overflow: 'hidden' },
-  listHead: { paddingHorizontal: space.md, paddingTop: 10, paddingBottom: 4, fontWeight: '700' },
   listRow: { flexDirection: 'row', alignItems: 'center', gap: 10, paddingVertical: 9, paddingHorizontal: space.md, borderTopWidth: StyleSheet.hairlineWidth },
   circle: { width: 18, height: 18, borderRadius: 9, borderWidth: 1.5, marginTop: 1 },
   note: { flexDirection: 'row', alignItems: 'flex-start', gap: 8, borderRadius: radius.md, paddingVertical: 9, paddingHorizontal: space.md },

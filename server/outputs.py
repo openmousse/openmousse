@@ -370,15 +370,15 @@ def meal_board(r: sqlite3.Row, d: dict) -> tuple[dict, str, dict | None]:
     ring = None
     if split:
         names = (L("蛋白质", "Protein"), L("碳水", "Carbs"), L("脂肪", "Fat"))
-        ring = {"total": fmt(kcal) if kcal is not None else "—", "caption": L(f"kcal · {cn}顿", f"kcal · {count} meal{'s' if count != 1 else ''}"),
+        ring = {"total": fmt(kcal) if kcal is not None else "—", "kcal": nv(kcal), "protein": nv(p), "carb": nv(c), "fat": nv(f),
+                "caption": L(f"kcal · {cn}顿", f"kcal · {count} meal{'s' if count != 1 else ''}"),
                 "parts": [{"key": k, "label": n, "grams": f"{fmt(g)} g", "pct": pct} for k, n, g, pct in zip(("protein", "carb", "fat"), names, (p, c, f), split)],
                 "a11y": L("按热量计：", "By calories: ") + L("，", ", ").join(f"{n} {pct}%" for n, pct in zip(names, split))}
     day = (_dt(r["created_at"]) or datetime.now(TZ)).date().isoformat()
     target = protein_target(day, d) if p is not None else None
     protein = None
     if p is not None:
-        top = max(p, target or 0) * 1.18
-        protein = {"value": fmt(p), "target": fmt(target) if target else None, "fill": round(min(p / top, 1), 3), "mark": round(target / top, 3) if target else None,
+        protein = {"value": fmt(p), "target": fmt(target) if target else None, "grams": nv(p), "targetGrams": nv(target) if target else None,
                    "a11y": L(f"蛋白质 {fmt(p)} 克", f"Protein {fmt(p)} g") + (L(f"，目标 {fmt(target)} 克", f", target {fmt(target)} g") if target else "")}
     rows = []
     for m in meals:
@@ -449,7 +449,8 @@ def sleep_board(r: sqlite3.Row, d: dict) -> tuple[dict, str, dict | None]:
         "template": "sleep_report", "synced": synced,
         "score": {"value": fmt(score) if score is not None else None, "label": verdict or None, "tone": tone, "provisional": provisional},
         "sleep": {"text": duration(sleep_min) if sleep_min is not None else None, "minutes": nv(sleep_min), "low": nv(lo), "high": nv(hi),
-                  "target": L(f"目标 {fmt(lo / 60)}–{fmt(hi / 60)} 小时", f"Target {fmt(lo / 60)}–{fmt(hi / 60)} h")},
+                  "target": L(f"目标 {fmt(lo / 60)}–{fmt(hi / 60)} 小时", f"Target {fmt(lo / 60)}–{fmt(hi / 60)} h"),
+                  "range": L(f"{fmt(lo / 60)}–{fmt(hi / 60)} 小时", f"{fmt(lo / 60)}–{fmt(hi / 60)} h")},
         "stages": stages, "vitals": vitals,
         "trend": {"points": [{"label": md(day_of_text(x["date"])), "value": nv(x.get("score"))} for x in series if num(x.get("score")) is not None],
                   "caption": L("近 7 天恢复分", "Recovery, last 7 days")} if series else None,

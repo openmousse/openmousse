@@ -10,8 +10,8 @@ import { useStore } from '../../store';
 import { ChevronRight } from '../icons';
 import { mealLabel } from '../LiveBoards';
 import { T } from '../ui';
-import { useOutputBoard } from './Board';
-import { ChangeTag } from './vizlite';
+import { ChangeTag } from '../viz';
+import { goodOf, useOutputBoard } from './Board';
 
 /** 卡片第二行：各模板最有用的那一句。 */
 function subline(o: Output): string {
@@ -61,7 +61,7 @@ export function OutputCard({ card }: { card: OutputChatCard }) {
       style={({ pressed }) => [styles.card, { backgroundColor: t.surface, borderColor: tint.soft, borderWidth: 1, gap: 10, opacity: pressed ? 0.7 : fade }]}>
       <View style={[styles.row, { gap: 8 }]}>
         <T v="caption" color={t.ink3} style={{ flex: 1, fontWeight: '700' }} numberOfLines={1}>{o.replaced ? `${o.label} · ${L('已更新', 'Updated')}` : o.label}</T>
-        {b.verdict ? <ChangeTag small dir={b.verdictTrend === 'up' ? 'up' : b.verdictTrend === 'down' ? 'down' : 'flat'} text={b.verdict} /> : null}
+        {b.verdict ? <ChangeTag dir={b.verdictTrend === 'up' ? 'up' : b.verdictTrend === 'down' ? 'down' : 'flat'} text={b.verdict} good={goodOf(b.verdictTrend)} /> : null}
       </View>
       <View style={[styles.row, { alignItems: 'baseline', gap: 8 }]}>
         <T v="headline" style={{ fontSize: 17, fontWeight: '700' }} numberOfLines={1}>{b.session}</T>
