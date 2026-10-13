@@ -48,7 +48,7 @@ By default the server talks to OpenClaw. For any other claw or agent with an Ope
 
 ## MCP: the features without a shell
 
-The server has an MCP endpoint at `/mcp` (Streamable HTTP, stateless, [`mcp_bridge.py`](mcp_bridge.py)) through which a claw uses boards, the inbox, goals, projects, the schedule, Agents, the background-task allowance, nightly proposals, the journal, handing off to an Agent, what to call the user, and the memory tree. Sandboxed Agents, Hermes on a docker or ssh terminal backend, and claws hosted in the cloud can't run the skills' commands; they can use this.
+The server has an MCP endpoint at `/mcp` (Streamable HTTP, stateless, [`mcp_bridge.py`](mcp_bridge.py)) through which a claw uses boards, the inbox, goals, projects, the schedule, Agents, the background-task allowance, nightly proposals, the journal, handing off to an Agent, what to call the user, the memory tree and pages. Sandboxed Agents, Hermes on a docker or ssh terminal backend, and claws hosted in the cloud can't run the skills' commands; they can use this.
 
 - Address: `http://<server>/mcp/<token>` (token in the path), or `/mcp` with `Authorization: Bearer <token>`. The token is the one named `mcp` under `auth.tokens` in `server.json` (the installer creates it; `python3 tokens.py add mcp` works too); `/mcp` accepts no other token. A token named `mcp-<agent id>` is bound to that Agent and can only act for it.
 - Tools: each one bridges an existing command, written exactly as in the skills: `args` = the words after the script name (one word per item, no shell, no quoting), `input` = what would go to standard input, `agent` = which Agent you are (the command runs in its workspace and boards and the inbox know it's that Agent; Agents of other claws, which have no workspace, are recognised too). Each call starts a subprocess (about 0.1 s), at most 4 at a time, 120 s at most (handoff: 300 s).
@@ -327,6 +327,26 @@ Each Agent has its own tables and a dashboard of blocks it lays out itself; the 
 | `POST /api/packs/{name}/remove` | Takes the pack's blocks off the board (tables and data stay) |
 | `GET /api/alerts/{agent}`, `POST /api/alerts/item/{id}` | Reminders that are on or paused; pause / resume / delete |
 | `POST /api/alerts/{agent}/check`, `POST /api/alerts/{agent}/propose` | A reminder rule `{id, title, source (a list query), row, message, at, days, level}`: check shows what it would send today; propose makes an inbox card of kind `push` (a new notification always needs the user's OK). Once approved the server checks every 30 s and sends one push when the query returns rows (up to 3 hours late if the server was down); tapping it opens the Agent's board |
+
+## Pages (web pages written by Agents)
+
+For what blocks can't draw (interactive views you drag or that recompute, custom charts, one-off analysis pages) an Agent writes one web page and the app shows it in a sandbox (2026-10-13, [`pages.py`](pages.py); Agents use [`page_ctl.py`](page_ctl.py) or the MCP tool `page`, see [`packs/core/skills/page`](../packs/core/skills/page/SKILL.md)). Same idea as Claude Artifacts and OpenClaw's `show_widget`, wired to OpenMousse's own data and UI:
+
+- **Versions**: publishing the same `name` again from the same Agent makes a new version with the same id; nothing new is stored when neither the HTML nor the data it reads changed.
+- **Sandbox**: the server wraps the document: a CSP first (`connect-src 'none'`, no frames, no form submission, scripts and styles only from jsDelivr / cdnjs / unpkg, fonts from Google Fonts), then theme colors (CSS variables following the app's light or dark mode) and the bridge. The web app puts it in a `sandbox="allow-scripts"` iframe (srcdoc, opaque origin): the page can't read the app's token, sign-in or other data and can't call `/api`; the web shell's `frame-src 'none'` stops it from navigating away with data, and the app stops a page that tries. The native app binary has no WebView yet, so pages show in the web version only for now.
+- **Bridge**: inside the page `mousse.data(name)` reads data, `mousse.prompt(text)` puts a line into that Agent's chat composer (you press send), `mousse.page` describes the page (id, title, version, today's date). Messages go through postMessage; the app accepts them only from that iframe, rate-limits them and calls the server with its own token.
+- **Data and consent**: what a page may read is declared at publish time in `caps.data`: name → a board query Q (`from` / `where` / `sort` / `limit`, at most 1000 rows) over that Agent's own tables and the read-only system sources `health:*`, read-only. The first time you open a page that declares data, the app asks you (which tables and fields); the decision is bound to that version's digest (a hash of HTML + caps), so a changed page asks again. Declining still shows the page; its reads get `not_granted`.
+- **Chat cards and boards**: the version an Agent published during a reply hangs under that reply (kind `page` in `/api/chat/cards`); Pin to board on the page adds a block of type `page` at the end of that Agent's board (logged and undoable like any board change).
+
+| Endpoint | What it does |
+|---|---|
+| `POST /api/pages` | An Agent publishes `{agent, name, title, summary?, html, caps?, note?, check?}`: size (256 KB), external URLs, inline script syntax (`node --check`) and data queries are checked first; `check: true` checks without saving |
+| `GET /api/pages?agent=`, `GET /api/pages/{id}` | Page list, one page (version, `needs` = tables and fields it reads, `grant` = your decision) |
+| `GET /api/pages/{id}/doc?theme=dark\|light` | The document shown in the sandbox (`raw=1` returns the Agent's original, used by `page_ctl get`) |
+| `POST /api/pages/{id}/grant` | `{digest, decision: allow / deny}`: current version only; 409 `stale` if the page just changed |
+| `POST /api/pages/{id}/data` | `{name, digest}`: one dataset the page asked for through the bridge; 403 `not_granted` without your OK, 409 `stale` on a version mismatch |
+| `GET /api/pages/{id}/preview-data?name=` | What an Agent's declared data returns now (`page_ctl data`; no user grant involved, the app never calls it) |
+| `POST /api/pages/{id}/pin`, `DELETE /api/pages/{id}` | Pin to the board (returns `undoTo`; undo = `POST /api/boards/{agent}/revert`); delete (chat cards and the board block then say it was deleted) |
 
 ## Nightly proposals
 

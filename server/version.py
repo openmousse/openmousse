@@ -39,6 +39,7 @@ FEATURES = (
     "boards.views",     # 看板积木 type collection（集合块：表格 / 看板 / 日历 / 时间线 / 图表）；POST /api/boards/{agent}/view 按排序、筛选、月份、翻页重算一个视图
     "outputs",  # GET /api/outputs（新产出 + 小板子）、/api/outputs/{id}；/api/chat/cards 带 kind output（对话里的产出卡片）
     "meetings",         # /api/meetings…：Agent 会议（发起、按发言人分段的流、纪要确认写进日程和看板、保留为群聊）；对话卡 kind meeting / minutes
+    "pages",            # /api/pages…：Agent 写的页面（盒子里的网页、读数据要你同意、钉到看板）；对话卡 kind page，看板积木 type page
 )
 
 

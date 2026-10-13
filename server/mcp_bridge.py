@@ -81,13 +81,17 @@ BRIDGES: dict[str, tuple[str, str, str, int]] = {
                  "Assistant settings such as what to call the user (settings_ctl.py): user-name.", TIMEOUT),
     "tree": ("mousse-tree", "世界树，用户跨平台共享的记忆（mousse-tree 命令行）。见 memory-tree skill。",
              "The memory tree, the user's memory shared across AI platforms (the mousse-tree CLI). See the memory-tree skill.", TIMEOUT),
+    "page": ("server/page_ctl.py", "页面（page_ctl.py）：积木画不了的互动和可视化，写一份网页，app 放进盒子里显示：check、publish、list、show、get、data、rm。"
+                                   "HTML 放 input、args 里写 --file -，要读的数据用 --data 名字=查询。见 page skill。",
+             "Pages (page_ctl.py): interactive views the board blocks can't draw; write one web page and the app shows it in a sandbox: check, publish, "
+             "list, show, get, data, rm. Put the HTML in input with --file - in args, and the data it reads as --data NAME=query. See the page skill.", TIMEOUT),
 }
 
 
 # 读服务器上文件的参数：经 MCP 只许写 -（内容放 input）。沙箱里的 Agent、云上的 claw 本来碰不到这台机器的文件，
 # 不能借 --detail-file /某个文件 把它塞进收件箱卡再读回去。argparse 认缩写（--detail-f、--pla），所以前缀也算，
 # 除了本身就是别的参数的这几个（--brief、--detail、--field 是正经参数，不读文件）。
-FILE_FLAGS = ("--file", "--detail-file", "--board-file", "--brief-file", "--fields-file", "--plan")
+FILE_FLAGS = ("--file", "--detail-file", "--board-file", "--brief-file", "--fields-file", "--plan", "--data-file")
 NOT_FILE = {"--brief", "--detail", "--field"}
 TREE_OK = {"add", "recall", "recent", "forget", "stats"}  # 世界树只给记忆本身的操作；init、migrate、urls（会打印令牌）这些不给
 # 别的模块加到 /mcp 上的工具（连接器 apps.py）：一项 = (tools, call)。tools(who) → [types.Tool]，每次列工具时现问；

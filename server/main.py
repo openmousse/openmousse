@@ -79,6 +79,7 @@ from schedule import router as schedule_router  # noqa: E402
 import today as today_page  # noqa: E402 — 本文件有自己的 today()（日期），模块换个名字
 from boards import router as boards_router  # noqa: E402
 from views import router as views_router  # noqa: E402  — 集合块（一张表、几种视图）：import 时把 collection 接进 boards.EXTRA
+from pages import router as pages_router  # noqa: E402 — 页面（Agent 写的网页，app 放进盒子里显示）：import 时把 page 接进 boards.EXTRA
 from pairing import router as pairing_router  # noqa: E402
 from projects import router as projects_router  # noqa: E402 — 顺带把 kind=project 的收件箱钩子挂上
 from goals import router as goals_router  # noqa: E402
@@ -155,6 +156,7 @@ app.include_router(alerts_router)  # 在 boards 之前：/api/alerts/… 和看�
 app.include_router(packs_router)
 app.include_router(boards_router)
 app.include_router(views_router)
+app.include_router(pages_router)
 app.include_router(projects_router)
 app.include_router(proposals_router)
 app.include_router(goals_router)

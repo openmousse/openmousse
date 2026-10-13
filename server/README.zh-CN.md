@@ -48,7 +48,7 @@ python3 run.py                   # 或按 openmousse-server.service.example 装�
 
 ## MCP：claw 不用 shell 也能用这些功能
 
-服务器在 `/mcp` 开了一个 MCP 入口（Streamable HTTP，无状态，[`mcp_bridge.py`](mcp_bridge.py)），claw 经它用看板、收件箱、目标、项目、日程、Agent、后台任务额度、日结提案、日志、转给 Agent、称呼、世界树。沙箱里的 Agent、换了 docker / ssh 终端后端的 Hermes、云上托管的 claw 跑不了 skill 里的命令，走这里就行。
+服务器在 `/mcp` 开了一个 MCP 入口（Streamable HTTP，无状态，[`mcp_bridge.py`](mcp_bridge.py)），claw 经它用看板、收件箱、目标、项目、日程、Agent、后台任务额度、日结提案、日志、转给 Agent、称呼、世界树、页面。沙箱里的 Agent、换了 docker / ssh 终端后端的 Hermes、云上托管的 claw 跑不了 skill 里的命令，走这里就行。
 
 - 地址：`http://<服务地址>/mcp/<令牌>`（令牌放在路径里），或者 `/mcp` + `Authorization: Bearer <令牌>`。令牌是 `server.json` 的 `auth.tokens` 里名字为 `mcp` 的那个（安装器生成；`python3 tokens.py add mcp` 也行），别的令牌 `/mcp` 不认。名字是 `mcp-<agent id>` 的令牌绑一个 Agent，只能替它做事。
 - 工具：每个是一条现成命令的桥，写法和 skills 里的命令一模一样：`args` = 脚本名后面的词（一个词一项，不经 shell，不用加引号），`input` = 本来要从标准输入给的，`agent` = 你是哪个 Agent（命令就在它的工作区里跑，看板、收件箱按它认；别的 claw 的 Agent 没有工作区也认得）。每次起一个子进程（约 0.1 秒），同时最多 4 个，单次最长 120 秒（handoff 300 秒）。
@@ -326,6 +326,26 @@ python3 nutrition.py cofid-import [--file 本地的 xlsx]
 | `POST /api/packs/{name}/remove` | 看板上拿掉这个包的积木（表和数据留着） |
 | `GET /api/alerts/{agent}`，`POST /api/alerts/item/{id}` | 开着和暂停的提醒；暂停 / 恢复 / 删掉 |
 | `POST /api/alerts/{agent}/check`，`POST /api/alerts/{agent}/propose` | 一条提醒规则 `{id, title, source（和列表一样的查询）, row, message, at, days, level}`：check 看今天会推什么；propose 出一张 kind `push` 的收件箱卡（新推送一律要用户点头）。同意后服务端每 30 秒看一次，到点查出有东西就推一条（服务器没开着，3 小时内补推），点开进这个 Agent 的看板 |
+
+## 页面（Agent 写的网页）
+
+积木画不了的（能拖、能实时计算的互动，自定义的图，一次性的分析页），Agent 写一份网页，app 放进盒子里显示（2026-10-13，[`pages.py`](pages.py)，Agent 用 [`page_ctl.py`](page_ctl.py) 或 MCP 工具 `page`，写法见 [`packs/core/skills/page`](../packs/core/skills/page/SKILL.md)）。思路和 Claude Artifacts、OpenClaw 的 `show_widget` 一样，接的是 OpenMousse 自己的数据和界面：
+
+- **版本**：同一个 Agent 同一个 `name` 再发 = 新的一版，id 不变；内容和要读的数据都没变就不加版本。
+- **盒子**：app 拿到的文档服务端包好：最前面一条 CSP（`connect-src 'none'`、不能嵌页面、不能提交表单，脚本和样式只认 jsDelivr / cdnjs / unpkg，字体可用 Google Fonts），然后是主题色（CSS 变量，跟 app 的深浅色）和桥。网页版放进 `sandbox="allow-scripts"` 的 iframe（srcdoc，不透明源）：页面读不到 app 的令牌、登录和别的数据，也调不了 `/api`；网页版外层的 `frame-src 'none'` 让它没法带着数据跳到别的网址，跳了 app 就停掉它。手机原生包没有 WebView，页面暂时只在网页版里显示。
+- **桥**：页面里 `mousse.data(名字)` 读数据、`mousse.prompt(文字)` 把一句话放进这个 Agent 对话的输入框（你按发送才发）、`mousse.page` 是页面信息（id、标题、第几版、今天的日期）。经 postMessage 交给 app，app 只认这个 iframe 发来的、限频，再用自己的令牌调服务器。
+- **数据和授权**：能读什么发布时写在 `caps.data`：名字 → 看板的查询 Q（`from` / `where` / `sort` / `limit`，最多 1000 行），只能读这个 Agent 自己的表和只读的系统来源 `health:*`，只读。声明了数据的页面第一次打开时 app 问你（哪些表、哪些字段），决定绑这一版的 digest（HTML + caps 的哈希）：内容改了要重新确认。不同意也显示，读数据回 `not_granted`。
+- **对话卡片和看板**：Agent 在哪次回复里发的版本，挂在那条回复下面（`/api/chat/cards` 里 kind `page`）；页面页的「钉到看板」在这个 Agent 的看板最后加一块 type `page`（看板改动照常有记录、能撤销）。
+
+| 接口 | 做什么 |
+|---|---|
+| `POST /api/pages` | Agent 发布 `{agent, name, title, summary?, html, caps?, note?, check?}`：先查大小（256 KB）、外部地址、内联脚本语法（`node --check`）、数据查询；`check: true` 只查不存 |
+| `GET /api/pages?agent=`，`GET /api/pages/{id}` | 页面列表、一个页面（第几版、`needs` 要读的表和字段、`grant` 你的决定） |
+| `GET /api/pages/{id}/doc?theme=dark\|light` | 盒子里显示的文档（`raw=1` 回 Agent 发的原文，`page_ctl get` 用） |
+| `POST /api/pages/{id}/grant` | `{digest, decision: allow / deny}`：只认当前这一版，页面刚更新过回 409 `stale` |
+| `POST /api/pages/{id}/data` | `{name, digest}`：页面经桥要的一份数据；没允许 403 `not_granted`，版本对不上 409 `stale` |
+| `GET /api/pages/{id}/preview-data?name=` | Agent 看自己声明的数据现在读出来什么（`page_ctl data`，不经你的授权，app 不调） |
+| `POST /api/pages/{id}/pin`，`DELETE /api/pages/{id}` | 钉到看板（回 `undoTo`，撤销 = `POST /api/boards/{agent}/revert`）；删除（对话卡片和看板积木显示「已删除」） |
 
 ## 日结提案
 

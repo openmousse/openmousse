@@ -6,7 +6,7 @@
   1. ~/.openmousse/repo → 仓库（skills 里的命令都走这个固定路径）
   2. ~/.openmousse/server.json：名字、时区、语言、监听地址、OpenClaw 的位置、令牌（phone 给手机，local 给本机脚本）；
      --vault（服务器上已经在同步的 Obsidian 库）：think.vault = 库的文件夹、think.obsidian_vault = 库名（文件夹名），没设过才写
-  3. 主 agent 工作区的 skills/ 里软链 packs/core 的十一个 skill（handoff / agent-builder / journal / memory-tree / inbox / dispatch / project / board / proposals / goals / onboarding）；AGENTS.md 末尾追加 OpenMousse 的规则（按所选语言写）；
+  3. 主 agent 工作区的 skills/ 里软链 packs/core 的 skill（handoff / agent-builder / journal / memory-tree / inbox / dispatch / project / board / proposals / goals / onboarding / study / page）；AGENTS.md 末尾追加 OpenMousse 的规则（按所选语言写）；
      刚 onboard 完的新工作区：BOOTSTRAP.md（OpenClaw 第一次对话的起名仪式，会抢走 app 的「带我走一遍」）挪进备份，IDENTITY.md 空着的名字填上，
      USER.md 还是模板就换成档案的空架子（都先备份到 ~/.openmousse/backups/）
   4. openclaw.json（先备份，改完 openclaw config validate，不过就恢复）：
@@ -62,7 +62,7 @@ LABELS = {"openmousse-server": "ai.openmousse.server", "openmousse-daily-close":
 FUNNEL_TIMEOUT = 30  # 秒：tailnet 还没开 Funnel 时 tailscale funnel 会一直等你去后台点开，安装不能卡在那
 PUBLIC_PATHS = ("/t", "/m", "/s", "/f")  # Funnel 只开这几条：世界树的 MCP（/t /m）、分享页（/s）、朋友（/f）；app 的 /api 永远不上公网
 SHARE_PORT = 8089  # 对外小服务（server/public.py：只有 /s 和 /f）默认的本机端口，被占了就往后找
-SKILLS = ("handoff", "agent-builder", "journal", "memory-tree", "inbox", "dispatch", "project", "board", "proposals", "goals", "onboarding", "study")
+SKILLS = ("handoff", "agent-builder", "journal", "memory-tree", "inbox", "dispatch", "project", "board", "proposals", "goals", "onboarding", "study", "page")
 GENERIC_SKILLS = tuple(s for s in SKILLS if s not in ("dispatch", "proposals"))  # 别的 claw：派活（sessions_spawn）和日结提案是 OpenClaw 那边的
 MAIN_SKILLS = tuple(s for s in SKILLS if s not in ("board", "study"))  # 主对话用的；board（Agent 自己的表和看板）、study（改课）只给 Agent；proposals（日结提案）只有主对话用
 AGENTS_MARK = "## OpenMousse"
@@ -435,7 +435,7 @@ def write_server_json(a: argparse.Namespace, oc: dict, home: Path, workspace: Pa
     dm = default_model(oc) if not claw else claw.get("model")
     if dm:
         setdefault("default_model", dm)
-    setdefault("agent_default_skills", ["journal", "memory-tree", "inbox", "board", "goals"])
+    setdefault("agent_default_skills", ["journal", "memory-tree", "inbox", "board", "goals", "page"])
     # 学习台：课件和学习页默认放数据目录下（新装的；已经配过 study 的不动）。建好目录，学习台打开就能「加一门课」
     if not isinstance(cfg.get("study"), dict) or not cfg["study"].get("materials"):
         st = dict(cfg.get("study") or {})
