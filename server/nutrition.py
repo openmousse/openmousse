@@ -363,16 +363,22 @@ def _first(v) -> str | None:
     return v or None
 
 
-def off_candidate(p: dict) -> dict | None:
-    n = p.get("nutriments") or {}
-
+def off_per100(n: dict, suffix: str) -> dict:
     def g(k: str) -> float | None:
-        return num(n.get(f"{k}_100g"))
+        return num(n.get(f"{k}{suffix}"))
     kcal = g("energy-kcal")
     if kcal is None and g("energy") is not None:  # energy_100g 是 kJ
         kcal = round(g("energy") / 4.184, 1)  # type: ignore[operator]
-    per100 = {"kcal": r1(kcal), "protein": r1(g("proteins")), "carb": r1(g("carbohydrates")), "fat": r1(g("fat")),
-              "sugars": r1(g("sugars")), "fibre": r1(g("fiber")), "satfat": r1(g("saturated-fat")), "salt": r1(g("salt"))}
+    return {"kcal": r1(kcal), "protein": r1(g("proteins")), "carb": r1(g("carbohydrates")), "fat": r1(g("fat")),
+            "sugars": r1(g("sugars")), "fibre": r1(g("fiber")), "satfat": r1(g("saturated-fat")), "salt": r1(g("salt"))}
+
+
+def off_candidate(p: dict) -> dict | None:
+    """一件商品 → 候选。营养只填在「冲调后」那一栏的（即饮、冲剂常这样）用冲调后的，标 prepared。"""
+    n = p.get("nutriments") or {}
+    per100, prepared = off_per100(n, "_100g"), False
+    if all(per100[k] is None for k in ("kcal", "protein", "carb", "fat")):
+        per100, prepared = off_per100(n, "_prepared_100g"), True
     if all(per100[k] is None for k in ("kcal", "protein", "carb", "fat")):
         return None
     code = str(p.get("code") or "")
@@ -386,7 +392,7 @@ def off_candidate(p: dict) -> dict | None:
         portions.append({"label": str(p.get("serving_size") or L("1 份", "1 serving")), "grams": sq})
     return {"source": "off", "ref": code, "name": str(p.get("product_name_en") or p.get("product_name") or "").strip(), "brand": _first(p.get("brands")),
             "basis": basis, "per100": per100, "portions": portions, "quantity": p.get("quantity") or None,
-            "uk": "en:united-kingdom" in (p.get("countries_tags") or []), "complete": complete(per100),
+            "uk": "en:united-kingdom" in (p.get("countries_tags") or []), "prepared": prepared, "complete": complete(per100),
             "url": OFF_PAGE.format(code=code) if code else None, "attribution": OFF_ATTR}
 
 

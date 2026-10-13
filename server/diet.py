@@ -233,7 +233,7 @@ def norm(s: str | None) -> str:
 
 
 def find_food(conn: sqlite3.Connection, ref: str | None) -> sqlite3.Row | None:
-    """食物库里的一样：id，或者名字 / 别名完全对上（不分大小写、不看空格）且只有一样。"""
+    """食物库里的一样：id，或者名字 / 别名完全对上（不分大小写、不看空格）；同名的有几样就取用得多的那样。"""
     if not ref:
         return None
     ref = str(ref).strip()
@@ -306,6 +306,9 @@ def save_food(conn: sqlite3.Connection, f: dict, by: str) -> tuple[str, bool]:
     extra = {k: per100[k] for k in EXTRA if per100.get(k) is not None}
     ts = now_iso()
     old = conn.execute("SELECT * FROM diet_foods WHERE source=? AND source_ref=? AND deleted_at IS NULL", (source, ref)).fetchone() if ref else None
+    if old is None and not ref:  # 手动、拍标签、估算的没有出处编号：同一个来源、同一个名字的就是同一样，更新它（Agent 重复加不会出两份）
+        old = next((r for r in conn.execute("SELECT * FROM diet_foods WHERE source=? AND source_ref IS NULL AND deleted_at IS NULL", (source,))
+                    if norm(r["name"]) == norm(name)), None)
     if old:
         merged = [a for a in dict.fromkeys([*jl(old["aliases"], []), *aliases, *([old["name"]] if norm(old["name"]) != norm(name) else [])]) if norm(a) != norm(name)]
         portions = clean_portions(f.get("portions")) or jl(old["portions"], [])
@@ -327,7 +330,7 @@ def save_food(conn: sqlite3.Connection, f: dict, by: str) -> tuple[str, bool]:
 
 def candidate_note(c: dict) -> str:
     if c["source"] == "off":
-        return f"Open Food Facts（ODbL）{c.get('ref') or ''}".strip()
+        return f"Open Food Facts（ODbL）{c.get('ref') or ''}{'，按冲调后' if c.get('prepared') else ''}".strip()
     if c["source"] == "cofid":
         return f"CoFID 2021 {c.get('ref') or ''}：{c.get('name') or ''}".strip()
     if c["source"] == "usda":
@@ -633,6 +636,8 @@ def delete_entry(eid: str, by: str | None = None):
         if not r:
             raise bad("没有这一条", "No such entry", 404)
         conn.execute("UPDATE diet_entries SET deleted_at=?, updated_at=? WHERE id=?", (now_iso(), now_iso(), eid))
+        if r["food_id"]:
+            conn.execute("UPDATE diet_foods SET uses=MAX(uses-1, 0) WHERE id=?", (r["food_id"],))
     log_activity(L(f"删了一条饮食记录（{r['date']} {meal_label(r['meal'])}）", f"Deleted a meal log entry ({r['date']} {meal_label(r['meal']).lower()})"),
                  "diet", None if actor_of(by) == "leo" else actor_of(by))
     return {"ok": True, "deleted": eid, "day": day_summary(r["date"])}
