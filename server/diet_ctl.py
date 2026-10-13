@@ -239,7 +239,7 @@ def print_food(d: dict) -> None:
     print(L(f"{'加进' if d.get('created') else '更新了'}食物库：", f"{'Added to' if d.get('created') else 'Updated in'} the food library: ")
           + f"{f['id']}  {f['name']}  /100{f['basis']}: {n(p.get('kcal'), 0)} kcal P {n(p.get('protein'))} C {n(p.get('carb'))} F {n(p.get('fat'))}"
           + f"  [{f['source']}{(': ' + f['sourceNote']) if f.get('sourceNote') else ''}]"
-          + (f"  {', '.join(x['label'] + '=' + n(x['grams']) + 'g' for x in f['portions'])}" if f["portions"] else ""))
+          + (f"  {', '.join(x['label'] + '=' + n(x['grams']) + f['basis'] for x in f['portions'])}" if f["portions"] else ""))
 
 
 def cmd_food_save(a) -> None:

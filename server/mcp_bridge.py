@@ -18,8 +18,8 @@
 
 server.json 的 mcp 段（可选，每次读文件）：{"scripts": {"工具名": ["命令", "参数"…]}}：换掉或加一个工具背后的命令
 （比如日志换成你自己 workspace 里的脚本）；写成 null = 不提供这个工具。改了工具列表要重启服务。
-连接器（apps.py）：你连上的第三方应用的工具也从这里给出去（<应用 id>__<工具名>），接在这 13 个后面；每次列工具时现查，连上、断开、
-改权限都不用重启。它们经 EXTRA 挂进来，这 13 个工具本身不经过它。
+连接器（apps.py）：你连上的第三方应用的工具也从这里给出去（<应用 id>__<工具名>），接在这 14 个后面；每次列工具时现查，连上、断开、
+改权限都不用重启。它们经 EXTRA 挂进来，这 14 个工具本身不经过它。
 """
 import asyncio
 import os
@@ -73,6 +73,10 @@ BRIDGES: dict[str, tuple[str, str, str, int]] = {
                   "Nightly proposals (proposals_ctl.py): context, skill, agent, list, show, withdraw. See the proposals skill.", TIMEOUT),
     "journal": ("packs/core/scripts/journal.py", "用户的日志：感受、想法、决定（journal.py）：add、list、search、delete。见 journal skill。",
                 "The user's journal: feelings, thoughts, decisions (journal.py): add, list, search, delete. See the journal skill.", TIMEOUT),
+    "diet": ("server/diet_ctl.py", "饮食记录（diet_ctl.py）：day、days、library、lookup、foods、food-save、food-add、food-update、add、log-plan、edit、rm、undo、targets。"
+                                    "记录默认只预览，加 --commit 才写。用法：board 工具 pack guide diet。",
+             "The meal log (diet_ctl.py): day, days, library, lookup, foods, food-save, food-add, food-update, add, log-plan, edit, rm, undo, targets. "
+             "Logging previews unless you add --commit. How to use it: the board tool's pack guide diet.", TIMEOUT),
     "settings": ("server/settings_ctl.py", "助手的设置，比如用户的称呼（settings_ctl.py）：user-name。",
                  "Assistant settings such as what to call the user (settings_ctl.py): user-name.", TIMEOUT),
     "tree": ("mousse-tree", "世界树，用户跨平台共享的记忆（mousse-tree 命令行）。见 memory-tree skill。",
@@ -267,7 +271,7 @@ def build() -> FastMCP:
 
 
 def extend(low) -> None:
-    """EXTRA 的工具接在后面：包一层低层的 tools/list、tools/call。这 13 个照旧走 FastMCP 自己的处理器（参数校验、ToolError 都一样）。"""
+    """EXTRA 的工具接在后面：包一层低层的 tools/list、tools/call。这 14 个照旧走 FastMCP 自己的处理器（参数校验、ToolError 都一样）。"""
     base_list, base_call = low.request_handlers[types.ListToolsRequest], low.request_handlers[types.CallToolRequest]
 
     def who() -> dict:
@@ -282,7 +286,7 @@ def extend(low) -> None:
         for tools, _ in EXTRA:
             try:
                 res.root.tools.extend(await tools(who()))
-            except Exception:  # noqa: BLE001 — 加上来的工具出了错，这 13 个照常
+            except Exception:  # noqa: BLE001 — 加上来的工具出了错，这 14 个照常
                 pass
         return res
 

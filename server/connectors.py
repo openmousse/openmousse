@@ -230,8 +230,11 @@ def check_xunji(env: set[str]) -> dict | None:
     seen = latest(read, wrote)
     facts = [(L("最近读到", "Last read"), ago(read)), (L("最近替你记", "Last logged for you"), ago(wrote)),
              (L("密钥", "Keys"), (L(f"{len(keys)} 把都在", f"All {len(keys)} present") if not missing else L(f"缺 {'、'.join(missing)}", f"Missing {', '.join(missing)}")) if keys else None)]
-    uses = L(f"看板上的训练、饮食和身体数据都从{name}读；你点了头，它也能替你往{name}里记。",
-             f"Workouts, meals and body data on the boards come from {name}; with your OK it also logs things there for you.")
+    meals = sources.AVAILABLE.get("meals") and diet_mode() == "xunji"
+    uses = L(f"看板上的训练{'、饮食' if meals else ''}和身体数据都从{name}读；你点了头，它也能替你往{name}里记。"
+             + ("" if meals else f"饮食记在 {app()} 自己的饮食记录里（见「营养数据」）。"),
+             f"Workouts{', meals' if meals else ''} and body data on the boards come from {name}; with your OK it also logs things there for you."
+             + ("" if meals else f" Meals are logged in {app()}'s own meal log (see Nutrition data)."))
     if missing:
         return item("xunji", name, "dumbbell", "warn", L(f"少了 {len(missing)} 把密钥", f"{len(missing)} key(s) missing"), facts, uses,
                     L(f"服务器的 .env 里缺 {'、'.join(missing)}：在{name} App 里申请开放接口的 Key，放进去后重启服务。",
@@ -242,6 +245,42 @@ def check_xunji(env: set[str]) -> dict | None:
                                    f"The {name} key may have expired: check the open-API key in the {name} app and update the server's .env if it changed."))
     return item("xunji", name, "dumbbell", "ok", L(f"最近读到 {at(read)}", f"Last read {at(read)}") if read else L(f"最近替你记 {at(wrote)}", f"Last logged {at(wrote)}"),
                 facts, uses)
+
+
+def diet_mode() -> str:
+    try:
+        import diet
+        return diet.source_mode()
+    except Exception:  # noqa: BLE001
+        return "local"
+
+
+def check_nutrition() -> dict | None:
+    """饮食记录和营养数据库（diet.py、nutrition.py）：记了多少、食物库多大、CoFID 导没导、Open Food Facts 缓存了多少、USDA 有没有 key。不连网。"""
+    try:
+        import diet
+        import nutrition
+    except Exception:  # noqa: BLE001 — 老代码没有这两个模块
+        return None
+    if diet.source_mode() == "xunji":
+        return None
+    with _lock, diet.dietdb() as conn:
+        last = q1(conn, "SELECT MAX(created_at) u, COUNT(*) n FROM diet_entries WHERE deleted_at IS NULL")
+        foods = q1(conn, "SELECT COUNT(*) n FROM diet_foods WHERE deleted_at IS NULL")
+    st = nutrition.status()
+    logged = parse_ts(last["u"]) if last is not None and last["u"] else None
+    cof = st["cofid"]
+    facts = [(L("最近记录", "Last logged"), ago(logged)), (L("食物库", "Food library"), L(f"{foods['n']} 样", f"{foods['n']} foods") if foods else None),
+             ("CoFID 2021", L(f"{cof['foods']} 种", f"{cof['foods']} foods") if cof["ready"] else L("第一次查时自动导入", "Imported on first lookup")),
+             ("Open Food Facts", (L(f"已缓存 {st['off']['cached_products']} 件商品", f"{st['off']['cached_products']} products cached") if st["off"]["enabled"]
+                                  else L("已关闭", "Turned off"))),
+             ("USDA", L("已接入", "Connected") if st["usda"]["enabled"] else L("没有 API key", "No API key"))]
+    uses = L("饮食看板、「今天」页的摄入、热量缺口都读这里；查营养的顺序：你的食物库 → Open Food Facts（包装食品）→ CoFID（英国通用食物）→ USDA，查不到的标「估算」。"
+             "Open Food Facts 的数据按 ODbL 署名，只缓存在这台服务器上。",
+             "The diet board, Today's intake and the energy balance read this. Nutrition lookup order: your food library → Open Food Facts (packaged food) → "
+             "CoFID (UK generic foods) → USDA; anything not found is marked as an estimate. Open Food Facts data is attributed under ODbL and cached on this server only.")
+    line = L(f"最近记录 {at(logged)}", f"Last logged {at(logged)}") if logged else L("还没有记录", "Nothing logged yet")
+    return item("nutrition", L("营养数据", "Nutrition data"), "utensils", "ok", line, facts, uses)
 
 
 def check_health() -> dict:
@@ -729,7 +768,7 @@ def local_part() -> tuple[dict[str, list], dict]:
     state = units(UNITS)
     oc = openclaw_config()
     return {
-        "data": [safe(check_xunji, env), safe(check_health), safe(check_canvas, env, state)],
+        "data": [safe(check_xunji, env), safe(check_nutrition), safe(check_health), safe(check_canvas, env, state)],
         "schedule": [safe(check_calendar, env), safe(check_mail, state), safe(check_feed)],
         "files": [safe(check_drive), safe(check_obsidian, state), safe(check_notion, env, oc)],
         "memory": [safe(check_tree, state)],

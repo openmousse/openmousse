@@ -7,7 +7,7 @@ import { ActivityIndicator, ScrollView, StyleSheet, View } from 'react-native';
 import { useFocusEffect, useNavigation } from '@react-navigation/native';
 import { agentName } from '../brand';
 import {
-  Bell, CalendarDays, CalendarSync, Dumbbell, FileText, GraduationCap, HardDrive, HeartPulse, Mail, MessagesSquare, Notebook, Plug, Plus, Send, Server, TreeDeciduous,
+  Bell, CalendarDays, CalendarSync, Dumbbell, FileText, GraduationCap, HardDrive, HeartPulse, Mail, MessagesSquare, Notebook, Plug, Plus, Send, Server, TreeDeciduous, Utensils,
 } from '../components/icons';
 import { Dot, Group, GroupLabel, GroupNote, RoundButton, Row, SettingsHeader, Tile } from '../components/settings';
 import { useSheet } from '../components/Sheet';
@@ -22,7 +22,7 @@ import { AppTile, ConnectHint, connectCatalog, statusChip } from './AppsScreens'
 const ICONS: Record<string, typeof Plug> = {
   dumbbell: Dumbbell, 'heart-pulse': HeartPulse, graduation: GraduationCap, calendar: CalendarDays, mail: Mail, 'calendar-sync': CalendarSync,
   'hard-drive': HardDrive, notebook: Notebook, 'file-text': FileText, tree: TreeDeciduous, send: Send, messages: MessagesSquare, bell: Bell,
-  server: Server,
+  server: Server, utensils: Utensils,
 };
 
 const statusWord = (s: Connector['status']) => ({ ok: L('正常', 'Working'), warn: L('需关注', 'Needs attention'), off: L('未连接', 'Not connected') })[s];

@@ -1,0 +1,18 @@
+{
+ "name": "diet",
+ "version": 1,
+ "title": {"zh": "饮食记录", "en": "Meal log"},
+ "summary": {"zh": "吃了什么记在自己的服务器上：按建议一键记、对话里说、拍一餐或拍营养标签。营养先查你的食物库，再查 Open Food Facts、英国 CoFID、USDA，查不到的标「估算」。",
+             "en": "What you eat is logged on your own server: one tap from a meal plan, in chat, or from a photo of the meal or its nutrition label. Nutrition comes from your food library first, then Open Food Facts, the UK's CoFID and USDA; anything not found is marked as an estimate."},
+ "for": ["diet"],
+ "guide": "GUIDE.md",
+ "tables": [],
+ "blocks": [
+  {"id": "diet_actions", "type": "action", "title": "", "after": "diet.eaten",
+   "actions": [{"kind": "upload", "label": {"zh": "拍这一餐", "en": "Snap a meal"}, "message": {"zh": "这是我刚吃的这一餐，记下来", "en": "Here's what I just ate. Log it."},
+                "accept": ["camera", "photos"], "primary": true},
+               {"kind": "upload", "label": {"zh": "拍标签", "en": "Snap a label"}, "message": {"zh": "这是包装上的营养标签，存进食物库", "en": "Here's a nutrition label. Add it to the food library."},
+                "accept": ["camera", "photos"]}]}
+ ],
+ "alerts": []
+}

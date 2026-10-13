@@ -564,7 +564,7 @@ def add_entries(body: EntriesIn):
         batch = f"b-{uuid.uuid4().hex[:8]}"
         refs = [body.source_ref and f"{body.source_ref}.{i}" for i in range(len(rows))] if body.source_ref else None
         ids = insert_rows(conn, d, meal, tm, body.source, rows, by, batch, refs, (body.note or "").strip()[:200] or None)
-        out = [entry_out(r) for r in conn.execute(f"SELECT * FROM diet_entries WHERE id IN ({','.join('?' * len(ids))})", ids)]
+        out = [entry_out(r) for r in conn.execute(f"SELECT * FROM diet_entries WHERE id IN ({','.join('?' * len(ids))}) ORDER BY rowid", ids)]
     add = sums(rows)
     log_activity(L(f"记了{meal_label(meal)}：{len(rows)} 样，{add['kcal']} kcal", f"Logged {meal_label(meal).lower()}: {len(rows)} item(s), {add['kcal']} kcal"),
                  "diet", None if by == "leo" else by)
@@ -924,7 +924,7 @@ def log_plan(body: PlanLogIn):
         batch = f"b-{uuid.uuid4().hex[:8]}"
         by = actor_of(body.by)
         ids = insert_rows(conn, d, all_rows[0]["meal"], tm, "plan", all_rows, by, batch, refs)
-        out = [entry_out(r) for r in conn.execute(f"SELECT * FROM diet_entries WHERE id IN ({','.join('?' * len(ids))})", ids)]
+        out = [entry_out(r) for r in conn.execute(f"SELECT * FROM diet_entries WHERE id IN ({','.join('?' * len(ids))}) ORDER BY rowid", ids)]
     add = sums(all_rows)
     labels = "、".join(str(m["label"]) for m in per_meal)
     log_activity(L(f"按建议记了{labels}：{add['kcal']} kcal", f"Logged {labels} as planned: {add['kcal']} kcal"), "diet", None if by == "leo" else by)
