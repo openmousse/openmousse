@@ -9,7 +9,7 @@ import { ChevronLeft, Plus } from '../components/icons';
 import { useSheet } from '../components/Sheet';
 import { Screen, T } from '../components/ui';
 import { CollectionPane, openedBlock } from '../components/views/Collection';
-import { pickedView, pickView } from '../components/views/palette';
+import { pickedView, pickView } from '../components/views/memory';
 import { L } from '../i18n';
 import { useStore } from '../store';
 import { space, useTheme } from '../theme';

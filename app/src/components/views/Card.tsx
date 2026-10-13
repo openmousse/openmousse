@@ -4,7 +4,7 @@ import { Pressable, StyleSheet, Text, View } from 'react-native';
 import type { CardTag, ViewCard } from '../../api/boards';
 import { radius, type, useTheme } from '../../theme';
 import { T } from '../ui';
-import { cardBg, seriesColor, toneTag } from './palette';
+import { cardToneColors, seriesColor } from '../viz';
 
 export function Tags({ tags }: { tags?: CardTag[] }) {
   const t = useTheme();
@@ -12,7 +12,7 @@ export function Tags({ tags }: { tags?: CardTag[] }) {
   return (
     <View style={styles.tags}>
       {tags.map((x, i) => {
-        const [bg, fg] = toneTag(t, x.tone);
+        const [bg, fg] = cardToneColors(t, x.tone);
         return (
           <View key={`${i}-${x.text}`} style={[styles.tag, { backgroundColor: bg }]}>
             <Text style={[type.caption, { fontSize: 11, fontWeight: '600', color: fg }]} numberOfLines={1}>{x.text}</Text>
@@ -27,10 +27,10 @@ export function Tags({ tags }: { tags?: CardTag[] }) {
 export function CardFace({ card, dot, lines = 2 }: { card: ViewCard; dot?: number | null; lines?: number }) {
   const t = useTheme();
   return (
-    <View style={[styles.card, { backgroundColor: cardBg(t) }]}>
+    <View style={[styles.card, { backgroundColor: t.mode === 'dark' ? t.surface2 : t.surface }]}>
       {card.meta ? (
         <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
-          {dot !== undefined ? <View style={[styles.dot, { backgroundColor: seriesColor(t, dot) }]} /> : null}
+          {dot !== undefined ? <View style={[styles.dot, { backgroundColor: seriesColor(t, dot ?? -1) }]} /> : null}
           <T v="caption" color={t.ink2} style={{ fontWeight: '400', flexShrink: 1 }} numberOfLines={1}>{card.meta}</T>
         </View>
       ) : null}

@@ -31,11 +31,13 @@ export interface DonutProps extends VizStateProps {
   /** 图例里写百分比 */
   pct?: boolean;
   fmt?: (v: number) => string;
+  /** 点了图例里的一份（同时会突出它） */
+  onPress?: (d: ShareDatum) => void;
   label?: string;
   style?: StyleProp<ViewStyle>;
 }
 
-export function Donut({ data, size = 120, thickness = 16, center, pct, fmt = plain, label, style, ...state }: DonutProps) {
+export function Donut({ data, size = 120, thickness = 16, center, pct, fmt = plain, onPress, label, style, ...state }: DonutProps) {
   const t = useTheme();
   const [sel, setSel] = useState<string | null>(null);
   const rows = foldOther(data.filter((d) => d.value > 0), 6, fmt);
@@ -76,7 +78,7 @@ export function Donut({ data, size = 120, thickness = 16, center, pct, fmt = pla
         {rows.map((d, i) => {
           const on = sel === d.key;
           return (
-            <Pressable key={d.key} onPress={() => setSel((k) => (k === d.key ? null : d.key))} accessibilityRole="button" accessibilityState={{ selected: on }}
+            <Pressable key={d.key} onPress={() => { setSel((k) => (k === d.key ? null : d.key)); onPress?.(d); }} accessibilityRole="button" accessibilityState={{ selected: on }}
               accessibilityLabel={L(`${d.label} ${text(d)}，${pctOf(d.value, total)}%`, `${d.label} ${text(d)}, ${pctOf(d.value, total)}%`)} style={styles.legendRow}>
               <SwatchMark color={colorOf(d, i)} />
               <T v="caption" color={on ? t.ink : t.ink2} numberOfLines={1} style={{ flex: 1, fontSize: 12, fontWeight: on ? '600' : '400' }}>{d.label}</T>

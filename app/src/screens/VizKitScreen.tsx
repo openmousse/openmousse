@@ -7,7 +7,7 @@ import { L } from '../i18n';
 import { space, useAppearance, useTheme, vizMark, type Appearance } from '../theme';
 import { NavHeader, Screen, SectionLabel, Segmented, T } from '../components/ui';
 import {
-  BarChart, BeforeAfter, ChangeTag, ChartCard, CompareList, DataTable, DayGrid, Donut, HBarChart, HeatCalendar, Kanban, LineChart, MonthCalendar,
+  BarChart, BeforeAfter, ChangeTag, ChartCard, CompareList, DataTable, DayGrid, Donut, HBarChart, HeatCalendar, Kanban, KanbanBoard, LineChart, MonthCalendar,
   NutritionRing, PercentBar, ProgressRing, RangeSwitch, SegmentBars, SleepStages, Sparkline, StackedBar, StatRow, StatTile, StatusTag, Streak,
   SwatchMark, TargetBar, Timeline, VizEmpty, VizError, VizLoading, VizSurface, type RangeDays, type TableColumn,
 } from '../components/viz';
@@ -270,6 +270,9 @@ export function VizKitScreen() {
           </Item>
           <Item title={L('看板', 'Board')} rule={L('按任一字段分列；长按卡片移到其他列（即改这个字段）；列头色点按列的身份取色。', 'Columns by any field; long-press a card to move it to another column (which changes that field); each column keeps its own colour.')}>
             <Kanban columns={D.jobBoard()} limit={2} onMove={() => {}} />
+          </Item>
+          <Item title={L('全屏看板', 'Full-screen board')} rule={L('集合块的全屏页用：每列竖着滚，长按卡片拖到其他列（即改这个字段），靠近边缘自动横滚，落点那一列描金边。', "For a collection's full screen: each column scrolls, long-press a card and drag it to another column (which changes that field); it scrolls sideways near the edges and the column under the card gets a gold outline.")}>
+            <View style={{ height: 340, paddingHorizontal: space.lg }}><KanbanBoard columns={D.jobBoard()} onMove={() => {}} /></View>
           </Item>
           <Item title={L('日历', 'Calendar')} rule={L('日程、截止、待办用颜色加形状（圆点、菱形、方块）区分，并配图例；今天金底。', 'Events, deadlines and to-dos differ by colour and shape (dot, diamond, square), with a legend; today is gold.')}>
             <MonthCalendar month="2026-10" marks={D.octoberMarks} kinds={D.calendarKinds()} today="2026-10-12" />

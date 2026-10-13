@@ -6,7 +6,7 @@ import { L } from '../../i18n';
 import { radius, space, useTheme } from '../../theme';
 import { Group, Row } from '../settings';
 import { useSheet } from '../Sheet';
-import { seriesColor, toneColors, useWidth, VizFrame, vizText, type Tone, type VizStateProps } from './core';
+import { cardToneColors, seriesColor, useWidth, VizFrame, vizText, type Tone, type VizStateProps } from './core';
 
 export interface KanbanCard { key: string; title: string; sub?: string; tags?: { text: string; tone?: Tone | string | null }[] }
 export interface KanbanCol {
@@ -72,8 +72,8 @@ export function Kanban({ columns, onPressCard, onMove, limit = 5, style, ...stat
             {card.tags?.length ? (
               <View style={styles.tags}>
                 {card.tags.map((x, k) => (
-                  <View key={k} style={[styles.tag, { backgroundColor: toneColors(t, x.tone)[0] }]}>
-                    <Text numberOfLines={1} style={{ fontSize: 10, fontWeight: '600', color: toneColors(t, x.tone)[1] }}>{x.text}</Text>
+                  <View key={k} style={[styles.tag, { backgroundColor: cardToneColors(t, x.tone)[0] }]}>
+                    <Text numberOfLines={1} style={{ fontSize: 10, fontWeight: '600', color: cardToneColors(t, x.tone)[1] }}>{x.text}</Text>
                   </View>
                 ))}
               </View>

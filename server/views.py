@@ -786,13 +786,13 @@ def timeline_view(conn: sqlite3.Connection, agent: str, b: dict, v: dict, coll: 
         s = min(s or t, end)
         item = card_of(r, spec, coll, fields)
         item.update(start=pos(max(s, w0)), end=pos(end), endText=md(end), clipped=end >= w1, overdue=end < t,
-                    color=color_of(gf, r["data"].get(gf["key"])) if gf else 0)
+                    startDate=max(s, w0).isoformat(), endDate=end.isoformat(), color=color_of(gf, r["data"].get(gf["key"])) if gf else 0)
         items.append(item)
     ticks, d = [], w0
     while d < w1:
         ticks.append({"pos": pos(d), "label": md(d)})
         d = step(d, "month" if span > 100 else "week")
-    return {"type": "timeline", "from": w0.isoformat(), "to": w1.isoformat(), "today": pos(t) if w0 <= t <= w1 else None, "ticks": ticks,
+    return {"type": "timeline", "from": w0.isoformat(), "to": w1.isoformat(), "today": pos(t) if w0 <= t <= w1 else None, "todayDate": t.isoformat(), "ticks": ticks,
             "items": items, "total": len(rows), "offset": offset, "more": max(0, len(rows) - offset - len(items)), "before": before,
             "dateLabel": fd.get("label") or dk}
 
@@ -861,7 +861,13 @@ def compute_chart(conn: sqlite3.Connection, agent: str, b: dict, v: dict, coll: 
         # 刻度：数行数的写纯数字、右上角注明「单位：个」；时长、金额这类带单位的数，刻度和柱子上的写法一样（2h30、£50）
         plain = c.get("agg", "count") == "count" and not unit
         res["axis"] = [{"value": x, "text": axis_text(x) if plain or fmt == "percent" else text(x)} for x in (0, top / 2, top)]
-        res["unitLabel"] = L("单位：个", "Count") if plain else ""
+    # 图的右上角写单位（app 的素材库刻度只写数）：数行数「单位：个」，带单位的写单位，金额写货币
+    if c.get("agg", "count") == "count" and not unit:
+        res["unitLabel"] = L("单位：个", "Count")
+    elif fmt == "money":
+        res["unitLabel"] = L(f"单位：{boards.CURRENCY.get(cur, cur)}", f"In {boards.CURRENCY.get(cur, cur)}")
+    elif unit:
+        res["unitLabel"] = L(f"单位：{unit}", f"Unit: {unit}")
     return res
 
 

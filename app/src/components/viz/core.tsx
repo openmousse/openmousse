@@ -22,6 +22,20 @@ export const toneColors = (t: Theme, tone?: Tone | string | null): [string, stri
 } as Record<string, [string, string]>)[tone ?? 'neutral'] ?? [t.surface2, t.ink2];
 
 /**
+ * 分类标签（表格里的「状态」、看板卡片上的选项值）：第 slot 个分类色的浅底 + 同色相的字。用 theme 的 tints（字对底 ≥ 4.5:1，深浅都校验过），
+ * 所以和列头色点、柱子的颜色同一色相；5 号（蓝）没有对应的 tint，和 null / 超出的一样用中性。onCard：标签放在卡片上（深色里卡片是 surface2），中性底换亮一级。
+ */
+export function slotColors(t: Theme, slot: number | null | undefined, onCard = false): [string, string] {
+  const tint = slot != null ? (['cyan', 'gold', 'purple', 'green', null, 'pink'] as const)[slot] : null;
+  if (tint) return [t.tints[tint].soft, t.tints[tint].fg];
+  return [onCard && t.mode === 'dark' ? t.line : t.surface2, t.ink2];
+}
+
+/** 卡片上的标签按 tone 配色：深色里卡片是 surface2，中性标签的底要亮一级才看得出。 */
+export const cardToneColors = (t: Theme, tone?: Tone | string | null): [string, string] =>
+  (!tone || tone === 'neutral' ? [t.mode === 'dark' ? t.line : t.surface2, t.ink2] : toneColors(t, tone));
+
+/**
  * 图表下面的底色：标记点外圈的 2px 描边、相邻色块之间的 2px 间隙都用它，才看得出是「留白」而不是一圈边框。
  * 默认是卡片色（t.surface）；放在别的底色上（小板子里的深色方块）时用 VizSurface 包一层。
  */

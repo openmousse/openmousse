@@ -22,7 +22,7 @@ import { CardItem } from './Card';
 import { ChartsView } from './ChartsView';
 import type { ViewEnv } from './env';
 import { KanbanView } from './KanbanView';
-import { pickedView, pickView } from './palette';
+import { pickedView, pickView } from './memory';
 import { TableView } from './TableView';
 import { TimelineView } from './TimelineView';
 

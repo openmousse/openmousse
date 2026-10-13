@@ -4,7 +4,7 @@ import React, { useState } from 'react';
 import { Pressable, StyleSheet, Text, View, type StyleProp, type ViewStyle } from 'react-native';
 import { L } from '../../i18n';
 import { useTheme } from '../../theme';
-import { toneColors, VizFrame, vizText, type Tone, type VizStateProps } from './core';
+import { slotColors, toneColors, VizFrame, vizText, type Tone, type VizStateProps } from './core';
 
 export interface TableColumn<R> {
   key: string;
@@ -15,8 +15,8 @@ export interface TableColumn<R> {
   numeric?: boolean;
   /** 这一格的字（不给就取 row[key]） */
   text?: (row: R) => string;
-  /** 这一格画成标签：{ text, tone } */
-  tag?: (row: R) => { text: string; tone?: Tone | string | null } | null;
+  /** 这一格画成标签：{ text, tone }，或按分类色 { text, slot }（选项字段：和看板列头同一种颜色） */
+  tag?: (row: R) => { text: string; tone?: Tone | string | null; slot?: number | null } | null;
   /** 排序用的值（不给就按 text 排）；sortable = false 不能排 */
   sortValue?: (row: R) => number | string | null;
   sortable?: boolean;
@@ -29,8 +29,10 @@ export interface DataTableProps<R> extends VizStateProps {
   rows: R[];
   rowKey: (row: R) => string;
   onPressRow?: (row: R) => void;
-  /** 一开始按哪列排 */
+  /** 一开始按哪列排；给了 onSort 就是受控的：表头只显示这个，行照给的顺序（服务器排好的） */
   sort?: { key: string; dir: 'asc' | 'desc' } | null;
+  /** 排序交给调用方（服务器排、要翻页的表）：点表头时调用，不在本地排 */
+  onSort?: (sort: { key: string; dir: 'asc' | 'desc' }) => void;
   /** 最多显示几行（其余点「另有 N 条」展开） */
   limit?: number;
   label?: string;
@@ -43,12 +45,13 @@ const cellText = <R,>(c: TableColumn<R>, r: R): string => {
   return v == null ? '' : String(v);
 };
 
-export function DataTable<R>({ columns, rows, rowKey, onPressRow, sort: initial = null, limit, label, style, ...state }: DataTableProps<R>) {
+export function DataTable<R>({ columns, rows, rowKey, onPressRow, sort: initial = null, onSort, limit, label, style, ...state }: DataTableProps<R>) {
   const t = useTheme();
-  const [sort, setSort] = useState(initial);
+  const [own, setSort] = useState(initial);
+  const sort = onSort ? initial : own;
   const [open, setOpen] = useState(false);
   const col = sort ? columns.find((c) => c.key === sort.key) : undefined;
-  const sorted = col ? [...rows].sort((a, b) => {
+  const sorted = col && !onSort ? [...rows].sort((a, b) => {
     const va = col.sortValue ? col.sortValue(a) : cellText(col, a);
     const vb = col.sortValue ? col.sortValue(b) : cellText(col, b);
     if (va == null && vb == null) return 0;
@@ -61,6 +64,7 @@ export function DataTable<R>({ columns, rows, rowKey, onPressRow, sort: initial 
   const hidden = sorted.length - shown.length;
   const tap = (c: TableColumn<R>) => {
     if (c.sortable === false) return;
+    if (onSort) { onSort(sort?.key === c.key ? { key: c.key, dir: sort.dir === 'asc' ? 'desc' : 'asc' } : { key: c.key, dir: 'asc' }); return; }
     setSort((s) => (s?.key === c.key ? { key: c.key, dir: s.dir === 'asc' ? 'desc' : 'asc' } : { key: c.key, dir: 'asc' }));
   };
   const line = { borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: t.line };
@@ -83,7 +87,7 @@ export function DataTable<R>({ columns, rows, rowKey, onPressRow, sort: initial 
         const cells = columns.map((c) => {
           const tag = c.tag?.(r);
           if (tag) {
-            const [bg, fg] = toneColors(t, tag.tone);
+            const [bg, fg] = tag.slot !== undefined ? slotColors(t, tag.slot) : toneColors(t, tag.tone);
             return (
               <View key={c.key} style={[styles.cell, { flex: c.flex ?? 1, alignItems: c.numeric ? 'flex-end' : 'flex-start' }]}>
                 <View style={[styles.tag, { backgroundColor: bg }]}><Text numberOfLines={1} style={[vizText.value, { fontSize: 11, fontWeight: '600', color: fg }]}>{tag.text}</Text></View>

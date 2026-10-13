@@ -1,21 +1,21 @@
-// 表格视图：表头点一下按这一列排（再点倒过来，第三下回到视图自己的排法），筛选按选项字段和日期；选项字段画成标签；点一行看详情。
-// 排序、筛选只在这台设备上临时用（不改视图配置），由服务器重算（POST /api/boards/{agent}/view）。
+// 表格视图：素材库的 DataTable。表头点一下按这一列排（再点倒过来），筛选按选项字段和日期；选项字段画成分类色的标签
+// （和看板列头同一种颜色）；点一行看详情。排序、筛选只在这台设备上临时用（不改视图配置），由服务器重算（POST /api/boards/{agent}/view）。
 import React, { useState } from 'react';
-import { ActivityIndicator, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
-import type { FieldDef, TableColumn, TableData, TableRowData, ViewData } from '../../api/boards';
+import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+import type { FieldDef, TableColumn as ViewColumn, TableData, TableRowData, ViewData } from '../../api/boards';
 import { L } from '../../i18n';
 import { radius, space, type, useTheme } from '../../theme';
-import { ArrowDown, ArrowUp, ListFilter, X } from '../icons';
+import { ListFilter, X } from '../icons';
 import { useSheet } from '../Sheet';
 import { showError, T } from '../ui';
+import { DataTable, type TableColumn } from '../viz';
 import type { ViewProps } from './env';
-import { seriesTag } from './palette';
 
 const INLINE_ROWS = 6;
 type Filter = { key: string; label: string; clause: unknown[]; text: string };
 
 /** 一列多宽（flex）：标题这类长文字宽一些，日期、数字窄一些。列多时整张表横着滚。 */
-const weight = (c: TableColumn, i: number) => (c.type === 'date' || c.type === 'datetime' ? 0.9 : c.type === 'number' || c.type === 'money' ? 0.75 : c.type === 'choice' || c.type === 'bool' ? 0.9 : i === 1 ? 1.5 : 1.2);
+const weight = (c: ViewColumn, i: number) => (c.type === 'date' || c.type === 'datetime' ? 0.9 : c.type === 'number' || c.type === 'money' ? 0.75 : c.type === 'choice' || c.type === 'bool' ? 0.9 : i === 1 ? 1.5 : 1.2);
 
 export function TableView({ env, data: initial }: ViewProps<TableData>) {
   const t = useTheme();
@@ -25,7 +25,7 @@ export function TableView({ env, data: initial }: ViewProps<TableData>) {
   const [sort, setSort] = useState<string[] | null>(null);  // null = 视图自己的排法
   const [filters, setFilters] = useState<Filter[]>([]);
   const [busy, setBusy] = useState(false);
-  if (initial !== seen) {  // 看板重读了：用新数据（你点过的排序、筛选由 rerun 重新算）
+  if (initial !== seen) {  // 看板重读了：用新数据（你点过的排序、筛选要再点一次才按新数据重算）
     setSeen(initial);
     if (!sort && !filters.length) setData(initial);
   }
@@ -42,13 +42,6 @@ export function TableView({ env, data: initial }: ViewProps<TableData>) {
       .catch((e) => showError(L('无法加载', "Couldn't load"), e))
       .finally(() => setBusy(false));
   };
-  const tapHeader = (c: TableColumn) => {
-    if (!c.sortable || !env.query) return;
-    const cur = (sort ?? data.sort)[0] ?? '';
-    const next = cur === c.key ? [`-${c.key}`] : cur === `-${c.key}` && sort ? null : [c.key];
-    setSort(next);
-    run(next, filters);
-  };
   const applyFilters = (next: Filter[]) => {
     setFilters(next);
     run(sort, next);
@@ -59,26 +52,20 @@ export function TableView({ env, data: initial }: ViewProps<TableData>) {
   });
   const rows = env.full ? data.rows : data.rows.slice(0, INLINE_ROWS);
   const hidden = data.total - rows.length;
+  const first = (sort ?? data.sort)[0] ?? '';
+  const current = first ? { key: first.replace(/^-/, ''), dir: (first.startsWith('-') ? 'desc' : 'asc') as 'asc' | 'desc' } : null;
+  // 表头点一下按这一列排，再点倒过来（服务器排好、要翻页，所以排序交给服务器）
+  const columns: TableColumn<TableRowData>[] = data.columns.map((c, i) => ({
+    key: c.key, title: c.label, flex: weight(c, i), numeric: c.align === 'right', primary: i === 0, sortable: c.sortable && !!env.query,
+    text: (r) => r.cells[c.key] ?? '—',
+    tag: c.type === 'choice' ? (r) => (r.cells[c.key] && r.cells[c.key] !== '—' ? { text: r.cells[c.key], slot: r.colors?.[c.key] ?? null } : null) : undefined,
+  }));
   const many = data.columns.length > 4;
-  const sorted = (sort ?? data.sort)[0] ?? '';
   const table = (
-    <View style={many ? { width: data.columns.length * 120 } : { flex: 1 }}>
-      <View style={[styles.row, styles.headRow, { borderBottomColor: t.line }]}>
-        {data.columns.map((c, i) => {
-          const dir = sorted === c.key ? 'asc' : sorted === `-${c.key}` ? 'desc' : null;
-          return (
-            <Pressable key={c.key} onPress={() => tapHeader(c)} disabled={!c.sortable || !env.query} accessibilityRole="button"
-              accessibilityLabel={L(`按「${c.label}」排序`, `Sort by ${c.label}`)} accessibilityState={{ selected: !!dir }}
-              style={[styles.cell, { flex: weight(c, i), flexDirection: 'row', gap: 2, justifyContent: c.align === 'right' ? 'flex-end' : 'flex-start' }]}>
-              <Text numberOfLines={1} style={[type.caption, { color: dir ? t.ink : t.ink3, fontWeight: dir ? '700' : '500' }]}>{c.label}</Text>
-              {dir === 'asc' ? <ArrowUp size={12} color={t.ink} /> : dir === 'desc' ? <ArrowDown size={12} color={t.ink} /> : null}
-            </Pressable>
-          );
-        })}
-      </View>
-      {rows.map((r, ri) => <Row key={r.id} r={r} cols={data.columns} last={ri === rows.length - 1} onPress={env.readOnly ? undefined : () => env.openCard(r)} />)}
-      {!rows.length ? <T v="callout" color={t.ink2} style={{ paddingVertical: space.lg, paddingHorizontal: 4 }}>{filters.length ? L('没有符合筛选条件的行。', 'No rows match the filter.') : L('暂无数据', 'No data yet')}</T> : null}
-    </View>
+    <DataTable columns={columns} rows={rows} rowKey={(r) => r.id} onPressRow={env.readOnly ? undefined : (r) => env.openCard(r)} sort={current}
+      onSort={env.query ? (s) => { const next = [s.dir === 'desc' ? `-${s.key}` : s.key]; setSort(next); run(next, filters); } : undefined}
+      loading={busy} emptyText={filters.length ? L('没有符合筛选条件的行。', 'No rows match the filter.') : undefined}
+      style={many ? { width: data.columns.length * 110 } : undefined} />
   );
   return (
     <View style={{ gap: space.sm }}>
@@ -95,7 +82,6 @@ export function TableView({ env, data: initial }: ViewProps<TableData>) {
               <X size={13} color={t.cyan} />
             </Pressable>
           ))}
-          {busy ? <ActivityIndicator size="small" color={t.ink3} /> : null}
         </View>
       ) : null}
       <View style={[styles.card, { backgroundColor: t.surface }]}>
@@ -115,31 +101,6 @@ export function TableView({ env, data: initial }: ViewProps<TableData>) {
         )
       ) : null}
     </View>
-  );
-}
-
-function Row({ r, cols, last, onPress }: { r: TableRowData; cols: TableColumn[]; last: boolean; onPress?: () => void }) {
-  const t = useTheme();
-  return (
-    <Pressable onPress={onPress} disabled={!onPress} accessibilityRole={onPress ? 'button' : undefined} accessibilityLabel={cols.map((c) => r.cells[c.key]).join('，')}
-      style={({ pressed }) => [styles.row, !last && { borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: t.line }, { opacity: pressed ? 0.6 : 1 }]}>
-      {cols.map((c, i) => {
-        const v = r.cells[c.key] ?? '—';
-        const color = r.colors?.[c.key];
-        if (c.type === 'choice' && v !== '—') {
-          const [bg, fg] = seriesTag(t, color);
-          return (
-            <View key={c.key} style={[styles.cell, { flex: weight(c, i), alignItems: c.align === 'right' ? 'flex-end' : 'flex-start' }]}>
-              <View style={[styles.tag, { backgroundColor: bg }]}><Text numberOfLines={1} style={[type.caption, { fontSize: 11, fontWeight: '600', color: fg }]}>{v}</Text></View>
-            </View>
-          );
-        }
-        return (
-          <Text key={c.key} numberOfLines={1} style={[type.callout, styles.cell, { flex: weight(c, i), fontSize: 13, textAlign: c.align, color: i === 0 ? t.ink : t.ink2,
-            fontVariant: c.align === 'right' ? ['tabular-nums'] : undefined }]}>{v}</Text>
-        );
-      })}
-    </Pressable>
   );
 }
 
@@ -211,10 +172,6 @@ function FilterSheet({ fields, initial, onChange }: { fields: FieldDef[]; initia
 
 const styles = StyleSheet.create({
   card: { borderRadius: radius.lg, paddingHorizontal: space.md, paddingVertical: 2 },
-  row: { flexDirection: 'row', alignItems: 'center', minHeight: 40 },
-  headRow: { borderBottomWidth: 1, minHeight: 34 },
-  cell: { paddingHorizontal: 4, paddingVertical: 8, minWidth: 0 },
-  tag: { borderRadius: 6, paddingHorizontal: 6, paddingVertical: 2, maxWidth: '100%' },
   chips: { flexDirection: 'row', flexWrap: 'wrap', gap: space.sm, alignItems: 'center' },
   chip: { flexDirection: 'row', alignItems: 'center', gap: 5, height: 30, borderRadius: 15, paddingHorizontal: 12, maxWidth: '100%' },
   more: { alignItems: 'center', paddingVertical: space.sm },

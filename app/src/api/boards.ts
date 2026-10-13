@@ -40,9 +40,12 @@ export interface CalendarData {
   count: number; undated: number; dateLabel: string; legend?: { label: string; color: number | null }[];
 }
 /** 时间线的一条：start / end 是在窗口里的位置（0–1），clipped = 截止在窗口之外。 */
-export interface TimelineItem extends ViewCard { start: number; end: number; endText: string; clipped: boolean; overdue: boolean; color: number | null }
+export interface TimelineItem extends ViewCard {
+  start: number; end: number; endText: string; clipped: boolean; overdue: boolean; color: number | null;
+  startDate?: string; endDate?: string;   // 起止（YYYY-MM-DD，窗口里的那一段）
+}
 export interface TimelineData {
-  type: 'timeline'; from: string; to: string; today: number | null; ticks: { pos: number; label: string }[]; items: TimelineItem[];
+  type: 'timeline'; from: string; to: string; today: number | null; todayDate?: string; ticks: { pos: number; label: string }[]; items: TimelineItem[];
   total: number; offset: number; more: number; before: number; dateLabel: string;
 }
 export interface ChartBar { key: string; label: string; value: number; text: string; current?: boolean; show?: boolean }

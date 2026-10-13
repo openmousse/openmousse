@@ -2,7 +2,7 @@
 // 样子见 app 里「设置 → 关于 → 可视化素材库」（网页版 ?screen=VizKit）。色板在 theme.tsx 的 t.viz，标记常量是 vizMark。
 export {
   ChangeTag, Legend, RangeSwitch, StatusGlyph, StatusTag, SwatchMark, Tip, VizEmpty, VizError, VizFrame, VizLoading, VizSurface,
-  dotProps, fmtTick, niceScale, seriesColor, toneColors, useFontScale, useSurface, useWidth,
+  cardToneColors, dotProps, fmtTick, niceScale, seriesColor, slotColors, toneColors, useFontScale, useSurface, useWidth,
 } from './core';
 export type { Direction, LegendItem, RangeDays, Status, Swatch, TipRow, Tone, VizStateProps } from './core';
 export { ChartCard } from './ChartCard';
@@ -30,6 +30,8 @@ export { Timeline } from './Timeline';
 export type { TimelineProps, TimelineRow } from './Timeline';
 export { Kanban } from './Kanban';
 export type { KanbanCard, KanbanCol, KanbanProps } from './Kanban';
+export { KanbanBoard } from './KanbanBoard';
+export type { BoardColumn as KanbanBoardColumn, KanbanBoardProps } from './KanbanBoard';
 export { BeforeAfter, CompareList, TargetBar } from './Compare';
 export type { CompareItem, ComparePoint } from './Compare';
 export { NutritionRing, SleepStages, Streak, durText } from './Health';
