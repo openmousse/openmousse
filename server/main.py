@@ -8,6 +8,7 @@
 - 推送：/api/push/register 存 Expo push token；回复完成后 push.notify_run 按档位（ring / quiet / none）推回复或这次写的卡（见 push.py）。
 - 收件箱「等你点头」：/api/inbox，Agent 经 inbox_ctl.py 提交要你同意的事，OpenClaw 执行审批也合在里面（见 inbox.py）。
 - 未读：/api/unread，各线程的未读回复、新卡片、角标（见 unread.py）。
+- 对话列表：/api/chats，Agent 栏和主对话、会议、项目各一行，排序只算你的话和给你的回复，置顶 / 免打扰（见 chats.py）。
 - 对话里的转交卡、任务卡：/api/chat/cards；后台任务额度 /api/tasks/quota；后台任务做完静默推一条（见 cards.py）。
 - 训记数据不落库：训记是真源，这里只有短时缓存（由 xunji.py / calendar_ics.py 管）。
 - 学习台：/study 网页 + /api/study/*，课件和学习页按课程 / 模块浏览，问答走同一条对话通道（见 study.py）。
@@ -71,6 +72,7 @@ from canvasapi import router as canvas_router  # noqa: E402
 import coursegen  # noqa: E402
 from inbox import router as inbox_router  # noqa: E402
 from unread import router as unread_router  # noqa: E402
+from chats import router as chats_router  # noqa: E402 — 对话列表（Grava 一边：Agent 栏、主对话、会议、项目；置顶 / 免打扰）
 from schedule import router as schedule_router  # noqa: E402
 from boards import router as boards_router  # noqa: E402
 from pairing import router as pairing_router  # noqa: E402
@@ -147,6 +149,7 @@ app.include_router(studyapp_router)  # 学习台接到 app 上：看板卡、手
 app.include_router(canvas_router)  # 学习台连 Canvas（个人令牌，canvasapi.py）
 app.include_router(inbox_router)
 app.include_router(unread_router)
+app.include_router(chats_router)
 app.include_router(schedule_router)  # 含 /cal/<令牌>.ics（在网页版的静态文件之前注册）
 app.include_router(alerts_router)  # 在 boards 之前：/api/alerts/… 和看板的路由互不相干，放前面只是好找
 app.include_router(packs_router)

@@ -401,8 +401,11 @@ def preview(text: str, limit: int = PREVIEW_WIDTH) -> str:
 # —— 回复结束：推卡片还是推回复 ———————————————————————————————————————————
 
 def run_level(run: Run) -> str:
-    """回完这次推送的档位：旧开关 notify=False 或学习台 → none；指定了 level 按它；否则 user → ring，relay → none，auto → quiet。"""
+    """回完这次推送的档位：旧开关 notify=False、学习台或免打扰的对话 → none；指定了 level 按它；否则 user → ring，relay → none，auto → quiet。"""
     if not run.notify or run.thread.startswith("study-"):
+        return "none"
+    import chats  # 延迟导入：chats 依赖 unread / data
+    if run.thread in chats.muted_threads():  # 免打扰的对话（对话列表里设的）：不推
         return "none"
     if run.level in LEVELS:
         return run.level

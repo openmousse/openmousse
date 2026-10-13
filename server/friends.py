@@ -1610,6 +1610,20 @@ async def hide_message(rid: int):
     return {"ok": True}
 
 
+@router.post("/api/friends/{fid}/clear")
+async def clear_chat(fid: str):
+    """删除和这位好友的聊天记录（对话列表左滑「删除」，2026-10-13）：每一条都像 hide 一样只在本机藏起来，好友关系、对方那边都不变。
+    没看的顺带算看过（不发已读回执）。"""
+    f = friend_or_404(fid)
+    with _lock, db() as conn:
+        q = ",".join("?" * len(SHOW))
+        n = conn.execute(f"UPDATE friend_messages SET hidden_at=?, status=CASE WHEN dir='in' AND status='new' THEN 'read' ELSE status END "  # noqa: S608
+                         f"WHERE friend=? AND hidden_at IS NULL AND kind IN ({q})", (now_iso(), fid, *SHOW)).rowcount
+    if n:
+        log_activity(LS(f"删除了与 {f['name']} 的聊天记录（{n} 条，仅本机）", f"Deleted the chat with {f['name']} ({n} messages, this server only)"), "deleted")
+    return {"ok": True, "hidden": n}
+
+
 # —— 分享发给朋友 ——
 
 class ShareSendIn(BaseModel):

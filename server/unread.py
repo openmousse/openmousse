@@ -4,7 +4,7 @@
   老消息不会一下子全变未读；之后新开的线程没有这一行 = 从头算。
 - 只算这些线程：main、每个 Agent（groups）、没归档的独立空间。学习台（study-*）、任务（task:*）之类不算。
 - n = 读到的位置之后助手回了几条（role=grava）；mine = 其中回的是你自己发的话（messages.origin=user），定时器、收件箱触发的不算。
-- 角标 badge = 收件箱待你点头（含 OpenClaw 执行审批）+ 各线程 mine 之和 + 朋友发来还没看的（friends：{朋友 id: {n, last, muted?}}，
+- 角标 badge = 收件箱待你点头（含 OpenClaw 执行审批）+ 各线程 mine 之和（免打扰的线程不算，threads 里那一项带 muted）+ 朋友发来还没看的（friends：{朋友 id: {n, last, muted?}}，
   免打扰的朋友不算进角标）。
 - 新卡片 feedNew：feed_items.seen_at 为空、没划掉的卡（app 用 /api/feed/seen 标成看过，见 data.py）。
 - 执行审批的条数要起一次 openclaw CLI（一个 node 进程），这里走单独的 60 秒缓存，app 频繁轮询也不会每次都起。
@@ -67,8 +67,17 @@ async def summary() -> dict:
         feed_new = [r["id"] for r in conn.execute("SELECT id FROM feed_items WHERE seen_at IS NULL AND dismissed=0 AND substr(created_at,1,10)=? ORDER BY created_at DESC LIMIT 50", (datetime.now(TZ).strftime("%Y-%m-%d"),))]  # 只算今天的（「今天」页只显示当天的卡）
     pending = await inbox.pending_count()
     fr = friend_unread()
+    muted = muted_threads()
+    for th in muted & threads.keys():
+        threads[th]["muted"] = True
     return {"ok": True, "threads": threads, "feedNew": feed_new, "inbox": pending, "friends": fr,
-            "badge": pending + sum(t["mine"] for t in threads.values()) + sum(c["n"] for c in fr.values() if not c.get("muted"))}
+            "badge": pending + sum(t["mine"] for th, t in threads.items() if th not in muted) + sum(c["n"] for c in fr.values() if not c.get("muted"))}
+
+
+def muted_threads() -> set[str]:
+    """免打扰的对话（chats.py 的 chat_prefs）：未读照算，但不算进角标。"""
+    import chats  # 延迟导入：chats 依赖本模块
+    return chats.muted_threads()
 
 
 def friend_unread() -> dict[str, dict]:
@@ -82,8 +91,9 @@ def friend_unread() -> dict[str, dict]:
 
 async def badge() -> int:
     """app 图标上的数：收件箱待你点头 + 给你的未读回复。"""
+    muted = muted_threads()
     with _lock, udb() as conn:
-        mine = sum(c["mine"] for c in counts(conn).values())
+        mine = sum(c["mine"] for th, c in counts(conn).items() if th not in muted)
     return mine + await inbox.pending_count() + sum(c["n"] for c in friend_unread().values() if not c.get("muted"))  # 免打扰的朋友不算
 
 

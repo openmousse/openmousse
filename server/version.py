@@ -29,6 +29,8 @@ FEATURES = (
     "friends.prefs",    # GET / PATCH /api/friends/prefs：好友通知开关、通知里显示内容、已读回执；PATCH /api/friends/{id} {pinned, muted}
     "friends.actions",  # POST /api/friends/messages/{id}/edit · /react · /hide；消息带 read、reactions、quote，GET …/messages 带 more、可 before 翻页
     "friends.search",   # GET /api/friends/search；/api/search 不限线程时带好友聊天（kind friend）
+    "chats.list",       # GET /api/chats（Agent 栏 + 主对话、会议、项目，带未读、置顶、免打扰、状态）；PATCH / DELETE /api/chats/{thread}
+    "friends.clear",    # POST /api/friends/{id}/clear：删除与这位好友的聊天记录（只在本机）
 )
 
 
