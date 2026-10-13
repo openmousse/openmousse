@@ -18,8 +18,8 @@ import { TrainingPlanCard, isTrainingPlan } from '../Records';
 import { AddScheduleButton, ClassEditor, ItemEditor } from '../Schedule';
 import { useSheet } from '../Sheet';
 import { Btn, T, showError } from '../ui';
-import { BlockHeader, toMin } from './parts';
-import { DayTimeGrid, seriesOf, type GridBlock } from './vizLite';
+import { DayGrid, seriesColor, type DayBlock } from '../viz';
+import { BlockHeader, hhmm, toMin } from './parts';
 
 /** 这一条是哪个 Agent 排的（课表、邮件、你自己加的、主对话加的都不算）。 */
 const agentOf = (e: DayEvent) => (e.origin === 'own' && e.by && e.by !== 'leo' && e.by !== 'main' ? e.by : null);
@@ -31,7 +31,7 @@ function useTint() {
   const { groups } = useStore();
   return (e: DayEvent) => {
     const g = groups.find((x) => x.id === agentOf(e));
-    return g ? agentTint(t, g.color) : { soft: t.cyanSoft, fg: seriesOf(t)[0] };
+    return g ? agentTint(t, g.color) : { soft: t.cyanSoft, fg: seriesColor(t, 0) };
   };
 }
 
@@ -47,13 +47,17 @@ export function ScheduleBlock({ events, allDay, day, today, now, onChanged, onOp
     // 没有安排：不画空卡，只留小标题和「添加」（过去的日子连小标题也不留）
     return past ? null : <BlockHeader title={L('日程 · 无安排', 'Schedule · Nothing yet')} right={add} />;
   }
-  const blocks: GridBlock[] = events.flatMap((e) => {
-    const s = toMin(e.slotStart), en = e.slotEnd === '24:00' ? 24 * 60 : toMin(e.slotEnd);
-    if (s == null || en == null) return [];
-    const time = [e.moved ? span(e.actualStart, e.actualEnd) : span(e.start, e.end), ...e.tags, skipped(e) ? L('已跳过', 'Skipped') : ''].filter(Boolean).join(' · ');
-    return [{ id: e.id, start: s, end: Math.max(en, s + 15), title: e.title, note: e.moved ? L(`原定 ${e.start}`, `planned ${e.start}`) : undefined, time,
-      color: tint(e), dim: skipped(e), strike: skipped(e), a11y: `${e.title}，${time}` }];
-  });
+  // 时间格（素材库 DayGrid）：一律日程色（月历里「日程」也是这个色）；过去的按实际时间放，第二行写实际时间和原定
+  const blocks: DayBlock[] = events.filter((e) => toMin(e.slotStart) != null).map((e) => ({
+    key: e.id, title: e.title, start: e.slotStart, end: e.slotEnd, slot: 0,
+    sub: [e.moved ? span(e.actualStart, e.actualEnd) : span(e.start, e.end), e.moved ? L(`原定 ${e.start}`, `planned ${e.start}`) : '', ...e.tags,
+      skipped(e) ? L('已跳过', 'Skipped') : ''].filter(Boolean).join(' · '),
+  }));
+  const isToday = day === today;
+  const mins = blocks.flatMap((b) => [toMin(b.start) ?? 0, toMin(b.end ?? b.start) ?? 0]);
+  if (isToday && now != null) mins.push(now);
+  const first = mins.length ? Math.min(...mins) : 0;
+  const last = mins.length ? Math.ceil(Math.max(...mins) / 60) * 60 : 0;
   return (
     <View>
       <BlockHeader title={L(`日程 · ${n}`, `Schedule · ${n}`)} right={add} />
@@ -65,7 +69,14 @@ export function ScheduleBlock({ events, allDay, day, today, now, onChanged, onOp
             <Text style={[styles.allDayTag, { color: t.ink2 }]}>{[L('全天', 'All day'), ...e.tags].join(' · ')}</Text>
           </Pressable>
         ))}
-        {blocks.length ? <DayTimeGrid blocks={blocks} now={day === today ? now : null} onPress={(id) => { const e = events.find((x) => x.id === id); if (e) open(e); }} /> : null}
+        {blocks.length ? (
+          <>
+            {/* 早上 8 点以后才有事：从 8 点画起，前面那段空闲收成一行 */}
+            <DayGrid items={blocks} now={isToday && now != null ? hhmm(now) : null} from={first >= 9 * 60 ? '08:00' : undefined} hourHeight={56}
+              onPressItem={(b) => { const e = events.find((x) => x.id === b.key); if (e) open(e); }} />
+            {last < 24 * 60 ? <T v="caption" color={t.ink3} style={{ fontWeight: '400', paddingTop: 2 }}>{L(`${hhmm(last)} 以后空闲`, `Free after ${hhmm(last)}`)}</T> : null}
+          </>
+        ) : null}
       </View>
     </View>
   );

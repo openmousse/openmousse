@@ -29,6 +29,9 @@ export function dayTitle(iso: string, today: string): string {
 /** 大标题下面：10月12日 星期一 */
 export const daySub = (iso: string) => L(`${monthDay(iso)} ${weekdayOf(iso)}`, `${weekdayOf(iso)}, ${monthDay(iso)}`);
 export const toMin = (s: string) => { const m = /^(\d{1,2}):(\d{2})$/.exec(s || ''); return m ? Number(m[1]) * 60 + Number(m[2]) : null; };
+export const hhmm = (m: number) => `${pad(Math.floor(m / 60) % 24)}:${pad(m % 60)}`;
+/** 月历的第一格：这个月 1 号所在那周的周一（周 / 月视图按它读 6 周 = 42 天）。 */
+export const monthStart = (year: number, month: number) => { const first = new Date(year, month, 1); return isoOf(new Date(year, month, 1 - ((first.getDay() + 6) % 7))); };
 
 /** 标签的底色和字色（只表示状态：安全 / 逾期 = bad，今天 = warn，待确认 = 金）。 */
 export function toneColors(t: Theme, tone: Tone): readonly [string, string] {

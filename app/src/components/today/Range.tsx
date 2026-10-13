@@ -7,11 +7,12 @@ import { L } from '../../i18n';
 import { radius, space, useTheme, type Theme } from '../../theme';
 import { ChevronLeft, ChevronRight } from '../icons';
 import { T, useScaledWidth } from '../ui';
-import { BlockHeader, addDays, monthDay, mondayOf, parseIso, shortWeekday, weekdayOf } from './parts';
-import { DotLegend, MonthCalendar, isoOfDate, monthCells, seriesOf } from './vizLite';
+import { MonthCalendar, seriesColor, type CalKind } from '../viz';
+import { BlockHeader, addDays, isoOf, monthDay, monthStart, mondayOf, parseIso, shortWeekday, weekdayOf } from './parts';
 
 const cache = new Map<string, RangeItem[]>();
-const typeColor = (t: Theme, type: RangeItem['type']) => seriesOf(t)[type === 'event' ? 0 : type === 'deadline' ? 1 : 2];
+/** 类别色和月历一样：日程 1 号色、截止 2 号色、待办 3 号色。 */
+const typeColor = (t: Theme, type: RangeItem['type']) => seriesColor(t, type === 'event' ? 0 : type === 'deadline' ? 1 : 2);
 
 /** 读一段日子（按 from + days 缓存，先画上次的）。 */
 function useRange(from: string, days: number, bump: number) {
@@ -98,35 +99,22 @@ export function MonthView({ anchor, today, bump, onAnchor, onPickDay }: {
   const t = useTheme();
   const a = parseIso(anchor);
   const y = a.getFullYear(), m = a.getMonth();
-  const cells = monthCells(y, m);
-  const { items, error } = useRange(cells[0], 42, bump);
+  const { items, error } = useRange(monthStart(y, m), 42, bump);
   // 选中的一天：换月时落到那个月的 anchor 那天（今天所在的月就是今天）
   const [picked, setPicked] = useState<string | null>(null);
   const selected = picked && picked.slice(0, 7) === anchor.slice(0, 7) ? picked : anchor;
-  // 每天最多三个点：截止和待办先占（不能被课挤掉），剩下的给日程；画的顺序是日程、截止、待办
-  const count: Record<string, Record<RangeItem['type'], number>> = {};
-  for (const r of items ?? []) {
-    if (r.done || r.skip) continue;
-    const c = (count[r.date] ??= { event: 0, deadline: 0, todo: 0 });
-    c[r.type] += 1;
-  }
+  // 每天每类一个记号（日程 / 截止 / 待办：颜色加形状），做完的、跳过的不算
   const marks: Record<string, string[]> = {};
-  for (const [d, c] of Object.entries(count)) {
-    const dl = Math.min(c.deadline, 3), td = Math.min(c.todo, 3 - dl), ev = Math.min(c.event, 3 - dl - td);
-    marks[d] = [...Array(ev).fill(typeColor(t, 'event')), ...Array(dl).fill(typeColor(t, 'deadline')), ...Array(td).fill(typeColor(t, 'todo'))];
-  }
+  for (const r of items ?? []) if (!r.done && !r.skip) (marks[r.date] ??= []).push(r.type);
   const rows = (items ?? []).filter((r) => r.date === selected);
-  const move = (n: number) => onAnchor(isoOfDate(new Date(y, m + n, 1)));
-  const series = seriesOf(t);
+  const move = (n: number) => onAnchor(isoOf(new Date(y, m + n, 1)));
+  const kinds: CalKind[] = [{ key: 'event', label: L('日程', 'Events') }, { key: 'deadline', label: L('截止', 'Deadlines') }, { key: 'todo', label: L('待办', 'To-dos') }];
   return (
     <View>
       <NavRow title={L(`${y}年${m + 1}月`, a.toLocaleDateString('en', { month: 'long', year: 'numeric' }))} onPrev={() => move(-1)} onNext={() => move(1)}
         prevLabel={L('上个月', 'Previous month')} nextLabel={L('下个月', 'Next month')} />
       {error ? <T v="callout" color={t.bad} style={{ paddingHorizontal: space.xs }}>{L(`无法加载：${error}`, `Couldn't load: ${error}`)}</T> : null}
-      <MonthCalendar year={y} month={m} today={today} selected={selected} marks={marks} onSelect={setPicked} />
-      <View style={{ paddingHorizontal: space.xs, paddingTop: space.sm }}>
-        <DotLegend items={[{ color: series[0], label: L('日程', 'Events') }, { color: series[1], label: L('截止', 'Deadlines') }, { color: series[2], label: L('待办', 'To-dos') }]} />
-      </View>
+      <MonthCalendar month={anchor.slice(0, 7)} marks={marks} kinds={kinds} today={today} selected={selected} onPressDay={setPicked} style={{ paddingHorizontal: space.xs }} />
       <BlockHeader title={L(`${monthDay(selected)} ${weekdayOf(selected)}`, `${weekdayOf(selected)}, ${monthDay(selected)}`)} accent={selected === today} />
       {!items ? <T v="callout" color={t.ink2} style={{ padding: space.xs }}>{L('正在加载…', 'Loading…')}</T>
         : rows.length ? (

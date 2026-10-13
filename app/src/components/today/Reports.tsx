@@ -8,7 +8,7 @@ import type { MealPlan } from '../../data/types';
 import { L } from '../../i18n';
 import { openThread } from '../../navigation';
 import { useStore } from '../../store';
-import { radius, space, useTheme } from '../../theme';
+import { radius, space, useTheme, vizMark } from '../../theme';
 import { Check, ChevronRight } from '../icons';
 import { GroupBadge } from '../GroupIcon';
 import { MealPlanCard } from '../LiveBoards';
@@ -16,11 +16,11 @@ import { Markdown } from '../Markdown';
 import { useSheet } from '../Sheet';
 import { useSourceName } from '../SourceBadge';
 import { T, showError } from '../ui';
+import { Legend, Sparkline, seriesColor } from '../viz';
 import { BlockHeader } from './parts';
-import { Sparkline, seriesOf } from './vizLite';
 
 const CARD_W = 250;
-const CARD_H = 172;
+const CARD_H = 188;  // 饮食卡的三项图例要占两行，几张卡一样高
 
 /** 536 → 8 小时 56 分 */
 const duration = (min: number) => {
@@ -96,7 +96,7 @@ function SleepCard({ r, fresh, onPress }: { r: CardReport; fresh: boolean; onPre
         </View>
       ) : <T v="headline" numberOfLines={2} style={{ fontSize: 15 }}>{r.title}</T>}
       {vals.filter((v) => v != null).length >= 2 ? (
-        <Sparkline values={vals} width={CARD_W - 28} height={44} label={L(`近 ${vals.length} 天恢复分：${vals.map((v) => v ?? '无').join('、')}`, `Recovery, last ${vals.length} days: ${vals.map((v) => v ?? 'none').join(', ')}`)} />
+        <Sparkline values={vals} height={44} min label={L(`近 ${vals.length} 天恢复分：${vals.map((v) => v ?? '无').join('、')}`, `Recovery, last ${vals.length} days: ${vals.map((v) => v ?? 'none').join(', ')}`)} />
       ) : null}
       {s?.low ? <T v="caption" color={t.ink3} style={{ fontWeight: '400', fontSize: 11 }} numberOfLines={1}>
         {L(`近 ${vals.length} 天恢复分，最低 ${s.low.score}（${md(s.low.date)}）`, `Last ${vals.length} days, lowest ${s.low.score} (${md(s.low.date)})`)}
@@ -111,9 +111,8 @@ function MealCard({ r, fresh, onPress }: { r: CardReport; fresh: boolean; onPres
   const tot = m?.totals;
   const kcal = { p: (tot?.protein ?? 0) * 4, c: (tot?.carb ?? 0) * 4, f: (tot?.fat ?? 0) * 9 };
   const sum = kcal.p + kcal.c + kcal.f;
-  const series = seriesOf(t);
   const parts = sum > 0 ? [
-    { label: L('蛋白质', 'Protein'), v: kcal.p, color: series[0] }, { label: L('碳水', 'Carbs'), v: kcal.c, color: series[1] }, { label: L('脂肪', 'Fat'), v: kcal.f, color: series[2] },
+    { label: L('蛋白质', 'Protein'), v: kcal.p, slot: 0 }, { label: L('碳水', 'Carbs'), v: kcal.c, slot: 1 }, { label: L('脂肪', 'Fat'), v: kcal.f, slot: 2 },
   ].map((x) => ({ ...x, pct: Math.round((x.v / sum) * 100) })) : [];
   const logged = m?.logged;
   const foot = [tot?.kcal ? `${tot.kcal} kcal` : '', logged ? (logged.count ? L(`今日已记录 ${logged.count} 项`, `${logged.count} logged today`) : L('今日尚未记录饮食', 'Nothing logged today')) : ''].filter(Boolean).join(' · ');
@@ -125,17 +124,15 @@ function MealCard({ r, fresh, onPress }: { r: CardReport; fresh: boolean; onPres
       <View style={{ flex: 1 }} />
       {parts.length ? (
         <View style={{ gap: 5 }} accessible accessibilityLabel={L(`按热量：${parts.map((p) => `${p.label} ${p.pct}%`).join('、')}`, `By calories: ${parts.map((p) => `${p.label} ${p.pct}%`).join(', ')}`)}>
+          {/* 按热量的三大营养素：一条百分比条（段间 2px，两头圆角）+ 图例 */}
           <View style={styles.split}>
-            {parts.map((p) => <View key={p.label} style={{ flex: Math.max(p.v, 1), height: 6, borderRadius: 3, backgroundColor: p.color }} />)}
-          </View>
-          <View style={styles.legend}>
-            {parts.map((p) => (
-              <View key={p.label} style={styles.legendItem}>
-                <View style={[styles.legendDot, { backgroundColor: p.color }]} />
-                <Text style={[styles.legendText, { color: t.ink2 }]}>{`${p.label} ${p.pct}%`}</Text>
-              </View>
+            {parts.map((p, i) => (
+              <View key={p.label} style={{ flex: Math.max(p.v, 1), height: 6, backgroundColor: seriesColor(t, p.slot),
+                borderTopLeftRadius: i === 0 ? vizMark.radius : 0, borderBottomLeftRadius: i === 0 ? vizMark.radius : 0,
+                borderTopRightRadius: i === parts.length - 1 ? vizMark.radius : 0, borderBottomRightRadius: i === parts.length - 1 ? vizMark.radius : 0 }} />
             ))}
           </View>
+          <Legend items={parts.map((p) => ({ label: p.label, slot: p.slot, value: `${p.pct}%` }))} style={{ columnGap: 10, rowGap: 0 }} />
         </View>
       ) : null}
       {foot ? <T v="caption" color={t.ink3} style={{ fontWeight: '400' }} numberOfLines={1}>{foot}</T> : null}
@@ -277,11 +274,7 @@ const styles = StyleSheet.create({
   newDot: { width: 7, height: 7, borderRadius: 4 },
   big: { flexDirection: 'row', alignItems: 'baseline', gap: 6 },
   bigNum: { fontSize: 28, fontWeight: '700', fontVariant: ['tabular-nums'] },
-  split: { flexDirection: 'row', gap: 2 },
-  legend: { flexDirection: 'row', gap: 10 },
-  legendItem: { flexDirection: 'row', alignItems: 'center', gap: 4 },
-  legendDot: { width: 6, height: 6, borderRadius: 3 },
-  legendText: { fontSize: 11 },
+  split: { flexDirection: 'row', gap: vizMark.gap },
   chips: { flexDirection: 'row', flexWrap: 'wrap', gap: 6 },
   cat: { borderRadius: 7, paddingHorizontal: 8, paddingVertical: 3 },
   catText: { fontSize: 12 },
