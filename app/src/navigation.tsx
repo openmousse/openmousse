@@ -3,11 +3,11 @@ import { Linking, Platform } from 'react-native';
 import { createNavigationContainerRef, DarkTheme, DefaultTheme, NavigationContainer } from '@react-navigation/native';
 import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
-import { LayoutGrid, Lightbulb, MessageCircle, Sparkles, Target } from './components/icons';
-import { ChatScreen } from './screens/ChatScreen';
+import { Lightbulb, MessageCircle, Sparkles, Target } from './components/icons';
+import { ChatArchiveScreen, ChatScreen, ThreadScreen, useChatBadge } from './screens/ChatScreen';
+import { InfoScreen } from './screens/InfoScreen';
 import { GoalsScreen } from './screens/GoalsScreen';
 import { GroupScreen } from './screens/GroupScreen';
-import { GroupsScreen } from './screens/GroupsScreen';
 import { MeScreen } from './screens/MeScreen';
 import { ActivityScreen, AvatarScreen, IdentityScreen, JournalScreen, MemoryScreen, ModelsScreen, SecurityScreen } from './screens/MoreScreens';
 import { NewGroupScreen } from './screens/NewGroupScreen';
@@ -56,13 +56,10 @@ const Stack = createNativeStackNavigator();
 
 function Tabs() {
   const t = useTheme();
-  const { inbox, unread, groups, sideChats } = useStore();
+  const { inbox, unread } = useStore();
   const insets = useSafeAreaInsets();
-  // 未读（青色）：「对话」= 主对话 + 项目 + 朋友，「Agents」= 各个 Agent，「Zen」（路由名「思考」）= 聊聊里的回复。「今天」（金色）= 等你点头的。
-  const n = (id: string) => unread.threads[id]?.n ?? 0;
-  const friendsUnread = Object.values(unread.friends ?? {}).reduce((sum, u) => sum + (u.muted ? 0 : u.n), 0);  // 朋友发来还没看的（「对话」页的「朋友」；免打扰的不算）
-  const chatUnread = n('main') + sideChats.reduce((sum, c) => sum + n(c.id), 0) + friendsUnread;
-  const agentUnread = groups.reduce((sum, g) => sum + n(g.id), 0);
+  // 未读（青色）：「对话」= Grava 一边（Agent、主对话、会议、项目，只算给你的回复）+ 好友，免打扰的不算；「Zen」（路由名「思考」）= 聊聊里的回复。「今天」（金色）= 等你点头的。
+  const chatUnread = useChatBadge();
   const thinkUnread = Object.entries(unread.threads).reduce((sum, [tid, u]) => sum + (tid.startsWith('tp-') ? u.n : 0), 0);
   const cyanBadge = { backgroundColor: t.cyan, color: t.surface };
   // Tab 的 name 是路由标识（深链 ?screen=今天、navigate 都用它），不翻译；界面上显示的是 tabBarLabel。
@@ -76,9 +73,7 @@ function Tabs() {
         tabBarLabelStyle: { fontSize: 11, fontWeight: '600', lineHeight: 14 },
       }}>
       <Tab.Screen name="对话" component={ChatScreen}
-        options={{ tabBarLabel: L('对话', 'Chat'), tabBarIcon: ({ color, size }) => <MessageCircle color={color} size={size} />, tabBarBadge: chatUnread || undefined, tabBarBadgeStyle: cyanBadge }} />
-      <Tab.Screen name="Agents" component={GroupsScreen}
-        options={{ tabBarIcon: ({ color, size }) => <LayoutGrid color={color} size={size} />, tabBarBadge: agentUnread || undefined, tabBarBadgeStyle: cyanBadge }} />
+        options={{ tabBarLabel: L('对话', 'Chats'), tabBarIcon: ({ color, size }) => <MessageCircle color={color} size={size} />, tabBarBadge: chatUnread || undefined, tabBarBadgeStyle: cyanBadge }} />
       {/* 路由名还叫「思考」（跳转、截图参数 ?screen=思考 都认它）；显示的名字 2026-09-28 起叫 Zen */}
       <Tab.Screen name="思考" component={ThinkScreen}
         options={{ tabBarLabel: 'Zen', tabBarIcon: ({ color, size }) => <Lightbulb color={color} size={size} />, tabBarBadge: thinkUnread || undefined, tabBarBadgeStyle: cyanBadge }} />
@@ -96,13 +91,17 @@ function initialFromQuery() {
   const screen = q.get('screen');
   if (!screen) return undefined;
   const params = Object.fromEntries([...q.entries()].filter(([k]) => k !== 'screen'));
-  const tabs = ['对话', 'Agents', '思考', '今天', '目标'];
+  const tabs = ['对话', '思考', '今天', '目标'];  // Agents tab 2026-10-13 起并进了「对话」
+  if (screen === 'Agents') return undefined;
   if (tabs.includes(screen)) return { routes: [{ name: 'Tabs', state: { routes: tabs.map((name) => ({ name })), index: tabs.indexOf(screen) } }] };
   return { routes: [{ name: 'Tabs' }, { name: screen, params }], index: 1 };
 }
 
 /** 给推送通知和小窗跳转用（src/store.tsx、components/Banner.tsx）。 */
 export const navigationRef = createNavigationContainerRef<any>();
+
+/** 有没有这个路由（会议的 Meeting / NewMeeting 由会议那条线加，没合进来之前没有）。 */
+export const hasRoute = (name: string) => !!navigationRef.getRootState()?.routeNames?.includes(name);
 
 /**
  * 输入框上面的引用：从收件箱「去对话里说」带过来的（inboxId：显示「回复：标题」，发出去时带上；follow：「已处理」里点「跟进」，显示「跟进：标题」），
@@ -115,7 +114,8 @@ let queued: { target: PushTarget; isGroup: boolean; quote?: ChatQuote; focus?: s
 
 /**
  * 打开推送 / 小窗指向的地方：
- * 对话 → main / 项目在「对话」tab 里，Agent 有自己的页；卡片、收件箱 → 「今天」页，滚到那一张闪一下金边。
+ * 对话 → 主对话和项目是 Chat 页，Agent 是 Group 页，会议是 Meeting 页（各按 id 一页，已经开着就回到那一页）；
+ * 看板 → Agent 的资料页（第一屏是看板）；卡片、收件箱 → 「今天」页，滚到那一张闪一下金边。
  * 去 tab 用 pop：从「已处理」「任务」这类叠在上面的页过去时退回到 tab，不再叠一层新的。
  */
 export function openTarget(target: PushTarget, isGroup = false, quote?: ChatQuote, focus?: string) {
@@ -126,15 +126,16 @@ export function openTarget(target: PushTarget, isGroup = false, quote?: ChatQuot
     case 'thread':
       if (target.thread === 'today') tab('今天', { at });
       else if (target.thread.startsWith('tp-')) navigationRef.navigate('ThinkTalk', { id: target.thread, at });  // 思考主题
-      else if (isGroup) navigationRef.navigate('Group', { id: target.thread, tab: 'chat', at, quote, focus });
-      else tab('对话', { thread: target.thread, at, quote, focus });
+      else if (isGroup) navigationRef.navigate('Group', { id: target.thread, at, quote, focus });
+      else if (target.thread.startsWith('grp-') && hasRoute('Meeting')) navigationRef.navigate('Meeting', { id: target.thread, at, focus });
+      else navigationRef.navigate('Chat', { id: target.thread, at, quote, focus });
       return;
     case 'card':
     case 'inbox':
       tab('今天', { highlight: { kind: target.type, id: target.id }, at });
       return;
     case 'board':
-      navigationRef.navigate('Group', { id: target.agent, tab: 'board', at });
+      navigationRef.navigate('Info', { kind: 'agent', id: target.agent, tab: 'board', at });
       return;
     case 'friend':
       navigationRef.navigate('FriendChat', { id: target.id, at });
@@ -237,7 +238,12 @@ export function RootNavigator() {
         <Stack.Screen name="CustomApp" component={CustomAppScreen} />
         <Stack.Screen name="MyName" component={MyNameScreen} options={{ gestureEnabled: false }} />
         <Stack.Screen name="Starter" component={StarterScreen} options={{ gestureEnabled: false }} />
-        <Stack.Screen name="Group" component={GroupScreen} />
+        {/* 每个对话一页（getId）：从一个 Agent 跳到另一个是新的一页，跳回已经开着的就回到它 */}
+        <Stack.Screen name="Chat" component={ThreadScreen} getId={({ params }: { params?: { id?: string } }) => params?.id ?? 'main'} />
+        <Stack.Screen name="Group" component={GroupScreen} getId={({ params }: { params?: { id?: string } }) => params?.id} />
+        {/* 资料页（聊天页头的 ⓘ）：Agent 第一屏是看板；主对话、项目、会议、好友各一页设置 */}
+        <Stack.Screen name="Info" component={InfoScreen} getId={({ params }: { params?: { kind?: string; id?: string } }) => `${params?.kind}:${params?.id}`} />
+        <Stack.Screen name="ChatArchive" component={ChatArchiveScreen} />
         <Stack.Screen name="History" component={HistoryScreen} />
         <Stack.Screen name="BoardHistory" component={BoardHistoryScreen} />
         <Stack.Screen name="HistoryDay" component={HistoryDayScreen} />
@@ -256,7 +262,7 @@ export function RootNavigator() {
         <Stack.Screen name="Tasks" component={TasksScreen} />
         <Stack.Screen name="ScheduleFeed" component={ScheduleFeedScreen} />
         <Stack.Screen name="Task" component={TaskScreen} />
-        {/* 「我」从 tab 挪到了侧栏底部（2026-09-27） */}
+        {/* 设置（「我」）：2026-09-27 从 tab 挪到侧栏底部，2026-10-13 起在「对话」页右上角 */}
         <Stack.Screen name="Me" component={MeScreen} />
         <Stack.Screen name="ThinkTalk" component={ThinkTalkScreen} />
         <Stack.Screen name="ThinkDone" component={ThinkDoneScreen} />

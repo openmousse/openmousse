@@ -11,13 +11,14 @@ import * as Haptics from 'expo-haptics';
 import Svg, { Path, Rect } from 'react-native-svg';
 import * as fr from '../api/friends';
 import type { A2AOut, AnyTier, CardLogItem, CardSettings, Friend, FriendMsg, FriendsHome as Home, Invite, ScopeKey, Tier } from '../api/friends';
-import { ArrowDown, ArrowUp, Ban, Bell, BellOff, Check, CheckCheck, ChevronDown, ChevronRight, ClipboardPaste, Clock, Copy, Ellipsis, Eye, IdCard, Link2, Pencil, Pin, PinOff, QrCode,
+import { ArrowDown, ArrowUp, Ban, Bell, BellOff, Check, CheckCheck, ChevronDown, ChevronRight, ClipboardPaste, Clock, Copy, Eye, IdCard, Link2, Pencil, Pin, PinOff, QrCode,
   Reply, RotateCw, Search, ShareIcon, ShieldCheck, Mic, Trash2, TriangleAlert, Undo2, UserPlus, UserX, X } from '../components/icons';
 import { AgentLens, clockLabel, dayKey, dayLabel, timeLabel } from '../components/FriendBits';
 import { Markdown } from '../components/Markdown';
 import { useSheet } from '../components/Sheet';
+import { ChatHeader, ChatRowView, MenuItem, StateFace, SwipeRow, rowTime, type SwipeAction } from '../components/ChatParts';
 import { ChatScroll, KeyboardSticky, dismissMode, useBottomInset } from '../components/keyboard';
-import { Btn, Card, CountPill, NavHeader, Pill, PullRefresh, Screen, SectionLabel, Segmented, T, showError } from '../components/ui';
+import { Btn, Card, NavHeader, Pill, PullRefresh, Screen, SectionLabel, Segmented, T, showError } from '../components/ui';
 import { Group, GroupLabel, GroupNote, Row, SettingsHeader } from '../components/settings';
 import type { AgentColor } from '../data/types';
 import { L } from '../i18n';
@@ -155,39 +156,28 @@ export function NameCard({ suggest, onSaved }: { suggest?: string; onSaved: (nam
   );
 }
 
-// —— 「对话」页的「朋友」 ——
+// —— 「对话」页的好友一边 ——
 
-/** 左滑露出的几个按钮（横向 ScrollView，不用新的原生模块）。宽度没量出来之前就是普通的一行。 */
-function SwipeRow({ children, actions }: { children: React.ReactNode; actions: { label: string; icon: React.ReactNode; bg: string; fg: string; onPress: () => void }[] }) {
-  const [w, setW] = useState(0);
-  const ref = useRef<ScrollView>(null);
-  const each = 78;
-  const total = each * actions.length;
-  if (!actions.length) return <>{children}</>;
+/** 删除和一位好友的聊天记录前的确认（列表左滑、长按和资料页共用）。 */
+export function FriendClear({ name, close, run }: { name: string; close: () => void; run: () => Promise<unknown> }) {
+  const t = useTheme();
+  const [busy, setBusy] = useState(false);
   return (
-    <View onLayout={(e) => setW(Math.round(e.nativeEvent.layout.width))}>
-      {w ? (
-        <ScrollView ref={ref} horizontal showsHorizontalScrollIndicator={false} bounces={false} decelerationRate="fast" snapToOffsets={[0, total]}
-          disableIntervalMomentum directionalLockEnabled>
-          <View style={{ width: w }}>{children}</View>
-          {actions.map((a) => (
-            <Pressable key={a.label} onPress={() => { ref.current?.scrollTo({ x: 0, animated: true }); a.onPress(); }} accessibilityRole="button" accessibilityLabel={a.label}
-              style={({ pressed }) => [styles.swipeBtn, { width: each, backgroundColor: a.bg, opacity: pressed ? 0.8 : 1 }]}>
-              {a.icon}
-              <T v="caption" color={a.fg} style={{ fontWeight: '700' }}>{a.label}</T>
-            </Pressable>
-          ))}
-        </ScrollView>
-      ) : children}
+    <View style={{ gap: space.sm }}>
+      <T v="callout" color={t.ink2} style={{ marginBottom: space.sm }}>{L(`聊天记录仅从你这边删除，${name} 那边不受影响。好友关系保留；删除好友请在资料页操作。`, `The chat is deleted on your side only; nothing changes for ${name}. You stay friends; remove the friend from their details page.`)}</T>
+      <Btn kind="danger" label={busy ? L('正在删除…', 'Deleting…') : L('删除聊天记录', 'Delete chat')}
+        onPress={() => { if (busy) return; setBusy(true); run().then(close).catch((e) => { setBusy(false); showError(L('删除失败', "Couldn't delete"), e); }); }} />
+      <Btn kind="quiet" label={L('取消', 'Cancel')} onPress={close} />
     </View>
   );
 }
 
-export function FriendsHome() {
+/** 好友一边的列表（2026-10-13 起和 Grava 一边同一种行）：置顶的在前，左滑或长按 置顶 / 免打扰 / 删除（只删聊天记录）。searchOpen：页头点了搜索。 */
+export function FriendsHome({ searchOpen }: { searchOpen?: boolean }) {
   const t = useTheme();
   const nav = useNavigation<any>();
   const sheet = useSheet();
-  const { unread } = useStore();
+  const { unread, reload } = useStore();
   const [data, setData] = useState<Home | null>(null);
   const [err, setErr] = useState('');
   const [q, setQ] = useState('');
@@ -198,6 +188,9 @@ export function FriendsHome() {
   // 未读变了（轮询每 45 秒一次）就重读一遍：谁发来了新的、最后一句
   const sig = JSON.stringify(unread.friends ?? {});
   useEffect(() => { load(); }, [sig, load]);
+  // 搜索框收起来：清空
+  const [wasOpen, setWasOpen] = useState(searchOpen);
+  if (searchOpen !== wasOpen) { setWasOpen(searchOpen); if (!searchOpen) { setQ(''); setHits(null); } }
   // 搜索：名字在本机筛；聊天内容问服务器（停 300ms 再问）
   const onQ = (v: string) => {
     setQ(v);
@@ -209,21 +202,29 @@ export function FriendsHome() {
   const words = q.trim().toLowerCase().split(/\s+/).filter(Boolean);
   const named = (f: Friend) => words.every((w) => `${f.name} ${f.cardName}`.toLowerCase().includes(w));
   const prefsOk = supports('friends.prefs');
+  const clearOk = supports('friends.clear');
   const patch = (f: Friend, b: { pinned?: boolean; muted?: boolean }) => { fr.patchFriend(f.id, b).then(load).catch((e) => showError(L('修改失败', "Couldn't update"), e)); };
-  const rowActions = (f: Friend) => (prefsOk ? [
-    { label: f.pinned ? L('取消置顶', 'Unpin') : L('置顶', 'Pin'), icon: f.pinned ? <PinOff size={18} color={t.ink} /> : <Pin size={18} color={t.ink} />, bg: t.surface2, fg: t.ink,
-      onPress: () => patch(f, { pinned: !f.pinned }) },
-    { label: f.muted ? L('取消免打扰', 'Unmute') : L('免打扰', 'Mute'), icon: f.muted ? <Bell size={18} color={t.onGold} /> : <BellOff size={18} color={t.onGold} />, bg: t.goldFill, fg: t.onGold,
-      onPress: () => patch(f, { muted: !f.muted }) },
-  ] : []);
+  const clear = (f: Friend) => sheet.open({
+    title: L(`删除与 ${f.name} 的聊天记录？`, `Delete your chat with ${f.name}?`),
+    content: (close) => <FriendClear name={f.name} close={close} run={() => fr.clearChat(f.id).then(() => { load(); reload('unread').catch(() => {}); })} />,
+  });
+  const rowActions = (f: Friend): SwipeAction[] => [
+    ...(prefsOk ? [
+      { key: 'pin', label: f.pinned ? L('取消置顶', 'Unpin') : L('置顶', 'Pin'), tone: 'plain' as const, icon: f.pinned ? <PinOff size={18} color={t.ink} /> : <Pin size={18} color={t.ink} />,
+        onPress: () => patch(f, { pinned: !f.pinned }) },
+      { key: 'mute', label: f.muted ? L('取消免打扰', 'Unmute') : L('免打扰', 'Mute'), tone: 'gold' as const, icon: f.muted ? <Bell size={18} color={t.onGold} /> : <BellOff size={18} color={t.onGold} />,
+        onPress: () => patch(f, { muted: !f.muted }) },
+    ] : []),
+    ...(clearOk ? [{ key: 'del', label: L('删除', 'Delete'), tone: 'danger' as const, icon: <Trash2 size={18} color="#FFFFFF" />, onPress: () => clear(f) }] : []),
+  ];
   const rowMenu = (f: Friend) => {
-    const acts = rowActions(f);
-    if (!acts.length) return;
+    if (!prefsOk && !clearOk) return;
     sheet.open({ title: f.name, content: (close) => (
-      <View style={{ gap: space.sm }}>
-        <Action icon={f.pinned ? PinOff : Pin} label={acts[0].label} onPress={() => { close(); acts[0].onPress(); }} />
-        <Action icon={f.muted ? Bell : BellOff} label={acts[1].label} note={f.muted ? undefined : L('不推送通知，未读不计入角标', "No notifications; unread doesn't count in the badge")}
-          onPress={() => { close(); acts[1].onPress(); }} />
+      <View>
+        {prefsOk ? <MenuItem icon={f.pinned ? PinOff : Pin} title={f.pinned ? L('取消置顶', 'Unpin') : L('置顶', 'Pin')} onPress={() => { close(); patch(f, { pinned: !f.pinned }); }} /> : null}
+        {prefsOk ? <MenuItem icon={f.muted ? Bell : BellOff} title={f.muted ? L('取消免打扰', 'Unmute') : L('免打扰', 'Mute')} desc={f.muted ? undefined : L('不推送通知，未读不计入角标', "No notifications; unread doesn't count in the badge")}
+          onPress={() => { close(); patch(f, { muted: !f.muted }); }} /> : null}
+        {clearOk ? <MenuItem icon={Trash2} danger title={L('删除聊天记录', 'Delete chat')} desc={L('好友关系保留', 'You stay friends')} onPress={() => { close(); setTimeout(() => clear(f), 250); }} /> : null}
       </View>
     ) });
   };
@@ -232,69 +233,50 @@ export function FriendsHome() {
   const off = (data?.friends ?? []).filter((f) => f.status !== 'active' && named(f));
   const open = data?.invites.length ?? 0;
   const searching = !!words.length;
+  const pad = { paddingHorizontal: space.lg };
   return (
-    <ScrollView contentContainerStyle={{ padding: space.lg, paddingBottom: space.xxl, gap: space.md }} refreshControl={<PullRefresh onRefresh={load} />}
+    <ScrollView contentContainerStyle={{ paddingTop: space.md, paddingBottom: space.xxl, gap: space.md }} refreshControl={<PullRefresh onRefresh={load} />}
       keyboardShouldPersistTaps="handled" keyboardDismissMode={Platform.OS === 'web' ? 'none' : 'on-drag'}>
-      <View style={styles.homeHead}>
-        <T v="title" style={{ flex: 1 }}>{L('好友', 'Friends')}</T>
-        <Pressable onPress={() => nav.navigate('AddFriend')} accessibilityRole="button" accessibilityLabel={L('添加好友', 'Add a friend')}
-          style={({ pressed }) => [styles.roundBtn, { backgroundColor: t.surface2, opacity: pressed ? 0.7 : 1 }]}>
-          <UserPlus size={20} color={t.ink} />
-        </Pressable>
-      </View>
-      {data?.friends.length ? (
-        <View style={[styles.searchBox, { backgroundColor: t.surface2 }]}>
-          <Search size={17} color={t.ink3} />
-          <TextInput value={q} onChangeText={onQ} placeholder={supports('friends.search') ? L('搜索好友和聊天记录', 'Search friends and messages') : L('搜索好友', 'Search friends')}
-            placeholderTextColor={t.ink3} autoCorrect={false} returnKeyType="search" accessibilityLabel={L('搜索', 'Search')} style={[type.body, { flex: 1, color: t.ink, paddingVertical: 0 }]} />
-          {q ? <Pressable onPress={() => onQ('')} hitSlop={8} accessibilityRole="button" accessibilityLabel={L('清空', 'Clear')}><X size={16} color={t.ink3} /></Pressable> : null}
+      {searchOpen ? (
+        <View style={pad}>
+          <View style={[styles.searchBox, { backgroundColor: t.surface2 }]}>
+            <Search size={17} color={t.ink3} />
+            <TextInput value={q} onChangeText={onQ} autoFocus placeholder={supports('friends.search') ? L('搜索好友和聊天记录', 'Search friends and messages') : L('搜索好友', 'Search friends')}
+              placeholderTextColor={t.ink3} autoCorrect={false} returnKeyType="search" accessibilityLabel={L('搜索', 'Search')} style={[type.body, { flex: 1, color: t.ink, paddingVertical: 0, outlineWidth: 0 }]} />
+            {q ? <Pressable onPress={() => onQ('')} hitSlop={8} accessibilityRole="button" accessibilityLabel={L('清空', 'Clear')}><X size={16} color={t.ink3} /></Pressable> : null}
+          </View>
         </View>
       ) : null}
-      {err ? <Card><T v="callout" color={t.bad}>{L(`无法加载：${err}`, `Couldn't load: ${err}`)}</T></Card> : null}
+      {err ? <View style={pad}><Card><T v="callout" color={t.bad}>{L(`无法加载：${err}`, `Couldn't load: ${err}`)}</T></Card></View> : null}
       {!data && !err ? <ActivityIndicator color={t.gold} style={{ marginTop: space.xl }} /> : null}
-      {!searching && data?.why === 'no_name' ? <NameCard suggest={data.me.suggest} onSaved={() => { load(); }} /> : !searching && data?.why === 'no_url' ? <NotReady /> : null}
-      {!searching && data?.unreachable ? <PublicWarn fix={data.publicFix} relay={!!data.relay?.base && data.me.url === data.relay.base} /> : null}
+      {!searching && data?.why === 'no_name' ? <View style={pad}><NameCard suggest={data.me.suggest} onSaved={() => { load(); }} /></View>
+        : !searching && data?.why === 'no_url' ? <View style={pad}><NotReady /></View> : null}
+      {!searching && data?.unreachable ? <View style={pad}><PublicWarn fix={data.publicFix} relay={!!data.relay?.base && data.me.url === data.relay.base} /></View> : null}
       {data && !data.friends.length ? (
-        <Card style={{ gap: space.sm }}>
-          <T v="headline">{L('暂无好友', 'No friends yet')}</T>
-          <T v="callout" color={t.ink2}>{L('添加好友：向对方发送邀请码（二维码或链接），或粘贴对方发来的邀请码。添加后双方服务器直接通信，每条消息均带签名。', "To add a friend, give them an invite (QR code or link) or paste theirs. Your servers then communicate directly, and every message is signed.")}</T>
-          <T v="callout" color={t.ink2}>{L('对方未安装 OpenMousse 时，可使用分享链接。', "For people without OpenMousse, use a share link.")}</T>
-          {data.ready ? <Btn label={L('添加好友', 'Add a friend')} icon={<UserPlus size={17} color={t.onGold} />} onPress={() => nav.navigate('AddFriend')} /> : null}
-        </Card>
+        <View style={pad}>
+          <Card style={{ gap: space.sm }}>
+            <T v="headline">{L('暂无好友', 'No friends yet')}</T>
+            <T v="callout" color={t.ink2}>{L('添加好友：向对方发送邀请码（二维码或链接），或粘贴对方发来的邀请码。添加后双方服务器直接通信，每条消息均带签名。', "To add a friend, give them an invite (QR code or link) or paste theirs. Your servers then communicate directly, and every message is signed.")}</T>
+            <T v="callout" color={t.ink2}>{L('对方未安装 OpenMousse 时，可使用分享链接。', "For people without OpenMousse, use a share link.")}</T>
+            {data.ready ? <Btn label={L('添加好友', 'Add a friend')} icon={<UserPlus size={17} color={t.onGold} />} onPress={() => nav.navigate('AddFriend')} /> : null}
+          </Card>
+        </View>
       ) : null}
-      {searching && live.length ? <SectionLabel>{L('好友', 'Friends')}</SectionLabel> : null}
+      {searching && live.length ? <View style={pad}><SectionLabel>{L('好友', 'Friends')}</SectionLabel></View> : null}
       {live.length ? (
-        <Card style={{ paddingVertical: 0, paddingHorizontal: 0, overflow: 'hidden' }}>
+        <View>
           {live.map((f, i) => (
-            <View key={f.id} style={i ? { borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: t.line } : null}>
-              <SwipeRow actions={rowActions(f)}>
-                <Pressable onPress={() => nav.navigate('FriendChat', { id: f.id })} onLongPress={prefsOk ? () => rowMenu(f) : undefined} delayLongPress={400} accessibilityRole="button"
-                  accessibilityHint={prefsOk ? L('左滑或长按可置顶、免打扰', 'Swipe left or long-press to pin or mute') : undefined}
-                  style={({ pressed }) => [styles.friendRow, { paddingHorizontal: space.md, backgroundColor: f.pinned ? t.surface2 : t.surface, opacity: pressed ? 0.7 : 1 }]}>
-                  <FriendAvatar id={f.id} name={f.name} />
-                  <View style={{ flex: 1, minWidth: 0, gap: 3 }}>
-                    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
-                      <T v="headline" numberOfLines={1} style={{ flexShrink: 1 }}>{f.name}</T>
-                      {f.muted ? <BellOff size={14} color={t.ink3} /> : null}
-                      {f.agent ? <Pill label={L('有 Agent', 'Has an Agent')} tone="cyan" /> : null}
-                    </View>
-                    <T v="callout" color={f.unread && !f.muted ? t.ink : t.ink2} numberOfLines={1}>{lastLine(f)}</T>
-                  </View>
-                  <View style={{ alignItems: 'flex-end', gap: 5, alignSelf: 'flex-start', paddingTop: 2 }}>
-                    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
-                      {f.pinned ? <Pin size={12} color={t.ink3} /> : null}
-                      <T v="caption" color={t.ink3}>{timeLabel(f.last?.ts ?? f.createdAt)}</T>
-                    </View>
-                    <CountPill n={f.unread} small muted={f.muted} />
-                  </View>
-                </Pressable>
-              </SwipeRow>
-            </View>
+            <SwipeRow key={f.id} actions={rowActions(f)}>
+              <ChatRowView face={<View style={{ padding: 4 }}><FriendAvatar id={f.id} name={f.name} size={46} /></View>} title={f.name} pinned={f.pinned} muted={f.muted}
+                time={rowTime(f.last?.ts ?? f.createdAt)} line={lastLine(f)} unread={f.unread} last={i === live.length - 1}
+                onPress={() => nav.navigate('FriendChat', { id: f.id })} onLongPress={prefsOk || clearOk ? () => rowMenu(f) : undefined}
+                hint={prefsOk ? L('左滑或长按可置顶、免打扰、删除聊天记录', 'Swipe left or long-press to pin, mute or delete the chat') : undefined} />
+            </SwipeRow>
           ))}
-        </Card>
+        </View>
       ) : null}
       {searching && hits?.length ? (
-        <>
+        <View style={pad}>
           <SectionLabel>{L('聊天记录', 'Messages')}</SectionLabel>
           <Card style={{ paddingVertical: 0, paddingHorizontal: space.md }}>
             {hits.map((h, i) => (
@@ -311,30 +293,34 @@ export function FriendsHome() {
               </Pressable>
             ))}
           </Card>
-        </>
+        </View>
       ) : null}
       {searching && hits && !hits.length && !live.length && !off.length ? (
-        <Card><T v="callout" color={t.ink2}>{L(`未找到「${q.trim()}」的相关结果。`, `No results for "${q.trim()}".`)}</T></Card>
+        <View style={pad}><Card><T v="callout" color={t.ink2}>{L(`未找到「${q.trim()}」的相关结果。`, `No results for "${q.trim()}".`)}</T></Card></View>
       ) : null}
       {!searching && open ? (
-        <Pressable onPress={() => nav.navigate('AddFriend')} accessibilityRole="button" style={({ pressed }) => [styles.linkRow, { backgroundColor: t.surface, opacity: pressed ? 0.7 : 1 }]}>
-          <QrCode size={18} color={t.ink2} />
-          <T v="callout" style={{ flex: 1 }}>{L(`${open} 张邀请码尚未使用`, `${open} invite${open === 1 ? '' : 's'} not used yet`)}</T>
-          <ChevronRight size={16} color={t.ink3} />
-        </Pressable>
+        <View style={pad}>
+          <Pressable onPress={() => nav.navigate('AddFriend')} accessibilityRole="button" style={({ pressed }) => [styles.linkRow, { backgroundColor: t.surface, opacity: pressed ? 0.7 : 1 }]}>
+            <QrCode size={18} color={t.ink2} />
+            <T v="callout" style={{ flex: 1 }}>{L(`${open} 张邀请码尚未使用`, `${open} invite${open === 1 ? '' : 's'} not used yet`)}</T>
+            <ChevronRight size={16} color={t.ink3} />
+          </Pressable>
+        </View>
       ) : null}
       {!searching && (data?.friends.length || data?.ready) ? (
-        <Pressable onPress={() => nav.navigate('CardAgent')} accessibilityRole="button" style={({ pressed }) => [styles.linkRow, { backgroundColor: t.surface, opacity: pressed ? 0.7 : 1 }]}>
-          <View style={[styles.cardIcon, { backgroundColor: t.goldSoft }]}><IdCard size={17} color={t.gold} /></View>
-          <View style={{ flex: 1, gap: 2 }}>
-            <T v="headline" style={{ fontSize: 15 }}>{L('我的名片 Agent', 'My card agent')}</T>
-            <T v="caption" color={t.ink3}>{data?.agent ? L('按档位设置好友可查询的内容', 'What friends can ask about, by tier') : L('尚未开启：好友的提问需要你亲自回复', "Not enabled: you answer friends' questions yourself")}</T>
-          </View>
-          <ChevronRight size={16} color={t.ink3} />
-        </Pressable>
+        <View style={pad}>
+          <Pressable onPress={() => nav.navigate('CardAgent')} accessibilityRole="button" style={({ pressed }) => [styles.linkRow, { backgroundColor: t.surface, opacity: pressed ? 0.7 : 1 }]}>
+            <View style={[styles.cardIcon, { backgroundColor: t.goldSoft }]}><IdCard size={17} color={t.gold} /></View>
+            <View style={{ flex: 1, gap: 2 }}>
+              <T v="headline" style={{ fontSize: 15 }}>{L('我的名片 Agent', 'My card agent')}</T>
+              <T v="caption" color={t.ink3}>{data?.agent ? L('按档位设置好友可查询的内容', 'What friends can ask about, by tier') : L('尚未开启：好友的提问需要你亲自回复', "Not enabled: you answer friends' questions yourself")}</T>
+            </View>
+            <ChevronRight size={16} color={t.ink3} />
+          </Pressable>
+        </View>
       ) : null}
       {off.length ? (
-        <>
+        <View style={pad}>
           <SectionLabel>{L('已不是好友', 'No longer friends')}</SectionLabel>
           <Card style={{ paddingVertical: 0, paddingHorizontal: space.md }}>
             {off.map((f, i) => (
@@ -348,7 +334,7 @@ export function FriendsHome() {
               </Pressable>
             ))}
           </Card>
-        </>
+        </View>
       ) : null}
     </ScrollView>
   );
@@ -724,9 +710,9 @@ export function SwitchRow({ icon, label, note, value, onChange, disabled }: {
   );
 }
 
-/** 朋友的设置（从聊天页右上角「…」打开）：agent 之间（第三层，FriendAgentsScreen）、档位、备注、指纹、拉黑、删掉。
- * 弹层画在导航器外面，用不了 useNavigation：跳转由聊天页传进来（onAgents）。 */
-function FriendSheet({ f, close, onChanged, onGone, onAgents }: {
+/** 好友的设置（2026-10-13 起在资料页 InfoScreen，聊天页头 ⓘ 进）：agent 之间（第三层，FriendAgentsScreen）、档位、备注、置顶、免打扰、指纹、屏蔽、删除好友。
+ * 跳转由外面传进来（onAgents / onGone），放进弹层里也能用。 */
+export function FriendInfoBody({ f, close, onChanged, onGone, onAgents }: {
   f: Friend; close: () => void; onChanged: (f: Friend) => void; onGone: () => void; onAgents: () => void;
 }) {
   const t = useTheme();
@@ -1105,12 +1091,6 @@ export function FriendChatScreen() {
       </View>
     ) });
   };
-  const openSheet = () => {
-    if (!friend) return;
-    sheet.open({ title: friend.name, content: (close) => (
-      <FriendSheet f={friend} close={close} onChanged={setFriend} onGone={() => nav.goBack()} onAgents={() => nav.navigate('FriendAgents', { id: friend.id })} />
-    ) });
-  };
 
   const active = friend?.status === 'active';
   const canAgent = !!friend && active && hasA2A;
@@ -1132,8 +1112,9 @@ export function FriendChatScreen() {
   const BarIcon = mode?.k === 'reply' ? Reply : mode?.k === 'edit' || mode?.k === 'review' ? Pencil : null;
   return (
     <Screen>
-      <NavHeader title={friend?.name ?? L('好友', 'Friend')} sub={sub} onBack={() => nav.goBack()}
-        right={friend ? <Pressable onPress={openSheet} hitSlop={10} accessibilityRole="button" accessibilityLabel={L('好友设置', 'Friend settings')} style={{ padding: 6 }}><Ellipsis size={22} color={t.ink} /></Pressable> : undefined} />
+      <ChatHeader title={friend?.name ?? L('好友', 'Friend')} sub={sub} onBack={() => nav.goBack()}
+        face={<StateFace size={36}><FriendAvatar id={id} name={friend?.name ?? ''} size={36} /></StateFace>}
+        onInfo={friend ? () => nav.navigate('Info', { kind: 'friend', id: friend.id }) : undefined} infoLabel={L('好友资料与设置', 'Friend details and settings')} />
       <View ref={root} style={{ flex: 1, paddingBottom: bottom.home }} onLayout={bottom.onLayout}>
         <ChatScroll ref={scroller} offset={bottom.offset} style={{ flex: 1 }} contentContainerStyle={{ padding: space.lg, gap: space.lg }}
           onScroll={onScroll} scrollEventThrottle={64} onContentSizeChange={onContentSize}

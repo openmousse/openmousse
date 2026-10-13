@@ -8,7 +8,8 @@ import { dataApi, missing, resetServerSupport, serverSupport } from './api/data'
 import { healthSupported, loadWake, postSignal, startHealthBackground, syncHealth, type WakeState } from './api/health';
 import { flushShareOutbox, refreshWidget, shareConfig, startLive, syncLive } from './api/native';
 import { HEALTH_KEYS, OPENCLAW, loadHealthParts, loadLive, probe, type ClawInfo, type LiveData } from './api/live';
-import { OLD_SERVER, setServerInfo, type ServerInfo } from './api/version';
+import { OLD_SERVER, setServerInfo, supports, type ServerInfo } from './api/version';
+import { chatsApi, type ChatList } from './api/chats';
 import { onPushReceived, onPushResponse, registerCategories, registerPush, setAppBadge, type PushAction, type PushInfo } from './api/push';
 import { useBanner, type BannerSpec } from './components/Banner';
 import { kindLabel } from './components/InboxCard';
@@ -79,6 +80,8 @@ interface State {
   inboxByThread: Record<string, InboxItem[]>;
   /** 未读：各线程没看的消息、新卡片、等你点头的数量、图标角标 */
   unread: UnreadSummary;
+  /** 「对话」tab 的 Grava 一边（/api/chats；老服务器 null，页面用 groups / sideChats / unread 自己拼） */
+  chats: ChatList | null;
   /** 正显示在屏幕上的对话（app 在前台时）。不为它弹小窗，新消息直接算已读。 */
   activeThread: string | null;
   feed: FeedItem[];
@@ -122,7 +125,7 @@ interface State {
   dataErrors: Partial<Record<DataKey, string>>;
 }
 
-export type DataKey = 'groups' | 'sideChats' | 'tasks' | 'inbox' | 'inboxRecent' | 'unread' | 'feed' | 'schedule' | 'remember' | 'upcoming' | 'goals' | 'weightTrend' | 'journal' | 'applications' | 'memories' | 'activity' | 'profile' | 'models' | 'security' | 'avatar' | 'wake' | 'tree' | 'connectors';
+export type DataKey = 'groups' | 'sideChats' | 'tasks' | 'inbox' | 'inboxRecent' | 'unread' | 'chats' | 'feed' | 'schedule' | 'remember' | 'upcoming' | 'goals' | 'weightTrend' | 'journal' | 'applications' | 'memories' | 'activity' | 'profile' | 'models' | 'security' | 'avatar' | 'wake' | 'tree' | 'connectors';
 
 interface Actions {
   /** 重新探测服务器，读回全部数据和对话记录。 */
@@ -273,6 +276,7 @@ const LOADERS: Record<DataKey, () => Promise<Partial<State>>> = {
   inbox: async () => ({ inbox: await dataApi.inbox('pending') }),
   inboxRecent: async () => ({ inboxRecent: await dataApi.inbox('recent') }),
   unread: async () => { const u = await dataApi.unread(); return u ? { unread: u } : {}; },
+  chats: async () => ({ chats: supports('chats.list') ? await chatsApi.load() : null }),
   feed: async () => ({ feed: await dataApi.feed() }),
   schedule: async () => { const r = await sched.timeline(todayIso(), 2); return { schedule: r.events, scheduleErrors: r.errors, scheduleEditable: r.editable }; },
   remember: async () => { const r = await sched.remember(); return { remember: r.items, rememberErrors: r.errors }; },
@@ -301,7 +305,7 @@ const ALL_KEYS = Object.keys(LOADERS) as DataKey[];
  */
 const STARTUP_KEYS = ALL_KEYS.filter((k) => !['groups', 'sideChats', 'unread', 'inboxRecent', 'tree', 'connectors'].includes(k));
 /** 后台轮询的：不亮「正在读」、读失败也不报错，没变化就不更新（不让整棵树白白重画）。 */
-const QUIET = new Set<DataKey>(['unread', 'wake']);
+const QUIET = new Set<DataKey>(['unread', 'wake', 'chats']);
 /** 回到前台时：离上次同步健康数据超过这么久才再同步一次（起床判断要看最新的睡眠分段） */
 const HEALTH_RESYNC_MS = 5 * 60_000;
 const POLL_MS = 45_000;
@@ -342,6 +346,7 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
     receipts: [],
     inboxByThread: {},
     unread: EMPTY_UNREAD,
+    chats: null,
     activeThread: null,
     feed: [],
     schedule: [],

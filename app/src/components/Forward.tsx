@@ -130,12 +130,12 @@ export function Transcript({ items, onBack }: { items: { name: string; text: str
   );
 }
 
-/** 打开一条的原处：Agent 的对话（主对话、项目在「对话」页，Group 在它自己的页）或和朋友的聊天。弹层里也能用（走 navigationRef）。 */
+/** 打开一条的原处：Agent 的对话（主对话、项目是 Chat 页，Agent 是 Group 页）或和朋友的聊天。弹层里也能用（走 navigationRef）。 */
 export function openBack(back: ForwardItem['back'], groupIds: string[]) {
   if (!navigationRef.isReady()) return;
   if (back.kind === 'friend') navigationRef.navigate('FriendChat', { id: back.friend });
   else if (groupIds.includes(back.thread)) navigationRef.navigate('Group', { id: back.thread });
-  else navigationRef.navigate('Tabs', { screen: '对话', params: { thread: back.thread, at: Date.now(), focus: back.id } });
+  else navigationRef.navigate('Chat', { id: back.thread, at: Date.now(), focus: back.id });
 }
 
 /** 转给 Agent 的那条消息：先拿全文再画（服务器在消息上只存了前三条的开头） */

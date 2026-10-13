@@ -67,8 +67,8 @@ function DeleteSheet({ g, close, onDeleted }: { g: Group; close: () => void; onD
   };
   return (
     <View style={{ gap: space.md }}>
-      <T v="callout" color={t.ink2}>{!claw.caps.agentWorkspaces ? L(`此 Agent 将从 Agents 中移除，${claw.name} 端不受影响。此处的对话记录、日志和卡片将保留为历史。`,
-        `It's removed from Agents; nothing changes on ${claw.name}'s side. Its chat history, journal and cards here are kept as history.`) : L('服务器上对应的 OpenClaw agent 将被移除，工作区和记忆归档到 archive/（不会删除）。此处的对话记录、日志和卡片将保留为历史。', 'Its OpenClaw agent on the server is removed, and its workspace and memory are moved to archive/ (not deleted). Its chats, journal and cards here are kept as history.')}</T>
+      <T v="callout" color={t.ink2}>{!claw.caps.agentWorkspaces ? L(`此 Agent 将从列表中移除，${claw.name} 端不受影响。此处的对话记录、日志和卡片将保留为历史。`,
+        `It's removed from your list; nothing changes on ${claw.name}'s side. Its chat history, journal and cards here are kept as history.`) : L('服务器上对应的 OpenClaw agent 将被移除，工作区和记忆归档到 archive/（不会删除）。此处的对话记录、日志和卡片将保留为历史。', 'Its OpenClaw agent on the server is removed, and its workspace and memory are moved to archive/ (not deleted). Its chats, journal and cards here are kept as history.')}</T>
       {err ? <T v="callout" color={t.bad}>{L(`删除失败：${err}`, `Couldn't delete it: ${err}`)}</T> : null}
       <View style={{ flexDirection: 'row', gap: space.sm }}>
         <Btn flex kind="quiet" label={L('保留', 'Keep')} onPress={close} />
@@ -147,8 +147,8 @@ function EditGroupBody({ g }: { g: Group }) {
   });
   const confirmDelete = () => sheet.open({
     title: L(`删除「${g.name}」？`, `Delete "${g.name}"?`),
-    // 删完回到 Agents 列表（这一页和它的 Agent 页一起退掉）
-    content: (close) => <DeleteSheet g={g} close={close} onDeleted={() => nav.navigate('Tabs', { screen: 'Agents' }, { pop: true })} />,
+    // 删完回到「对话」列表（这一页和它的 Agent 页、资料页一起退掉）
+    content: (close) => <DeleteSheet g={g} close={close} onDeleted={() => nav.navigate('Tabs', { screen: '对话' }, { pop: true })} />,
   });
 
   return (

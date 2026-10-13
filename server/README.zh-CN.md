@@ -317,6 +317,8 @@ python3 proposals_ctl.py agent --slug reading --name 读书 --purpose "…" --ic
 
 `GET /api/unread` → `{threads: {<线程>: {n, mine, last: {id, text, ts, origin}}}, feedNew: [卡片 id], inbox, badge}`。只列有未读的线程（main、各 Agent、没归档的独立空间）；n = 读到的位置之后助手回了几条，mine = 其中回的是你发的话（`messages.origin = user`，定时器和收件箱触发的不算）；inbox = 等你点头的条数（含执行审批）；badge = inbox + 各线程 mine 之和。`POST /api/unread/read {thread, upto?}` 标成已读（只往后挪），返回同样的摘要。「今天」页的新卡片：`GET /api/feed` 每张带 `seen`，`POST /api/feed/seen {ids}` 标成看过。
 
+对话列表（2026-10-13，`chats.py`，能力名 `chats.list`）：`GET /api/chats` → `{agents, rows, ended, archived}`，给「对话」tab 用。`agents` 是每个 Agent `{id, name, icon, color, purpose, line, lineRole, at, unread, pinned, muted, state}`；`rows` 是主对话（永远第一行、算置顶、不能删）、会议和 Agent 群（kind `meeting` / `room`，来自可选的 `meetings` 模块：`chat_rows()`、`delete_meeting(id)`）和没归档的项目；`ended` / `archived` 是已结束的会议、已归档的项目各几条（`GET /api/chats?archived=1` 列出来）。排序和未读只算你的话和给你的回复（`role=user`，或 `role=grava` 且 `origin=user`）：定时器、收件箱、主对话转来的回复不改排序、不算未读。`state` 是 `working`（正在回复，或它派的后台任务还在跑）或 `waiting`（收件箱里有 thread 或 source 是它的条目）。`PATCH /api/chats/{thread} {pinned?, muted?}` 把置顶、免打扰存进 `chat_prefs`；免打扰的线程不推送，回复不算进 app 图标的角标（`/api/unread` 里那一项带 `muted`）。`DELETE /api/chats/{thread}` 删项目或会议（Agent 走 `DELETE /api/groups/{id}`）。好友：`POST /api/friends/{id}/clear` 删除和这位好友的聊天记录，只在你的服务器上（能力名 `friends.clear`）。
+
 ## 学习台
 
 `/study` 是给电脑用的宽屏页面：左边是课程和模块，中间看学习页、课件（PDF）、闪卡、小测，右边就着这一节的材料提问。在 `server.json` 的 `study` 里配置（见 [`study.py`](study.py)）：

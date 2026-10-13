@@ -42,14 +42,15 @@ function useThreadName() {
 export function HistoryScreen() {
   const t = useTheme();
   const nav = useNavigation<any>();
-  const { thread } = useRoute<any>().params as { thread: string };
+  // q：从「对话」页搜索带过来的关键词（打开就搜全部对话）
+  const { thread, q: initialQ } = useRoute<any>().params as { thread: string; q?: string };
   const name = useThreadName();
   const { connected } = useStore();
   const [days, setDays] = useState<DayInfo[] | null>(null);
-  const [q, setQ] = useState('');
+  const [q, setQ] = useState(initialQ ?? '');
   const [scope, setScope] = useState<'all' | 'thread'>('all');
   const [hits, setHits] = useState<SearchHit[] | null>(null);
-  const [searching, setSearching] = useState(false);
+  const [searching, setSearching] = useState(!!initialQ?.trim());
   const [error, setError] = useState('');
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
@@ -70,6 +71,11 @@ export function HistoryScreen() {
     }, 350);
   };
   const changeQ = (v: string) => { setQ(v); runSearch(v, scope); };
+  useEffect(() => {
+    const first = initialQ?.trim();
+    if (!first || !connected) return;
+    dataApi.search(first).then(setHits).catch((e) => setError(e instanceof Error ? e.message : String(e))).finally(() => setSearching(false));
+  }, [initialQ, connected]);
   const changeScope = (sc: 'all' | 'thread') => { setScope(sc); runSearch(q, sc); };
 
   const grouped = useMemo(() => {

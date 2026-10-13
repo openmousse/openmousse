@@ -50,14 +50,14 @@ export const iconKey = (icon?: string | null): G | null => {
 };
 
 /** Agent 的方块图标：浅底 + 前景都跟它的颜色走（没有颜色 = 青）。 */
-export function GroupBadge({ icon, color, size = 44 }: { icon?: G | string | null; color?: AgentColor | null; size?: number }) {
+export function GroupBadge({ icon, color, size = 44, round }: { icon?: G | string | null; color?: AgentColor | null; size?: number; /** 圆形（对话页的 Agent 栏、聊天页头） */ round?: boolean }) {
   const t = useTheme();
   const tint = agentTint(t, color);
   const key = iconKey(icon);
   const C = GROUP_ICONS.find((x) => x.key === key)?.C ?? LayoutGrid;
   return (
-    <View style={{ width: size, height: size, borderRadius: size * 0.3, backgroundColor: tint.soft, alignItems: 'center', justifyContent: 'center' }}>
-      <C size={size * 0.5} color={tint.fg} />
+    <View style={{ width: size, height: size, borderRadius: round ? size / 2 : size * 0.3, backgroundColor: tint.soft, alignItems: 'center', justifyContent: 'center' }}>
+      <C size={size * (round ? 0.48 : 0.5)} color={tint.fg} />
     </View>
   );
 }

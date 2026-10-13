@@ -89,7 +89,7 @@ function FeedCard({ f, onDismiss, isNew }: { f: FeedItem; onDismiss?: () => void
       <T v="headline">{f.title}</T>
       {f.kind === 'meal_plan' && f.data && 'meals' in f.data ? <MealPlanCard plan={f.data} /> : isTrainingPlan(f) ? <TrainingPlanCard plan={f.data} /> : <Markdown text={f.body} color={t.ink2} compact />}
       {f.cta && onDismiss ? (
-        <Pressable onPress={() => (f.groupId ? nav.navigate('Group', { id: f.groupId }) : nav.navigate('Tabs', { screen: '对话' }))} accessibilityRole="button"
+        <Pressable onPress={() => (f.groupId ? nav.navigate('Group', { id: f.groupId }) : nav.navigate('Chat', { id: 'main' }))} accessibilityRole="button"
           style={({ pressed }) => [styles.cta, { backgroundColor: t.surface2, opacity: pressed ? 0.7 : 1 }]}>
           <T v="callout" style={{ fontWeight: '600' }}>{f.cta}</T>
         </Pressable>

@@ -7,7 +7,7 @@ import { useBottomInset } from './keyboard';
 import { T } from './ui';
 
 // 自己画的底部弹层，不用 RN 的 Modal：Modal 在网页上会挂到 body，跑出预览里的手机框。
-interface SheetSpec { title: string; content: (close: () => void) => React.ReactNode }
+interface SheetSpec { title: string; /** 标题右边的灰字（对话页「新建」写在哪一边） */ sub?: string; content: (close: () => void) => React.ReactNode }
 const Ctx = createContext<{ open: (s: SheetSpec) => void; close: () => void }>({ open: () => {}, close: () => {} });
 export const useSheet = () => useContext(Ctx);
 
@@ -51,7 +51,12 @@ function Panel({ spec, shown, close, onHidden }: { spec: SheetSpec; shown: boole
       </Animated.View>
       <Animated.View style={[styles.panel, { backgroundColor: t.bg, paddingBottom: space.lg, transform: [{ translateY: lift }] }]}>
         <View style={[styles.grabber, { backgroundColor: t.line }]} />
-        <T v="title" style={{ marginBottom: space.md }}>{spec.title}</T>
+        {spec.sub ? (
+          <View style={{ flexDirection: 'row', alignItems: 'baseline', gap: space.sm, marginBottom: space.md }}>
+            <T v="title">{spec.title}</T>
+            <T v="callout" color={t.ink3}>{spec.sub}</T>
+          </View>
+        ) : <T v="title" style={{ marginBottom: space.md }}>{spec.title}</T>}
         {/* handled：键盘开着时点弹层里的按钮（比如「保存」）一次就生效，点空白处收键盘。 */}
         <ScrollView style={{ flexGrow: 0 }} showsVerticalScrollIndicator={false} keyboardShouldPersistTaps="handled">{spec.content(close)}</ScrollView>
         {/* 垫片：键盘开着时和键盘一样高（逐帧跟着），收起时让出 Home 指示条 */}

@@ -150,3 +150,5 @@ export { default as UserRound } from 'lucide-react-native/icons/user-round';
 export { default as Minus } from 'lucide-react-native/icons/minus';
 export { default as Table } from 'lucide-react-native/icons/table';
 export { default as ChartColumn } from 'lucide-react-native/icons/chart-column';
+export { default as CirclePlus } from 'lucide-react-native/icons/circle-plus';
+export { default as ScanLine } from 'lucide-react-native/icons/scan-line';

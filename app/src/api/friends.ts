@@ -121,6 +121,8 @@ export const react = (msgId: number, emoji: string | null) =>
   request<{ message: FriendMsg }>(`/api/friends/messages/${msgId}/react`, { method: 'POST', body: { emoji } }).then((j) => j.message);
 /** 只在我这删除（对方那边不变） */
 export const hideMsg = (msgId: number) => request(`/api/friends/messages/${msgId}/hide`, { method: 'POST' });
+/** 删除和这位好友的聊天记录（只在本机，服务器 friends.clear） */
+export const clearChat = (id: string) => request<{ hidden: number }>(`/api/friends/${id}/clear`, { method: 'POST' });
 
 /** 好友通知和已读回执（设置 → 通知）。notify：好友消息的通知；preview：通知里显示内容；receipts：已读回执（双向） */
 export interface FriendPrefs { notify: boolean; preview: boolean; receipts: boolean; friends: { id: string; name: string; muted: boolean }[] }

@@ -121,7 +121,7 @@ export function ForwardScreen() {
     try {
       const r = await fw.toAgent({ refs: items.map((i) => i.ref), gist: gist.trim(), agent, intent, note: note.trim() || undefined });
       await finish('');
-      if (r.thread === 'main') nav.navigate('Tabs', { screen: '对话', params: { thread: 'main', at: Date.now(), focus: r.messageId } }, { pop: true });
+      if (r.thread === 'main') nav.replace('Chat', { id: 'main', at: Date.now(), focus: r.messageId });
       else nav.replace('Group', { id: r.thread });
     } catch (e) { showError(L('转发失败', "Couldn't forward"), e); } finally { setBusy(false); }
   };
