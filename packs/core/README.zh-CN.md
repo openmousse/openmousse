@@ -6,7 +6,7 @@
 
 | 目录 | 是什么 |
 |---|---|
-| `skills/handoff` | 主对话把属于某个 Agent 的事转给它（`scripts/ask_agent.py` → 服务的 `/api/chat/relay`） |
+| `skills/handoff` | 主对话把属于某个 Agent 的事转给它（`scripts/ask_agent.py` → 服务的 `/api/chat/relay`）；要几个 Agent 一起定的事发起会议（`ask_agent.py --meet` → `/api/meetings`） |
 | `skills/agent-builder` | 在对话里新建 / 删除 Agent（`server/agent_ctl.py`） |
 | `skills/journal` | 用户随口说的感受、想法、决定记进日志（`scripts/journal.py` → 服务数据库 `journal` 表；app「我 → 日志」能翻） |
 | `skills/memory-tree` | 学到关于用户的新东西写进世界树（`mousse-tree add`），回答前先查 |

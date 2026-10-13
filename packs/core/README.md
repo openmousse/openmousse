@@ -6,7 +6,7 @@ The layer you get right after install: how the main chat and the Agents cooperat
 
 | Path | What it is |
 |---|---|
-| `skills/handoff` | The main chat hands a question to the Agent that owns it (`scripts/ask_agent.py` → the server's `/api/chat/relay`) |
+| `skills/handoff` | The main chat hands a question to the Agent that owns it (`scripts/ask_agent.py` → the server's `/api/chat/relay`), or starts a meeting when several Agents need to work something out together (`ask_agent.py --meet` → `/api/meetings`) |
 | `skills/agent-builder` | Create / delete Agents from chat (`server/agent_ctl.py`) |
 | `skills/journal` | Feelings, thoughts and decisions the user mentions go into a journal (`scripts/journal.py` → the `journal` table; readable under "Me → Journal" in the app) |
 | `skills/memory-tree` | Write new facts about the user to the memory tree (`mousse-tree add`), read it before answering |

@@ -160,6 +160,10 @@ python3 tasks_ctl.py list
 
 Handoff card: `{kind: "handoff", id, thread, messageId, createdAt, status: queued / running / done / error / busy / lost, to, toName, from, fromName, question, seconds, relayId, replyId, error}`. Task card: `{kind: "task", id, thread, messageId, createdAt, status (进行中 / 完成 / 失败 / 已取消), timedOut, title, deliverable: [], modelId, minutes, startedAt, finishedAt, tools, step, result, error, round, roundStatus, note, roundResult, tokens, limitMinutes, seq, dailyLimit}` (`seq` = the how-manyth task started today). `deliverable` is the task text's "要交：" / "Deliverable:" line plus the list under it.
 
+## Meetings
+
+Several Agents take turns on one topic while the main chat's agent hosts and writes the minutes; confirmed to-dos go into the schedule and each Agent's dashboard. Start one in the app (+ → New meeting) or from the main chat (`ask_agent.py --meet`). Each member speaks in its own OpenClaw session `agent:<id>:grava:grp-<id>`; at most one turn per Agent per round, @ goes one hop, and a round costs at most one reply per member + 1 for the minutes. See [`meetings.py`](meetings.py); rules, data and the API (`/api/meetings…`, chat cards `meeting` / `minutes`) are in [`docs/meetings.md`](../docs/meetings.md).
+
 ## Schedule and "To remember"
 
 One timeline per day and one list of things to remember, both editable. See [`schedule.py`](schedule.py).

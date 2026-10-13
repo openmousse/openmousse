@@ -159,6 +159,10 @@ python3 tasks_ctl.py list
 
 转交卡：`{kind: "handoff", id, thread, messageId, createdAt, status: queued / running / done / error / busy / lost, to, toName, from, fromName, question, seconds, relayId, replyId, error}`。任务卡：`{kind: "task", id, thread, messageId, createdAt, status（进行中 / 完成 / 失败 / 已取消）, timedOut, title, deliverable: [], modelId, minutes, startedAt, finishedAt, tools, step, result, error, round, roundStatus, note, roundResult, tokens, limitMinutes, seq, dailyLimit}`（`seq` = 今天第几个派的）。`deliverable` 取任务正文里「要交：」/「Deliverable:」那一行和紧跟着的列表。
 
+## 会议
+
+几个 Agent 围绕一个议题轮流发言，主对话的 agent 主持、写纪要，确认后待办写进日程和各 Agent 的看板；可以在 app 里手动发起（「+」→ 发起会议），也可以由主对话发起（`ask_agent.py --meet`）。每个成员在会里有自己的 OpenClaw 会话 `agent:<id>:grava:grp-<id>`；每轮每个 Agent 最多发言一次，@ 只转一层，一轮最多 = 成员数次回复 + 1 次纪要。见 [`meetings.py`](meetings.py)，规则、数据和接口（`/api/meetings…`、对话卡 `meeting` / `minutes`）在 [`docs/meetings.zh-CN.md`](../docs/meetings.zh-CN.md)。
+
 ## 日程和「要记得的」
 
 每天一条时间线、一张「要记得的」，都能改。见 [`schedule.py`](schedule.py)。
