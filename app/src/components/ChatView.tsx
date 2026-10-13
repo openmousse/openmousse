@@ -31,6 +31,7 @@ import { openEpisode } from '../think/Podcast';
 import * as fw from '../api/forward';
 import { BasketPill, BundleCard, ForwardTranscript, SelectBar, SelectMark, forwardActions, openBack, setBasketCount, useForwardSupported, useSelect } from './Forward';
 import { Composer, type ComposerHandle } from './ChatComposer';
+import { MeetingChip, MinutesChip } from './MeetingBits';
 
 // 从「今天」的「去对话里说」带过来、还没发出去的引用，也按线程记着。
 const quotes = new Map<string, ChatQuote>();
@@ -103,7 +104,7 @@ const ChatTasks = React.memo(function ChatTasks({ cards, onRevise, thread }: { c
   return <>{cards.map((c) => (
     <View key={c.id} style={{ paddingLeft: 36 }}>
       {c.kind === 'task' ? <TaskCardView card={c} onRevise={onRevise} /> : c.kind === 'schedule' ? <ScheduleChip card={c} /> : c.kind === 'project' ? <ProjectChip card={c} here={thread} />
-        : c.kind === 'course' ? <CourseChip card={c} /> : c.kind === 'output' ? <OutputCard card={c} /> : <HandoffChip card={c} />}
+        : c.kind === 'course' ? <CourseChip card={c} /> : c.kind === 'output' ? <OutputCard card={c} /> : c.kind === 'meeting' ? <MeetingChip card={c} /> : c.kind === 'minutes' ? <MinutesChip card={c} /> : <HandoffChip card={c} />}
     </View>
   ))}</>;
 });

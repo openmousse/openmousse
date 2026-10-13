@@ -111,6 +111,16 @@ function normalizeCard(raw: any): ChatCard | null {
     return { ...raw, messageId: msgNum(raw.messageId), title: str(raw.title), summary: str(raw.summary), action: str(raw.action), actor: str(raw.actor),
       area: raw.area === 'remember' ? 'remember' : 'schedule', status: raw.status === 'undone' ? 'undone' : 'done', createdAt: str(raw.createdAt) } as ChatCard;
   }
+  if (raw.kind === 'meeting' && typeof raw.meeting === 'string') {  // 这条回复发起的会议（server/meetings.py）
+    return { ...raw, messageId: msgNum(raw.messageId), title: str(raw.title), statusLabel: str(raw.statusLabel), createdAt: str(raw.createdAt), round: num(raw.round) ?? 1,
+      members: Array.isArray(raw.members) ? raw.members : [], status: ['running', 'pending', 'ended', 'group'].includes(raw.status) ? raw.status : 'ended' } as ChatCard;
+  }
+  if (raw.kind === 'minutes' && typeof raw.meeting === 'string') {  // 会议一轮说完的纪要卡（server/meetings.py）
+    return { ...raw, messageId: msgNum(raw.messageId), title: str(raw.title), createdAt: str(raw.createdAt), round: num(raw.round) ?? 1,
+      decisions: Array.isArray(raw.decisions) ? raw.decisions.map(String) : [], todos: Array.isArray(raw.todos) ? raw.todos : [],
+      open: Array.isArray(raw.open) ? raw.open.map(String) : [], confirmed: raw.confirmed ?? null,
+      status: ['pending', 'confirmed', 'superseded', 'ended'].includes(raw.status) ? raw.status : 'ended' } as ChatCard;
+  }
   return null;
 }
 export const cardOf = normalizeCard;

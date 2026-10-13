@@ -312,7 +312,8 @@ const POLL_MS = 45_000;
 /** 看着的对话里有还在问的转交、还在做的任务：隔多久重读一次卡片（回复进行中不用，流里会来） */
 const CARD_POLL_MS = 6_000;
 /** 这张卡还在变（在问、在做、在改）。 */
-const cardBusy = (c: ChatCard) => (c.kind === 'handoff' ? c.status === 'running' || c.status === 'queued' : c.kind === 'task' ? c.status === '进行中' || c.roundStatus === 'running' : false);
+const cardBusy = (c: ChatCard) => (c.kind === 'handoff' ? c.status === 'running' || c.status === 'queued' : c.kind === 'task' ? c.status === '进行中' || c.roundStatus === 'running'
+  : c.kind === 'meeting' ? c.status === 'running' : false);  // 会议进行中：会议卡的状态、纪要卡要跟着刷
 
 export function StoreProvider({ children }: { children: React.ReactNode }) {
   const api = useRef<GravaApi>(new OfflineApi());
@@ -449,14 +450,15 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
 
   /** 重读一个对话里的转交卡、任务卡。clearLive：这个对话的回复刚结束，流里收到的那些换成服务器记的（已经挂到回复上）。 */
   const loadThreadCards = useCallback(async (threadId: string, clearLive = false) => {
-    if (!api.current.connected || serverSupport.cards === false) return;
+    if (!api.current.connected || serverSupport.cards === false) return null;
     const c = await dataApi.cards(threadId).catch(() => null);
-    if (!c) return;
+    if (!c) return null;
     setS((st) => {
       const liveCards = { ...st.liveCards };
       if (clearLive) delete liveCards[threadId];
       return { ...st, cardsByThread: { ...st.cardsByThread, [threadId]: c }, liveCards };
     });
+    return c;
   }, []);
 
   /** 流里来了一张卡：进行中的回复里转给了某个 Agent、派了一个任务，或者它们的状态变了。 */
@@ -618,7 +620,7 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
       if (!lastId || lastId <= (seenLast.current[tid] ?? 0)) continue;
       seenLast.current[tid] = lastId;
       changed = true;
-      if (!known.has(tid)) unknown = true;
+      if (!known.has(tid) && !tid.startsWith('grp-')) unknown = true;  // 会议的线程（grp-…）不是 Agent 也不是项目，不用为它重读列表
       if (!st.typing[tid]) refreshThread(tid).catch(() => {});
       // 网页版没有推送：只为「你发的消息有了回复」弹小窗（mine 变多了），后台自己跑出来的只标未读
       if (web && tid !== active && u.last && u.mine > (prev.threads[tid]?.mine ?? 0)) {
@@ -890,12 +892,17 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
   useEffect(() => {
     const tid = s.activeThread;
     if (!s.connected || !tid || !activeCardsBusy) return undefined;
+    const meetingOn = (c: ThreadCards | null | undefined) => !!c?.cards.some((x) => x.kind === 'meeting' && x.status === 'running');
     const h = setInterval(() => {
       if (AppState.currentState !== 'active' || latest.current.typing[tid]) return;
-      loadThreadCards(tid).catch(() => {});
+      const hadMeeting = meetingOn(latest.current.cardsByThread[tid]);
+      loadThreadCards(tid).then((c) => {
+        // 这里发起的会议一轮说完了：对话里多了一条「会议已结束，以下 N 项待办……」，跟着重读（下面挂纪要卡）
+        if (hadMeeting && c && !meetingOn(c)) refreshThread(tid).catch(() => {});
+      }).catch(() => {});
     }, CARD_POLL_MS);
     return () => clearInterval(h);
-  }, [s.connected, s.activeThread, activeCardsBusy, loadThreadCards]);
+  }, [s.connected, s.activeThread, activeCardsBusy, loadThreadCards, refreshThread]);
 
   /** 读一张项目卡。没有这个项目了（删了）就丢掉；老服务器没有这个接口就不管。 */
   const loadProject = useCallback(async (pid: string) => {

@@ -46,6 +46,7 @@ import { SharesScreen } from './screens/SharesScreen';
 import { AddFriendScreen, CardAgentScreen, FriendChatScreen, MyNameScreen, NotifySettingsScreen } from './screens/FriendsScreens';
 import { FriendAgentsScreen } from './screens/FriendAgentsScreen';
 import { VizKitScreen } from './screens/VizKitScreen';
+import { MeetingInfoScreen, MeetingScreen, MeetingsScreen, NewMeetingScreen } from './screens/MeetingScreens';
 import { findCode } from './api/friends';
 import type { PushTarget } from './data/types';
 import { L } from './i18n';
@@ -304,6 +305,11 @@ export function RootNavigator() {
         <Stack.Screen name="FriendAgents" component={FriendAgentsScreen} />
         {/* 可视化素材库（2026-10-13）：设置 → 关于 → 可视化素材库，网页版 ?screen=VizKit */}
         <Stack.Screen name="VizKit" component={VizKitScreen} />
+        {/* Agent 会议（2026-10-13）：会议页、发起会议（「+」进来）、会议资料、已结束的会议 */}
+        <Stack.Screen name="Meeting" component={MeetingScreen} />
+        <Stack.Screen name="NewMeeting" component={NewMeetingScreen} options={{ presentation: 'modal' }} />
+        <Stack.Screen name="MeetingInfo" component={MeetingInfoScreen} />
+        <Stack.Screen name="Meetings" component={MeetingsScreen} />
       </Stack.Navigator>
     </NavigationContainer>
   );

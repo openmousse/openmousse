@@ -157,3 +157,6 @@ export { default as Columns3 } from 'lucide-react-native/icons/columns-3';
 export { default as CalendarIcon } from 'lucide-react-native/icons/calendar';
 export { default as ChartGantt } from 'lucide-react-native/icons/chart-gantt';
 export { default as ListFilter } from 'lucide-react-native/icons/list-filter';
+// 会议（2026-10-13）：@ 成员、结束会议
+export { default as AtSign } from 'lucide-react-native/icons/at-sign';
+export { default as CircleStop } from 'lucide-react-native/icons/circle-stop';

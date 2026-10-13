@@ -1,6 +1,7 @@
 // app 里的数据类型。2026-09-23 起全部对应服务器上的真实来源（server/data.py 的表格写了每一项的真源）。
 import type { ForwardCard } from '../api/forward';
 import type { Output } from '../api/outputs';
+import type { MeetingConfirmed, MeetingMember, MeetingStatus, MeetingTodo } from '../api/meetings';
 
 export type Billing = '订阅' | 'API' | '免费';
 export type CostTier = '省' | '中' | '贵';
@@ -276,7 +277,38 @@ export interface CourseChangeCard {
 }
 /** Agent 在这条回复里出的产出（建议卡，server/outputs.py）：对话里的产出卡片，点开是小板子。 */
 export interface OutputChatCard { kind: 'output'; id: string; thread: string; messageId: number | null; createdAt: string; status: 'done' | 'replaced'; output: Output }
-export type ChatCard = HandoffCard | TaskCardInfo | ScheduleChangeCard | ProjectChangeCard | CourseChangeCard | OutputChatCard;
+/** 对话里的会议卡（server/meetings.py）：这条回复发起的会议，状态跟着会议走（进行中 / 待确认 / 已结束 / 群聊），点开进会议。 */
+export interface MeetingCardInfo {
+  kind: 'meeting';
+  id: string;
+  meeting: string;
+  thread: string | null;
+  messageId: number | null;
+  createdAt: string;
+  title: string;
+  members: MeetingMember[];
+  status: MeetingStatus;
+  statusLabel: string;
+  round: number;
+}
+
+/** 会议一轮说完、主对话里那条通知下面的纪要卡：待办 + 确认 / 查看会议。confirmed 确认过（回执）；superseded 被下一轮的纪要取代；ended 没确认就结束了。 */
+export interface MinutesCardInfo {
+  kind: 'minutes';
+  id: string;
+  meeting: string;
+  thread: string | null;
+  messageId: number | null;
+  createdAt: string;
+  title: string;
+  round: number;
+  status: 'pending' | 'confirmed' | 'superseded' | 'ended';
+  decisions: string[];
+  todos: MeetingTodo[];
+  open: string[];
+  confirmed: MeetingConfirmed | null;
+}
+export type ChatCard = HandoffCard | TaskCardInfo | ScheduleChangeCard | ProjectChangeCard | CourseChangeCard | OutputChatCard | MeetingCardInfo | MinutesCardInfo;
 /** 一个对话里的卡片（GET /api/chat/cards）：它自己转出去、派出去的，加上别的对话转给它的（incoming）。 */
 export interface ThreadCards { cards: ChatCard[]; incoming: HandoffCard[] }
 

@@ -99,7 +99,7 @@ async function consume(thread: string, r: Response, onDelta?: (partial: string) 
     else if (event === 'text') { partial = data.text ?? ''; onDelta?.(partial); }
     else if (event === 'done') { done = data; setReplyProgress(thread, null); }
     else if (event === 'progress' && data && Array.isArray(data.steps)) setReplyProgress(thread, data as ReplyProgress);
-    else if (event === 'card' && data && (data.kind === 'handoff' || data.kind === 'task' || data.kind === 'schedule' || data.kind === 'project' || data.kind === 'course')) onCard?.(data as ChatCard);
+    else if (event === 'card' && data && (data.kind === 'handoff' || data.kind === 'task' || data.kind === 'schedule' || data.kind === 'project' || data.kind === 'course' || data.kind === 'meeting')) onCard?.(data as ChatCard);
   }).finally(() => setReplyProgress(thread, null));
   if (!done) throw new Error(L('回复流中断', 'Reply stream cut off'));
   return { id: done.id, role: 'grava', time: done.time, modelId: done.modelId, fallbackFrom: done.fallbackFrom ?? undefined, body: { type: 'text', text: done.text }, error: done.status === 'error' ? done.error : undefined };
