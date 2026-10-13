@@ -2,7 +2,7 @@
 import React, { useCallback, useEffect, useState } from 'react';
 import { Image, Linking, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
 import { useNavigation, useRoute } from '@react-navigation/native';
-import { BookOpen, Check, ChevronLeft, Ellipsis, FileText, Forward, Languages, Lightbulb, MessageCircle, Plus, Trash2 } from '../components/icons';
+import { BookOpen, Check, ChevronLeft, ChevronRight, Ellipsis, FileText, Forward, Languages, Lightbulb, MessageCircle, Plus, Trash2 } from '../components/icons';
 import { setChatDraft } from '../components/chatInput';
 import { GroupBadge } from '../components/GroupIcon';
 import { useSheet } from '../components/Sheet';
@@ -13,7 +13,7 @@ import { L } from '../i18n';
 import { openThread } from '../navigation';
 import { useStore } from '../store';
 import { radius, space, type, useTheme } from '../theme';
-import { GrowInput, KeywordChip, TypeTile, dayLabel, saveStatusLabel } from '../think/parts';
+import { GrowInput, KeywordChip, TypeTile, dayLabel, fileLine, previewFiles, saveStatusLabel } from '../think/parts';
 import { useThink } from '../think/ThinkStore';
 
 export function SaveScreen() {
@@ -82,6 +82,8 @@ export function SaveScreen() {
     content: (close) => <DeleteBlock onDelete={() => run(async () => { await removeSave(s.id); close(); nav.goBack(); })} />,
   });
   const status = saveStatusLabel(s);
+  const file = thinkApi.saveFile(s);
+  const openFile = () => { if (file) previewFiles(nav.navigate, [file], 0); };
   const actions = [
     { Icon: MessageCircle, label: L('提问', 'Ask'), sub: L('在主对话中提问', 'Take it to the main chat'), color: t.cyan, go: ask },
     { Icon: Forward, label: L('交给 Agent', 'Hand to an Agent'), sub: sent ? L(`已交给「${sent}」`, `Handed to "${sent}"`) : L('求职、饮食记录……', 'Jobs, diet…'), color: t.cyan, go: give },
@@ -121,11 +123,20 @@ export function SaveScreen() {
             placeholder={L('收藏原因（可选，#词会成为关键词）', 'Why you saved it (optional; #words become keywords)')} placeholderTextColor={t.ink3} multiline
             accessibilityLabel={L('备注', 'Note')} style={[type.body, styles.input, { backgroundColor: t.surface, color: t.ink }]} />
         </View>
-        {s.kind === 'image' && s.fileUrl ? <Image source={{ uri: s.fileUrl }} resizeMode="contain" style={{ width: '100%', height: 260, borderRadius: radius.md, backgroundColor: t.surface2 }} accessibilityLabel={s.name ?? ''} /> : null}
+        {s.kind === 'image' && s.fileUrl ? (
+          <Pressable onPress={openFile} accessibilityRole="imagebutton" accessibilityLabel={s.name ?? ''} accessibilityHint={L('全屏查看', 'View full screen')}>
+            <Image source={{ uri: s.fileUrl }} resizeMode="contain" style={{ width: '100%', height: 260, borderRadius: radius.md, backgroundColor: t.surface2 }} />
+          </Pressable>
+        ) : null}
         {s.fileUrl && s.kind !== 'image' ? (
-          <Pressable onPress={() => Linking.openURL(s.fileUrl!).catch(() => {})} accessibilityRole="button" style={[styles.file, { backgroundColor: t.surface }]}>
+          <Pressable onPress={openFile} accessibilityRole="button" accessibilityHint={L('在 app 内预览', 'Preview in the app')}
+            style={({ pressed }) => [styles.file, { backgroundColor: t.surface, opacity: pressed ? 0.7 : 1 }]}>
             <FileText size={20} color={t.cyan} />
-            <View style={{ flex: 1 }}><T v="headline" numberOfLines={1} style={{ fontSize: 15 }}>{s.name}</T><T v="caption" color={t.ink3}>{L('打开原件', 'Open the original')}</T></View>
+            <View style={{ flex: 1, minWidth: 0 }}>
+              <T v="headline" numberOfLines={1} style={{ fontSize: 15 }}>{s.name}</T>
+              <T v="caption" color={t.ink3}>{fileLine(s.name ?? '', s.size) || L('文件', 'File')}</T>
+            </View>
+            <ChevronRight size={18} color={t.ink3} />
           </Pressable>
         ) : null}
         {s.url ? <Pressable onPress={() => Linking.openURL(s.url).catch(() => {})} accessibilityRole="link"><T v="callout" color={t.gold} numberOfLines={2}>{s.url}</T></Pressable> : null}

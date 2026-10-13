@@ -14,7 +14,7 @@ import { L } from '../i18n';
 import { radius, space, type, useTheme } from '../theme';
 import { CaptureBar } from '../think/CaptureBar';
 import { FragmentSheet } from '../think/FragmentSheet';
-import { FloatBtn, FloatClose, Floater, FragmentCard, Highlight, SaveRow, TopicRow, TypeTile, dayLabel } from '../think/parts';
+import { FloatBtn, FloatClose, Floater, FragmentCard, Highlight, SaveRow, TopicRow, TypeTile, dayLabel, previewFiles } from '../think/parts';
 import { useThink } from '../think/ThinkStore';
 
 const RECENT = 'think:recent-searches';
@@ -261,7 +261,7 @@ export function ThinkKeywordScreen() {
                 {items.map((it) => (it.type === 'idea'
                   ? <FragmentCard key={it.idea.id} f={it.idea} withDay selected={sel.includes(it.idea.id)} onToggle={() => toggle(it.idea.id)}
                       onPress={() => sheet.open({ title: it.idea.title || L('想法', 'Thought'), content: (close) => <FragmentSheet id={it.idea.id} initial={it.idea} close={close} /> })}
-                      onKeyword={(x) => (x === page?.k ? undefined : nav.push('ThinkKeyword', { k: x }))} />
+                      onKeyword={(x) => (x === page?.k ? undefined : nav.push('ThinkKeyword', { k: x }))} onFile={(list, i) => previewFiles(nav.navigate, list, i)} />
                   : <SaveRow key={it.save.id} s={it.save} onPress={() => nav.navigate('Save', { id: it.save.id })} />))}
               </React.Fragment>
             ))}
@@ -367,7 +367,7 @@ export function ThinkHistoryScreen() {
         {items && !items.length ? <T v="callout" color={t.ink3}>{L('当天无记录。', 'Nothing that day.')}</T> : null}
         {(items ?? []).map((it) => (it.type === 'idea'
           ? <FragmentCard key={it.idea.id} f={it.idea} onPress={() => sheet.open({ title: it.idea.title || L('想法', 'Thought'), content: (close) => <FragmentSheet id={it.idea.id} initial={it.idea} close={close} /> })}
-              onKeyword={(k) => nav.navigate('ThinkKeyword', { k })} />
+              onKeyword={(k) => nav.navigate('ThinkKeyword', { k })} onFile={(list, i) => previewFiles(nav.navigate, list, i)} />
           : <SaveRow key={it.save.id} s={it.save} onPress={() => nav.navigate('Save', { id: it.save.id })} />))}
       </ScrollView>
     </Screen>

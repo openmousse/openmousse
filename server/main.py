@@ -178,7 +178,7 @@ if apps is not None:
     app.include_router(apps.router)
 app.add_exception_handler(sources.NoSource, sources.no_source_handler)
 _whois: dict[str, tuple[float, str | None]] = {}
-TOKEN_URL = re.compile(r"^/api/(?:files/|think/file/|think/saves/[^/]+/file$|podcast/episodes/pe-[0-9a-f]{8}/audio/\d+$|study/file(?:/page)?$)")
+TOKEN_URL = re.compile(r"^/api/(?:files/|think/file/|think/saves/[^/]+/(?:file|page/\d+)$|podcast/episodes/pe-[0-9a-f]{8}/audio/\d+$|study/file(?:/page)?$)")
 _lock = threading.Lock()
 
 

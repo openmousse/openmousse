@@ -16,7 +16,7 @@ import { L } from '../i18n';
 import { useStore } from '../store';
 import { radius, space, type, useTheme } from '../theme';
 import { CaptureBar } from '../think/CaptureBar';
-import { FloatBtn, FloatClose, Floater, FragmentCard, GrowInput, SaveRow, TopicRow, dayLabel } from '../think/parts';
+import { FloatBtn, FloatClose, Floater, FragmentCard, GrowInput, SaveRow, TopicRow, dayLabel, previewFiles } from '../think/parts';
 import { FragmentSheet } from '../think/FragmentSheet';
 import { TopicActionsSheet } from '../think/TopicSheets';
 import { useThink } from '../think/ThinkStore';
@@ -140,7 +140,7 @@ function Ideas() {
               <SectionLabel>{dayLabel(day)}</SectionLabel>
               {list.map((f) => (
                 <FragmentCard key={f.id} f={f} selected={sel.includes(f.id)} onToggle={() => toggle(f.id)} onPress={() => open(f)}
-                  onKeyword={(k) => nav.navigate('ThinkKeyword', { k })} />
+                  onKeyword={(k) => nav.navigate('ThinkKeyword', { k })} onFile={(items, i) => previewFiles(nav.navigate, items, i)} />
               ))}
             </React.Fragment>
           ))}

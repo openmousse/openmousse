@@ -485,7 +485,8 @@ app 的「思考」tab（2026-09-28 起界面上叫 **Zen**，代码和接口仍
 | `POST /api/think/fragments` | `{kind?, text?, title?, keywords?, url?, topic?}`；带 `topic` = 在这个主题里只记下 |
 | `POST /api/think/fragments/upload` | multipart：最多 10 个 `files`、`text`、`kind`（voice 转文字、原声留着）、`keywords`（JSON 数组）、`duration`、`title` |
 | `GET` / `PATCH` / `DELETE /api/think/fragments/{id}` | 一条想法；`{text?, title?, keywords?}` 改笔记本身；删 = 挪进库的回收站 |
-| `GET /api/think/file/{id}/{index}?thumb=1` | 附件（缩略图缓存在库外面） |
+| `GET /api/think/file/{id}/{index}?thumb=1` | 附件（缩略图缓存在库外面；`preview=1` 看大图、`inline=1` 在浏览器里直接显示，同对话附件） |
+| `GET /api/think/file/{id}/{index}/preview` · `…/page/{n}?w=` | 在 app 里预览附件，和对话附件同一套（[`preview.py`](preview.py)）；大图和页图缓存在库外面 |
 | `POST /api/think/notes` | `{title, text, folder}`：长文直接存进写作（或笔记）文件夹 |
 | `POST /api/think/topics` / `GET /api/think/topics?status=` | 开一个主题 `{fragments, title?}` / 列出来 |
 | `GET` / `PATCH /api/think/topics/{id}` | 主题、它的碎片和草稿 / `{title?, add?, remove?, status: open?}` |
@@ -501,7 +502,8 @@ app 的「思考」tab（2026-09-28 起界面上叫 **Zen**，代码和接口仍
 | `GET /api/think/saves?filter=` | `filter`：all / new / link / file / image / text，另给 `new` 数 |
 | `POST /api/think/saves` / `…/upload` / `…/from-message` | 存链接或一段字 `{url?, text?, title?, note?, source?, keywords?}` / 文件 / 对话里的一条消息 `{thread, id}` |
 | `GET` / `PATCH` / `DELETE /api/think/saves/{id}` | `?full=1` 给全文 / `{title?, note?, keywords?, seen?}` / 软删（`…/restore` 恢复） |
-| `GET /api/think/saves/{id}/file?thumb=1` | 原件 |
+| `GET /api/think/saves/{id}/file?thumb=1` | 原件（`preview` / `inline` 同对话附件） |
+| `GET /api/think/saves/{id}/preview` · `…/page/{n}?w=` | 在 app 里预览原件：Word / Excel / PPT 转好排版，PDF 出页图（同对话附件，页图存在原件旁边） |
 | `POST /api/think/saves/{id}/give` / `…/to-idea` | 交给 Agent `{agent}` / 放进思考 |
 
 ## 播客

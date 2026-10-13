@@ -1,11 +1,13 @@
 // 思考空间几页共用的小件：一条想法的卡、关键词、高亮的搜索结果、主题一行、收藏一行、底上浮着的操作条。
 import React from 'react';
-import { Image, Platform, Pressable, StyleSheet, Text, TextInput, View, type TextInputProps } from 'react-native';
+import { Image, Linking, Platform, Pressable, StyleSheet, Text, TextInput, View, type TextInputProps } from 'react-native';
 import { setAudioModeAsync, useAudioPlayer, useAudioPlayerStatus } from 'expo-audio';
 import {
-  FileAudio as AudioLines, Bookmark, Check, FileText, Hash, ImageIcon, Lightbulb, Link2, MessageCircle, Pencil, Play, Square, TextIcon, X,
+  FileAudio as AudioLines, Bookmark, Check, ChevronRight, FileText, Hash, ImageIcon, Lightbulb, Link2, MessageCircle, Pencil, Play, Square, TextIcon, X,
 } from '../components/icons';
-import type { Fragment, FragmentKind, Parts, SaveItem, TopicBrief } from '../api/think';
+import { fragmentFiles, type Fragment, type FragmentKind, type Parts, type SaveItem, type TopicBrief } from '../api/think';
+import { supports } from '../api/version';
+import type { Attachment } from '../data/types';
 import { L } from '../i18n';
 import { radius, space, type, useTheme, type Theme } from '../theme';
 import { T } from '../components/ui';
@@ -115,6 +117,26 @@ export function wordCount(text: string) {
 
 const human = (n: number) => (n >= 1024 * 1024 ? `${(n / 1024 / 1024).toFixed(1)} MB` : `${Math.max(1, Math.round(n / 1024))} KB`);
 const mmss = (s: number) => `${Math.floor(s / 60)}:${pad(Math.round(s % 60))}`;
+const FILE_TYPES: Record<string, string> = { doc: 'Word', docx: 'Word', xls: 'Excel', xlsx: 'Excel', xlsm: 'Excel', ppt: 'PowerPoint', pptx: 'PowerPoint', pdf: 'PDF', csv: 'CSV', md: 'Markdown', epub: 'EPUB' };
+
+/** 「Word · 22 KB」：按扩展名说是什么文件。 */
+export function fileLine(name: string, size?: number | null) {
+  const ext = (/\.([A-Za-z0-9]+)$/.exec(name)?.[1] ?? '').toLowerCase();
+  return [FILE_TYPES[ext] ?? (ext === 'txt' ? L('文本', 'Text') : ext.toUpperCase()), size ? human(size) : ''].filter(Boolean).join(' · ');
+}
+
+/**
+ * 点开 Zen 里的照片 / 文件：在 app 里预览（FilePreview，几个能左右滑），和对话附件一样。
+ * 老服务器没有 Zen 的预览接口（supports('think.preview')）：照片照样看，文件交给浏览器。
+ */
+export function previewFiles(navigate: (name: string, params: object) => void, items: Attachment[], index: number) {
+  const a = items[index];
+  if (!a) return;
+  if (supports('think.preview')) { navigate('FilePreview', { items, index }); return; }
+  if (a.kind !== 'image') { Linking.openURL(a.url).catch(() => {}); return; }
+  const photos = items.filter((x) => x.kind === 'image');
+  navigate('FilePreview', { items: photos, index: Math.max(0, photos.indexOf(a)) });
+}
 
 /** 语音：点一下才建播放器（一页上很多条语音也不会一起去下载）。 */
 function VoicePlay({ url, duration }: { url: string; duration: number | null }) {
@@ -146,15 +168,22 @@ function VoicePlay({ url, duration }: { url: string; duration: number | null }) 
   );
 }
 
-/** 一条想法。selected / onToggle：右上角的圈（勾几条去聊聊、想完了）；onPress：点开看全文、改、删。 */
-export function FragmentCard({ f, selected, onToggle, onPress, onKeyword, full, withDay }: {
-  f: Fragment; selected?: boolean; onToggle?: () => void; onPress?: () => void; onKeyword?: (k: string) => void; full?: boolean;
+/** 一条想法。selected / onToggle：右上角的圈（勾几条去聊聊、想完了）；onPress：点开看全文、改、删；onFile：点了照片或文件（交给 previewFiles）。 */
+export function FragmentCard({ f, selected, onToggle, onPress, onKeyword, onFile, full, withDay }: {
+  f: Fragment; selected?: boolean; onToggle?: () => void; onPress?: () => void; onKeyword?: (k: string) => void;
+  onFile?: (items: Attachment[], index: number) => void; full?: boolean;
   /** 不在按天分组的列表里：时间前面带上哪天 */ withDay?: boolean;
 }) {
   const t = useTheme();
   const look = kindLook(t, f.kind);
-  const photos = f.files.filter((x) => x.kind === 'photo');
-  const others = f.files.filter((x) => x.kind !== 'photo' && x.kind !== 'voice');
+  const indexed = f.files.map((x, i) => ({ ...x, i }));
+  const photos = indexed.filter((x) => x.kind === 'photo');
+  const others = indexed.filter((x) => x.kind !== 'photo' && x.kind !== 'voice');
+  const openFile = (i: number) => {
+    if (!onFile) return;
+    const items = fragmentFiles(f);
+    onFile(items, Math.max(0, items.findIndex((a) => a.id === `${f.id}-${i}`)));
+  };
   const audio = f.files.find((x) => x.kind === 'voice');
   const lines = full ? undefined : f.kind === 'long' ? 3 : 6;
   const showKw = f.kind !== 'keywords' && f.keywords.length > 0;
@@ -181,19 +210,24 @@ export function FragmentCard({ f, selected, onToggle, onPress, onKeyword, full, 
       {photos.length ? (
         <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 6 }}>
           {photos.slice(0, 4).map((p) => (
-            <Image key={p.url} source={{ uri: `${p.url}${p.url.includes('?') ? '&' : '?'}thumb=1` }} accessibilityLabel={p.name}
-              style={{ width: photos.length === 1 ? 160 : 84, height: photos.length === 1 ? 120 : 64, borderRadius: radius.sm, backgroundColor: t.surface2 }} />
+            <Pressable key={p.url} onPress={() => openFile(p.i)} disabled={!onFile} accessibilityRole="imagebutton" accessibilityLabel={p.name}>
+              <Image source={{ uri: `${p.url}${p.url.includes('?') ? '&' : '?'}thumb=1` }}
+                style={{ width: photos.length === 1 ? 160 : 84, height: photos.length === 1 ? 120 : 64, borderRadius: radius.sm, backgroundColor: t.surface2 }} />
+            </Pressable>
           ))}
         </View>
       ) : null}
       {others.map((x) => (
-        <View key={x.url} style={[styles.file, { backgroundColor: t.bg }]}>
+        <Pressable key={x.url} onPress={() => openFile(x.i)} disabled={!onFile} accessibilityRole="button" accessibilityLabel={x.name}
+          accessibilityHint={onFile ? L('在 app 内预览', 'Preview in the app') : undefined}
+          style={({ pressed }) => [styles.file, { backgroundColor: t.bg, opacity: pressed ? 0.7 : 1 }]}>
           <FileText size={18} color={t.cyan} />
-          <View style={{ flexShrink: 1 }}>
+          <View style={{ flex: 1, minWidth: 0 }}>
             <T v="callout" numberOfLines={1} style={{ fontWeight: '600' }}>{x.name}</T>
-            <T v="caption" color={t.ink3}>{human(x.size)}</T>
+            <T v="caption" color={t.ink3}>{fileLine(x.name, x.size)}</T>
           </View>
-        </View>
+          {onFile ? <ChevronRight size={16} color={t.ink3} /> : null}
+        </Pressable>
       ))}
       {showKw ? <View style={styles.chips}>{f.keywords.map((k) => <KeywordChip key={k} k={k} onPress={onKeyword ? () => onKeyword(k) : undefined} />)}</View> : null}
       {onToggle ? (

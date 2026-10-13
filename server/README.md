@@ -486,7 +486,8 @@ The Think tab in the app (labelled **Zen** since 2026-09-28; the code and API st
 | `POST /api/think/fragments` | `{kind?, text?, title?, keywords?, url?, topic?}`; with `topic` it's a private note in that topic |
 | `POST /api/think/fragments/upload` | Multipart: up to 10 `files`, `text`, `kind` (voice is transcribed, the audio kept), `keywords` (JSON array), `duration`, `title` |
 | `GET` / `PATCH` / `DELETE /api/think/fragments/{id}` | One thought; `{text?, title?, keywords?}` rewrites the note; delete = vault trash |
-| `GET /api/think/file/{id}/{index}?thumb=1` | An attachment (thumbnails are cached outside the vault) |
+| `GET /api/think/file/{id}/{index}?thumb=1` | An attachment (thumbnails are cached outside the vault; `preview=1` for the full image, `inline=1` to show it in the browser, as for chat attachments) |
+| `GET /api/think/file/{id}/{index}/preview` · `…/page/{n}?w=` | Preview the attachment in the app, the same way as chat attachments ([`preview.py`](preview.py)); full images and page images are cached outside the vault |
 | `POST /api/think/notes` | `{title, text, folder}`: a long piece straight into the writing (or notes) folder |
 | `POST /api/think/topics` / `GET /api/think/topics?status=` | Open a topic `{fragments, title?}` / list them |
 | `GET` / `PATCH /api/think/topics/{id}` | The topic with its thoughts and draft / `{title?, add?, remove?, status: open?}` |
@@ -502,7 +503,8 @@ The Think tab in the app (labelled **Zen** since 2026-09-28; the code and API st
 | `GET /api/think/saves?filter=` | `filter`: all / new / link / file / image / text, plus the `new` count |
 | `POST /api/think/saves` / `…/upload` / `…/from-message` | Save a link or text `{url?, text?, title?, note?, source?, keywords?}` / files / a chat message `{thread, id}` |
 | `GET` / `PATCH` / `DELETE /api/think/saves/{id}` | `?full=1` for the whole text / `{title?, note?, keywords?, seen?}` / soft delete (`…/restore` undoes) |
-| `GET /api/think/saves/{id}/file?thumb=1` | The original |
+| `GET /api/think/saves/{id}/file?thumb=1` | The original (`preview` / `inline` as for chat attachments) |
+| `GET /api/think/saves/{id}/preview` · `…/page/{n}?w=` | Preview the original in the app: Word / Excel / PowerPoint as formatted text and tables, PDF as page images (as for chat attachments; page images sit next to the original) |
 | `POST /api/think/saves/{id}/give` / `…/to-idea` | Hand it to an Agent `{agent}` / turn it into a thought |
 
 ## Podcast

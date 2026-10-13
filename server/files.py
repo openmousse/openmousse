@@ -230,12 +230,13 @@ def thumbnail(path: Path) -> Path | None:
         return None
 
 
-def preview_image(path: Path, mime: str | None) -> tuple[Path, str] | None:
-    """看大图用：网页认得、不太大的给原图；HEIC / TIFF / BMP 或者特别大的转成 JPEG，存在原件旁边。转不了就 None。"""
+def preview_image(path: Path, mime: str | None, out: Path | None = None) -> tuple[Path, str] | None:
+    """看大图用：网页认得、不太大的给原图；HEIC / TIFF / BMP 或者特别大的转成 JPEG，存在原件旁边（out 给了就存那里：库里的附件不能往库里写）。
+    转不了就 None。"""
     mime = (mime or "").lower()
     if mime in WEB_IMAGES and path.stat().st_size <= PREVIEW_BYTES:
         return path, mime
-    out = path.with_name(path.name + ".preview.jpg")
+    out = out or path.with_name(path.name + ".preview.jpg")
     if out.is_file():
         return out, "image/jpeg"
     try:
@@ -342,9 +343,14 @@ def get_file(fid: str, thumb: int = 0, preview: int = 0, inline: int = 0):
         p = preview_image(path, r["mime"])
         if p:
             return FileResponse(str(p[0]), media_type=p[1], headers=IMMUTABLE)
-    media = (r["mime"] or "application/octet-stream").lower()
+    return original(path, r["mime"], r["name"], inline)
+
+
+def original(path: Path, mime: str | None, name: str, inline: int = 0) -> FileResponse:
+    """把原件发出去。inline=1：浏览器里直接显示（只限 INLINE_TYPES 和音视频），别的一律下载。Zen 的收藏、想法的附件也用它。"""
+    media = (mime or "application/octet-stream").lower()
     show = bool(inline) and (media in INLINE_TYPES or media.startswith(("audio/", "video/")))
-    return FileResponse(str(path), media_type=media, filename=r["name"], content_disposition_type="inline" if show else "attachment",
+    return FileResponse(str(path), media_type=media, filename=name, content_disposition_type="inline" if show else "attachment",
                         headers={"X-Content-Type-Options": "nosniff"})
 
 

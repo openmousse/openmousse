@@ -1,7 +1,7 @@
 // 思考空间、收藏、冥想时间（server/think.py、server/saves.py）。
 // 想法是服务器上库里收件箱的笔记（Obsidian 里也能看、能改），AI 不碰；勾几条「聊聊」「想完了」才开一个主题叫它来。
 // 收藏存原件和抽出来的正文，存的时候不调模型。
-import type { PendingFile } from '../data/types';
+import type { Attachment, PendingFile } from '../data/types';
 import { fileUrl, getBase, request } from './base';
 import { formFile, xhrUpload } from './client';
 
@@ -99,6 +99,23 @@ export const keyword = (k: string) => request<KeywordPage>(`/api/think/keyword?k
 export const days = (month: string) => request<{ month: string; days: { day: string; ideas: number; saves: number }[]; total: number }>(`/api/think/days?month=${month}`);
 export const day = (d: string) => request<{ items: DayItem[] }>(`/api/think/day?day=${d}`).then((j) => j.items.map(fixItem));
 const fixItem = (x: DayItem): DayItem => (x.type === 'idea' ? { ...x, idea: withUrls(x.idea) } : { ...x, save: saveUrls(x.save) });
+
+/** 按文件名和类型猜附件的种类（FilePreview 只靠它认图片、挑图标；怎么显示由服务器的预览接口定）。 */
+const attachKind = (name: string, mime: string | null): Attachment['kind'] => {
+  const m = (mime ?? '').toLowerCase();
+  if (m.startsWith('image/') || /\.(jpe?g|png|gif|webp|heic|heif)$/i.test(name)) return 'image';
+  if (m.startsWith('audio/')) return 'audio';
+  if (m.startsWith('video/')) return 'video';
+  return /\.(pdf|docx?|xlsx?|xlsm|pptx?|csv|tsv|md|markdown|txt|rtf|epub|json|ipynb)$/i.test(name) ? 'doc' : 'file';
+};
+/** 收藏的原件当成一个附件交给 FilePreview：预览和页图走 /api/think/saves/{id}/…。没有原件（链接、一段字）就是 null。 */
+export const saveFile = (s: SaveItem): Attachment | null => (s.fileUrl
+  ? { id: s.id, name: s.name || s.title || 'file', mime: s.mime, size: s.size ?? 0, kind: s.kind === 'image' ? 'image' : attachKind(s.name ?? '', s.mime), url: s.fileUrl, zen: `/api/think/saves/${s.id}` }
+  : null);
+/** 一条想法的照片和文件交给 FilePreview（左右滑）：预览和页图走 /api/think/file/{id}/{i}/…。语音在卡片上直接放，不算在内。 */
+export const fragmentFiles = (f: Fragment): Attachment[] => f.files.flatMap((x, i) => (x.kind === 'voice' ? [] : [{
+  id: `${f.id}-${i}`, name: x.name, mime: null, size: x.size, kind: x.kind === 'photo' ? 'image' as const : attachKind(x.name, null), url: x.url, zen: `/api/think/file/${f.id}/${i}`,
+}]));
 
 export const saves = (filter = 'all') => request<{ saves: SaveItem[]; new: number }>(`/api/think/saves?filter=${filter}`).then((j) => ({ ...j, saves: j.saves.map(saveUrls) }));
 export const getSave = (id: string, full = false) =>

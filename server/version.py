@@ -34,6 +34,7 @@ FEATURES = (
     "diet.log",       # 饮食记录在服务自己的库里：/api/diet/day 的 meals 带 key / time / carb / fat、每样带 id；/api/diet/entries · /days · /undo · /targets
     "diet.log_meal",  # POST /api/diet/log-plan：按饮食建议卡一键「记录这一餐」（份量可改，同一餐不重复记，返回 batch 可撤销）
     "diet.foods",     # 个人食物库 /api/diet/foods、查营养 /api/diet/lookup（个人食物库 → Open Food Facts → CoFID → USDA）
+    "think.preview",    # Zen 里的文件在 app 里预览：/api/think/saves/{id}/preview · /page/{n}、/api/think/file/{id}/{i}/preview · /page/{n}；两个原件接口收 preview / inline
     "today",            # GET /api/today（待处理 / 日程 / 报告三块）、/api/today/range（周 / 月）、POST /api/today/snooze；/api/schedule/mark 收 mail:
     "boards.views",     # 看板积木 type collection（集合块：表格 / 看板 / 日历 / 时间线 / 图表）；POST /api/boards/{agent}/view 按排序、筛选、月份、翻页重算一个视图
     "outputs",  # GET /api/outputs（新产出 + 小板子）、/api/outputs/{id}；/api/chat/cards 带 kind output（对话里的产出卡片）

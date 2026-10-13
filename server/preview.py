@@ -509,18 +509,23 @@ def build(path: Path, name: str, mime: str, kind: str, stored_text: str | None) 
     return _text(text, mono, L("代码", "Code") if mono and ext not in (".log", ".csv") else L("文字", "Text"))
 
 
-@router.get("/api/files/{fid}/preview")
-def preview(fid: str):
-    r = _row(fid)
-    out = {"ok": True, "file": summary(r)}
+def describe(file: dict, path: Path, name: str, mime: str, kind: str, stored_text: str | None) -> dict:
+    """预览接口回的整个结果：file（附件的样子）+ build 的内容。对话附件、Zen 的收藏和想法的附件（saves.py、think.py）都用它。"""
+    out = {"ok": True, "file": file}
     try:
-        out.update(build(Path(r["path"]), r["name"], r["mime"] or "", r["kind"], r["text"]))
-    except Exception as exc:  # noqa: BLE001 — 预览坏了不影响原件：退回上传时抽的文字，没有就只给文件信息
+        out.update(build(path, name, mime, kind, stored_text))
+    except Exception as exc:  # noqa: BLE001 — 预览坏了不影响原件：退回存的时候抽的文字，没有就只给文件信息
         note = L(f"预览出错：{str(exc)[:120]}", f"Preview failed: {str(exc)[:120]}")
-        out.update(_text(r["text"], False, "") if r["text"] else {"view": "none"}, note=note)
+        out.update(_text(stored_text, False, "") if stored_text else {"view": "none"}, note=note)
     if out.get("view") == "none" and not out.get("note"):
         out["note"] = L("这种文件在 app 里看不了，可以用浏览器打开。", "This kind of file can't be shown in the app. Try opening it in the browser.")
     return out
+
+
+@router.get("/api/files/{fid}/preview")
+def preview(fid: str):
+    r = _row(fid)
+    return describe(summary(r), Path(r["path"]), r["name"], r["mime"] or "", r["kind"], r["text"])
 
 
 @router.get("/api/files/{fid}/page/{n}")

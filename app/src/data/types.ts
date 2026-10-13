@@ -125,7 +125,9 @@ export type PushTarget =
 /** 对话附件。url 是服务器地址（/api/files/id），还没上传完的用本地 uri。 */
 export interface Attachment { id: string; name: string; mime: string | null; size: number; kind: 'image' | 'doc' | 'audio' | 'video' | 'file'; url: string; chars?: number | null; note?: string | null; status?: string;
   /** 学习台的课件（不是对话附件）：预览和页图走 /api/study/file/… */
-  study?: { course: string; path: string; where?: 'materials' | 'pages' } }
+  study?: { course: string; path: string; where?: 'materials' | 'pages' };
+  /** Zen 里的文件（收藏的原件、想法的附件）：预览和页图走 {zen}/preview、{zen}/page/{n}（server/saves.py、think.py） */
+  zen?: string }
 /** 选好还没发的文件。web 上有 File 对象；原生上是本地 uri。 */
 export interface PendingFile { uri: string; name: string; mime: string; size: number; file?: File }
 export type MessageBody = { type: 'text'; text: string; attachments?: Attachment[] };

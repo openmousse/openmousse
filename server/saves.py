@@ -7,6 +7,7 @@
 - 处理：问 Grava（app 把这条带进主对话，chat.py 的 save 字段把正文给模型）、交给某个 Agent（在它的线程里开一轮，回完静默推）、
   放进思考（变成一条 kind=save 的碎片）、提炼进库（app：放进思考 → 主题 → 想完了）、删（软删，deleted_at，能恢复）。
 - 关键词和想法共用（think.py 的 keyword 页一起列）。
+- 看原件：app 里点开就预览（…/preview、…/page/{n}），和对话附件同一套（preview.py）；页图存在原件旁边。
 """
 from __future__ import annotations
 
@@ -446,17 +447,51 @@ async def get_save(sid: str, full: int = 0):
     return {"ok": True, "save": save_json(r), "text": text if full else text[:4000], "more": len(text) > 4000 and not full}
 
 
-@router.get("/api/think/saves/{sid}/file")
-async def save_file(sid: str, thumb: int = 0):
-    r = row(sid)
+def file_of(r: sqlite3.Row) -> Path:
     if not r["file"] or not Path(r["file"]).is_file():
         raise HTTPException(404, L("文件不在了", "File no longer exists"))
-    path = Path(r["file"])
+    return Path(r["file"])
+
+
+@router.get("/api/think/saves/{sid}/file")
+async def save_file(sid: str, thumb: int = 0, preview: int = 0, inline: int = 0):
+    """原件。thumb / preview / inline 和对话附件（files.py 的 /api/files/{id}）一样。"""
+    import files as files_mod
+    r = row(sid)
+    path = file_of(r)
     if thumb and r["kind"] == "image":
         t = await asyncio.to_thread(think.thumb_of, path)
         if t:
             return FileResponse(str(t), media_type="image/jpeg")
-    return FileResponse(str(path), media_type=r["mime"] or "application/octet-stream", filename=r["name"] or path.name)
+    if preview and r["kind"] == "image":
+        p = await asyncio.to_thread(files_mod.preview_image, path, r["mime"])
+        if p:
+            return FileResponse(str(p[0]), media_type=p[1], headers=files_mod.IMMUTABLE)
+    return files_mod.original(path, r["mime"], r["name"] or path.name, inline)
+
+
+@router.get("/api/think/saves/{sid}/preview")
+def save_preview(sid: str):
+    """在 app 里看原件：和对话附件同一套（preview.py），Word / Excel / PPT 转好排版，PDF 出页图。"""
+    import files as files_mod
+    import preview
+    r = row(sid)
+    path = file_of(r)
+    name = r["name"] or path.name
+    mime = r["mime"] or ""
+    kind = files_mod.kind_of(name, mime)
+    file = {"id": sid, "name": name, "mime": r["mime"], "size": r["size"] or path.stat().st_size, "kind": kind, "chars": r["text_len"] or None,
+            "note": None, "status": "ok", "url": f"/api/think/saves/{sid}/file"}
+    return preview.describe(file, path, name, mime, kind, text_of(sid) or None)
+
+
+@router.get("/api/think/saves/{sid}/page/{n}")
+def save_page(sid: str, n: int, w: int = 1200):
+    """PDF 这类的第 n 页（从 1 数）渲染成 JPEG，存在原件旁边。"""
+    import preview
+    path = file_of(row(sid))
+    w = preview.page_width(w)
+    return FileResponse(str(preview.render_page(path, n, w, path.with_name(f"{path.name}.p{n}-{w}.jpg"))), media_type="image/jpeg", headers=preview.CACHE)
 
 
 class SavePatch(BaseModel):

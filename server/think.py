@@ -73,6 +73,7 @@ ID_RE = re.compile(r"^th-[0-9a-f]{8}$")
 TOPIC_RE = re.compile(r"^tp-[0-9a-f]{8}$")
 HASHTAG = re.compile(r"(?<![A-Za-z0-9/&=?._:~%+-])#([^\s#，。、；：！？,.;:!?()（）\[\]【】「」『』\"'`<>…～]+)")
 EMBED = re.compile(r"^!\[\[([^\]|]+)(?:\|[^\]]*)?\]\]\s*$")
+STAMP = re.compile(r"^\d{4}-\d{2}-\d{2} \d{6} ")   # store_file 给库里的附件加的时间前缀
 FM = re.compile(r"\A---[ \t]*\n(.*?)\n---[ \t]*(?:\n|\Z)", re.S)
 KINDS = ("text", "keywords", "voice", "photo", "file", "link", "long", "save")
 
@@ -276,8 +277,8 @@ def frag_from_file(path: Path, st: os.stat_result) -> dict:
         m = EMBED.match(line.strip())
         if m:
             p = resolve_embed(m.group(1), path)
-            if p is not None:
-                files.append({"path": rel(p), "name": p.name, "kind": kind_of_file(p.name), "size": p.stat().st_size})
+            if p is not None:  # 名字去掉存的时候加的「2026-10-13 023949 」（只为在附件夹里不重名）
+                files.append({"path": rel(p), "name": STAMP.sub("", p.name) or p.name, "kind": kind_of_file(p.name), "size": p.stat().st_size})
                 continue
         lines.append(line)
     for extra in meta.get("big_files") or []:  # 放不进库的大附件：在服务器上
@@ -615,21 +616,66 @@ async def delete_fragment(fid: str):
     return {"ok": True}
 
 
-@router.get("/api/think/file/{fid}/{index}")
-async def get_file(fid: str, index: int, thumb: int = 0):
-    f = await asyncio.to_thread(frag_by_id, fid)
+def attachment(fid: str, index: int) -> tuple[dict, Path]:
+    """一条想法的第 index 个附件：(附件信息, 文件)。"""
+    f = frag_by_id(fid)
     if index < 0 or index >= len(f["files"]):
         raise HTTPException(404, L("没有这个附件", "No such attachment"))
     x = f["files"][index]
     path = big_dir() / "files" / x["path"][5:] if x["path"].startswith("@big/") else base_dir() / x["path"]
     if not path.is_file():
         raise HTTPException(404, L("文件不在了", "File no longer exists"))
+    return x, path
+
+
+def cache_file(path: Path, suffix: str) -> Path:
+    """附件的派生文件（大图、页图）放服务器的缓存里，不往库里写（库里的每个文件都会同步到手机）。"""
+    return big_dir() / "previews" / (hashlib.sha1(f"{path}:{path.stat().st_mtime_ns}".encode()).hexdigest()[:16] + suffix)
+
+
+@router.get("/api/think/file/{fid}/{index}")
+async def get_file(fid: str, index: int, thumb: int = 0, preview: int = 0, inline: int = 0):
+    import mimetypes
+
+    import files as files_mod
+    x, path = await asyncio.to_thread(attachment, fid, index)
     if thumb and x["kind"] == "photo":
         t = await asyncio.to_thread(thumb_of, path)
         if t:
             return FileResponse(str(t), media_type="image/jpeg")
+    mime = mimetypes.guess_type(path.name)[0]
+    if preview and x["kind"] == "photo":
+        out = cache_file(path, ".preview.jpg")
+        out.parent.mkdir(parents=True, exist_ok=True)
+        p = await asyncio.to_thread(files_mod.preview_image, path, mime, out)
+        if p:
+            return FileResponse(str(p[0]), media_type=p[1], headers=files_mod.IMMUTABLE)
+    return files_mod.original(path, mime, x["name"], inline)
+
+
+@router.get("/api/think/file/{fid}/{index}/preview")
+def file_preview(fid: str, index: int):
+    """在 app 里看附件：和对话附件同一套（preview.py）。语音的转写就是这条想法的正文。"""
     import mimetypes
-    return FileResponse(str(path), media_type=mimetypes.guess_type(path.name)[0] or "application/octet-stream", filename=path.name)
+
+    import files as files_mod
+    import preview
+    x, path = attachment(fid, index)
+    mime = mimetypes.guess_type(path.name)[0] or ""
+    kind = files_mod.kind_of(path.name, mime)
+    text = frag_by_id(fid)["text"] if kind == "audio" else None
+    file = {"id": f"{fid}-{index}", "name": x["name"], "mime": mime or None, "size": x["size"], "kind": kind, "chars": None, "note": None,
+            "status": "ok", "url": file_url(fid, index)}
+    return preview.describe(file, path, x["name"], mime, kind, text)
+
+
+@router.get("/api/think/file/{fid}/{index}/page/{n}")
+def file_page(fid: str, index: int, n: int, w: int = 1200):
+    """PDF 这类附件的第 n 页（从 1 数）：页图存服务器的缓存里，不进库。"""
+    import preview
+    _, path = attachment(fid, index)
+    w = preview.page_width(w)
+    return FileResponse(str(preview.render_page(path, n, w, cache_file(path, f".p{n}-{w}.jpg"))), media_type="image/jpeg", headers=preview.CACHE)
 
 
 def thumb_of(path: Path) -> Path | None:

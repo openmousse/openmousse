@@ -7,7 +7,7 @@ import * as thinkApi from '../api/think';
 import type { Fragment } from '../api/think';
 import { L } from '../i18n';
 import { radius, space, type, useTheme } from '../theme';
-import { FragmentCard, GrowInput } from './parts';
+import { FragmentCard, GrowInput, previewFiles } from './parts';
 import { navigationRef } from '../navigation';
 import { useThink } from './ThinkStore';
 
@@ -57,7 +57,8 @@ export function FragmentSheet({ id, initial, close, topicId, onRemoved }: { id: 
         </View>
       ) : (
         <>
-          <FragmentCard f={f} full onKeyword={(k) => { close(); nav.navigate('ThinkKeyword', { k }); }} />
+          <FragmentCard f={f} full onKeyword={(k) => { close(); nav.navigate('ThinkKeyword', { k }); }}
+            onFile={(items, i) => { close(); previewFiles(nav.navigate, items, i); }} />
           {topics.map((tp) => (
             <Pressable key={tp.id} onPress={() => { close(); nav.navigate('ThinkTalk', { id: tp.id }); }} accessibilityRole="button"
               style={({ pressed }) => [styles.row, { backgroundColor: t.surface, opacity: pressed ? 0.7 : 1 }]}>
