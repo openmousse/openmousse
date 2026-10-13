@@ -1,4 +1,5 @@
-// 七种积木：数字 stat / 进度 progress / 趋势 chart / 列表 list / 清单 checklist / 文字 text / 按钮 action。
+// 七种积木：数字 stat / 进度 progress / 趋势 chart / 列表 list / 清单 checklist / 文字 text / 按钮 action；
+// 外加集合块 collection（一张表、几种视图，在 ../views/Collection.tsx）。
 // 数据和文字都是服务器按配置算好、按语言格式化好的，这里只管画和你自己点的改动。不认识的种类显示「要新版 app」。
 import React, { useState } from 'react';
 import { ActivityIndicator, Pressable, StyleSheet, Text, View } from 'react-native';
@@ -13,6 +14,7 @@ import { Markdown } from '../Markdown';
 import { useSheet } from '../Sheet';
 import { Card, Disclosure, Pill, showError, T } from '../ui';
 import { pickDocuments, pickMedia } from '../chatInput';
+import { CollectionBody } from '../views/Collection';
 import { useBoard } from './ctx';
 import { openForm, openRow } from './RowSheet';
 
@@ -54,6 +56,7 @@ export function BlockView({ block }: { block: Block }) {
   else if (block.type === 'checklist') body = <ChecklistBody block={block} />;
   else if (block.type === 'text') body = <Card><Markdown text={d.text || block.data.text || ''} compact /></Card>;
   else if (block.type === 'action') body = <ActionBody block={block} />;
+  else if (block.type === 'collection') body = <CollectionBody block={block} />;
   else body = <Card><T v="callout" color={t.ink2}>{L('此区块需要更新 app 后才能显示。', 'This block needs a newer version of the app.')}</T></Card>;
   return (
     <Pressable onLongPress={onLong} delayLongPress={450} disabled={!onLong}>

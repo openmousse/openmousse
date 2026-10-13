@@ -12,6 +12,7 @@ import { MeScreen } from './screens/MeScreen';
 import { ActivityScreen, AvatarScreen, IdentityScreen, JournalScreen, MemoryScreen, ModelsScreen, SecurityScreen } from './screens/MoreScreens';
 import { NewGroupScreen } from './screens/NewGroupScreen';
 import { BoardHistoryScreen } from './screens/BoardHistoryScreen';
+import { CollectionScreen } from './screens/CollectionScreen';
 import { EditGroupScreen } from './screens/EditGroupScreen';
 import { TaskScreen, TasksScreen } from './screens/TasksScreen';
 import { ScheduleFeedScreen } from './screens/ScheduleFeedScreen';
@@ -246,6 +247,8 @@ export function RootNavigator() {
         <Stack.Screen name="ChatArchive" component={ChatArchiveScreen} />
         <Stack.Screen name="History" component={HistoryScreen} />
         <Stack.Screen name="BoardHistory" component={BoardHistoryScreen} />
+        {/* 集合块全屏（2026-10-13）：表格 / 看板 / 日历 / 时间线 / 图表，看板能拖卡片 */}
+        <Stack.Screen name="Collection" component={CollectionScreen} />
         <Stack.Screen name="HistoryDay" component={HistoryDayScreen} />
         <Stack.Screen name="Inbox" component={InboxScreen} />
         <Stack.Screen name="NewGroup" component={NewGroupScreen} options={{ presentation: 'modal' }} />

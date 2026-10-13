@@ -1,4 +1,5 @@
 // 点开一行：看全部字段、积木给的快捷动作（「用掉 1 份」）、改、问 Agent、删；按钮「记一样」是同一个表单的空白版。
+// 从集合块的看板视图点开的还有「移到」：换到别的列（和拖卡片一样，改分列的那个字段）。
 // 改动直接写（是你自己的数据），写完重读看板。表单按表的字段类型出输入框；日期没有原生选择器（要新包），用输入框加「今天 / 明天 / +3 天」。
 import React, { useState } from 'react';
 import { ActivityIndicator, Pressable, StyleSheet, Switch, Text, TextInput, View } from 'react-native';
@@ -35,8 +36,11 @@ function fromInput(f: FieldDef, v: string | boolean): unknown {
   return s;
 }
 
-export function openRow(sheet: SheetApi, ctx: BoardCtx, block: Block, row: BoardRow) {
-  sheet.open({ title: row.title, content: (close) => <RowView ctx={ctx} block={block} row={row} close={close} /> });
+/** 看板视图里的一张卡片：可以移到哪些列（label 是分列字段的名字）。 */
+export interface MoveTo { label: string; options: { key: string; label: string; on: boolean }[]; pick: (key: string) => Promise<unknown> }
+
+export function openRow(sheet: SheetApi, ctx: BoardCtx, block: Block, row: BoardRow, move?: MoveTo) {
+  sheet.open({ title: row.title, content: (close) => <RowView ctx={ctx} block={block} row={row} close={close} move={move} /> });
 }
 
 export function openForm(sheet: SheetApi, ctx: BoardCtx, collection: string, title: string, fields: FieldDef[], defaults?: Record<string, unknown>) {
@@ -61,7 +65,7 @@ export function openForm(sheet: SheetApi, ctx: BoardCtx, collection: string, tit
   });
 }
 
-function RowView({ ctx, block, row, close }: { ctx: BoardCtx; block: Block; row: BoardRow; close: () => void }) {
+function RowView({ ctx, block, row, close, move }: { ctx: BoardCtx; block: Block; row: BoardRow; close: () => void; move?: MoveTo }) {
   const t = useTheme();
   const fields = block.data.fields ?? [];
   const [mode, setMode] = useState<'view' | 'edit'>('view');
@@ -98,6 +102,22 @@ function RowView({ ctx, block, row, close }: { ctx: BoardCtx; block: Block; row:
           </View>
         ))}
       </View>
+      {move ? (
+        <View style={{ gap: 6 }}>
+          <T v="caption" color={t.ink2} style={{ fontSize: 13, fontWeight: '600' }}>{L(`移到（${move.label}）`, `Move to (${move.label})`)}</T>
+          <View style={styles.opts}>
+            {move.options.map((o) => (
+              <Pressable key={o.key} onPress={o.on ? undefined : () => run(`move:${o.key}`, () => move.pick(o.key))} disabled={o.on || !!busy}
+                accessibilityRole="button" accessibilityState={{ selected: o.on }}
+                style={[styles.opt, { backgroundColor: o.on ? t.ink : t.surface, borderColor: o.on ? t.ink : t.line }]}>
+                {busy === `move:${o.key}` ? <ActivityIndicator size="small" color={t.ink2} /> : (
+                  <Text style={[type.caption, { fontSize: 14, fontWeight: '600', color: o.on ? t.surface : t.ink2 }]}>{o.label}</Text>
+                )}
+              </Pressable>
+            ))}
+          </View>
+        </View>
+      ) : null}
       {(block.rowActions ?? []).map((a) => (
         <SheetBtn key={a.label} kind="primary" label={a.label} busy={busy === a.label} onPress={() => run(a.label, () => boardsApi.patchRow(row.id, a.set))} />
       ))}

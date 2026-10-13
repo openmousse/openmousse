@@ -152,3 +152,8 @@ export { default as Table } from 'lucide-react-native/icons/table';
 export { default as ChartColumn } from 'lucide-react-native/icons/chart-column';
 export { default as CirclePlus } from 'lucide-react-native/icons/circle-plus';
 export { default as ScanLine } from 'lucide-react-native/icons/scan-line';
+// 集合块的视图（2026-10-13）：看板、日历、时间线、筛选（表格、图表用上面素材库的 Table / ChartColumn）
+export { default as Columns3 } from 'lucide-react-native/icons/columns-3';
+export { default as CalendarIcon } from 'lucide-react-native/icons/calendar';
+export { default as ChartGantt } from 'lucide-react-native/icons/chart-gantt';
+export { default as ListFilter } from 'lucide-react-native/icons/list-filter';
