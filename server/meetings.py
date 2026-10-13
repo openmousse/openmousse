@@ -184,7 +184,7 @@ def system_text(meta: dict, ag: dict[str, dict], lx=L) -> str:
         if meta.get("origin") == "main":
             return lx(f"由 {host} 发起", f"Started by {host}")
         return lx(f"由你发起，{host} 主持", f"Started by you, hosted by {host}")
-    head = lx(f"第 {rnd} 轮 · ", f"Round {rnd} · ") if rnd > 1 else ""
+    head = lx(f"第 {rnd} 轮 · ", f"Round {rnd} · ") if rnd > 1 and not meta.get("group") else ""  # 群聊每句一轮，不写第几轮
     if ev == "invite":
         return head + lx(f"{host} 请 {names} 回答", f"{host} asked {names} to answer")
     if ev == "mention":  # 你 @ 了谁
@@ -403,9 +403,11 @@ async def create(body: MeetingIn):
     title = clean_text(body.title, TITLE_MAX) or default_title(topic)
     mid = f"grp-{uuid.uuid4().hex[:8]}"
     src = None
-    if origin == "main":  # 主对话正在回复（exec 起的脚本不知道自己在哪个会话，和转交卡一样按「谁在回复」认）
+    if origin == "main":  # 主对话正在回复（exec 起的脚本不知道自己在哪个会话，和转交卡一样按「谁在回复」认；只认主 agent 的线程）
         import cards  # 延迟导入：cards 依赖 chat
         src = cards.source_run(mid)
+        if src is not None and chat.agent_of(src.thread) != "main":  # 主对话在 Telegram 那边、app 里只有某个 Agent 在回复：不挂到它那里
+            src = None
     from_thread = (src.thread if src else "main") if origin == "main" else None
     ts = now_iso()
     _starting.add(mid)
@@ -481,7 +483,7 @@ def begin_round(mid: str, invited: list[str], rnd: int, minutes: bool, event: st
     LIVE[mid] = lv
     ts = now_iso()
     with _lock, mdb() as conn:
-        sid = system_line(conn, mid, event, round=rnd, agents=invited)
+        sid = system_line(conn, mid, event, round=rnd, agents=invited, **({} if minutes else {"group": True}))
         if minutes:
             conn.execute("UPDATE meetings SET status='running', round=?, updated_at=? WHERE id=?", (rnd, ts, mid))
         else:
@@ -1211,14 +1213,18 @@ async def delete(mid: str):
         if conn.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='read_marks'").fetchone():
             conn.execute("DELETE FROM read_marks WHERE thread=?", (mid,))
     LIVE.pop(mid, None)
-    if claw.is_openclaw():  # 各成员在会里的会话也删掉（OpenClaw 会压缩存档一份，不是彻底抹掉）
-        for a in loads(m["members"], []):
-            try:
-                await chat.gateway_call("sessions.delete", {"key": member_key(a, mid)}, timeout=20)
-            except Exception:  # noqa: BLE001 — 没发过言的成员没有会话
-                pass
+    if claw.is_openclaw():  # 各成员在会里的会话也删掉（OpenClaw 会压缩存档一份，不是彻底抹掉）：一个一个在后台删，每次要起一个 openclaw 进程
+        spawn(drop_sessions([member_key(a, mid) for a in loads(m["members"], [])]))
     log_activity(L(f"删除了会议「{m['title']}」的记录", f'Deleted the records of the meeting "{m["title"]}"'), "deleted")
     return {"ok": True}
+
+
+async def drop_sessions(keys: list[str]) -> None:
+    for k in keys:
+        try:
+            await chat.gateway_call("sessions.delete", {"key": k}, timeout=20)
+        except Exception:  # noqa: BLE001 — 没发过言的成员没有会话
+            pass
 
 
 @router.get("/api/meetings/{mid}")
