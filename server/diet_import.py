@@ -68,7 +68,15 @@ def export(lo: date, hi: date, out: Path | None) -> Path:
     window = None
     for a, b in months(lo, hi):
         print(L(f"读训记 {a} → {b} …", f"Reading Xunji {a} → {b} …"), file=sys.stderr)
-        data = xj.call("food_query", {"start_date": a.isoformat(), "end_date": b.isoformat(), "include_detail": True}, refresh=True)
+        for attempt in range(6):  # 训记同一接口 15 秒一次，线上服务、watcher 也在读：撞上限频就按它说的等一会儿再试
+            try:
+                data = xj.call("food_query", {"start_date": a.isoformat(), "end_date": b.isoformat(), "include_detail": True}, refresh=True)
+                break
+            except xj.XunjiError as e:
+                if "too frequent" not in str(e) or attempt == 5:
+                    raise
+                m = re.search(r"retry_after_ms\D+(\d+)", str(e))
+                time.sleep(min(int(m.group(1)) / 1000 if m else 15, 60) + 2 + attempt * 3)
         res = data.get("res") or {}
         window = res.get("window") or window
         for d in res.get("days") or []:
