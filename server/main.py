@@ -96,6 +96,7 @@ import friends  # noqa: E402 — 朋友（社交第二层）：/api/friends…�
 from forward import router as forward_router  # noqa: E402 — 合并转发：几条消息合成一份，发给朋友或转给自己的 Agent
 from a2a import router as a2a_router  # noqa: E402 — agent 之间（社交第三层）：/api/a2a…、/api/card…，顺带挂上收件箱 social 类的钩子
 from egress import router as egress_router  # noqa: E402 — Doorman 出口（第 9 步）：代办沙箱的出网判断 /api/egress…，顺带挂上收件箱 egress 类的钩子
+import diet  # noqa: E402
 from diet import router as diet_router  # noqa: E402 — 饮食记录、个人食物库、营养目标、查营养（diet.py + nutrition.py）
 
 DIST = settings.dist
@@ -340,6 +341,11 @@ def fitness_week(offset: int = 0):
             "sessions": sum(len(x["trains"]) for x in days), "active_days": len(done),
             "total_minutes": sum(x["minutes"] for x in days), "total_sets": sum(tr["sets_done"] for x in days for tr in x["trains"]),
             "days": days}
+
+
+def diet_day(date_: str | None = None) -> dict:
+    """饮食看板的一天（2026-10-13 搬到 diet.py 的 day_view）。留着这个名字给按老路径调它的模块（比如产出小板子读蛋白质目标）。"""
+    return diet.day_view(date_)
 
 
 @app.get("/api/body/latest")
