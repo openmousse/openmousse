@@ -146,3 +146,7 @@ export { default as Monitor } from 'lucide-react-native/icons/monitor';
 export { default as ArrowUpRight } from 'lucide-react-native/icons/arrow-up-right';
 export { default as KeyRound } from 'lucide-react-native/icons/key-round';
 export { default as UserRound } from 'lucide-react-native/icons/user-round';
+// 可视化素材库（2026-10-13）：变化标签「持平」、表格 / 图表切换
+export { default as Minus } from 'lucide-react-native/icons/minus';
+export { default as Table } from 'lucide-react-native/icons/table';
+export { default as ChartColumn } from 'lucide-react-native/icons/chart-column';

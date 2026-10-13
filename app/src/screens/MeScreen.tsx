@@ -7,7 +7,7 @@ import Constants from 'expo-constants';
 import { useFocusEffect, useNavigation } from '@react-navigation/native';
 import { agentName } from '../brand';
 import {
-  Activity, Bell, BookOpen, Brain, CalendarDays, Check, ClipboardList, Cpu, Globe, IdCard, Info, LogOut, Palette, Plug, Plus, Server, ShareIcon, ShieldCheck, SunMoon,
+  Activity, Bell, BookOpen, Brain, CalendarDays, ChartColumn, Check, ClipboardList, Cpu, Globe, IdCard, Info, LogOut, Palette, Plug, Plus, Server, ShareIcon, ShieldCheck, SunMoon,
   TreeDeciduous, User,
 } from '../components/icons';
 import { LensAvatar } from '../components/LensAvatar';
@@ -129,11 +129,14 @@ export function MeScreen() {
 
   const about = () => sheet.open({
     title: L('关于', 'About'),
-    content: () => (
+    content: (close) => (
       <View style={{ gap: space.sm }}>
         <T v="body">{`${Constants.expoConfig?.name ?? 'OpenMousse'} ${version}`}</T>
         <T v="callout" color={t.ink2}>{L('开源（AGPL-3.0）：github.com/openmousse/openmousse。你的对话、记忆和数据均保存在你自己的 claw 上。',
           'Open source (AGPL-3.0): github.com/openmousse/openmousse. Your chats, memory and data are stored on your own claw.')}</T>
+        <Group style={{ marginHorizontal: 0, marginTop: space.sm }}>
+          <Row first icon={<ChartColumn size={22} color={t.cyan} />} title={L('可视化素材库', 'Chart kit')} onPress={() => { close(); nav.navigate('VizKit'); }} />
+        </Group>
       </View>
     ),
   });

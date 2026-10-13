@@ -36,6 +36,15 @@ const light = {
   bad: '#B83A30',
   badSoft: '#FBE3E0',
   lensField: '#101216',
+  // 可视化色板（src/components/viz/ 用，规则见下方 vizMark 上面的说明）
+  viz: {
+    series: ['#1488A3', '#B07D22', '#7B5CC7', '#2F8A5B', '#4A72C2', '#B24F86'],
+    seq: ['#CAE9F3', '#7CBDD1', '#4DA3BC', '#1488A3', '#005A6F'],
+    other: '#A6AEB7',
+    emph: '#005A6F',
+    grid: '#E6E9EC',
+    axis: '#C9CED3',
+  },
   tints: {
     cyan: { soft: '#DAF0F5', fg: '#0C6F86', swatch: '#0F7A93' },
     gold: { soft: '#F5EAD3', fg: '#8A5F12', swatch: '#B07D22' },
@@ -71,6 +80,14 @@ const dark: typeof light = {
   bad: '#EC7A70',
   badSoft: '#3A1815',
   lensField: '#050607',
+  viz: {
+    series: ['#2A97B0', '#B5873A', '#8E6FD8', '#3E9E6E', '#5E86D6', '#C0679A'],
+    seq: ['#163038', '#1B4C59', '#23708A', '#2A97B0', '#5CCFE6'],
+    other: '#525A64',
+    emph: '#5CCFE6',
+    grid: '#23272E',
+    axis: '#30353D',
+  },
   tints: {
     cyan: { soft: '#10303A', fg: '#5CCFE6', swatch: '#5CCFE6' },
     gold: { soft: '#30271A', fg: '#DDB56A', swatch: '#DDB56A' },
@@ -128,6 +145,25 @@ export const useAppearance = () => {
   const { appearance, setAppearance } = useContext(Ctx);
   return { appearance, setAppearance };
 };
+
+/**
+ * 可视化色板 t.viz（2026-10-13，dataviz 的 validate_palette.js 深浅两套都跑过）：
+ * - series：分类色 6 个，同一色相顺序（青、金、紫、绿、蓝、粉），在卡片和页面底色上都通过色觉、对比度校验。
+ *   按顺序用、不循环；颜色跟着这一类走，不跟名次走（筛掉一类，其余的不换色）；超过 6 类把末尾的合并成「其他」。
+ *   series[0] / series[1] 就是原来的 chartA / chartB。散点、小多图这类任意两点都可能挨着的图最多用前 3 个
+ *   （深色前三个任意两两 7.5，在警告区，必须再加一种区分：形状、直接标注或间隙）。
+ * - seq：顺序色阶 5 级，低 → 高（深色由暗到亮，浅色由浅到深），单一色相，热力图这类连续量用。
+ *   第 0 级贴近底色、表示接近 0；分档的格子用 1–4 级（浅色 1–4 级按有序色阶校验通过，深色第 1 级对底色 1.9:1，属于连续量的低端）。
+ * - other：「其他」与弱化的灰，对底色不到 3:1，用到它的地方必须有文字（图例或数值）。和各分类色挨着时色觉差都在 8 以上。
+ * - emph：强调（当前这一项、今天），同一色相高一级。
+ * - grid / axis：网格线、基线，发丝线、实线、不抢数据。
+ * 状态色不在这里：用 good / warn / bad，只表示状态，必须配图标和文字（viz 的 StatusTag）。
+ */
+/**
+ * 可视化标记规范：线宽 2；柱顶 4 圆角、贴基线一端直角；柱子最粗 24；标记点直径 8 外加 2 的底色描边；
+ * 相邻色块（堆叠段、相邻柱、环形的段）之间留 2 的底色间隙；点按区域至少 24；面积填充 10%；目标范围带 14%。
+ */
+export const vizMark = { line: 2, radius: 4, barMax: 24, dot: 8, ring: 2, gap: 2, hit: 24, area: 0.1, band: 0.14 } as const;
 
 export const space = { xs: 4, sm: 8, md: 12, lg: 16, xl: 24, xxl: 32 };
 export const radius = { sm: 8, md: 12, lg: 18, pill: 999 };

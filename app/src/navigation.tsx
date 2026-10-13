@@ -43,6 +43,7 @@ import { ForwardScreen } from './screens/ForwardScreen';
 import { SharesScreen } from './screens/SharesScreen';
 import { AddFriendScreen, CardAgentScreen, FriendChatScreen, MyNameScreen, NotifySettingsScreen } from './screens/FriendsScreens';
 import { FriendAgentsScreen } from './screens/FriendAgentsScreen';
+import { VizKitScreen } from './screens/VizKitScreen';
 import { findCode } from './api/friends';
 import type { PushTarget } from './data/types';
 import { L } from './i18n';
@@ -288,6 +289,8 @@ export function RootNavigator() {
         <Stack.Screen name="Notify" component={NotifySettingsScreen} />
         {/* agent 之间（社交第三层）：从朋友聊天右上角「…」进 */}
         <Stack.Screen name="FriendAgents" component={FriendAgentsScreen} />
+        {/* 可视化素材库（2026-10-13）：设置 → 关于 → 可视化素材库，网页版 ?screen=VizKit */}
+        <Stack.Screen name="VizKit" component={VizKitScreen} />
       </Stack.Navigator>
     </NavigationContainer>
   );
