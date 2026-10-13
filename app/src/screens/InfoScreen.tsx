@@ -1,13 +1,13 @@
 // 资料页（2026-10-13，聊天页头的 ⓘ）：每种对话一页，头上是大头像、名字和一行说明。
-// Agent：看板（第一屏）/ 记忆 / 设置；主对话、项目、会议、好友：一页设置。置顶 / 免打扰 / 删除和对话列表的左滑、长按是同一套（useChatActions）。
-// params：kind（agent | main | project | meeting | friend）、id、tab（Agent 的 board | memory | settings）、at（从推送 / 链接来时换 tab 用）。
+// Agent：看板（第一屏）/ 记忆 / 设置；主对话、项目、好友：一页设置（会议的资料页是会议那边的 MeetingInfo）。置顶 / 免打扰 / 删除和对话列表的左滑、长按是同一套（useChatActions）。
+// params：kind（agent | main | project | friend）、id、tab（Agent 的 board | memory | settings）、at（从推送 / 链接来时换 tab 用）。
 import React, { useCallback, useEffect, useState } from 'react';
 import { ActivityIndicator, Pressable, ScrollView, StyleSheet, Switch, TextInput, View } from 'react-native';
 import { useNavigation, useRoute } from '@react-navigation/native';
 import { agentName } from '../brand';
 import { AgentMemory } from '../components/AgentMemory';
 import { useAgentBoard } from '../components/blocks/BoardContext';
-import { AgentFace, PillTabs, ProjectFace, RoomFace } from '../components/ChatParts';
+import { AgentFace, PillTabs, ProjectFace } from '../components/ChatParts';
 import { Archive, ArchiveRestore, Bell, Brain, CalendarDays, ChevronLeft, ClipboardList, Cpu, MessageCircle, Palette, Pencil, Pin, Settings, Trash2 } from '../components/icons';
 import { LensAvatar } from '../components/LensAvatar';
 import { ModelSwitch, modelOf } from '../components/ModelPicker';
@@ -25,7 +25,7 @@ import { useChatActions, useChatList } from './ChatScreen';
 import { FriendAvatar, FriendClear, FriendInfoBody } from './FriendsScreens';
 import { AgentBoard } from './GroupScreen';
 
-type Kind = 'agent' | 'main' | 'project' | 'meeting' | 'friend';
+type Kind = 'agent' | 'main' | 'project' | 'friend';
 type AgentTab = 'board' | 'memory' | 'settings';
 
 /** 页头：只有返回（设计稿：资料页不重复名字，名字在下面的大头像旁）。 */
@@ -155,49 +155,33 @@ function AgentInfo({ id, tab: wanted, at, onBack }: { id: string; tab?: AgentTab
   );
 }
 
-/** 主对话、项目、会议：一页设置。 */
+/** 主对话、项目：一页设置。 */
 function ThreadInfo({ kind, id, onBack }: { kind: Kind; id: string; onBack: () => void }) {
   const t = useTheme();
   const nav = useNavigation<any>();
   const sheet = useSheet();
-  const { avatar, threadModel, setThreadModel, sharedChannels, sideChats, groups, claw, renameSideChat, restoreProject, archiveSideChat, reload } = useStore();
+  const { avatar, threadModel, setThreadModel, sharedChannels, sideChats, claw, renameSideChat, restoreProject, archiveSideChat, reload } = useStore();
   const list = useChatList();
   const { prefs, deleteRow } = useChatActions();
   const row = list.rows.find((r) => r.id === id);
   const side = sideChats.find((c) => c.id === id);
-  const memberOf = (mid: string) => groups.find((g) => g.id === mid);
   const isMain = kind === 'main';
-  const title = isMain ? agentName() : kind === 'project' ? side?.title ?? row?.title ?? '' : row?.title ?? '';
+  const title = isMain ? agentName() : side?.title ?? row?.title ?? '';
   const model = modelOf(threadModel[id] ?? threadModel.main)?.short;
-  const face = isMain ? <LensAvatar size={60} config={avatar} /> : kind === 'project' ? <ProjectFace size={60} archived={side?.archived} />
-    : <RoomFace size={60} avatar={avatar} members={(row?.members ?? []).map((m) => ({ id: m, icon: memberOf(m)?.icon, color: memberOf(m)?.color ?? null }))} />;
+  const face = isMain ? <LensAvatar size={60} config={avatar} /> : <ProjectFace size={60} archived={side?.archived} />;
   const sub = isMain ? [L('主对话', 'Main chat'), model].filter(Boolean).join(' · ')
-    : kind === 'project' ? (side ? `${side.archived ? L('已归档', 'Archived') : L('项目', 'Project')} · ${projectLine(side)}` : L('项目', 'Project'))
-      : L(`${row?.kind === 'room' ? '群聊' : '会议'} · ${row?.members?.length ?? 0} 位成员`, `${row?.kind === 'room' ? 'Group' : 'Meeting'} · ${row?.members?.length ?? 0} members`);
+    : side ? `${side.archived ? L('已归档', 'Archived') : L('项目', 'Project')} · ${projectLine(side)}` : L('项目', 'Project');
   const after = () => toList(nav);
   return (
     <Screen>
       <Top onBack={onBack} />
       <ScrollView contentContainerStyle={{ paddingBottom: space.xxl }} refreshControl={<PullRefresh onRefresh={() => reload('chats', 'sideChats')} />}>
         <Head face={face} title={title} sub={sub} />
-        {kind === 'meeting' && row?.members?.length ? (
-          <>
-            <GroupLabel>{L('成员', 'Members')}</GroupLabel>
-            <Box>
-              {row.members.map((m, i) => {
-                const g = memberOf(m);
-                return <Row key={m} first={i === 0} title={m === 'main' ? agentName() : g?.name ?? m}
-                  icon={m === 'main' ? <LensAvatar size={28} config={avatar} /> : <AgentFace icon={g?.icon} color={g?.color} size={28} />}
-                  onPress={m === 'main' ? () => nav.navigate('Chat', { id: 'main' }) : g ? () => nav.navigate('Group', { id: m }) : undefined} />;
-              })}
-            </Box>
-          </>
-        ) : null}
         <GroupLabel>{L('对话', 'Chat')}</GroupLabel>
         <Box>
-          {kind !== 'meeting' ? <Row first icon={<Cpu size={18} color={t.ink2} />} title={L('本对话的模型', 'Model for this chat')} chevron={false}
-            right={<ModelSwitch value={threadModel[id] ?? threadModel.main} onChange={(m) => setThreadModel(id, m)} />} /> : null}
-          <Row first={kind === 'meeting'} icon={<CalendarDays size={18} color={t.ink2} />} title={L('聊天记录', 'Chat history')} onPress={() => nav.navigate('History', { thread: id })} />
+          <Row first icon={<Cpu size={18} color={t.ink2} />} title={L('本对话的模型', 'Model for this chat')} chevron={false}
+            right={<ModelSwitch value={threadModel[id] ?? threadModel.main} onChange={(m) => setThreadModel(id, m)} />} />
+          <Row icon={<CalendarDays size={18} color={t.ink2} />} title={L('聊天记录', 'Chat history')} onPress={() => nav.navigate('History', { thread: id })} />
           {list.server && !isMain && !side?.archived ? <SwitchLine icon={<Pin size={18} color={t.ink2} />} title={L('置顶', 'Pin')} sub={L('排在主对话之后', 'Right after the main chat')} value={!!row?.pinned} onChange={(v) => prefs(id, { pinned: v })} /> : null}
           {list.server ? <SwitchLine icon={<Bell size={18} color={t.ink2} />} title={L('免打扰', 'Mute')} sub={L('不推送通知，未读不计入角标', "No notifications; unread doesn't count in the badge")} value={!!row?.muted} onChange={(v) => prefs(id, { muted: v })} /> : null}
           {isMain ? <Row icon={<MessageCircle size={18} color={t.ink2} />} title={L('共用会话的渠道', 'Channels sharing this session')} value={sharedChannels.length ? sharedChannels.join('、') : L('仅 app', 'App only')} chevron={false} /> : null}
@@ -227,10 +211,6 @@ function ThreadInfo({ kind, id, onBack }: { kind: Kind; id: string; onBack: () =
               <Row icon={<Trash2 size={18} color={t.bad} />} title={L('删除项目', 'Delete project')} danger onPress={() => deleteRow({ kind: 'project', id, title: side.title }, after)} />
             </Box>
           </>
-        ) : kind === 'meeting' && row ? (
-          <Box style={{ marginTop: space.lg }}>
-            <Row first icon={<Trash2 size={18} color={t.bad} />} title={row.kind === 'room' ? L('删除群聊', 'Delete group') : L('删除会议', 'Delete meeting')} danger onPress={() => deleteRow(row, after)} />
-          </Box>
         ) : null}
       </ScrollView>
     </Screen>
