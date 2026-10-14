@@ -1,7 +1,7 @@
 // 附件预览（2026-09-30）：GET /api/files/{id}/preview 说这个文件怎么显示，PDF 这类的页图 /api/files/{id}/page/{n}?w=。见 server/preview.py。
 import { PixelRatio } from 'react-native';
 import type { Attachment } from '../data/types';
-import { fileUrl, request } from './base';
+import { authHeaders, fileUrl, getBase, request } from './base';
 
 export type PreviewTable = { rows: string[][]; head?: boolean; rowsTotal?: number | null; colsTotal?: number | null };
 export type PreviewBlock = { md: string } | { table: PreviewTable };
@@ -43,5 +43,10 @@ export const pageOf = (a: Attachment, n: number, w: number) => (a.study ? fileUr
 
 /** 附件的地址已经带好服务器和令牌（client.ts 用 fileUrl 换过）；再加一个参数。 */
 export const withParam = (url: string, kv: string) => `${url}${url.includes('?') ? '&' : '?'}${kv}`;
+/** 原生播放器取原件（视频）：令牌放请求头，和播客原声一样；地址里的 token= 拿掉，不留在播放器的缓存和日志里。 */
+export function headerSource(url: string): { uri: string; headers: Record<string, string> } {
+  const u = url.replace(/([?&])token=[^&#]*&?/, '$1').replace(/[?&]$/, '');
+  return { uri: u.startsWith('http') ? u : `${getBase()}${u}`, headers: authHeaders() };
+}
 /** 是服务器上的文件（网页版同源时是 /api/files/… 这样的相对地址），不是还没传完的本地文件。 */
 export const isRemote = (url: string) => /^https?:\/\//i.test(url) || url.startsWith('/api/');

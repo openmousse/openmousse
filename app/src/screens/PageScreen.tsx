@@ -1,18 +1,21 @@
 // 页面页（2026-10-13，画布「Artifacts 原理与页面层」第 6–8 张）：Agent 写的网页放进盒子里显示。参数 {id}；网页版 ?screen=Page&id=pg-…
 // - 页面要读数据、你还没决定过：先出授权 sheet（读哪些表和字段、只读、内容更新后要重新确认），决定了才显示；「不允许」也显示，只是读不到数据。
-// - 盒子：网页版是 sandbox="allow-scripts" 的 iframe（srcdoc，不透明源）。页面经 postMessage 要数据（data）、往对话输入框放一句话（prompt）、
-//   报错（error）；这里只认这个 iframe 发来的、限频，再用自己的令牌调服务器。iframe 自己跳到别处（第二次 load）就断开桥。
-// - 手机原生包没有 WebView：给说明（页面在网页版里看，下一个安装包加入）。
+// - 盒子（src/components/PageHost.tsx / PageHost.native.tsx）：网页版是 sandbox="allow-scripts" 的 iframe（srcdoc，不透明源），手机 app（1.0.6 起）
+//   是 WebView（about:blank、无痕、不许跳走）。页面经桥要数据（data）、往对话输入框放一句话（prompt）、报错（error）；两种盒子都交给这里的
+//   onBridge：只认自己那个盒子发来的、限频，再用自己的令牌调服务器。盒子跳到别处（第二次加载）就停下、断开桥。
+// - 手机上要服务器也认 WebView 的桥（pages.native）；更早的服务器给说明（在网页版里看，或者更新服务器）。
 // - 底下：在对话中讨论 / 钉到看板（Agent 的页面；钉上以后出一条带撤销的提示）。右上角「…」：读取权限、重新加载、删除页面。
 import { useNavigation, useRoute } from '@react-navigation/native';
 import React, { useCallback, useEffect, useRef, useState } from 'react';
-import { Platform, Pressable, StyleSheet, View } from 'react-native';
+import { Pressable, StyleSheet, View } from 'react-native';
 import { boardsApi } from '../api/boards';
-import { canPages, pageErrorCode, pageErrorMessage, pagesApi, type PageInfo } from '../api/pages';
+import { canPages, canShowPages, pageErrorCode, pageErrorMessage, pagesApi, type PageInfo } from '../api/pages';
 import { needsUpdate } from '../api/version';
 import { agentName } from '../brand';
 import { Check, ChevronLeft, Ellipsis, PanelsTopLeft, RefreshCw, Table, Trash2 } from '../components/icons';
+import type { BridgeHandler, PageStop } from '../components/pageBridge';
 import { pageTime, PageTag } from '../components/PageCards';
+import { PageHost } from '../components/PageHost';
 import { useSheet } from '../components/Sheet';
 import { Card, Screen, showError, T } from '../components/ui';
 import { L } from '../i18n';
@@ -21,8 +24,6 @@ import { useStore } from '../store';
 import { space, useTheme } from '../theme';
 
 interface Doc { html: string; digest: string; version: number; theme: 'dark' | 'light' }
-interface BridgeMsg { mousse: 1; type: string; id?: number; payload?: { name?: unknown; text?: unknown; message?: unknown } }
-type BridgeReply = { ok: true; data: unknown } | { ok: false; error: { code: string; message: string } };
 
 const MAX_DATA_PER_MIN = 30;
 const MAX_PROMPTS = 5;
@@ -37,30 +38,30 @@ export function PageScreen() {
   const [doc, setDoc] = useState<Doc | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [pageErrors, setPageErrors] = useState<string[]>([]);
-  const [left, setLeft] = useState(false);
+  const [stopped, setStopped] = useState<PageStop | null>(null);
   const [toast, setToast] = useState<{ text: string; undo?: () => void } | null>(null);
   const toastTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const asked = useRef<string | null>(null);
   const live = useRef<{ info: PageInfo | null; doc: Doc | null }>({ info: null, doc: null });
   const budget = useRef({ windowStart: 0, data: 0, prompts: 0, lastPrompt: 0 });
-  const web = Platform.OS === 'web';
+  const shows = canShowPages();  // 这个平台、这台服务器能显示页面
   const theme: 'dark' | 'light' = t.mode === 'light' ? 'light' : 'dark';
 
   const gen = useRef(0);
   // 只有最后一次读的结果算数（主题切换、页面刚更新又重读时，先发的请求后回来不会盖掉新的）
   const load = useCallback((): Promise<void> => {
     const my = ++gen.current;
-    return Promise.all([pagesApi.get(id), web ? pagesApi.doc(id, theme) : Promise.resolve(null)]).then(
+    return Promise.all([pagesApi.get(id), shows ? pagesApi.doc(id, theme) : Promise.resolve(null)]).then(
       ([p, d]) => {
         if (my !== gen.current) return;
         setInfo(p);
         setDoc(d ? { html: d.html, digest: d.digest, version: d.version, theme } : null);
-        setLeft(false);
+        setStopped(null);
         setPageErrors([]);
         setError(null);
       },
       (e) => { if (my === gen.current) setError(pageErrorMessage(e)); });
-  }, [id, web, theme]);
+  }, [id, shows, theme]);
 
   useEffect(() => { if (canPages()) void load(); }, [load]);
   useEffect(() => { live.current = { info, doc }; }, [info, doc]);
@@ -106,12 +107,13 @@ export function PageScreen() {
 
   // 这一版要读数据、还没决定过：打开时问一次（同一个 digest 只问一次；之后从「…」里改）
   useEffect(() => {
-    if (!web || !info || !info.needs.length || info.grant != null || asked.current === info.digest) return;
+    if (!shows || !info || !info.needs.length || info.grant != null || asked.current === info.digest) return;
     asked.current = info.digest;
     askConsent(info);
-  }, [web, info, askConsent]);
+  }, [shows, info, askConsent]);
 
-  const onBridge = useCallback((m: BridgeMsg, reply: (r: BridgeReply) => void) => {
+  // 两种盒子共用：页面要数据 / 放一句话 / 报错
+  const onBridge = useCallback<BridgeHandler>((m, reply) => {
     const { info: p, doc: d } = live.current;
     const fail = (code: string, message: string) => reply({ ok: false, error: { code, message } });
     if (!p || !d) return fail('not_ready', L('页面还没准备好', 'The page is not ready'));
@@ -228,15 +230,15 @@ export function PageScreen() {
           <View style={styles.center}><T v="callout" color={t.ink2}>{L('正在加载…', 'Loading…')}</T></View>
         ) : info.deleted ? (
           <View style={styles.center}><T v="callout" color={t.ink2}>{L('这个页面已删除。', 'This page has been deleted.')}</T></View>
-        ) : !web ? (
+        ) : !shows ? (
           <NativeNote page={info} />
         ) : waiting ? (
           <View style={styles.center}><T v="callout" color={t.ink2}>{L('等待确认读取权限…', 'Waiting for your OK to read data…')}</T></View>
         ) : ready && doc ? (
-          left ? (
-            <View style={styles.center}><T v="callout" color={t.bad}>{L('页面试图打开别的地址，已停止运行。', 'The page tried to navigate away and was stopped.')}</T></View>
+          stopped ? (
+            <View style={styles.center}><T v="callout" color={t.bad} style={{ textAlign: 'center' }}>{stopText(stopped)}</T></View>
           ) : (
-            <PageFrame key={`${doc.digest}:${doc.theme}`} html={doc.html} title={info.title} onBridge={onBridge} onLeft={() => setLeft(true)} />
+            <PageHost key={`${doc.digest}:${doc.theme}`} html={doc.html} title={info.title} onBridge={onBridge} onStop={setStopped} />
           )
         ) : (
           <View style={styles.center}><T v="callout" color={t.ink2}>{L('正在加载…', 'Loading…')}</T></View>
@@ -337,7 +339,14 @@ function ConsentBody({ page }: { page: PageInfo }) {
   );
 }
 
-/** 手机原生包里没有 WebView：说明 + 页面摘要。 */
+/** 盒子停下以后的那句话。 */
+function stopText(why: PageStop): string {
+  if (why === 'crashed') return L('页面已停止运行。可在「…」中重新加载。', 'The page stopped running. Reload it from the … menu.');
+  if (why === 'flood') return L('页面发出的请求过多，已停止运行。', 'The page sent too many requests and was stopped.');
+  return L('页面试图打开别的地址，已停止运行。', 'The page tried to navigate away and was stopped.');
+}
+
+/** 服务器的桥还不认手机 app 的 WebView（没有 pages.native）：说明 + 页面摘要。 */
 function NativeNote({ page }: { page: PageInfo }) {
   const t = useTheme();
   return (
@@ -345,38 +354,14 @@ function NativeNote({ page }: { page: PageInfo }) {
       <Card style={{ gap: 8 }}>
         <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
           <PanelsTopLeft size={18} color={t.tints.purple.fg} />
-          <T v="headline" style={{ fontSize: 15 }}>{L('这个版本的 app 还不能显示页面', "This version of the app can't show pages yet")}</T>
+          <T v="headline" style={{ fontSize: 15 }}>{L('无法在手机上显示此页面', "Can't show this page on the phone")}</T>
         </View>
-        <T v="callout" color={t.ink2}>{L('请在网页版中打开。下一个安装包会加入页面显示。', 'Open it in the web version. The next app build adds page display.')}</T>
+        <T v="callout" color={t.ink2}>{needsUpdate('这台服务器的页面只能在网页版中打开。', 'Pages from this server open only in the web version.')}</T>
       </Card>
       {page.summary ? <T v="callout" color={t.ink2}>{page.summary}</T> : null}
       <PageTag />
     </View>
   );
-}
-
-/** 网页版的盒子：sandbox="allow-scripts"（不透明源）的 iframe，内容由服务器包好（CSP、桥、主题）。 */
-function PageFrame({ html, title, onBridge, onLeft }: { html: string; title: string; onBridge: (m: BridgeMsg, reply: (r: BridgeReply) => void) => void; onLeft: () => void }) {
-  const ref = useRef<HTMLIFrameElement | null>(null);
-  const loads = useRef(0);
-  useEffect(() => {
-    const onMsg = (e: MessageEvent) => {
-      const f = ref.current;
-      if (!f || e.source !== f.contentWindow || loads.current > 1) return;  // 只认这个盒子；它跳走以后不再理
-      const m = e.data as BridgeMsg | null;
-      if (!m || m.mousse !== 1 || typeof m.type !== 'string') return;
-      onBridge(m, (r) => {
-        if (loads.current <= 1) f.contentWindow?.postMessage({ mousse: 1, type: 'result', id: m.id, ...r }, '*');
-      });
-    };
-    window.addEventListener('message', onMsg);
-    return () => window.removeEventListener('message', onMsg);
-  }, [onBridge]);
-  return React.createElement('iframe', {
-    ref, title, srcDoc: html, sandbox: 'allow-scripts', referrerPolicy: 'no-referrer',
-    onLoad: () => { loads.current += 1; if (loads.current > 1) onLeft(); },
-    style: { border: 0, width: '100%', height: '100%', display: 'block', background: 'transparent' },
-  });
 }
 
 const styles = StyleSheet.create({

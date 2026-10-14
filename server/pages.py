@@ -4,10 +4,10 @@
 - 页面 = Agent 交的一份自包含网页（HTML 片段；样式、脚本写在里面，库只能从几个 CDN 加载）。服务器存成版本（pages / page_versions）：
   同一个 Agent 同一个 name 再发一次 = 新的一版，id 不变；内容和要读的数据都没变就不加新版。
 - 盒子：app 拿到的文档由这里包好（wrap）：最前面一条 CSP（不能联网、不能提交表单、不能嵌别的页面，脚本和样式只认 CDN 白名单），
-  后面是桥和主题色。app 把它放进 sandbox="allow-scripts" 的 iframe（srcdoc，不带 allow-same-origin = 不透明源），
-  页面读不到 app 的令牌、登录和别的数据，也调不了 /api。
+  后面是桥和主题色。网页版把它放进 sandbox="allow-scripts" 的 iframe（srcdoc，不带 allow-same-origin = 不透明源），
+  手机 app 放进 WebView（about:blank，不许跳到别的地址、不存 cookie 和本地存储）；页面读不到 app 的令牌、登录和别的数据，也调不了 /api。
 - 桥：页面里 mousse.data(名字) 读数据、mousse.prompt(文字) 把一句话放进这个 Agent 对话的输入框（你按发送才发）。
-  经 postMessage 交给 app，app 用自己的令牌调 POST /api/pages/{id}/data。能读什么，发布时写在 caps.data 里：
+  经 postMessage（手机上是 window.ReactNativeWebView）交给 app，app 用自己的令牌调 POST /api/pages/{id}/data。能读什么，发布时写在 caps.data 里：
   名字 → 看板的查询 Q（from / where / sort / limit，见 boards.py），只能读这个 Agent 自己的表和只读的系统来源 health:*，只读。
 - 授权：声明了 data 的页面第一次打开时 app 问你（列出要读的表和字段），决定记在 page_grants，绑这一版的 digest（HTML + caps 的哈希）：
   内容改了要重新确认（和 OpenClaw 的批准绑内容哈希一样）。没同意的页面照样显示，读数据回 not_granted。
@@ -16,7 +16,9 @@
 - 钉到看板：POST /api/pages/{id}/pin 在这个 Agent 的看板最后加一块 type page（boards.EXTRA），看板顶上照常出撤回。
 - Agent 用 server/page_ctl.py（MCP 工具 page）：check / publish / list / show / get / data / rm。写法见 packs/core/skills/page。
 
-还没做的：手机原生包没有 WebView（页面先只在网页版里显示，手机上给说明）；页面不能写数据；页面里不能问模型（以后接 llm-task，零工具）。
+手机 app 从 1.0.6 起用 WebView 显示（服务器报 pages.native；更早的服务器桥只认 iframe，手机上给说明）。
+
+还没做的：页面不能写数据；页面里不能问模型（以后接 llm-task，零工具）。
 """
 from __future__ import annotations
 
@@ -319,12 +321,18 @@ def base_css(t: dict) -> str:
 
 
 def bridge_js(meta: dict) -> str:
-    """页面里的 window.mousse：data(名字) / prompt(文字) 经 postMessage 交给 app；出错报给 app（最多 3 条）。"""
-    return ("(function(){var seq=0,wait={},errs=0,M=" + json.dumps(meta, ensure_ascii=False).replace("</", "<\\/") + ";"
-            "function post(m){m.mousse=1;try{parent.postMessage(m,'*')}catch(e){}}"
+    """页面里的 window.mousse：data(名字) / prompt(文字) 交给 app；出错报给 app（最多 3 条）。
+    同一份文档两种盒子都能用：网页版的 iframe 经 parent.postMessage 发、只收 parent 发来的结果；手机 app 的 WebView 里有
+    window.ReactNativeWebView（在页面脚本之前就有），经它发 JSON 字符串，结果由 app 用 injectJavaScript 派一个 message 事件回来
+    （没有 source，形状和网页版一样）。手机上再去掉摄像头 / 麦克风 / 定位和弹窗：网页版的 iframe 本来就用不了这些。"""
+    return ("(function(){var seq=0,wait={},errs=0,RN=window.ReactNativeWebView,M=" + json.dumps(meta, ensure_ascii=False).replace("</", "<\\/") + ";"
+            "if(RN){var N=window.Navigator&&Navigator.prototype;['mediaDevices','getUserMedia','webkitGetUserMedia','geolocation'].forEach(function(k){"
+            "try{if(N)delete N[k];delete navigator[k]}catch(e){}});"
+            "['alert','confirm','prompt','print'].forEach(function(k){try{window[k]=function(){return k==='confirm'?false:k==='prompt'?null:undefined}}catch(e){}})}"
+            "function post(m){m.mousse=1;try{if(RN)RN.postMessage(JSON.stringify(m));else parent.postMessage(m,'*')}catch(e){}}"
             "function ask(type,payload){return new Promise(function(res,rej){var id=++seq;wait[id]={res:res,rej:rej};post({type:type,id:id,payload:payload});"
             "setTimeout(function(){if(wait[id]){delete wait[id];var e=new Error('timeout');e.code='timeout';rej(e)}},30000)})}"
-            "window.addEventListener('message',function(e){if(e.source!==parent)return;var m=e.data;if(!m||m.mousse!==1||m.type!=='result')return;"
+            "window.addEventListener('message',function(e){if(e.source!==(RN?null:parent))return;var m=e.data;if(!m||m.mousse!==1||m.type!=='result')return;"
             "var w=wait[m.id];if(!w)return;delete wait[m.id];if(m.ok)w.res(m.data);else{var x=new Error((m.error&&m.error.message)||'error');"
             "x.code=(m.error&&m.error.code)||'error';w.rej(x)}});"
             "function report(msg,line){if(errs>=3)return;errs++;post({type:'error',payload:{message:String(msg).slice(0,300),line:line||0}})}"
