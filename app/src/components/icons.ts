@@ -162,3 +162,8 @@ export { default as AtSign } from 'lucide-react-native/icons/at-sign';
 export { default as CircleStop } from 'lucide-react-native/icons/circle-stop';
 // 页面（2026-10-13）：Agent 写的网页，对话卡片、看板积木、页面页的标识
 export { default as PanelsTopLeft } from 'lucide-react-native/icons/panels-top-left';
+// 硬件（1.0.6）：蓝牙连 Flipper Zero、电量、红外遥控器
+export { default as Bluetooth } from 'lucide-react-native/icons/bluetooth';
+export { default as BluetoothOff } from 'lucide-react-native/icons/bluetooth-off';
+export { default as BatteryMedium } from 'lucide-react-native/icons/battery-medium';
+export { default as Tv } from 'lucide-react-native/icons/tv';
