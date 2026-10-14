@@ -1,7 +1,7 @@
 // 附件预览（2026-09-30）：对话里点开附件就在 app 里看，不再跳浏览器。
 // 同一条消息里的几个附件左右滑（网页版用底下的箭头 / 键盘左右键）。图片全屏、双指放大；PDF / EPUB / SVG 是服务器渲染的页图
-// （手机包里没有 WebView）；Word / PPT / Excel / CSV / Markdown 是服务器转好的排版和表格；文字、代码原样；音频能放、带转写；
-// 视频和看不了的给「用浏览器打开」。服务器那边见 server/preview.py。
+// （不靠 WebView，老安装包也能看）；Word / PPT / Excel / CSV / Markdown 是服务器转好的排版和表格；文字、代码原样；音频能放、带转写；
+// 视频能放（手机上 1.0.6 起用 expo-video）；看不了的给「用浏览器打开」。服务器那边见 server/preview.py。
 // 参数：items（附件）+ index（先看哪个）；或者 file = 附件 id（逗号分开几个，网页版调试 ?screen=FilePreview&file=<id> 也走这条）。
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { ActivityIndicator, FlatList, Image, Linking, Platform, Pressable, ScrollView, StyleSheet, Text, View, type LayoutChangeEvent, type NativeScrollEvent, type NativeSyntheticEvent } from 'react-native';
@@ -9,11 +9,13 @@ import { useNavigation, useRoute } from '@react-navigation/native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import * as Clipboard from 'expo-clipboard';
 import { setAudioModeAsync, useAudioPlayer, useAudioPlayerStatus } from 'expo-audio';
+import { useEvent } from 'expo';
+import { useVideoPlayer, VideoView } from 'expo-video';
 import { ArrowUpRight, Check, ChevronLeft, ChevronRight, Copy, FileAudio, FileText, Film, ImageIcon, Paperclip, Pause, Play, X } from '../components/icons';
 import { Markdown } from '../components/Markdown';
 import { Btn, T } from '../components/ui';
 import { fileUrl } from '../api/base';
-import { filePreview, isRemote, pageOf, pageWidth, previewOf, withParam, type FilePreview, type PreviewTable } from '../api/files';
+import { filePreview, headerSource, isRemote, pageOf, pageWidth, previewOf, withParam, type FilePreview, type PreviewTable } from '../api/files';
 import type { Attachment } from '../data/types';
 import { L } from '../i18n';
 import { radius, space, type, useTheme } from '../theme';
@@ -144,12 +146,12 @@ export function FilePreviewScreen() {
       </View>
       <View style={{ flex: 1 }} onLayout={onLayout}>
         {box ? (items.length === 1 ? (
-          <Page a={a} info={cur} w={box.w} h={box.h} active bottom={insets.bottom} />
+          <Page a={a} info={cur} w={box.w} h={box.h} active bottom={insets.bottom} pager={false} />
         ) : (
           <FlatList ref={list} data={items} horizontal pagingEnabled showsHorizontalScrollIndicator={false} keyExtractor={(x) => x.id}
             initialScrollIndex={index} getItemLayout={(_, i) => ({ length: box.w, offset: box.w * i, index: i })}
             onScroll={onScroll} scrollEventThrottle={32} windowSize={3} initialNumToRender={1} maxToRenderPerBatch={2}
-            renderItem={({ item, index: i }) => <Page a={item} info={info[item.id]} w={box.w} h={box.h} active={i === index} bottom={insets.bottom} />} />
+            renderItem={({ item, index: i }) => <Page a={item} info={info[item.id]} w={box.w} h={box.h} active={i === index} bottom={insets.bottom} pager />} />
         )) : null}
         {items.length > 1 ? (
           <View pointerEvents="box-none" style={[styles.pager, { bottom: insets.bottom + 14 }]}>
@@ -169,8 +171,8 @@ export function FilePreviewScreen() {
   );
 }
 
-/** 一个附件占一整屏。 */
-function Page({ a, info, w, h, active, bottom }: { a: Attachment; info?: Loaded; w: number; h: number; active: boolean; bottom: number }) {
+/** 一个附件占一整屏。pager = 底下有左右切换的小条（视频的控件要让开它）。 */
+function Page({ a, info, w, h, active, bottom, pager }: { a: Attachment; info?: Loaded; w: number; h: number; active: boolean; bottom: number; pager: boolean }) {
   const t = useTheme();
   if (plainImage(a)) return <ImagePage a={a} w={w} h={h} />;
   if (!isRemote(a.url)) return <NonePage a={a} note={L('正在上传，完成后即可查看。', 'Still uploading. Open it once it has finished.')} w={w} h={h} />;
@@ -183,7 +185,7 @@ function Page({ a, info, w, h, active, bottom }: { a: Attachment; info?: Loaded;
     case 'doc': return <DocPage p={info} w={w} h={h} bottom={bottom} />;
     case 'text': return <TextPage p={info} w={w} h={h} bottom={bottom} />;
     case 'audio': return <AudioPage a={a} p={info} w={w} h={h} active={active} />;
-    case 'video': return <VideoPage a={a} w={w} h={h} />;
+    case 'video': return <VideoPage a={a} w={w} h={h} active={active} below={pager ? bottom + 64 : bottom} />;
     case 'image': return <ImagePage a={a} w={w} h={h} />;
     default: return <NonePage a={a} note={info.note ?? ''} label={info.label} w={w} h={h} />;
   }
@@ -403,16 +405,35 @@ function AudioPage({ a, p, w, h, active }: { a: Attachment; p: FilePreview; w: n
   );
 }
 
-/** 视频：网页版直接放；手机上这个版本的 app 没有播放器，交给浏览器。 */
-function VideoPage({ a, w, h }: { a: Attachment; w: number; h: number }) {
-  if (Platform.OS === 'web' && isRemote(a.url)) {
+/** 视频：网页版用 <video>（令牌在地址里）；手机上用 expo-video。滑到这一页才去取（相邻的页先挂上，但不取视频）。 */
+function VideoPage({ a, w, h, active, below }: { a: Attachment; w: number; h: number; active: boolean; below: number }) {
+  const [armed, setArmed] = useState(active);
+  if (active && !armed) setArmed(true);
+  if (Platform.OS === 'web') {
     return (
       <View style={[styles.center, { width: w, height: h, backgroundColor: '#000' }]}>
         {React.createElement('video', { src: withParam(a.url, 'inline=1'), controls: true, playsInline: true, style: { maxWidth: '100%', maxHeight: '100%' } })}
       </View>
     );
   }
-  return <NonePage a={a} note={L('当前版本的 app 暂不支持播放视频，请在浏览器中打开。', "This version of the app can't play videos yet. Open it in the browser to watch.")} w={w} h={h} />;
+  if (!armed) return <View style={[styles.center, { width: w, height: h, backgroundColor: '#000' }]}><Film size={34} color="#9AA1A9" /></View>;
+  return <NativeVideo a={a} w={w} h={h} active={active} below={below} />;
+}
+
+/** 手机上的视频：令牌放请求头（headerSource），原生控件（全屏、拖动进度），滑走就停；放不了就换成「用浏览器打开」。 */
+function NativeVideo({ a, w, h, active, below }: { a: Attachment; w: number; h: number; active: boolean; below: number }) {
+  const source = useMemo(() => { const s = headerSource(a.url); return { ...s, uri: withParam(s.uri, 'inline=1') }; }, [a.url]);
+  const player = useVideoPlayer(source);
+  const { status } = useEvent(player, 'statusChange', { status: player.status });
+  useEffect(() => { if (!active) player.pause(); }, [active, player]);
+  if (status === 'error') return <NonePage a={a} note={L('无法播放此视频，请在浏览器中打开。', "Couldn't play this video. Open it in the browser.")} w={w} h={h} />;
+  return (
+    <View style={{ width: w, height: h, paddingBottom: below, backgroundColor: '#000' }}>
+      <VideoView player={player} style={{ flex: 1 }} nativeControls contentFit="contain" allowsPictureInPicture={false}
+        accessibilityLabel={prettyName(a.name)} />
+      {status === 'loading' ? <View pointerEvents="none" style={[StyleSheet.absoluteFill, styles.center]}><ActivityIndicator color="#9AA1A9" /></View> : null}
+    </View>
+  );
 }
 
 /** 看不了的：文件信息 +「用浏览器打开」。 */
