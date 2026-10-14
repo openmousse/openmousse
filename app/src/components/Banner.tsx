@@ -3,7 +3,7 @@
 // 同一个来源、同一个去处再来一条：替换原来那条，不重复排队。4 秒内来了两条以上不同的：合成一张「N 条新消息」，
 // 点一下原地展开成列表（最多 4 行，每行点了去各自的地方），往上划全部收起。列表里的顺序：要你点头 > 回复 > 卡片。
 // 正看着的那个对话不弹（store 发之前判断；弹出来之后你自己点进了那个对话，也会收起）。
-// 只用 RN 自带的 Animated 和触摸响应（onResponder*）：reanimated、gesture-handler 这类原生模块不在已装的包里，热更新带不过去。
+// 只用 RN 自带的 Animated 和触摸响应（onResponder*）：写的时候 gesture-handler 还不在包里（1.0.6 起有了，以后可以换）。
 import React, { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
 import { Animated, Easing, Platform, Pressable, StyleSheet, Text, View, type GestureResponderEvent } from 'react-native';
 import * as Haptics from 'expo-haptics';
