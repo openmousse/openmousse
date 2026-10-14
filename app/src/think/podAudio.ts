@@ -1,4 +1,5 @@
-// 播客的录音、播放、录的时候屏幕不锁。都用已经在原生包里的模块（expo-audio、expo 自带的 ExpoKeepAwake），热更新就能发。
+// 播客的录音、播放、录的时候屏幕不锁。用原生包里的 expo-audio、expo 自带的 ExpoKeepAwake。
+// 1.0.6 起包里开了后台录音（app.json 的 expo-audio 插件 enableBackgroundRecording）：锁屏、切到别的 app 也接着录。
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { Platform } from 'react-native';
 import { requireOptionalNativeModule } from 'expo';
@@ -14,7 +15,7 @@ type WakeLock = { release: () => Promise<void> };
 let keepMod: KeepAwake | null | undefined;
 let wakeLock: WakeLock | null = null;
 
-/** 录的时候屏幕不锁（锁屏 = app 进后台，原生包没开后台录音，这一段就停了）。拿不到模块就算了。 */
+/** 录的时候屏幕不锁（看着题目录更顺手；锁了屏也照样在录）。拿不到模块就算了。 */
 export async function keepAwake(on: boolean) {
   try {
     if (Platform.OS === 'web') {
@@ -32,10 +33,16 @@ export async function keepAwake(on: boolean) {
 export function useTakeRecorder() {
   const recorder = useAudioRecorder(PRESET);
   const state = useAudioRecorderState(recorder, 120);
+  /** 这一段能不能在后台接着录（网页上标签页切走时浏览器自己会接着录） */
+  const background = useRef(Platform.OS === 'web');
   const start = useCallback(async (): Promise<'ok' | 'denied'> => {
     const perm = await AudioModule.requestRecordingPermissionsAsync();
     if (!perm.granted) return 'denied';
-    await setAudioModeAsync({ allowsRecording: true, playsInSilentMode: true });
+    // 后台接着录：iOS 靠音频后台模式，安卓起一个带通知的前台服务（插件配好了）。设不上就退回只在前台录
+    background.current = await setAudioModeAsync({ allowsRecording: true, playsInSilentMode: true, allowsBackgroundRecording: true }).then(() => true, async () => {
+      await setAudioModeAsync({ allowsRecording: true, playsInSilentMode: true });
+      return false;
+    });
     await recorder.prepareToRecordAsync();
     recorder.record();
     return 'ok';
@@ -43,7 +50,7 @@ export function useTakeRecorder() {
   const stop = useCallback(async (): Promise<{ file: PendingFile; seconds: number } | null> => {
     const seconds = (recorder.getStatus().durationMillis ?? 0) / 1000;
     await recorder.stop();
-    await setAudioModeAsync({ allowsRecording: false, playsInSilentMode: true }).catch(() => {});
+    await setAudioModeAsync({ allowsRecording: false, playsInSilentMode: true, allowsBackgroundRecording: false }).catch(() => {});
     const uri = recorder.uri;
     if (!uri) return null;
     if (Platform.OS === 'web') {  // 网页版录的是 blob: 地址（webm），上传要 File
@@ -54,7 +61,7 @@ export function useTakeRecorder() {
     }
     return { file: { uri, name: 'take.m4a', mime: 'audio/m4a', size: 0 }, seconds };
   }, [recorder]);
-  return { start, stop, state };
+  return { start, stop, state, background };
 }
 
 /**

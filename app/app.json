@@ -2,7 +2,7 @@
   "expo": {
     "name": "OpenMousse",
     "slug": "openmousse",
-    "version": "1.0.5",
+    "version": "1.0.6",
     "orientation": "portrait",
     "icon": "./assets/icon.png",
     "userInterfaceStyle": "automatic",
@@ -17,7 +17,10 @@
         "NSHealthShareUsageDescription": "{name} 读取睡眠、心率变异性、静息心率等数据，用于每天的状态判断和训练建议。",
         "NSHealthUpdateUsageDescription": "{name} 不会向健康写入数据。",
         "ITSAppUsesNonExemptEncryption": false,
-        "NSSupportsLiveActivities": true
+        "NSSupportsLiveActivities": true,
+        "UIBackgroundModes": [
+          "bluetooth-central"
+        ]
       },
       "entitlements": {
         "com.apple.developer.healthkit": true,
@@ -55,14 +58,15 @@
       [
         "expo-audio",
         {
-          "microphonePermission": "{name} 需要用麦克风，把你说的话转成文字。"
+          "microphonePermission": "{name} 需要用麦克风，把你说的话转成文字、录播客。",
+          "enableBackgroundRecording": true
         }
       ],
       [
         "expo-image-picker",
         {
           "photosPermission": "{name} 需要访问相册，把你选的照片发给它看。",
-          "cameraPermission": "{name} 需要用相机，拍照直接发给它看。"
+          "cameraPermission": "{name} 需要用相机拍照发给它看，以及扫描配对码和好友邀请码。"
         }
       ],
       "expo-asset",
@@ -81,6 +85,33 @@
           "android": {
             "usesCleartextTraffic": true
           }
+        }
+      ],
+      [
+        "expo-camera",
+        {
+          "cameraPermission": "{name} 需要用相机拍照发给它看，以及扫描配对码和好友邀请码。",
+          "microphonePermission": "{name} 需要用麦克风，把你说的话转成文字、录播客。",
+          "recordAudioAndroid": false,
+          "barcodeScannerEnabled": true
+        }
+      ],
+      [
+        "expo-video",
+        {
+          "supportsBackgroundPlayback": false,
+          "supportsPictureInPicture": false
+        }
+      ],
+      "@react-native-community/datetimepicker",
+      "expo-sharing",
+      [
+        "react-native-ble-manager",
+        {
+          "isBleRequired": false,
+          "neverForLocation": true,
+          "companionDeviceEnabled": false,
+          "bluetoothAlwaysPermission": "{name} 用蓝牙连接你的 Flipper 等硬件设备。"
         }
       ]
     ]

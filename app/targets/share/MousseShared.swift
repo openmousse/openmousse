@@ -26,6 +26,12 @@ enum MousseShared {
     return (Bundle.main.object(forInfoDictionaryKey: "CFBundleDisplayName") as? String) ?? "OpenMousse"
   }
 
+  /// app 的 URL scheme（app 每次连上服务器写进 App Group）；小组件、实时活动点了用它打开对应的页面。没写过（旧版 app）= nil，点了只打开 app。
+  static func appURL(_ path: String) -> URL? {
+    guard let s = defaults?.string(forKey: "scheme"), !s.isEmpty else { return nil }
+    return URL(string: "\(s)://\(path)")
+  }
+
   /// 界面语言跟 app 走（app 里切过就用 app 的），没切过跟系统。
   static var isChinese: Bool {
     if let l = defaults?.string(forKey: "lang"), !l.isEmpty { return l.hasPrefix("zh") }

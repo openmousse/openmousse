@@ -14,6 +14,8 @@ import { NewGroupScreen } from './screens/NewGroupScreen';
 import { BoardHistoryScreen } from './screens/BoardHistoryScreen';
 import { CollectionScreen } from './screens/CollectionScreen';
 import { PageScreen } from './screens/PageScreen';
+import { ScanScreen } from './screens/ScanScreen';
+import { HardwareScreen } from './screens/HardwareScreen';
 import { EditGroupScreen } from './screens/EditGroupScreen';
 import { TaskScreen, TasksScreen } from './screens/TasksScreen';
 import { ScheduleFeedScreen } from './screens/ScheduleFeedScreen';
@@ -191,6 +193,8 @@ async function finishOAuth(cb: NonNullable<ReturnType<typeof parseOAuthCallback>
 }
 
 function handleUrl(url: string | null) {
+  // 小组件、实时活动（1.0.6 起）：<scheme>://today
+  if (url && /^[a-z][a-z0-9+.-]*:\/\/today\b/i.test(url)) { openTarget({ type: 'today' }); return; }
   const oauth = url ? parseOAuthCallback(url) : null;
   if (oauth) { finishOAuth(oauth).catch(() => {}); return; }
   if (url && /^[a-z]+:\/\/pair\?/i.test(url)) {
@@ -257,6 +261,8 @@ export function RootNavigator() {
         <Stack.Screen name="Collection" component={CollectionScreen} />
         {/* 页面（2026-10-13）：Agent 写的网页放进盒子里显示，网页版 ?screen=Page&id=pg-… */}
         <Stack.Screen name="Page" component={PageScreen} getId={({ params }: { params?: { id?: string } }) => params?.id} />
+        <Stack.Screen name="Scan" component={ScanScreen} options={{ presentation: 'fullScreenModal' }} />
+        <Stack.Screen name="Hardware" component={HardwareScreen} />
         <Stack.Screen name="HistoryDay" component={HistoryDayScreen} />
         <Stack.Screen name="Inbox" component={InboxScreen} />
         <Stack.Screen name="NewGroup" component={NewGroupScreen} options={{ presentation: 'modal' }} />

@@ -14,10 +14,10 @@ enum SharedStore {
   static let keychainService = "mousse.server"
   static let keychainAccount = "token"
 
-  /// JS 传来的 JSON：{serverUrl, token, appName, lang}，给了哪个写哪个。
+  /// JS 传来的 JSON：{serverUrl, token, appName, lang, scheme}，给了哪个写哪个。
   static func setShared(_ json: String) {
     guard let obj = (try? JSONSerialization.jsonObject(with: Data(json.utf8))) as? [String: Any], let d = defaults else { return }
-    for key in ["serverUrl", "appName", "lang"] {
+    for key in ["serverUrl", "appName", "lang", "scheme"] {
       if let v = obj[key] as? String { d.set(v, forKey: key) }
     }
     if let tok = obj["token"] as? String { setToken(tok) }

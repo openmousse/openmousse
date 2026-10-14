@@ -270,16 +270,16 @@ export function PodRecScreen() {
     }
   }, [id, nextIdx, rec, upload]);
 
-  // 锁屏、切到后台：原生包没开后台录音，这一段先停下传上去
+  // 锁屏、切到后台：包里有后台录音（1.0.6 起）就接着录；设不上后台模式的（start 时退回了前台录）才先停下这一段传上去
   useEffect(() => {
     const sub = AppState.addEventListener('change', (s) => {
-      if (s !== 'active' && phaseRef.current === 'recording') {
+      if (s !== 'active' && phaseRef.current === 'recording' && !rec.background.current) {
         stopTake('none');
         setNote(L('切换到后台时已暂停，本段已保存。点按下方按钮继续录制。', 'Stopped when the app went to the background; that take is saved. Tap below to continue.'));
       }
     });
     return () => sub.remove();
-  }, [stopTake]);
+  }, [stopTake, rec.background]);
 
   const big = () => (phase === 'recording' ? stopTake(asks ? 'ask' : 'none') : phase === 'idle' || phase === 'paused' ? start() : undefined);
   const askNow = async () => {

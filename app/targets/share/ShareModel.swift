@@ -37,7 +37,6 @@ final class ShareModel: ObservableObject {
   @Published var text = ""
   @Published var files: [SharedFile] = []
   @Published var note = ""
-  @Published var dest: Dest
   @Published var phase: Phase = .editing
   @Published var skipped = 0
 
@@ -48,8 +47,6 @@ final class ShareModel: ObservableObject {
   private let lock = NSLock()
 
   init() {
-    let last = MousseShared.defaults?.string(forKey: "shareDest") ?? ""
-    dest = Dest(rawValue: last) ?? .saves
     let root = MousseShared.container?.appendingPathComponent("outbox", isDirectory: true)
       ?? FileManager.default.temporaryDirectory.appendingPathComponent("outbox", isDirectory: true)
     staging = root.appendingPathComponent(".staging-\(UUID().uuidString)", isDirectory: true)
@@ -57,6 +54,9 @@ final class ShareModel: ObservableObject {
   }
 
   var isEmpty: Bool { link == nil && text.isEmpty && files.isEmpty }
+  /// 存到哪：Zen 的「记下的」里想法和收藏已经合在一起（2026-10-13），不再让人选。
+  /// 有链接或文件 → 收藏（留着原件，链接服务器会抓正文）；只有一段文字 → 一条想法。
+  var dest: Dest { link != nil || !files.isEmpty ? .saves : .think }
   var tooBig: SharedFile? { files.first { $0.size > ShareModel.maxFileBytes } }
   var canSave: Bool {
     if case .failed = phase { return !loading && !isEmpty && tooBig == nil }  // 没存上可以再点一次
@@ -203,7 +203,6 @@ final class ShareModel: ObservableObject {
 
   func save() {
     guard canSave else { return }
-    MousseShared.defaults?.set(dest.rawValue, forKey: "shareDest")
     phase = .saving
     let job = ShareJob(dest: dest, link: link, title: title, text: text, note: note.trimmingCharacters(in: .whitespacesAndNewlines),
                        files: files.prefix(ShareModel.maxFiles).map { ShareJob.File(path: $0.path, name: $0.name, mime: $0.mime) })

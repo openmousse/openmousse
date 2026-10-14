@@ -1,7 +1,7 @@
 import SwiftUI
 import UIKit
 
-/// 分享进来时弹的卡：上面是分享的东西，中间选「存到收藏 / 放进思考」，下面一句备注。系统表单的样子，和「提醒事项」的分享卡一个路数。
+/// 分享进来时弹的卡：上面是分享的东西，下面一句备注，存进 Zen 的「记下的」（有链接或文件存成收藏，只有文字记成想法，见 ShareModel.dest）。系统表单的样子，和「提醒事项」的分享卡一个路数。
 struct ShareCard: View {
   @ObservedObject var model: ShareModel
   @FocusState private var noteFocused: Bool
@@ -15,20 +15,11 @@ struct ShareCard: View {
           preview
         }
         Section {
-          Picker(L("存到", "Save to"), selection: $model.dest) {
-            Text(L("收藏", "Saved")).tag(ShareModel.Dest.saves)
-            Text(L("思考", "Think")).tag(ShareModel.Dest.think)
-          }
-          .pickerStyle(.segmented)
-        } footer: {
-          Text(model.dest == .saves
-               ? L("原样存着，\(MousseShared.appName) 先不看，等你决定怎么处理。", "Kept as is. \(MousseShared.appName) won't look at it until you decide.")
-               : L("变成一条想法，放进思考空间，AI 不回。", "Becomes a thought in your thinking space. No reply."))
-        }
-        Section {
           TextField(L("一句备注（可以不写）", "A note (optional)"), text: $model.note, axis: .vertical)
             .lineLimit(1...5)
             .focused($noteFocused)
+        } footer: {
+          Text(L("存进 Zen 的「记下的」，\(MousseShared.appName) 不回复。", "Goes to Noted in Zen. \(MousseShared.appName) doesn't reply."))
         }
         if let status = statusText {
           Section {
@@ -147,7 +138,7 @@ struct ShareCard: View {
     switch model.phase {
     case .editing: return nil
     case .saving: return L("正在存…", "Saving…")
-    case .saved: return model.dest == .saves ? L("存进收藏了", "Saved") : L("放进思考了", "Added to Think")
+    case .saved: return L("已存进 Zen", "Saved to Zen")
     case .queued: return L("没连上服务器，先存在手机上了；打开 \(MousseShared.appName) 时会自动补传。",
                            "Couldn't reach the server. Kept on this phone; it'll upload next time you open \(MousseShared.appName).")
     case .failed(let why): return why

@@ -5,6 +5,7 @@
 // - refreshWidget：取 /api/widget 写成小组件的快照并刷新小组件（小组件自己也会去取，这份是它连不上时用的）
 // - live*：实时活动（锁屏 + 灵动岛）。服务器的 /api/live 说现在该有哪些，app 在前台时照着开、改、关；
 //   令牌（push-to-start 和每个活动的）交给服务器，服务器配了 APNs 密钥以后，app 没开也能开、能改。
+import Constants from 'expo-constants';
 import { Platform } from 'react-native';
 import { mousseNative, type EditMenuEvent } from '../../modules/mousse-native';
 import { agentName } from '../brand';
@@ -21,7 +22,10 @@ export function shareConfig(): void {
   const m = mousseNative();
   if (!m || !getBase()) return;
   try {
-    m.setShared(JSON.stringify({ serverUrl: getBase(), token: getToken(), appName: agentName(), lang: lang() }));
+    // scheme：小组件、实时活动点了用 <scheme>://today 打开今天页（1.0.6 起，旧包的扩展不认这个键）
+    const sc = Constants.expoConfig?.scheme;
+    const scheme = (Array.isArray(sc) ? sc[0] : sc) || undefined;
+    m.setShared(JSON.stringify({ serverUrl: getBase(), token: getToken(), appName: agentName(), lang: lang(), scheme }));
   } catch { /* 写不了就算了：扩展会提示打开 app 连一次 */ }
 }
 

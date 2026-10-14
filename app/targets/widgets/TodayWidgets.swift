@@ -7,6 +7,7 @@ struct TodayWidget: Widget {
   var body: some WidgetConfiguration {
     StaticConfiguration(kind: "mousse.today", provider: MousseProvider()) { entry in
       TodayView(entry: entry)
+        .widgetURL(MousseShared.appURL("today"))  // 点了打开今天页
     }
     .configurationDisplayName(MousseShared.L("今天", "Today"))
     .description(MousseShared.L("恢复分、下一餐、下一件事。", "Recovery, next meal, what's next."))
@@ -19,6 +20,7 @@ struct NextWidget: Widget {
   var body: some WidgetConfiguration {
     StaticConfiguration(kind: "mousse.next", provider: MousseProvider()) { entry in
       NextView(entry: entry)
+        .widgetURL(MousseShared.appURL("today"))  // 点了打开今天页
     }
     .configurationDisplayName(MousseShared.L("下一件事", "What's next"))
     .description(MousseShared.L("下一节课、训练、截止。", "Next class, workout or deadline."))
@@ -31,6 +33,7 @@ struct RecoveryWidget: Widget {
   var body: some WidgetConfiguration {
     StaticConfiguration(kind: "mousse.recovery", provider: MousseProvider()) { entry in
       RecoveryView(entry: entry)
+        .widgetURL(MousseShared.appURL("today"))  // 点了打开今天页
     }
     .configurationDisplayName(MousseShared.L("恢复分", "Recovery"))
     .description(MousseShared.L("今天的恢复分。", "Today's recovery score."))

@@ -27,6 +27,7 @@ struct MousseLiveActivity: Widget {
       LockBanner(attrs: context.attributes, state: context.state)
         .activityBackgroundTint(nil)
         .activitySystemActionForegroundColor(LiveStyle.accent(context.attributes, context.state))
+        .widgetURL(MousseShared.appURL("today"))
     } dynamicIsland: { context in
       let accent = LiveStyle.accent(context.attributes, context.state)
       let icon = LiveStyle.icon(context.attributes, context.state)
@@ -75,6 +76,7 @@ struct MousseLiveActivity: Widget {
         Image(systemName: icon).foregroundColor(accent)
       }
       .keylineTint(accent)
+      .widgetURL(MousseShared.appURL("today"))
     }
   }
 }
