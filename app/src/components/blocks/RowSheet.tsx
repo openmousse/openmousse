@@ -1,12 +1,13 @@
 // 点开一行：看全部字段、积木给的快捷动作（「用掉 1 份」）、改、问 Agent、删；按钮「记一样」是同一个表单的空白版。
 // 从集合块的看板视图点开的还有「移到」：换到别的列（和拖卡片一样，改分列的那个字段）。
-// 改动直接写（是你自己的数据），写完重读看板。表单按表的字段类型出输入框；日期没有原生选择器（要新包），用输入框加「今天 / 明天 / +3 天」。
+// 改动直接写（是你自己的数据），写完重读看板。表单按表的字段类型出输入框；日期用 DateField（手机上是系统的选择器，网页版是输入框，都带「今天 / 明天 / +3 天」）。
 import React, { useState } from 'react';
 import { ActivityIndicator, Pressable, StyleSheet, Switch, Text, TextInput, View } from 'react-native';
 import { boardsApi, type Block, type BoardRow, type FieldDef } from '../../api/boards';
 import { L } from '../../i18n';
 import { radius, space, type, useTheme } from '../../theme';
 import { setChatDraft } from '../chatInput';
+import { DateField, isoDay, plusDays } from '../DateField';
 import { MessageCircle, Pencil, Trash2 } from '../icons';
 import type { useSheet } from '../Sheet';
 import { showError, T } from '../ui';
@@ -16,8 +17,6 @@ type SheetApi = ReturnType<typeof useSheet>;
 type Values = Record<string, string | boolean>;
 
 const pad = (n: number) => String(n).padStart(2, '0');
-const isoDay = (d: Date) => `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
-const plusDays = (n: number) => { const d = new Date(); d.setDate(d.getDate() + n); return isoDay(d); };
 
 /** 行里的值 → 输入框里的字符串。 */
 function toInput(f: FieldDef, v: unknown): string | boolean {
@@ -175,23 +174,13 @@ function FieldForm({ fields, init, saveLabel, onSave, onCancel }: {
                 style={[...input, { flex: 1, textAlign: 'center' }]} placeholderTextColor={t.ink3} />
               <StepBtn label="+" onPress={() => set(f.key, String((Number(vals[f.key]) || 0) + 1))} />
             </View>
+          ) : f.type === 'date' ? (
+            <DateField value={String(vals[f.key] ?? '')} onChange={(v) => set(f.key, v)} label={f.label} />
           ) : (
-            <>
-              <TextInput value={String(vals[f.key] ?? '')} onChangeText={(v) => set(f.key, v)} accessibilityLabel={f.label} placeholderTextColor={t.ink3}
-                keyboardType={f.type === 'money' ? 'decimal-pad' : 'default'} autoCapitalize="none"
-                placeholder={f.type === 'date' ? 'YYYY-MM-DD' : f.type === 'datetime' ? 'YYYY-MM-DD HH:MM' : f.type === 'money' ? '0.00' : ''}
-                style={input} />
-              {f.type === 'date' ? (
-                <View style={styles.opts}>
-                  {[[L('今天', 'Today'), 0], [L('明天', 'Tomorrow'), 1], [L('+3 天', '+3 days'), 3], [L('+1 周', '+1 week'), 7]].map(([label, n]) => (
-                    <Pressable key={String(label)} onPress={() => set(f.key, plusDays(Number(n)))} accessibilityRole="button"
-                      style={[styles.opt, { backgroundColor: t.surface, borderColor: t.line }]}>
-                      <Text style={[type.caption, { fontSize: 13, fontWeight: '600', color: t.ink2 }]}>{String(label)}</Text>
-                    </Pressable>
-                  ))}
-                </View>
-              ) : null}
-            </>
+            <TextInput value={String(vals[f.key] ?? '')} onChangeText={(v) => set(f.key, v)} accessibilityLabel={f.label} placeholderTextColor={t.ink3}
+              keyboardType={f.type === 'money' ? 'decimal-pad' : 'default'} autoCapitalize="none"
+              placeholder={f.type === 'datetime' ? 'YYYY-MM-DD HH:MM' : f.type === 'money' ? '0.00' : ''}
+              style={input} />
           )}
         </View>
       ))}
