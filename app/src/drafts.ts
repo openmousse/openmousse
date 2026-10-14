@@ -1,7 +1,8 @@
 // 没发出去的草稿按线程存在本机：切走、退出 app、手机重启以后都还在，发出去或清空了才删。
-// iOS 用 React Native 自带的 Settings（NSUserDefaults，同步读写，不用新原生模块），网页用 localStorage，其它平台只在内存里。
+// 存在本机（deviceStore.ts：iOS 的 Settings、网页的 localStorage、安卓的文件），同步读写。
 // 读在模块加载时一次读进来，打开对话时同步就能拿到；写攒 0.5 秒，切到后台时立刻写。
-import { AppState, Platform, Settings } from 'react-native';
+import { AppState } from 'react-native';
+import { readLocal, writeLocal } from './deviceStore';
 
 const KEY = 'mousse.drafts';
 const MAX_THREADS = 30;       // 最多记这么多个线程的草稿，多了丢最旧的
@@ -12,7 +13,7 @@ type Saved = Record<string, { text: string; at: number }>;
 
 function readAll(): Saved {
   try {
-    const raw = Platform.OS === 'ios' ? Settings.get(KEY) : Platform.OS === 'web' ? globalThis.localStorage?.getItem(KEY) : null;
+    const raw = readLocal(KEY);
     const parsed: unknown = typeof raw === 'string' ? JSON.parse(raw) : null;
     if (!parsed || typeof parsed !== 'object') return {};
     const now = Date.now();
@@ -29,12 +30,7 @@ function writeAll() {
   timer = null;
   const keep = Object.entries(saved).sort((a, b) => b[1].at - a[1].at).slice(0, MAX_THREADS);
   const value = JSON.stringify(Object.fromEntries(keep));
-  try {
-    if (Platform.OS === 'ios') Settings.set({ [KEY]: value });
-    else if (Platform.OS === 'web') globalThis.localStorage?.setItem(KEY, value);
-  } catch {
-    // 存不上就只在内存里（隐私模式的浏览器等）
-  }
+  writeLocal(KEY, value);  // 存不上就只在内存里（隐私模式的浏览器等）
 }
 
 /** 这个线程上次没发出去的草稿（没有是空字符串）。 */

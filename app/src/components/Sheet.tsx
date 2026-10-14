@@ -1,5 +1,5 @@
 import React, { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
-import { Animated, Easing, Keyboard, Platform, Pressable, ScrollView, StyleSheet, View, useWindowDimensions } from 'react-native';
+import { Animated, BackHandler, Easing, Keyboard, Platform, Pressable, ScrollView, StyleSheet, View, useWindowDimensions } from 'react-native';
 import { L } from '../i18n';
 import { radius, space, useTheme } from '../theme';
 import Reanimated from 'react-native-reanimated';
@@ -20,6 +20,12 @@ export function SheetProvider({ children }: { children: React.ReactNode }) {
   const open = useCallback((s: SheetSpec) => { Keyboard.dismiss(); want.current = true; setSpec(s); setShown(true); }, []);
   const close = useCallback(() => { Keyboard.dismiss(); want.current = false; setShown(false); }, []);
   const hidden = useCallback(() => { if (!want.current) setSpec(null); }, []);
+  // 安卓的返回键 / 返回手势：弹层开着时只关弹层（后注册的先收到，导航那边就不会退一页）
+  useEffect(() => {
+    if (!shown || Platform.OS !== 'android') return;
+    const sub = BackHandler.addEventListener('hardwareBackPress', () => { close(); return true; });
+    return () => sub.remove();
+  }, [shown, close]);
   const api = useMemo(() => ({ open, close }), [open, close]);
   return (
     <Ctx.Provider value={api}>

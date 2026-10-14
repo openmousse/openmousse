@@ -74,7 +74,15 @@
       ],
       "expo-secure-store",
       "@bacons/apple-targets",
-      "./plugins/withExtensionVersions"
+      "./plugins/withExtensionVersions",
+      [
+        "expo-build-properties",
+        {
+          "android": {
+            "usesCleartextTraffic": true
+          }
+        }
+      ]
     ]
   }
 }

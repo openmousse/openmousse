@@ -34,6 +34,14 @@
         "simulator": true,
         "resourceClass": "m-medium"
       }
+    },
+    "android-test": {
+      "extends": "production-openmousse",
+      "distribution": "internal",
+      "channel": "android-test",
+      "android": {
+        "buildType": "apk"
+      }
     }
   },
   "submit": {
