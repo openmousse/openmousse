@@ -42,6 +42,13 @@
       "android": {
         "buildType": "apk"
       }
+    },
+    "android-release": {
+      "extends": "production-openmousse",
+      "distribution": "internal",
+      "android": {
+        "buildType": "apk"
+      }
     }
   },
   "submit": {
