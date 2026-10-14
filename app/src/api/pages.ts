@@ -1,7 +1,8 @@
 // 页面（2026-10-13，服务器 ../server/pages.py）：积木画不了的互动和可视化，Agent 写一份网页，app 放进盒子里显示。
-// 盒子 = 网页版的 sandbox="allow-scripts" iframe（srcdoc，不透明源）：页面读不到 app 的令牌和数据，也调不了 /api。
-// 页面经桥（postMessage）要数据：app 用自己的令牌调 POST /api/pages/{id}/data，只给你点过「允许」的、当前这一版的。
-// 手机原生包里没有 WebView，页面先只在网页版里显示（PageScreen 给说明）。
+// 盒子 = 网页版的 sandbox="allow-scripts" iframe（srcdoc，不透明源）/ 手机 app 的 WebView（about:blank、无痕）：页面读不到 app 的令牌和数据，也调不了 /api。
+// 页面经桥（postMessage / window.ReactNativeWebView）要数据：app 用自己的令牌调 POST /api/pages/{id}/data，只给你点过「允许」的、当前这一版的。
+// 手机上还要服务器的桥认 WebView（pages.native，2026-10-14）；更早的服务器页面只在网页版里显示（PageScreen 给说明）。
+import { Platform } from 'react-native';
 import { HttpError, request } from './base';
 import { supports } from './version';
 
@@ -22,6 +23,8 @@ export interface PageField { key: string; label?: string; type?: string; options
 export interface PageData { name: string; collection: string; title: string; fields: PageField[]; rows: Record<string, unknown>[]; total: number; truncated: boolean }
 
 export const canPages = () => supports('pages');
+/** 这里能不能显示页面本身：网页版一直能；手机 app 要服务器的桥认 WebView。 */
+export const canShowPages = () => Platform.OS === 'web' || supports('pages.native');
 
 const enc = encodeURIComponent;
 
