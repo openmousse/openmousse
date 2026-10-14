@@ -26,7 +26,7 @@ import { ConnectScreen } from './screens/ConnectScreen';
 import { ClawScreen } from './screens/ClawScreen';
 import { AccountScreen, LoginScreen, loginSkipped } from './screens/AccountScreens';
 import { AppDetailScreen, AppGalleryScreen, CustomAppScreen, StarterScreen } from './screens/AppsScreens';
-import { loadServerConfig, parsePairing } from './api/base';
+import { loadServerConfig, parsePairing, serverConfigured } from './api/base';
 import { accountsEnabled, loadAccount } from './api/account';
 import { appsApi, parseOAuthCallback } from './api/apps';
 import { showError } from './components/ui';
@@ -170,12 +170,36 @@ export function openAddFriend(code: string) {
 }
 
 // 配对链接（服务器上 tokens.py pair 出的 <scheme>://pair?s=<服务器>&c=<码>）：打开连接页、填好地址和配对码，用户看过地址再点「连接」
-// （不自动连：别人发来的链接可能想把 app 接到他的服务器上）
+// （不自动连：别人发来的链接可能想把 app 接到他的服务器上）。server 为空（只扫到 8 位码）时只填码，地址用连接页上已有的。
+// merge：从连接页打开的扫码页扫完回到那一页，保留它原来的参数（「添加 claw」的 add）
 let queuedPair: { server: string; code: string } | null = null;
 
 export function openPair(server: string, code: string) {
   if (!navigationRef.isReady()) { queuedPair = { server, code }; return; }
-  navigationRef.navigate('Connect', { pairServer: server, pairCode: code, at: Date.now() });
+  navigationRef.navigate('Connect', { pairServer: server, pairCode: code, at: Date.now() }, { merge: true });
+}
+
+/**
+ * 扫一扫（ScanScreen）扫到的文字，认出来就跳过去，返回是哪种：
+ * - 'pair'：配对二维码。claw 设置页「添加设备」（POST /api/pair/new）和 tokens.py pair 画的都是 openmousse://pair?s=<服务器>&c=<码>
+ *   （server/pairing.py 的 link()）；只有 8 位配对码的也认。和点配对链接一样只打开连接页、填好，不自动连。
+ * - 'friend'：好友邀请二维码。app 里生成的和落地页上的都是邀请链接本身 https://<根地址>/f/i/<令牌>/<公钥>（server/friends.py 的 code_of()），
+ *   落地页按钮是 <scheme>://friends/add?code=…；打开「添加好友」先看是谁。
+ * - 'offline'：是好友邀请，但这台设备还没连服务器（加好友要经自己的服务器），不跳。
+ * - null：认不出，什么也不做。
+ * 跳之前先关掉扫码页，从连接页进来的就回到那一页。
+ */
+export function openScanned(text: string): 'pair' | 'friend' | 'offline' | null {
+  const s = (text || '').trim();
+  const closeScan = () => { if (navigationRef.getCurrentRoute()?.name === 'Scan') navigationRef.goBack(); };
+  const pair = parsePairing(s.replace(/^[a-z][a-z0-9+.-]*:\/\/pair\?/i, 'openmousse://pair?'));
+  if (pair.code) { closeScan(); openPair(pair.server ?? '', pair.code); return 'pair'; }
+  const code = findCode(s);
+  if (!code) return null;
+  if (!serverConfigured()) return 'offline';
+  closeScan();
+  openAddFriend(code);
+  return 'friend';
 }
 
 // 连接器授权完跳回来（<scheme>://oauth/callback?code=…&state=…，见 api/apps.ts）：交给服务器换令牌，打开那个连接器的页面

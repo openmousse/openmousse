@@ -68,8 +68,8 @@ export function ClawScreen() {
         title: L('添加设备', 'Add a device'),
         content: () => (
           <View style={{ gap: space.md }}>
-            <T v="callout" color={t.ink2}>{L('在另一台 iPhone 上用相机扫描此二维码，或将链接发送到该设备后打开。10 分钟内有效，仅可使用一次。',
-              'Scan this with the camera on the other iPhone, or send the link to it and open it there. Valid for 10 minutes, single use.')}</T>
+            <T v="callout" color={t.ink2}>{L('在另一台手机上，用相机或 app 的扫一扫扫描此二维码，或将链接发送到该设备后打开。10 分钟内有效，仅可使用一次。',
+              'On the other phone, scan this with the camera or with Scan in the app, or send the link to it and open it there. Valid for 10 minutes, single use.')}</T>
             <QrCode qr={p.qr} label={L('配对二维码', 'Pairing QR code')} />
             <T v="title" selectable style={{ textAlign: 'center', letterSpacing: 3 }}>{p.code}</T>
             <View style={{ flexDirection: 'row', gap: space.sm }}>

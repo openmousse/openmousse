@@ -121,6 +121,9 @@ function useMembers() {
 }
 
 const roomKind = (r: ChatRow) => r.kind === 'meeting' || r.kind === 'room';
+// 「+」里的扫一扫（ScanScreen，1.0.6 起）：只有手机 app 有相机扫码，网页版灰着并说明
+const canScan = Platform.OS !== 'web';
+const scanDesc = (what: string) => (canScan ? what : `${what} · ${L('仅限手机 app', 'phone app only')}`);
 
 /** 置顶 / 免打扰 / 删除：左滑、长按、资料页共用。改完重读列表。 */
 export function useChatActions() {
@@ -244,7 +247,8 @@ export function ChatScreen() {
       sheet.open({ title: L('新建', 'New'), sub: L('好友', 'Friends'), content: (close) => (
         <View>
           <MenuItem icon={UserPlus} title={L('添加好友', 'Add a friend')} desc={L('发送邀请链接或输入邀请码', 'Send an invite link or enter a code')} chevron onPress={() => { close(); nav.navigate('AddFriend'); }} />
-          <MenuItem icon={ScanLine} title={L('扫一扫', 'Scan')} desc={L('扫描好友的邀请二维码 · 需更新 app', "Scan a friend's invite QR code · needs an app update")} off />
+          <MenuItem icon={ScanLine} title={L('扫一扫', 'Scan')} desc={scanDesc(L('扫描好友的邀请二维码', "Scan a friend's invite QR code"))} off={!canScan} chevron
+            onPress={() => { close(); nav.navigate('Scan', { kind: 'friend' }); }} />
         </View>
       ) });
       return;
@@ -259,7 +263,8 @@ export function ChatScreen() {
           onPress={() => { close(); nav.navigate('NewGroup'); }} />
         <MenuItem icon={FolderKanban} title={L('新建项目', 'New project')} desc={L('持续多日、有截止日期的事项', 'Something that runs for days and has deadlines')} chevron
           onPress={() => { close(); setTimeout(() => sheet.open({ title: L('新建项目', 'New project'), content: (c) => <NewProjectSheet close={c} onCreated={(id) => { reload('chats').catch(() => {}); nav.navigate('Chat', { id }); }} /> }), 250); }} />
-        <MenuItem icon={ScanLine} title={L('扫一扫', 'Scan')} desc={L('配对设备或导入 Agent 模板 · 需更新 app', 'Pair a device or import an Agent template · needs an app update')} off />
+        <MenuItem icon={ScanLine} title={L('扫一扫', 'Scan')} desc={scanDesc(L('扫描配对二维码连接此设备，或扫描好友邀请码', "Scan a pairing QR code to connect this device, or a friend's invite"))} off={!canScan} chevron
+          onPress={() => { close(); nav.navigate('Scan'); }} />
       </View>
     ) });
   };

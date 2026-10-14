@@ -10,9 +10,12 @@ import { L } from '../i18n';
 import { useStore } from '../store';
 import { radius, space, type, useTheme } from '../theme';
 import { KeyboardScroll } from '../components/keyboard';
+import { ScanLine } from '../components/icons';
 
 /** 网站上的新手指南：从装服务到在手机上说第一句话。 */
 const GUIDE_URL = 'https://openmousse.ai/start.html';
+/** 扫一扫只有手机 app 有（网页版没有相机扫码，和服务器同源也用不着）。 */
+const canScan = Platform.OS !== 'web';
 
 /** 连接页：填自己服务器的地址和接入令牌。第一次打开 app、或在「我 → 服务器」里都能进来。 */
 export function ConnectScreen() {
@@ -31,9 +34,9 @@ export function ConnectScreen() {
   const [pairText, setPairText] = useState('');
   const pairAt = (route.params?.at as number | undefined) ?? 0;
   const [seenAt, setSeenAt] = useState(0);
-  if (pairAt !== seenAt && route.params?.pairServer && route.params?.pairCode) {  // 新点进来的链接：渲染时就换上（React 推荐的「随参数调整状态」写法）
+  if (pairAt !== seenAt && route.params?.pairCode) {  // 新点进来的链接或扫到的码：渲染时就换上（React 推荐的「随参数调整状态」写法）
     setSeenAt(pairAt);
-    setBase(route.params.pairServer);
+    if (route.params.pairServer) setBase(route.params.pairServer);  // 只扫到 8 位码时没有地址：用这一页上已有的
     setPairText(route.params.pairCode);
     setMsg(null);
   }
@@ -88,13 +91,25 @@ export function ConnectScreen() {
         )}
         <SectionLabel>{L('配对码', 'Pairing code')}</SectionLabel>
         <T v="callout" color={t.ink2} style={{ marginBottom: 6 }}>
-          {L('claw 完成安装后会发来一条配对链接，点击即可打开此页；也可以将链接或 8 位配对码粘贴到这里。',
-            'After your claw finishes setup it sends you a pairing link; tapping it opens this page. You can also paste the link or the 8-character code here.')}
+          {canScan
+            ? L('claw 完成安装后会发来一条配对链接，点击即可打开此页；也可以扫描配对二维码，或将链接、8 位配对码粘贴到这里。',
+              'After your claw finishes setup it sends you a pairing link; tapping it opens this page. You can also scan the pairing QR code, or paste the link or the 8-character code here.')
+            : L('claw 完成安装后会发来一条配对链接，点击即可打开此页；也可以将链接或 8 位配对码粘贴到这里。',
+              'After your claw finishes setup it sends you a pairing link; tapping it opens this page. You can also paste the link or the 8-character code here.')}
         </T>
-        <TextInput value={pairText} onChangeText={(v) => { setPairText(v); setMsg(null); const p = parsePairing(v); if (p.server) setBase(p.server); }}
-          placeholder={L('openmousse://pair?… 或 8 位配对码', 'openmousse://pair?… or the 8-character code')}
-          placeholderTextColor={t.ink3} autoCapitalize="characters" autoCorrect={false} accessibilityLabel={L('配对码', 'Pairing code')}
-          style={[type.body, styles.input, { backgroundColor: t.surface, color: t.ink }]} />
+        <View style={{ flexDirection: 'row', gap: space.sm }}>
+          <TextInput value={pairText} onChangeText={(v) => { setPairText(v); setMsg(null); const p = parsePairing(v); if (p.server) setBase(p.server); }}
+            placeholder={L('openmousse://pair?… 或 8 位配对码', 'openmousse://pair?… or the 8-character code')}
+            placeholderTextColor={t.ink3} autoCapitalize="characters" autoCorrect={false} accessibilityLabel={L('配对码', 'Pairing code')}
+            style={[type.body, styles.input, { flex: 1, backgroundColor: t.surface, color: t.ink }]} />
+          {/* 扫配对二维码（另一台设备「添加设备」或终端里 tokens.py pair 画的）：扫到后回到这一页、填好地址和码，仍由用户点「连接」 */}
+          {canScan ? (
+            <Pressable onPress={() => nav.navigate('Scan', { kind: 'pair' })} accessibilityRole="button" accessibilityLabel={L('扫描配对二维码', 'Scan the pairing QR code')}
+              style={({ pressed }) => [styles.scan, { backgroundColor: t.surface, opacity: pressed ? 0.7 : 1 }]}>
+              <ScanLine size={22} color={t.gold} />
+            </Pressable>
+          ) : null}
+        </View>
         {pairText.trim() ? (
           <View style={{ marginTop: space.md }}>
             <T v="callout" color={t.ink2} style={{ marginBottom: 6 }}>{L(`将连接到：${(parsePairing(pairText).server || base || '（先填下面的服务器地址）').trim()}`, `Will connect to: ${(parsePairing(pairText).server || base || '(enter the server address below)').trim()}`)}</T>
@@ -126,4 +141,7 @@ export function ConnectScreen() {
   );
 }
 
-const styles = StyleSheet.create({ input: { borderRadius: radius.md, paddingHorizontal: space.lg, paddingVertical: 13 } });
+const styles = StyleSheet.create({
+  input: { borderRadius: radius.md, paddingHorizontal: space.lg, paddingVertical: 13 },
+  scan: { width: 50, borderRadius: radius.md, alignItems: 'center', justifyContent: 'center' },
+});

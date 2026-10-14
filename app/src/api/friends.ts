@@ -213,11 +213,12 @@ export const setMyName = async (name: string) => {
   return c;
 };
 
-/** 贴进来的文字里有没有邀请码（…/f/i/<令牌>/<公钥>，或 openmousse://friends/add?code=…）。 */
+/** 贴进来或扫到的文字里有没有邀请码（…/f/i/<令牌>/<公钥>，或 openmousse://friends/add?code=…）。
+ *  根地址可以带路径前缀：走中继的是 https://relay.openmousse.ai/u/<kid>/f/i/…（和 server/friends.py 的 CODE_RE 一样）。 */
 export function findCode(text: string): string | null {
   let s = text || '';
   const q = /[?&]code=([^&\s]+)/.exec(s);
   if (q && !s.includes('/f/i/')) { try { s = decodeURIComponent(q[1]); } catch { /* 原样 */ } }
-  const m = /(https?:\/\/[^\s/?#<>"']+)\/f\/i\/([A-Za-z0-9_-]{22})\/([A-Za-z0-9_-]{43})/.exec(s);
+  const m = /(https?:\/\/[^\s/?#<>"']+(?:\/[A-Za-z0-9._~-]+){0,4}?)\/f\/i\/([A-Za-z0-9_-]{22})\/([A-Za-z0-9_-]{43})/.exec(s);
   return m ? m[0] : null;
 }
