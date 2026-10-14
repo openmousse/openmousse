@@ -644,6 +644,9 @@ def page(course: str, path: str):
 
 @router.get("/api/study/file")
 def file(course: str, path: str, where: str = "materials"):
+    """课件 / 学习页目录里的原件，内联给浏览器（学习页 <img> 嵌图、iframe 里看 PDF、app 里「用浏览器打开」）。
+    这些文件是课程平台、网页来的或 Agent 写的：带 nosniff，网页 / SVG / XML 加 CSP sandbox，直接打开也不在 app 的源上跑脚本
+    （files.untrusted_headers）。选内联 + sandbox 而不是下载：SVG 要能嵌、能在新标签放大看，网页课件打开就能读，脚本不跑。"""
     base = pages_dir(course) if where == "pages" else course_dir(course)
     if not base:
         raise HTTPException(404, L("找不到这个文件", "File not found"))
@@ -652,7 +655,7 @@ def file(course: str, path: str, where: str = "materials"):
     mime = mimetypes.guess_type(p.name)[0] or ("text/markdown" if p.suffix.lower() in (".md", ".rmd") else "application/octet-stream")
     if mime.startswith("text/") or p.suffix.lower() in TEXT_EXT:
         mime = f"{mime.split(';')[0]}; charset=utf-8"
-    return FileResponse(p, media_type=mime, filename=p.name, content_disposition_type="inline")
+    return FileResponse(p, media_type=mime, filename=p.name, content_disposition_type="inline", headers=files_mod.untrusted_headers(mime))
 
 
 def cmd_deadlines(refresh: int = 0) -> dict:

@@ -408,6 +408,8 @@ python3 proposals_ctl.py agent --slug reading --name 读书 --purpose "…" --ic
 - `recordings`（可选）：录播字幕，`<课程>/index.json` 列出录播（`id, name, start, duration, sessions, file`），`file` 里是 `{viewer_url, segments: [{t, text}]}`。每节多一个「录播」标签（带时间点的字幕，点时间跳到录播那一刻），字幕也会放进问答前情。学校的录播规定要求保密的话，字幕只留在自己的服务器上。
 - `video_cmd`（可选）：渲染命令（argv 列表，`{script}` = 助手写的 Manim 脚本，`{media_dir}` = 工作目录）。配了以后每节多一个「做视频」：助手写脚本、服务器渲染，出错把报错交回去改一次。这会在本机运行助手写的代码，只在已经信任助手能在这台机器上执行代码时打开。
 
+课件和学习页的原件（`GET /api/study/file?course=&path=&where=materials|pages`）原样内联给浏览器，一律带 `X-Content-Type-Options: nosniff`。这些文件是课程平台、网页来的或 Agent 写的：网页、SVG、XML 再加 `Content-Security-Policy: sandbox`（不带 `allow-scripts`），直接打开地址也是不透明源、不跑脚本，碰不到网页版存的令牌和 `/api`；学习页里用 `<img>` 嵌的 SVG 照常显示。对话附件的原件守同一条规矩（`files.untrusted_headers`）。
+
 每个学习页打开先看到**学习路线**：按这一节的全部材料排 5–8 步（做什么、看课件哪几页 / 学习页哪一节 / 哪篇阅读 / 录播哪个时间点、大概多久），每步可以打勾，进度存在服务器上，目录里也显示。
 
 **复习**：播客的费曼讲错和漏了的，点一下加进这门课（`POST /api/study/review {course, page?, items, …}`，存在 `pages/<课程>/.gen/review.json`，挂在那一节上）；学习台打开那一节时顶上一个「复习」框，点「复习过了」划掉（`POST /api/study/review/done`）。`GET /api/study/review?course=&page=&all=`。
