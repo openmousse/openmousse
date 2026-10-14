@@ -30,6 +30,30 @@ function localUrl(path: string): string {
   return `${base}${path}`;
 }
 
+/**
+ * 手机上分享卡片图：服务器画好的 PNG（data URI）写进缓存目录 share-cards/，再用 expo-sharing 交给系统分享面板
+ * （RN 自带的 Share 在 iOS 上只部分认 data URI，安卓完全不认）。目录里只留这一张：写之前把上一次的清掉
+ * （分享面板关了以后对方 app 可能还在读刚分享的那张，所以不在分享完马上删）。两个模块用到时才加载，网页包不碰。
+ */
+async function shareImageFile(dataUri: string, title: string) {
+  /* eslint-disable @typescript-eslint/no-require-imports */
+  const { Directory, File, Paths } = require('expo-file-system') as typeof import('expo-file-system');
+  const Sharing = require('expo-sharing') as typeof import('expo-sharing');
+  /* eslint-enable @typescript-eslint/no-require-imports */
+  const dir = new Directory(Paths.cache, 'share-cards');
+  if (dir.exists) {
+    for (const old of dir.list()) { try { old.delete(); } catch { /* 删不掉就留给系统清缓存 */ } }
+  } else {
+    dir.create({ intermediates: true, idempotent: true });
+  }
+  // 文件名就是对方看到的名字（存到「文件」、发到电脑上时）：用标题，去掉挡住的部分和文件名里不能有的字符
+  const clean = title.split(BLOCK).join(' ').replace(/[\\/:*?"<>|]+/g, ' ').replace(/\s+/g, ' ').trim().replace(/^\.+/, '');
+  const name = Array.from(clean).slice(0, 50).join('') || 'card';  // 按字符截，不把表情切成半个
+  const file = new File(dir, `${name}.png`);
+  file.write(dataUri.slice(dataUri.indexOf(',') + 1), { encoding: 'base64' });
+  await Sharing.shareAsync(file.uri, { mimeType: 'image/png', UTI: 'public.png', dialogTitle: L('分享图片', 'Share image') });
+}
+
 /** 网页版：把图存下来（data URI → 下载）。 */
 function downloadWeb(dataUri: string, name: string) {
   const doc = (globalThis as { document?: { createElement: (t: string) => { href: string; download: string; click: () => void; remove: () => void }; body: { appendChild: (n: unknown) => void } } }).document;
@@ -155,7 +179,7 @@ export function ShareScreen() {
     setNote('');
     try {
       if (Platform.OS === 'web') { downloadWeb(data.dataUri, `${share.title || 'card'}.png`); setNote(L('图片已保存', 'Image saved')); }
-      else await NativeShare.share({ url: data.dataUri });
+      else await shareImageFile(data.dataUri, share.title || '');
     } catch (e) { showError(L('分享失败', "Couldn't share"), e); } finally { setBusy(false); }
   };
   const sendToFriends = async () => {
