@@ -2,7 +2,7 @@
 // 进来的方式：对话里长按一条 →「分享」（from: message）、Zen「想完了」存好以后（from: note）、「我 → 分享出去的」点一条（id）。
 // 卡片预览就是服务器画好的那张图，和别人收到的一样；挡住的地方一处一行，能放出来、挡回去。
 import React, { useCallback, useEffect, useState } from 'react';
-import { ActivityIndicator, Alert, Image, Linking, Platform, Pressable, ScrollView, Share as NativeShare, StyleSheet, Switch, Text, TextInput, View } from 'react-native';
+import { ActivityIndicator, Alert, Image, Linking, Platform, Pressable, Share as NativeShare, StyleSheet, Switch, Text, TextInput, View } from 'react-native';
 import { useNavigation, useRoute } from '@react-navigation/native';
 import * as Clipboard from 'expo-clipboard';
 import { getBase } from '../api/base';
@@ -15,6 +15,7 @@ import { Markdown } from '../components/Markdown';
 import { Btn, Card, Disclosure, NavHeader, Screen, SectionLabel, Segmented, T, showError } from '../components/ui';
 import { L } from '../i18n';
 import { radius, space, type, useTheme } from '../theme';
+import { KeyboardScroll } from '../components/keyboard';
 
 const BLOCK = '▇▇▇';
 
@@ -228,7 +229,7 @@ export function ShareScreen() {
   return (
     <Screen>
       <NavHeader title={L('分享', 'Share')} sub={kindLine || undefined} onBack={() => nav.goBack()} />
-      <ScrollView contentContainerStyle={{ padding: space.lg, paddingBottom: space.xxl, gap: space.md }} automaticallyAdjustKeyboardInsets keyboardShouldPersistTaps="handled">
+      <KeyboardScroll contentContainerStyle={{ padding: space.lg, paddingBottom: space.xxl, gap: space.md }} keyboardShouldPersistTaps="handled">
         {err ? <Card><T v="callout" color={t.bad}>{L(`无法打开：${err}`, `Couldn't open it: ${err}`)}</T></Card> : null}
         {!share && !err ? <ActivityIndicator color={t.gold} style={{ marginTop: space.xl }} /> : null}
 
@@ -339,7 +340,7 @@ export function ShareScreen() {
             ) : null}
           </>
         ) : null}
-      </ScrollView>
+      </KeyboardScroll>
     </Screen>
   );
 }

@@ -6,7 +6,7 @@ import { useFocusEffect, useNavigation, useRoute } from '@react-navigation/nativ
 import Reanimated from 'react-native-reanimated';
 import * as study from '../api/study';
 import { Check, ChevronRight, FileText, Film, Mic, Monitor, NotebookText, Plus, Send } from '../components/icons';
-import { useBottomInset } from '../components/keyboard';
+import { KeyboardScroll, useBottomInset } from '../components/keyboard';
 import { Markdown } from '../components/Markdown';
 import { useSheet } from '../components/Sheet';
 import { DeskLinkRow, StudyLine, copyDeskLink, daysLeft, dueText, nextLine, reviewLine, useStudyHome } from '../components/StudyBoard';
@@ -392,13 +392,13 @@ function SelfTab({ u, onAsk }: { u: study.StudyUnit; onAsk: (text: string, extra
   if (!items.length) return <Card style={{ margin: space.lg }}><T v="callout" color={t.ink2}>{L('这一节的学习页暂无自测题。可在「提问」中请求出题。', 'These notes have no self-test. Ask for a few questions in Ask.')}</T></Card>;
   const seen = Object.values(st.v).filter((x) => x?.open).length;
   return (
-    <ScrollView contentContainerStyle={{ padding: space.lg, paddingTop: space.xs, paddingBottom: space.xxl, gap: space.md }} keyboardShouldPersistTaps="handled" automaticallyAdjustKeyboardInsets>
+    <KeyboardScroll contentContainerStyle={{ padding: space.lg, paddingTop: space.xs, paddingBottom: space.xxl, gap: space.md }} keyboardShouldPersistTaps="handled">
       <View style={{ flexDirection: 'row', justifyContent: 'space-between' }}>
         <T v="headline" style={{ fontSize: 15 }}>{L(`自测 · ${seen} / ${items.length}`, `Self-test · ${seen} / ${items.length}`)}</T>
         <T v="caption" color={t.ink3}>{L('可先作答，也可直接查看答案', 'Answer first, or view the answer')}</T>
       </View>
       {items.map((it, i) => <SelfCard key={i} it={it} i={i} rec={st.v[i] ?? {}} upd={(p) => upd(i, p)} u={u} onAsk={onAsk} />)}
-    </ScrollView>
+    </KeyboardScroll>
   );
 }
 

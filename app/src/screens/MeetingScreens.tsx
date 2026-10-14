@@ -12,7 +12,7 @@ import { dataApi } from '../api/data';
 import { followMeeting, meetingsApi, splitMentions, type Meeting, type MeetingLive, type MeetingMember, type MeetingMsg } from '../api/meetings';
 import { Dots } from '../components/ChatCards';
 import { ArrowUp, AtSign, Check, ChevronLeft, ChevronRight, CircleStop, Info, Square, Trash2 } from '../components/icons';
-import { ChatScroll, KeyboardSticky, dismissMode, useBottomInset } from '../components/keyboard';
+import { ChatScroll, dismissMode, KeyboardScroll, KeyboardSticky, useBottomInset } from '../components/keyboard';
 import { LensAvatar } from '../components/LensAvatar';
 import { Markdown } from '../components/Markdown';
 import { AgentAvatar, MeetingAvatar, StatusPill, TodoRow, confirmedLine } from '../components/MeetingBits';
@@ -470,7 +470,7 @@ function NewMeetingForm() {
           <T v="body" color={can ? t.gold : t.ink3} style={{ fontWeight: '700' }}>{starting ? L('正在发起', 'Starting') : L('开始', 'Start')}</T>
         </Pressable>
       </View>
-      <ScrollView contentContainerStyle={{ paddingHorizontal: space.lg, paddingBottom: space.xxl }} automaticallyAdjustKeyboardInsets keyboardShouldPersistTaps="handled">
+      <KeyboardScroll contentContainerStyle={{ paddingHorizontal: space.lg, paddingBottom: space.xxl }} keyboardShouldPersistTaps="handled">
         <T v="caption" color={t.ink3} style={styles.formLabel}>{L('议题', 'Topic')}</T>
         <TextInput value={topic} onChangeText={setTopic} multiline placeholder={L('例如：下周三模拟面试前的训练、饮食与睡眠安排', 'e.g. Training, meals and sleep before next Wednesday’s mock interview')}
           placeholderTextColor={t.ink3} accessibilityLabel={L('议题', 'Topic')} style={[type.body, styles.topicInput, { backgroundColor: t.surface, color: t.ink }]} />
@@ -508,7 +508,7 @@ function NewMeetingForm() {
             ? L(`用量：每轮 = 成员数次回复 + 1 次纪要，当前 ${picked.length} + 1 = ${picked.length + 1} 次模型调用。`, `Usage: each round = one reply per member + 1 for the minutes; now ${picked.length} + 1 = ${picked.length + 1} model calls.`)
             : L('用量：每轮 = 成员数次回复 + 1 次纪要。至少选择 2 个 Agent。', 'Usage: each round = one reply per member + 1 for the minutes. Pick at least 2 Agents.')}
         </T>
-      </ScrollView>
+      </KeyboardScroll>
     </Screen>
   );
 }

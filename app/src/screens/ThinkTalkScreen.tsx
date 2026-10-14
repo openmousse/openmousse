@@ -17,6 +17,7 @@ import { FragmentSheet } from '../think/FragmentSheet';
 import { RenameSheet } from '../think/TopicSheets';
 import { GrowInput, KeywordChip, TypeTile } from '../think/parts';
 import { useThink } from '../think/ThinkStore';
+import { KeyboardScroll } from '../components/keyboard';
 
 function Header({ title, sub, onBack, right, icon }: { title: string; sub: string; onBack: () => void; right?: React.ReactNode; icon: React.ReactNode }) {
   const t = useTheme();
@@ -216,7 +217,7 @@ export function ThinkDoneScreen() {
     <Screen>
       <Header title={L('完成思考', 'Done thinking')} sub={saved ? L('已保存', 'Saved') : L('草稿 · 沿用你的原话，各项均可编辑', 'Draft · your own words, all editable')} onBack={() => nav.goBack()}
         icon={<View style={[styles.icon, { backgroundColor: t.goodSoft }]}><Check size={18} color={t.good} strokeWidth={2.5} /></View>} />
-      <ScrollView ref={scroller} contentContainerStyle={{ padding: space.md, gap: space.md, paddingBottom: space.xxl }} automaticallyAdjustKeyboardInsets keyboardShouldPersistTaps="handled">
+      <KeyboardScroll ref={scroller} contentContainerStyle={{ padding: space.md, gap: space.md, paddingBottom: space.xxl }} keyboardShouldPersistTaps="handled">
         {saved ? (
           <View style={[styles.ok, { backgroundColor: t.goodSoft }]}>
             <T v="headline" color={t.good}>{L('已保存', 'Saved')}</T>
@@ -338,7 +339,7 @@ export function ThinkDoneScreen() {
             <Pressable onPress={retry} accessibilityRole="button" style={{ alignSelf: 'center', padding: 6 }}><T v="caption" color={t.ink3}>{L('不满意？重新整理', 'Not right? Draft it again')}</T></Pressable>
           </>
         ) : null}
-      </ScrollView>
+      </KeyboardScroll>
     </Screen>
   );
 }

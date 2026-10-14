@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { Pressable, ScrollView, StyleSheet, TextInput, View } from 'react-native';
+import { Pressable, StyleSheet, TextInput, View } from 'react-native';
 import { useNavigation } from '@react-navigation/native';
 import { agentName } from '../brand';
 import { GroupBadge } from '../components/GroupIcon';
@@ -13,6 +13,7 @@ import { L } from '../i18n';
 import { openThread } from '../navigation';
 import { useStore } from '../store';
 import { radius, space, type, useTheme } from '../theme';
+import { KeyboardScroll } from '../components/keyboard';
 
 // 这一页是原生 modal，盖在根部 SheetProvider 之上；弹层要在页内自己挂一个，不然模型列表会被压在这一页后面。
 export function NewGroupScreen() {
@@ -97,7 +98,7 @@ function NewGroupForm() {
   return (
     <Screen>
       <NavHeader title={L('新建 Agent', 'New Agent')} onBack={() => nav.goBack()} />
-      <ScrollView contentContainerStyle={{ padding: space.lg, paddingTop: space.xl, paddingBottom: space.xxl }} keyboardShouldPersistTaps="handled" automaticallyAdjustKeyboardInsets keyboardDismissMode="interactive">
+      <KeyboardScroll contentContainerStyle={{ padding: space.lg, paddingTop: space.xl, paddingBottom: space.xxl }} keyboardShouldPersistTaps="handled" keyboardDismissMode="interactive">
         {/* 预览：改名字、职责、颜色、图标，这里跟着变 */}
         <View style={styles.preview} accessible accessibilityLabel={L(`预览：${name.trim() || '还没起名'}`, `Preview: ${name.trim() || 'no name yet'}`)}>
           <GroupBadge icon={icon} color={color} size={64} />
@@ -165,7 +166,7 @@ function NewGroupForm() {
 
         <View style={{ marginTop: space.xl }}><Btn label={busy === 'create' ? L('正在创建…', 'Creating…') : L('创建', 'Create')} onPress={create} /></View>
         {err.text && err.at === 'create' ? <T v="callout" color={t.bad} style={{ marginTop: 6 }}>{err.text}</T> : null}
-      </ScrollView>
+      </KeyboardScroll>
     </Screen>
   );
 }

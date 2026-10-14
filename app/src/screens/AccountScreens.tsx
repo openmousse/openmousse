@@ -17,6 +17,7 @@ import { L } from '../i18n';
 import { useStore } from '../store';
 import { radius, space, type, useTheme } from '../theme';
 import { useAccount } from './MeScreen';
+import { KeyboardScroll } from '../components/keyboard';
 
 /** 这次打开 app 里，账号服务连不上时点了「先用着」：不再拦着。下次打开再请登录。 */
 let skipped = false;
@@ -99,7 +100,7 @@ export function LoginScreen() {
 
   return (
     <Screen>
-      <ScrollView contentContainerStyle={{ flexGrow: 1 }} keyboardShouldPersistTaps="handled" automaticallyAdjustKeyboardInsets>
+      <KeyboardScroll layout contentContainerStyle={{ flexGrow: 1 }} keyboardShouldPersistTaps="handled">
         {step === 'email' ? (
           <View style={{ flex: 1, paddingHorizontal: space.xl }}>
             {fromSettings ? <View style={{ paddingTop: 6 }}><RoundButton onPress={() => nav.goBack()} label={L('返回', 'Back')}><ChevronLeft size={22} color={t.ink} /></RoundButton></View> : null}
@@ -155,7 +156,7 @@ export function LoginScreen() {
             </View>
           </View>
         )}
-      </ScrollView>
+      </KeyboardScroll>
     </Screen>
   );
 }

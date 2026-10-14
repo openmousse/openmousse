@@ -15,6 +15,7 @@ import { httpStatus } from '../api/base';
 import { L } from '../i18n';
 import { useStore } from '../store';
 import { radius, space, type, useTheme } from '../theme';
+import { KeyboardScroll } from '../components/keyboard';
 
 const zh = () => L('zh', 'en') === 'zh';
 const levels = (): { value: AppLevel; label: string }[] => [
@@ -360,7 +361,7 @@ export function CustomAppScreen() {
   return (
     <Screen>
       <SettingsHeader title={L('自定义连接器', 'Custom connector')} onBack={() => nav.goBack()} />
-      <ScrollView contentContainerStyle={{ paddingBottom: space.xxl }} keyboardShouldPersistTaps="handled" automaticallyAdjustKeyboardInsets>
+      <KeyboardScroll contentContainerStyle={{ paddingBottom: space.xxl }} keyboardShouldPersistTaps="handled">
         <Group style={{ paddingHorizontal: 18, marginTop: 8 }}>
           {field(L('名称', 'Name'), input(name, setName, L('例如 Linear', 'e.g. Linear'), { accessibilityLabel: L('名称', 'Name') }), true)}
           {field(L('MCP 地址', 'MCP address'), input(url, setUrl, 'https://mcp.example.com/mcp', { keyboardType: 'url', accessibilityLabel: L('MCP 地址', 'MCP address') }))}
@@ -381,7 +382,7 @@ export function CustomAppScreen() {
           style={({ pressed }) => [styles.primary, { backgroundColor: t.cyan, opacity: pressed || busy ? 0.7 : 1 }]}>
           {busy ? <ActivityIndicator color="#FFFFFF" /> : <T v="headline" color="#FFFFFF">{auth === 'oauth' ? L('添加并授权', 'Add and sign in') : L('添加', 'Add')}</T>}
         </Pressable>
-      </ScrollView>
+      </KeyboardScroll>
     </Screen>
   );
 }

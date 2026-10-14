@@ -1,6 +1,6 @@
 import React, { useCallback, useState } from 'react';
 import { Dimensions, Platform, ScrollView, type ScrollViewProps, type View, type ViewProps } from 'react-native';
-import { KeyboardChatScrollView, useReanimatedKeyboardAnimation } from 'react-native-keyboard-controller';
+import { KeyboardAwareScrollView, KeyboardChatScrollView, useReanimatedKeyboardAnimation } from 'react-native-keyboard-controller';
 import Reanimated, { useAnimatedStyle } from 'react-native-reanimated';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
@@ -65,6 +65,17 @@ export const ChatScroll = React.forwardRef<ScrollView, ChatScrollProps>(function
     return React.createElement(KeyboardChatScrollView, { ...props, offset, onContentInsetChange, ref: ref as never });
   }
   return React.createElement(ScrollView, { ...props, ref });
+});
+
+/**
+ * 带输入框的整页滚动（表单、设置、加好友……）：键盘升起时让开，正在输入的框留在键盘上面。
+ * iOS 用 ScrollView 自带的 automaticallyAdjustKeyboardInsets；Android 没有这个属性，Android 15 起整页贴边、窗口也不再因键盘变矮，
+ * 换成 keyboard-controller 的 KeyboardAwareScrollView（原生部分 1.0.5 起就在包里，热更新能上）。网页没有键盘，就是 ScrollView。
+ * layout：底部有按钮、内容用 flexGrow 撑满的页面，键盘升起时让按钮一起挪到键盘上面（Android 在末尾垫一块，iOS 照旧靠 inset）。
+ */
+export const KeyboardScroll = React.forwardRef<ScrollView, ScrollViewProps & { layout?: boolean }>(function KeyboardScroll({ layout, ...props }, ref) {
+  if (Platform.OS === 'android') return React.createElement(KeyboardAwareScrollView, { bottomOffset: 16, mode: layout ? 'layout' : 'insets', ...props, ref: ref as never });
+  return React.createElement(ScrollView, { automaticallyAdjustKeyboardInsets: true, ...props, ref });
 });
 
 /** 列表的收键盘方式：iOS 下拉时键盘跟着手指走；Android 一拖就收；网页不收（react-native-web 滚动时会让输入框失焦）。 */

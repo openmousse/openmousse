@@ -2,7 +2,7 @@
 // 底下一直开着学习 Agent 的对话（和「对话」tab 同一个线程）：找不到东西问它、发截图，核对时说哪里不对它就改（标黄、能撤销）。
 // 拖一堆文件还是电脑上方便：每一步都有「电脑上打开」。数据在服务器（api/study.ts → server/courses.py）。
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
-import { ActivityIndicator, Platform, Pressable, ScrollView, StyleSheet, TextInput, View } from 'react-native';
+import { ActivityIndicator, Platform, Pressable, StyleSheet, TextInput, View } from 'react-native';
 import { useFocusEffect, useNavigation, useRoute } from '@react-navigation/native';
 import * as study from '../api/study';
 import { usePartial } from '../api/partial';
@@ -17,6 +17,7 @@ import type { CourseChangeCard, PendingFile } from '../data/types';
 import { L } from '../i18n';
 import { useStore, useThreadOnScreen } from '../store';
 import { radius, space, type, useTheme } from '../theme';
+import { KeyboardScroll } from '../components/keyboard';
 
 const EXAMS = () => [['closed', L('闭卷笔试', 'Closed-book exam')], ['open', L('开卷考试', 'Open-book exam')], ['essay', L('书面作业', 'Written coursework')],
   ['group', L('小组作业', 'Group work')], ['present', L('展示', 'Presentation')], ['unknown', L('尚不确定', 'Not sure yet')]] as const;
@@ -62,7 +63,7 @@ export function AddCourseScreen() {
     <Screen>
       <NavHeader title={L('添加课程', 'Add a course')} sub={c ? c.title : undefined} onBack={() => nav.goBack()} right={<T v="callout" color={t.ink3}>{`${step} / 5`}</T>} />
       <View style={styles.dots}>{[1, 2, 3, 4, 5].map((n) => <View key={n} style={[styles.dot, { backgroundColor: n <= step ? t.goldFill : t.track }]} />)}</View>
-      <ScrollView contentContainerStyle={{ padding: space.lg, paddingBottom: space.xxl, gap: space.md }} keyboardShouldPersistTaps="handled" automaticallyAdjustKeyboardInsets keyboardDismissMode="interactive">
+      <KeyboardScroll contentContainerStyle={{ padding: space.lg, paddingBottom: space.xxl, gap: space.md }} keyboardShouldPersistTaps="handled" keyboardDismissMode="interactive">
         {err ? <T v="callout" color={t.bad}>{err}</T> : null}
         {step === 1 ? <Step1 c={c} onDone={(n, x) => { setName(n); setC(x); setStep(2); }} />
           : !c ? <ActivityIndicator color={t.ink3} />
@@ -79,7 +80,7 @@ export function AddCourseScreen() {
           generating={c.sessions.some((s) => s.job?.status === 'queued' || s.job?.status === 'running')} /> : null}
         {c && !agent ? <T v="callout" color={t.ink3}>{L('尚未创建学习 Agent：新建 Agent 时选择「学习」示例，即可在此提问。', 'No study Agent yet: create an Agent from the "Study" example to ask it here.')}</T> : null}
         {c ? <DeskLinkRow params={{ course: c.name }} /> : null}
-      </ScrollView>
+      </KeyboardScroll>
     </Screen>
   );
 }

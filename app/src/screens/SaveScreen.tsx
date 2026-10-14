@@ -1,6 +1,6 @@
 // 收藏里的一条：看存下的正文、备注和关键词，处理由你定——问问、交给 Agent、放进思考、翻译、提炼进库、删。它不会自己读。
 import React, { useCallback, useEffect, useState } from 'react';
-import { Image, Linking, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
+import { Image, Linking, Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
 import { useNavigation, useRoute } from '@react-navigation/native';
 import { BookOpen, Check, ChevronLeft, ChevronRight, Ellipsis, FileText, Forward, Languages, Lightbulb, MessageCircle, Plus, Trash2 } from '../components/icons';
 import { setChatDraft } from '../components/chatInput';
@@ -15,6 +15,7 @@ import { useStore } from '../store';
 import { radius, space, type, useTheme } from '../theme';
 import { GrowInput, KeywordChip, TypeTile, dayLabel, fileLine, previewFiles, saveStatusLabel } from '../think/parts';
 import { useThink } from '../think/ThinkStore';
+import { KeyboardScroll } from '../components/keyboard';
 
 export function SaveScreen() {
   const t = useTheme();
@@ -99,7 +100,7 @@ export function SaveScreen() {
         <T v="headline" style={{ flex: 1 }}>{L('收藏', 'Saved')}</T>
         <Pressable onPress={menu} hitSlop={8} accessibilityRole="button" accessibilityLabel={L('更多', 'More')} style={styles.back}><Ellipsis size={20} color={t.ink2} /></Pressable>
       </View>
-      <ScrollView contentContainerStyle={{ padding: space.lg, gap: space.md, paddingBottom: space.xxl }} automaticallyAdjustKeyboardInsets keyboardShouldPersistTaps="handled">
+      <KeyboardScroll contentContainerStyle={{ padding: space.lg, gap: space.md, paddingBottom: space.xxl }} keyboardShouldPersistTaps="handled">
         <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
           <TypeTile kind={s.kind} size={26} />
           <T v="caption" color={t.ink2} style={{ fontSize: 13 }}>{[s.source, `${dayLabel(s.day).split(' · ')[0]} ${s.time}`].filter(Boolean).join(' · ')}{L(' 保存', ' saved')}</T>
@@ -157,7 +158,7 @@ export function SaveScreen() {
           ))}
         </View>
         <T v="caption" color={t.ink3} style={{ textAlign: 'center', lineHeight: 18 }}>{L('Agent 不会主动读取此收藏，仅在你选择上方的某项操作后读取。', "The Agent won't read this on its own; it reads it only when you pick one of the above.")}</T>
-      </ScrollView>
+      </KeyboardScroll>
     </Screen>
   );
 }

@@ -1,7 +1,7 @@
 // 编辑 Agent：名字、图标和颜色、职责、默认模型；看它用到哪些数据；最底下删除。
 // 从 Agent 页顶上点名字（旁边的小笔）进来，原生 modal。保存 = PATCH /api/groups/{id}，只发改了的。
 import React, { useState } from 'react';
-import { Pressable, ScrollView, StyleSheet, TextInput, View } from 'react-native';
+import { Pressable, StyleSheet, TextInput, View } from 'react-native';
 import { useNavigation, useRoute } from '@react-navigation/native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { httpStatus } from '../api/base';
@@ -15,6 +15,7 @@ import { L } from '../i18n';
 import { useStore } from '../store';
 import { radius, space, type, useTheme } from '../theme';
 import { needsUpdate } from '../api/version';
+import { KeyboardScroll } from '../components/keyboard';
 
 const COLORS: AgentColor[] = ['cyan', 'gold', 'green', 'purple', 'pink', 'orange'];
 const errText = (e: unknown) => (e instanceof Error ? e.message : String(e));
@@ -154,7 +155,7 @@ function EditGroupBody({ g }: { g: Group }) {
   return (
     <Screen>
       <Header onCancel={() => nav.goBack()} onSave={save} canSave={dirty && !busy && !!name.trim()} busy={busy} />
-      <ScrollView contentContainerStyle={{ padding: space.lg, paddingTop: 22, paddingBottom: space.xxl + insets.bottom }} keyboardShouldPersistTaps="handled" automaticallyAdjustKeyboardInsets keyboardDismissMode="interactive">
+      <KeyboardScroll contentContainerStyle={{ padding: space.lg, paddingTop: 22, paddingBottom: space.xxl + insets.bottom }} keyboardShouldPersistTaps="handled" keyboardDismissMode="interactive">
         <View style={{ alignItems: 'center', gap: 10 }}>
           <Pressable onPress={openPicker} accessibilityRole="button" accessibilityLabel={L('更换图标和颜色', 'Change icon and color')}>
             <GroupBadge icon={icon ?? g.icon} color={color} size={76} />
@@ -198,7 +199,7 @@ function EditGroupBody({ g }: { g: Group }) {
           </Pressable>
           <T v="callout" color={t.ink2} style={{ fontSize: 13, lineHeight: 19 }}>{L('其工作区和记忆将移至 archive/，不会删除；对话记录、日志和卡片均会保留。', 'Its workspace and memory move to archive/ and are not deleted; its chats, journal and cards all stay.')}</T>
         </View>
-      </ScrollView>
+      </KeyboardScroll>
     </Screen>
   );
 }

@@ -2,7 +2,7 @@
 // 三个去处：发给朋友（一份「聊天记录」分享：先挡私事，能追问、能收回；里面有朋友说的话就不能追问）、
 // 转给自己的 Agent（带一个意图和一句话；朋友说的话只交要点）、更多（放进播客、存进收藏）。
 import React, { useEffect, useMemo, useState } from 'react';
-import { ActivityIndicator, Pressable, ScrollView, StyleSheet, Switch, TextInput, View } from 'react-native';
+import { ActivityIndicator, Pressable, StyleSheet, Switch, TextInput, View } from 'react-native';
 import { useNavigation, useRoute } from '@react-navigation/native';
 import * as fw from '../api/forward';
 import type { ForwardIntent, ForwardItem, ForwardPreview } from '../api/forward';
@@ -22,6 +22,7 @@ import { radius, space, type, useTheme } from '../theme';
 import { PutInPodcast } from '../think/Materials';
 import { openEpisode } from '../think/Podcast';
 import { MaskRow } from './ShareScreen';
+import { KeyboardScroll } from '../components/keyboard';
 
 type Dest = 'friends' | 'agent' | 'more';
 const EMPTY: ForwardPreview = { items: [], gist: '', convs: [], external: [], hasExternal: false };
@@ -152,7 +153,7 @@ export function ForwardScreen() {
   return (
     <Screen>
       <NavHeader title={fromBasket ? L('转发篮', 'Forward basket') : L('转发', 'Forward')} sub={sub} onBack={() => nav.goBack()} />
-      <ScrollView contentContainerStyle={{ padding: space.lg, paddingBottom: space.xxl, gap: space.md }} automaticallyAdjustKeyboardInsets keyboardShouldPersistTaps="handled">
+      <KeyboardScroll contentContainerStyle={{ padding: space.lg, paddingBottom: space.xxl, gap: space.md }} keyboardShouldPersistTaps="handled">
         {err ? <Card><T v="callout" color={t.bad}>{L(`无法打开：${err}`, `Couldn't open it: ${err}`)}</T></Card> : null}
         {!pv && !err ? <ActivityIndicator color={t.gold} style={{ marginTop: space.xl }} /> : null}
         {pv && !items.length ? (
@@ -302,7 +303,7 @@ export function ForwardScreen() {
             )}
           </>
         ) : null}
-      </ScrollView>
+      </KeyboardScroll>
     </Screen>
   );
 }

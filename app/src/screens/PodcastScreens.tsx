@@ -10,7 +10,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import Reanimated from 'react-native-reanimated';
 import { useNavigation, useRoute } from '@react-navigation/native';
 import { ArrowUp, Check, ChevronDown, ChevronLeft, ChevronRight, ChevronUp, CircleAlert, GraduationCap, MessageCircle, Mic, NotebookText, Paperclip, Pause, Pencil, Play, Plus, Square, TextAlignStart, TreeDeciduous, User, Users, X } from '../components/icons';
-import { useBottomInset } from '../components/keyboard';
+import { KeyboardScroll, useBottomInset } from '../components/keyboard';
 import { useSheet } from '../components/Sheet';
 import { Btn, Screen, T, showError } from '../components/ui';
 import * as pod from '../api/podcast';
@@ -539,7 +539,7 @@ export function PodDoneScreen() {
     <Screen>
       <Header title={L('录制完成', 'Recorded')} sub={e ? [pod.clock(e.duration), modeName(mode), saved ? L('已保存', 'Saved') : done ? L('各项均可编辑', 'Edit anything') : ''].filter(Boolean).join(' · ') : ''}
         onBack={() => nav.goBack()} icon={<View style={[styles.icon, { backgroundColor: lk.soft }]}><lk.Icon size={17} color={lk.fg} /></View>} />
-      <ScrollView ref={scroller} contentContainerStyle={{ padding: space.md, gap: space.md, paddingBottom: space.xxl }} automaticallyAdjustKeyboardInsets keyboardShouldPersistTaps="handled">
+      <KeyboardScroll ref={scroller} contentContainerStyle={{ padding: space.md, gap: space.md, paddingBottom: space.xxl }} keyboardShouldPersistTaps="handled">
         {saved ? (
           <View style={[styles.ok, { backgroundColor: t.goodSoft }]}>
             <T v="headline" color={t.good}>{L('已保存', 'Saved')}</T>
@@ -834,7 +834,7 @@ export function PodDoneScreen() {
           </>
         ) : null}
         {e && !working ? <Pressable onPress={del} accessibilityRole="button" style={{ alignSelf: 'center', padding: 6 }}><T v="caption" color={t.bad}>{L('删除本期', 'Delete this episode')}</T></Pressable> : null}
-      </ScrollView>
+      </KeyboardScroll>
     </Screen>
   );
 }
@@ -1052,7 +1052,7 @@ export function PodFriendsScreen() {
     <Screen>
       <Header title={L('多人对谈', 'Record with friends')} sub={L('共用一台手机', 'One phone in the middle')} onBack={() => nav.goBack()}
         icon={<View style={[styles.icon, { backgroundColor: lk.soft }]}><Users size={17} color={lk.fg} /></View>} />
-      <ScrollView contentContainerStyle={{ padding: space.md, gap: space.md }} automaticallyAdjustKeyboardInsets keyboardShouldPersistTaps="handled">
+      <KeyboardScroll contentContainerStyle={{ padding: space.md, gap: space.md }} keyboardShouldPersistTaps="handled">
         <TextInput value={title} onChangeText={setTitle} placeholder={L('本期主题', 'Episode topic')} placeholderTextColor={t.ink3} accessibilityLabel={L('本期主题', 'Topic')}
           style={[type.body, { backgroundColor: t.surface, color: t.ink, borderRadius: radius.md, paddingHorizontal: space.lg, paddingVertical: 12 }]} />
         {hasPeople ? (
@@ -1111,7 +1111,7 @@ export function PodFriendsScreen() {
           {hasPeople ? <T v="callout">{L('· 为每位朋友记录几条画像：在做的事、在意的、下次问问。仅你可见，可编辑或删除', '· A few notes about each friend: what they are up to, what they care about, what to ask next time. Only you see them; edit or delete any')}</T> : null}
         </View>
         <Btn label={busy ? L('正在开始…', 'Starting…') : L('开始录制', 'Start recording')} icon={<Mic size={16} color={t.onGold} />} onPress={go} />
-      </ScrollView>
+      </KeyboardScroll>
     </Screen>
   );
 }

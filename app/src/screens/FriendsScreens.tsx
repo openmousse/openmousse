@@ -17,7 +17,7 @@ import { AgentLens, clockLabel, dayKey, dayLabel, timeLabel } from '../component
 import { Markdown } from '../components/Markdown';
 import { useSheet } from '../components/Sheet';
 import { ChatHeader, ChatRowView, MenuItem, StateFace, SwipeRow, rowTime, type SwipeAction } from '../components/ChatParts';
-import { ChatScroll, KeyboardSticky, dismissMode, useBottomInset } from '../components/keyboard';
+import { ChatScroll, dismissMode, KeyboardScroll, KeyboardSticky, useBottomInset } from '../components/keyboard';
 import { Btn, Card, NavHeader, Pill, PullRefresh, Screen, SectionLabel, Segmented, T, showError } from '../components/ui';
 import { Group, GroupLabel, GroupNote, Row, SettingsHeader } from '../components/settings';
 import type { AgentColor } from '../data/types';
@@ -1311,7 +1311,7 @@ export function MyNameScreen() {
   if (suggest === null) return <Screen><ActivityIndicator style={{ marginTop: space.xxl }} color={t.ink3} /></Screen>;
   return (
     <Screen>
-      <ScrollView contentContainerStyle={{ flexGrow: 1, paddingBottom: space.xl }} automaticallyAdjustKeyboardInsets keyboardShouldPersistTaps="handled">
+      <KeyboardScroll layout contentContainerStyle={{ flexGrow: 1, paddingBottom: space.xl }} keyboardShouldPersistTaps="handled">
         <View style={{ paddingHorizontal: space.xl, paddingTop: space.xl, gap: 8 }}>
           <T v="callout" color={t.cyan} style={{ fontWeight: '600' }}>{L('开始之前', 'Before you start')}</T>
           <T v="largeTitle" style={{ fontSize: 28 }}>{L('好友如何称呼你', 'What should friends call you?')}</T>
@@ -1329,7 +1329,7 @@ export function MyNameScreen() {
         <Pressable onPress={next} accessibilityRole="button" style={{ height: 44, alignItems: 'center', justifyContent: 'center', marginTop: 6 }}>
           <T v="callout" color={t.ink2}>{L('跳过', 'Skip for now')}</T>
         </Pressable>
-      </ScrollView>
+      </KeyboardScroll>
     </Screen>
   );
 }
@@ -1416,7 +1416,7 @@ export function AddFriendScreen() {
   return (
     <Screen>
       <NavHeader title={L('添加好友', 'Add a friend')} onBack={() => nav.goBack()} />
-      <ScrollView contentContainerStyle={{ padding: space.lg, paddingBottom: space.xxl, gap: space.md }} automaticallyAdjustKeyboardInsets keyboardShouldPersistTaps="handled">
+      <KeyboardScroll contentContainerStyle={{ padding: space.lg, paddingBottom: space.xxl, gap: space.md }} keyboardShouldPersistTaps="handled">
         {home?.why === 'no_name' ? <NameCard suggest={home.me.suggest} onSaved={() => { loadHome(); }} /> : home?.why === 'no_url' ? <NotReady /> : null}
         {home?.unreachable ? <PublicWarn fix={home.publicFix} relay={!!home.relay?.base && home.me.url === home.relay.base} /> : null}
 
@@ -1500,7 +1500,7 @@ export function AddFriendScreen() {
             <T v="caption" color={t.ink3} style={{ paddingHorizontal: space.xs }}>{L('二维码仅在生成时显示一次。如未发送，请收回后重新生成。', "A QR code shows only when created; if you didn't send it, withdraw it and create another.")}</T>
           </>
         ) : null}
-      </ScrollView>
+      </KeyboardScroll>
     </Screen>
   );
 }
@@ -1552,7 +1552,7 @@ export function CardAgentScreen() {
   return (
     <Screen>
       <NavHeader title={L('我的名片 Agent', 'My card agent')} sub={L('代你对外回答 · 无法访问世界树', 'Speaks for you · never sees your memory tree')} onBack={() => nav.goBack()} />
-      <ScrollView contentContainerStyle={{ padding: space.lg, paddingBottom: space.xxl, gap: space.md }} automaticallyAdjustKeyboardInsets keyboardShouldPersistTaps="handled"
+      <KeyboardScroll contentContainerStyle={{ padding: space.lg, paddingBottom: space.xxl, gap: space.md }} keyboardShouldPersistTaps="handled"
         refreshControl={<PullRefresh onRefresh={load} />}>
         {err ? <Card><T v="callout" color={t.bad}>{L(`无法加载：${err}`, `Couldn't load: ${err}`)}</T></Card> : null}
         {!data && !err ? <ActivityIndicator color={t.gold} style={{ marginTop: space.xl }} /> : null}
@@ -1630,7 +1630,7 @@ export function CardAgentScreen() {
             {health?.sentinel ? <DoormanCard s={health.sentinel} /> : null}
           </>
         ) : null}
-      </ScrollView>
+      </KeyboardScroll>
     </Screen>
   );
 }

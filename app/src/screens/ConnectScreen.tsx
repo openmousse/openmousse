@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { Linking, Platform, Pressable, ScrollView, StyleSheet, TextInput, View } from 'react-native';
+import { Linking, Platform, Pressable, StyleSheet, TextInput, View } from 'react-native';
 import { useNavigation, useRoute } from '@react-navigation/native';
 import * as Device from 'expo-device';
 import { Btn, Card, NavHeader, Pill, Screen, SectionLabel, T, showError } from '../components/ui';
@@ -9,6 +9,7 @@ import { rememberClaw } from '../api/claws';
 import { L } from '../i18n';
 import { useStore } from '../store';
 import { radius, space, type, useTheme } from '../theme';
+import { KeyboardScroll } from '../components/keyboard';
 
 /** 网站上的新手指南：从装服务到在手机上说第一句话。 */
 const GUIDE_URL = 'https://openmousse.ai/start.html';
@@ -74,7 +75,7 @@ export function ConnectScreen() {
     <Screen>
       <NavHeader title={adding ? L('添加 claw', 'Add a claw') : L('服务器', 'Server')} onBack={() => (needsServer ? undefined : nav.goBack())}
         right={connected && !adding ? <Pill label={L('已连接', 'Connected')} tone="good" /> : undefined} />
-      <ScrollView contentContainerStyle={{ padding: space.lg, paddingBottom: space.xxl }} keyboardShouldPersistTaps="handled" automaticallyAdjustKeyboardInsets keyboardDismissMode="interactive">
+      <KeyboardScroll contentContainerStyle={{ padding: space.lg, paddingBottom: space.xxl }} keyboardShouldPersistTaps="handled" keyboardDismissMode="interactive">
         <T v="callout" color={t.ink2} style={{ marginBottom: space.md }}>
           {L('此 app 是客户端，所有对话、记忆和数据都保存在你自己的服务器上。点击 claw 发来的配对链接，或填写服务器地址和接入令牌，即可开始使用。',
             'This app connects to your own server, where all your chats, memory and data live. Tap the pairing link your claw sent you, or enter the server address and access token, to get started.')}
@@ -120,7 +121,7 @@ export function ConnectScreen() {
           <T v="callout" color={t.ink2}>{L('将输出的新令牌填入上方。令牌保存在此设备的钥匙串中，不经过任何第三方。',
             "Paste the new token it prints into the field above. It's stored in this device's keychain and never passes through a third party.")}</T>
         </Card>
-      </ScrollView>
+      </KeyboardScroll>
     </Screen>
   );
 }

@@ -15,6 +15,7 @@ import type { DayInfo, Message, SearchHit } from '../data/types';
 import { L } from '../i18n';
 import { useStore } from '../store';
 import { radius, space, useTheme } from '../theme';
+import { KeyboardScroll } from '../components/keyboard';
 
 const WEEK = ['日', '一', '二', '三', '四', '五', '六'];
 const WEEK_EN = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
@@ -110,7 +111,7 @@ export function HistoryScreen() {
           </View>
         ) : null}
       </View>
-      <ScrollView contentContainerStyle={{ padding: space.lg, paddingBottom: space.xxl }} keyboardShouldPersistTaps="handled" automaticallyAdjustKeyboardInsets keyboardDismissMode={Platform.OS === 'web' ? 'none' : 'on-drag'}>
+      <KeyboardScroll contentContainerStyle={{ padding: space.lg, paddingBottom: space.xxl }} keyboardShouldPersistTaps="handled" keyboardDismissMode={Platform.OS === 'web' ? 'none' : 'on-drag'}>
         {!connected ? <Card><T v="callout" color={t.ink2}>{L('未连接服务器。', 'Not connected to the server.')}</T></Card> : null}
         {error ? <Card><T v="callout" color={t.bad}>{error}</T></Card> : null}
         {q.trim() ? (
@@ -156,7 +157,7 @@ export function HistoryScreen() {
             </Card>
           </>
         )}
-      </ScrollView>
+      </KeyboardScroll>
     </Screen>
   );
 }
