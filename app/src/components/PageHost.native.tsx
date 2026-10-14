@@ -66,6 +66,7 @@ export function PageHost({ html, title, onBridge, onStop }: PageHostProps) {
     });
   };
 
+  // dataDetectorTypes 一定传数组：原生组件的定义是数组，安卓（新架构）拿到字符串解析属性时直接崩（10/14 模拟器上崩过）
   return (
     <WebView ref={ref} source={source} accessibilityLabel={title} style={styles.web} containerStyle={styles.web}
       originWhitelist={ANY} onShouldStartLoadWithRequest={onShouldStart} onLoadStart={onLoadStart} onMessage={onMessage}
@@ -73,7 +74,7 @@ export function PageHost({ html, title, onBridge, onStop }: PageHostProps) {
       javaScriptEnabled incognito domStorageEnabled={false} sharedCookiesEnabled={false} thirdPartyCookiesEnabled={false}
       allowFileAccess={false} allowFileAccessFromFileURLs={false} allowUniversalAccessFromFileURLs={false}
       setSupportMultipleWindows={false} javaScriptCanOpenWindowsAutomatically={false} geolocationEnabled={false} saveFormDataDisabled
-      mediaCapturePermissionGrantType="deny" allowsLinkPreview={false} dataDetectorTypes="none" allowsBackForwardNavigationGestures={false} />
+      mediaCapturePermissionGrantType="deny" allowsLinkPreview={false} dataDetectorTypes={['none']} allowsBackForwardNavigationGestures={false} />
   );
 }
 
