@@ -192,6 +192,8 @@ function PendingLine({ r, last, done, swipe, cats, onTick, onOpen, onPostpone, o
   const t = useTheme();
   const ring = cats && r.category ? catColor(t, r.category) : null;
   const sub = cats && r.category ? [catLabel(r.category), r.sub].filter(Boolean).join(' · ') : r.sub;
+  // 「不用管」的（别的日子里看得到）：不画成做完，标签照服务器写的「不用管」
+  const ticked = done && !r.dismissed;
   const body = (
     <View style={[styles.row, { backgroundColor: t.surface }, !last && { borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: t.line }]}>
       {r.kind === 'security' ? (
@@ -202,17 +204,17 @@ function PendingLine({ r, last, done, swipe, cats, onTick, onOpen, onPostpone, o
         <Pressable onPress={onTick} disabled={!r.canTick} hitSlop={10} accessibilityRole="checkbox" accessibilityState={{ checked: done }}
           accessibilityLabel={L(`标记完成：${r.title}`, `Tick off: ${r.title}`)}
           style={[styles.tick, ring ? { borderWidth: 2 } : null, {
-            borderColor: done ? (ring ?? t.cyan) : (ring ?? t.ink3), backgroundColor: done ? (ring ?? t.cyan) : 'transparent',
+            borderColor: ticked ? (ring ?? t.cyan) : (ring ?? t.ink3), backgroundColor: ticked ? (ring ?? t.cyan) : 'transparent',
           }]}>
-          {done ? <Check size={14} color={t.surface} strokeWidth={3} /> : null}
+          {ticked ? <Check size={14} color={t.surface} strokeWidth={3} /> : null}
         </Pressable>
       )}
       <Pressable onPress={onOpen} accessibilityRole="button" accessibilityLabel={`${r.title}${r.chip ? `，${r.chip}` : ''}`}
         style={({ pressed }) => [styles.mid, { opacity: pressed ? 0.6 : 1 }]}>
-        <Text style={[styles.title, { color: done ? t.ink3 : t.ink }, done && { textDecorationLine: 'line-through' }]} numberOfLines={1}>{r.title}</Text>
+        <Text style={[styles.title, { color: done ? t.ink3 : t.ink }, ticked && { textDecorationLine: 'line-through' }]} numberOfLines={1}>{r.title}</Text>
         {sub ? <Text style={[styles.sub, { color: t.ink3 }]} numberOfLines={1}>{sub}</Text> : null}
       </Pressable>
-      <Chip label={done ? L('已完成', 'Done') : r.chip} tone={done ? 'good' : r.tone} />
+      <Chip label={ticked ? L('已完成', 'Done') : r.chip} tone={ticked ? 'good' : r.tone} />
     </View>
   );
   const actions = [
@@ -293,7 +295,7 @@ function PendingDetail({ r, done, snooze, cats, onTick, onPostpone, onDismiss, o
     return (
       <View style={{ gap: space.md }}>
         <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
-          <Chip label={done ? L('已完成', 'Done') : r.chip} tone={done ? 'good' : r.tone} />
+          <Chip label={done && !r.dismissed ? L('已完成', 'Done') : r.chip} tone={done && !r.dismissed ? 'good' : r.tone} />
           <T v="callout" color={t.ink2} style={{ flex: 1 }} numberOfLines={2}>{r.sub}</T>
         </View>
         {r.detail ? <View style={[styles.box, { backgroundColor: t.surface }]}><T v="callout" color={t.ink}>{r.detail}</T></View> : null}

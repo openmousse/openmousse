@@ -59,6 +59,8 @@ export interface EngBoard {
   /** 交接本最后一次改动后同步的时间（今天的写几点，更早的写日子） */
   syncedLabel: string;
   lines: EngLine[]; older: EngLine[]; columns: EngColumn[];
+  /** 这次没能重读交接本（给的是上次同步的） */
+  error: string | null;
 }
 
 export interface TodayDay {
@@ -99,9 +101,9 @@ function normDay(j: Partial<TodayDay>): TodayDay {
 const cache = new Map<string, TodayDay>();
 export const cachedDay = (iso: string | null) => cache.get(iso ?? 'today') ?? null;
 
-/** 一天的三块。iso 为 null = 服务器的今天。 */
+/** 一天的三块。iso 为 null = 服务器的今天。eng=1：这版 app 认得工程看板卡（更早的 app 不带，服务器就不给）。 */
 export async function loadDay(iso: string | null): Promise<TodayDay> {
-  const d = normDay(await request<Partial<TodayDay>>(iso ? `/api/today?day=${iso}` : '/api/today'));
+  const d = normDay(await request<Partial<TodayDay>>(iso ? `/api/today?day=${iso}&eng=1` : '/api/today?eng=1'));
   cache.set(iso ?? 'today', d);
   return d;
 }
@@ -142,6 +144,6 @@ export async function loadEng(): Promise<EngBoard> {
   return {
     weekDone: Number(j.weekDone ?? 0), todo: Number(j.todo ?? 0), wait: Number(j.wait ?? 0), main: arr<EngMain>(j.main),
     mainCells: arr<EngMain>(j.mainCells), mainNote: String(j.mainNote ?? ''), syncedAt: j.syncedAt ?? null, syncedLabel: String(j.syncedLabel ?? ''),
-    lines: arr<EngLine>(j.lines), older: arr<EngLine>(j.older), columns: arr<EngColumn>(j.columns),
+    lines: arr<EngLine>(j.lines), older: arr<EngLine>(j.older), columns: arr<EngColumn>(j.columns), error: j.error ? String(j.error) : null,
   };
 }

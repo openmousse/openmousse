@@ -15,7 +15,8 @@
 定时任务、后台任务不在这里（定时任务以后放设置；后台任务看对话页 Agent 栏的状态）。
 
 GET  /api/today?day=YYYY-MM-DD        一天；不给 = 今天。别的日子：待处理只列那天到期的，没有收件箱、安全提醒和推迟。
-                                      开着工程看板（today.engineering，engboard.py）时今天的报告里多一张工程看板卡
+     &eng=1                           开着工程看板（today.engineering，engboard.py）时今天的报告里多一张工程看板卡（type eng）。
+                                      认得它的 app 才带 eng=1：更早的 app 会把不认识的报告当普通卡画，读不到正文就出错
 GET  /api/today/range?from=&days=     周 / 月视图：每天的日程、截止、待办（days ≤ 42；不补实际时间，免得一次查几十天训练记录）
 POST /api/today/snooze {ref, until}   推迟一条待处理到 until（YYYY-MM-DD）；until 为 null = 取消推迟
 """
@@ -534,7 +535,7 @@ def build_reports(d0: date, cards: list[dict], used: set[str]) -> list[dict]:
 
 # —— 一天 ————————————————————————————————————————————————————————————
 
-def build_day(d0: date, inbox_items: list[dict], errors: dict[str, str]) -> dict:
+def build_day(d0: date, inbox_items: list[dict], errors: dict[str, str], eng: bool = False) -> dict:
     t, now_dt = sch.today(), sch.now()
     now_m = now_dt.hour * 60 + now_dt.minute if d0 == t else None
     cats = todocat.enabled()
@@ -544,10 +545,10 @@ def build_day(d0: date, inbox_items: list[dict], errors: dict[str, str]) -> dict
     used = attach(events, cards)
     reports = build_reports(d0, cards, used)
     eerr: dict[str, str] = {}
-    if d0 == t:
-        eng, why = engboard.report_card()
-        if eng:
-            reports.insert(0, eng)
+    if d0 == t and eng:
+        card, why = engboard.report_card()
+        if card:
+            reports.insert(0, card)
         if why:
             eerr["engineering"] = why
     timed = [e for e in events if e["slotStart"]]
@@ -560,8 +561,8 @@ def build_day(d0: date, inbox_items: list[dict], errors: dict[str, str]) -> dict
 
 
 @router.get("/api/today")
-async def get_today(request: Request, day: str | None = None):
-    """「今天」页的三块，按 day（不给 = 今天）。收件箱只在今天给。"""
+async def get_today(request: Request, day: str | None = None, eng: int = 0):
+    """「今天」页的三块，按 day（不给 = 今天）。收件箱只在今天给。eng=1：报告里带工程看板卡（新 app 才带）。"""
     d0 = date.fromisoformat(sch.check_date(day, "day")) if day else sch.today()
     errors: dict[str, str] = {}
     items: list[dict] = []
@@ -571,7 +572,7 @@ async def get_today(request: Request, day: str | None = None):
             items = got.get("items") or []
         except Exception as exc:  # noqa: BLE001 — 收件箱读不到，其余照常
             errors["inbox"] = str(exc)[:200]
-    return await asyncio.to_thread(build_day, d0, items, errors)
+    return await asyncio.to_thread(build_day, d0, items, errors, bool(eng))
 
 
 # —— 周 / 月 ——————————————————————————————————————————————————————————

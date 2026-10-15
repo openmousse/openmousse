@@ -7,7 +7,7 @@
   拍板 ·、你做 ·……）= 等你；
   其余没打勾 = 没做；写着「→ 搬到…」的（挪到别处了）和「不做了」的不算。
 - 线的状态：节里写了「状态：在做 / 等你 / 排队 / 做完」就按它；否则全做完 = 做完，写着「从这里开始」= 在做，有等你的 = 等你，其余 = 排队。
-- 做完的日子：第一次看到它打了勾时，条目里写的最近的日子（「10/15 核对：…」），没写就用文件的修改日子；
+- 做完的日子：第一次看到它打了勾时，条目里写的最近的日子（「10/15 核对：…」），没写就用那一节标题里的日子，再没有用文件的修改日子；
   上次同步时还没打勾的，不早于上次同步那天。「这周做完」= 周一以来做完的。
 - 什么时候同步：读看板或「今天」页时看文件的修改时间，变了才重读（不加定时器）。
 
@@ -52,11 +52,13 @@ START_HERE_BODY = re.compile(r"(下一个|下个) ?session 从这里开始")
 # 「→ 已搬到 Grava（item:…）」「→ 剩下的已搬到…」「→ 已在 Grava」「→ 不搬：…」= 挪到别处或别处已经有了；写在括号里的（「（体脂这一半 → 已搬到…）」）
 # 只说了一半，这一条还算开着
 MOVED = re.compile(r"→[^→（(]{0,8}?(已在|不搬|已?(搬|挪|移|并)(到|进))")
-DROPPED = re.compile(r"不做了|^~~")
+DROPPED_NOTE = re.compile(r"[（(]\s*(\d{1,2}/\d{1,2}\s*核对\s*[:：]\s*)?不做了")  # 「（不做了：…）」「（10/15 核对：不做了，…）」
 # 「写着要你」（名字是 server.json 的 user_name）：等 <名字> / 等你 / <名字> 定、选、看、点、拍板、决定、确认、动手的 / 要 <名字> / 问 <名字> /
 # 拍板 · / 你做 ·。括号里的补充、「」里引的原话不算；「上线前先问 <名字>」这种做事的规矩也不算
 WAIT_TPL = (r"等\s*({who}|你)|(要|问|让|请)\s*({who})|({who})\s*(来|自己|亲自)?\s*(定|选|看|点|拍板|决定|确认|真机|手动|手机|登录|装|开|批|同意|"
-            r"回复|答|填|签|在|用)|^({who})\s*[:：]|^(拍板|你做)\s*·|({who}) 的事|只有 ({who})")
+            r"回复|答|填|签|在|用)(?![了过])|^({who})\s*[:：]|^(拍板|你做)\s*·|({who}) 的事|只有 ({who})")
+# 已经定过的不算：「10/8 Leo 定「…」」「10/15 03:5x Leo 选了…」
+DECIDED_TPL = r"\d{{1,2}}/\d{{1,2}}(\s*\d{{1,2}}:\d{{1,2}}x?)?\s*({who})\s*(定|选|说|点|看|同意|拍板)"
 PROCEDURE_TPL = r"(之前|以前|前|先)\s*(用选项)?(问|告诉)\s*({who})"
 QUOTE = re.compile(r"「[^「」]*」")
 DATE_MD = re.compile(r"(?<![\d/.])(1[0-2]|0?[1-9])/(3[01]|[12]\d|0?[1-9])(?![\d/])")
@@ -73,7 +75,8 @@ _sync_lock = threading.Lock()
 # —— 配置 ——————————————————————————————————————————————————————————————
 
 def cfg() -> dict:
-    c = (raw().get("today") or {}).get("engineering")
+    t = raw().get("today")
+    c = t.get("engineering") if isinstance(t, dict) else None
     return c if isinstance(c, dict) and c.get("todos") else {}
 
 
@@ -131,12 +134,12 @@ def line_name(heading: str) -> str:
 
 
 def to_day(m: int, d: int, today: date) -> date | None:
-    """「10/15」→ 今年的那天；比今天晚一个多月的算去年的。"""
+    """「10/15」→ 今年的那天；比今天晚半年以上的算去年的（1 月看到「12/6」是去年的；10 月看到「12/6」是今年的）。"""
     try:
         x = date(today.year, m, d)
     except ValueError:
         return None
-    return x.replace(year=x.year - 1) if x > today + timedelta(days=31) else x
+    return x.replace(year=x.year - 1) if x > today + timedelta(days=183) else x
 
 
 def days_in(text: str, today: date) -> list[date]:
@@ -160,10 +163,11 @@ def owner_names() -> tuple[str, ...]:
 
 
 @functools.lru_cache(maxsize=8)
-def patterns(names: tuple[str, ...]) -> tuple[re.Pattern, re.Pattern, re.Pattern]:
-    """(写着要你, 做事的规矩, 开头的「<名字>：」)。"""
+def patterns(names: tuple[str, ...]) -> tuple[re.Pattern, re.Pattern, re.Pattern, re.Pattern]:
+    """(写着要你, 做事的规矩, 开头的「<名字>：」, 带日子的「已经定过」)。"""
     who = "|".join(re.escape(n) for n in names) or r"(?!)"
-    return re.compile(WAIT_TPL.format(who=who)), re.compile(PROCEDURE_TPL.format(who=who)), re.compile(rf"^({who})\s*[:：]\s*")
+    return (re.compile(WAIT_TPL.format(who=who)), re.compile(PROCEDURE_TPL.format(who=who)), re.compile(rf"^({who})\s*[:：]\s*"),
+            re.compile(DECIDED_TPL.format(who=who)))
 
 
 def strip_parens(t: str) -> str:
@@ -181,10 +185,10 @@ def item_state(checked: bool, text: str, names: tuple[str, ...] | None = None) -
     t = QUOTE.sub("", plain(text))
     if MOVED.search(strip_parens(t)):
         return "moved"
-    if DROPPED.search(text.strip()) or DROPPED.search(t):
+    if text.strip().startswith("~~") or "不做了" in strip_parens(t) or DROPPED_NOTE.search(t):
         return "dropped"
-    wait, procedure, _ = patterns(owner_names() if names is None else names)
-    core = procedure.sub("", strip_parens(t))
+    wait, procedure, _, decided = patterns(owner_names() if names is None else names)
+    core = decided.sub("", procedure.sub("", strip_parens(t)))
     return "wait" if wait.search(core) else "todo"
 
 
@@ -356,7 +360,9 @@ def sync(force: bool = False) -> str | None:
         for kind, p in files:
             try:
                 text = p.read_text(encoding="utf8")
-            except OSError:
+            except (OSError, UnicodeError) as e:
+                if kind == "todos":  # 交接本读不了：这次什么都不改（不然整块看板会被当成删光了）
+                    return L(f"读不到 {p}：{e}", f"Can't read {p}: {e}")[:200]
                 continue
             mday = datetime.fromtimestamp(p.stat().st_mtime, TZ).date()
             parsed.append((kind, p, parse(text, today), mday))
@@ -386,9 +392,14 @@ def apply_parse(conn: sqlite3.Connection, parsed: list[tuple[str, Path, list[PLi
         by_name.setdefault(r["name"], []).append(lid)
     taken: set[str] = set()
     present: set[str] = set()
+    names_now = {pl.name for _, _, plines, _ in parsed for pl in plines}
+    # 这次一个名字都对不上的老线：标题改了名的一节，按里面的条目认回来（不然改个名，做完的就算了两遍）
+    vanished = {lid: conn.execute("SELECT * FROM eng_items WHERE line=?", (lid,)).fetchall()
+                for lid, r in old_lines.items() if r["name"] not in names_now}
     for kind, path, plines, mday in parsed:
         for pl in plines:
-            lid = next((x for x in sorted(by_name.get(pl.name, [])) if x not in taken), None) or line_id(pl.name, taken | set(old_lines))
+            lid = next((x for x in sorted(by_name.get(pl.name, [])) if x not in taken), None) or renamed(vanished, pl, taken) \
+                or line_id(pl.name, taken | set(old_lines))
             taken.add(lid)
             present.add(lid)
             archived = kind == "archive"
@@ -426,6 +437,19 @@ def apply_parse(conn: sqlite3.Connection, parsed: list[tuple[str, Path, list[PLi
     for lid, r in old_lines.items():
         if lid not in present and not r["gone_at"]:
             conn.execute("UPDATE eng_lines SET gone_at=? WHERE id=?", (ts, lid))
+            conn.execute("UPDATE eng_items SET gone_at=? WHERE line=? AND gone_at IS NULL", (ts, lid))
+
+
+def renamed(vanished: dict[str, list[sqlite3.Row]], pl: PLine, taken: set[str]) -> str | None:
+    """新名字的一节是不是哪条消失的老线改了名：一半以上的条目对得上就算同一条。"""
+    best, score = None, 0
+    for lid, olds in vanished.items():
+        if lid in taken or not olds or not pl.items:
+            continue
+        n = len(match_items(olds, pl.items))
+        if n * 2 >= min(len(olds), len(pl.items)) and n > score:
+            best, score = lid, n
+    return best
 
 
 # —— 算 ————————————————————————————————————————————————————————————————
@@ -470,9 +494,13 @@ def main_name(group: str) -> str:
 
 
 def load(conn: sqlite3.Connection) -> tuple[list[sqlite3.Row], dict[str, list[sqlite3.Row]]]:
+    """线和条目。还在的线里被删掉 / 改得认不出的条目不算（改写过的那条以新的为准）；整节挪走了的线，做完的照样算。"""
     lines = conn.execute("SELECT * FROM eng_lines ORDER BY pos").fetchall()
+    gone_line = {r["id"] for r in lines if r["gone_at"]}
     items: dict[str, list[sqlite3.Row]] = {}
-    for r in conn.execute("SELECT * FROM eng_items WHERE gone_at IS NULL OR state='done' ORDER BY pos"):
+    for r in conn.execute("SELECT * FROM eng_items ORDER BY pos"):
+        if r["gone_at"] and not (r["line"] in gone_line and r["state"] == "done"):
+            continue
         items.setdefault(r["line"], []).append(r)
     return lines, items
 
@@ -570,7 +598,8 @@ def report_card() -> tuple[dict | None, str | None]:
     except (OSError, sqlite3.Error, ValueError) as e:
         return None, L(f"工程看板读不出来：{e}", f"Couldn't read the engineering board: {e}")[:200]
     return {"type": "eng", "id": "eng-board", "kind": "eng_board", "title": L("工程看板", "Engineering"), "time": s["syncedLabel"],
-            "weekDone": s["weekDone"], "todo": s["todo"], "wait": s["wait"], "main": s["main"]}, None
+            "weekDone": s["weekDone"], "todo": s["todo"], "wait": s["wait"], "main": s["main"],
+            "body": "", "agent": None, "unseen": False, "cta": "", "data": None, "createdAt": s.get("syncedAt") or ""}, None
 
 
 def line_items(lid: str) -> dict:
@@ -579,7 +608,8 @@ def line_items(lid: str) -> dict:
         line = conn.execute("SELECT * FROM eng_lines WHERE id=?", (lid,)).fetchone()
         if line is None:
             raise HTTPException(404, L("没有这条线", "No such line"))
-        rows = conn.execute("SELECT * FROM eng_items WHERE line=? AND (gone_at IS NULL OR state='done') ORDER BY pos", (lid,)).fetchall()
+        rows = conn.execute("SELECT * FROM eng_items WHERE line=? AND (gone_at IS NULL OR (? AND state='done')) ORDER BY pos",
+                            (lid, int(bool(line["gone_at"])))).fetchall()
     rows = [r for r in rows if counted(r)]
 
     def one(r: sqlite3.Row) -> dict:
@@ -598,7 +628,7 @@ def get_eng_line(lid: str):
     """看板页点开一条线：这条线里没做的、等你的、做完的。"""
     if not cfg():
         raise HTTPException(404, L("没有配工程看板（server.json 的 today.engineering）", "No engineering board (today.engineering in server.json)"))
-    sync()
+    sync()  # 读不了就用库里上次同步的
     return {"ok": True, **line_items(lid)}
 
 
@@ -607,7 +637,5 @@ def get_eng():
     """工程看板页（只读）：交接本改过就先重读。"""
     if not cfg():
         raise HTTPException(404, L("没有配工程看板（server.json 的 today.engineering）", "No engineering board (today.engineering in server.json)"))
-    err = sync()
-    if err:
-        raise HTTPException(502, err)
-    return {"ok": True, **board()}
+    err = sync()  # 读不了就给库里上次同步的，error 里说一声
+    return {"ok": True, **board(), "error": err}

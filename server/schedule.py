@@ -549,24 +549,32 @@ KEEP_FIELDS = ("id", "kind", "origin", "title", "detail", "date", "start", "allD
 
 
 def keep_mail(conn: sqlite3.Connection, entries: list[dict]) -> None:
-    """开着 today.categories：邮件里的待办记一份快照，来源到期删了照样列；来源里标了做完的删掉快照。在锁里调。"""
+    """开着 today.categories：邮件里的待办记一份快照，来源到期删了照样列；做完了、或者改成不是待办了（edit --type status）的删掉快照。
+    只在有变化时写（「今天」每次打开都会走到这里）。在锁里调。"""
+    have = {r["ref"]: r["entry"] for r in conn.execute("SELECT ref, entry FROM todo_keep")}
     ts = now_iso()
     for e in entries:
-        if e["origin"] != "mail" or e["kind"] != "todo":
+        if e["origin"] != "mail":
             continue
-        if e["done"]:
-            conn.execute("DELETE FROM todo_keep WHERE ref=?", (e["id"],))
+        if e["kind"] != "todo" or e["done"]:
+            if e["id"] in have:
+                conn.execute("DELETE FROM todo_keep WHERE ref=?", (e["id"],))
             continue
         snap = json.dumps({k: e.get(k) for k in KEEP_FIELDS}, ensure_ascii=False)
-        conn.execute("INSERT INTO todo_keep(ref, entry, first_seen, last_seen) VALUES(?,?,?,?) ON CONFLICT(ref) DO UPDATE SET "
-                     "entry=excluded.entry, last_seen=excluded.last_seen WHERE todo_keep.entry != excluded.entry", (e["id"], snap, ts, ts))
+        if have.get(e["id"]) != snap:
+            conn.execute("INSERT INTO todo_keep(ref, entry, first_seen, last_seen) VALUES(?,?,?,?) ON CONFLICT(ref) DO UPDATE SET "
+                         "entry=excluded.entry, last_seen=excluded.last_seen", (e["id"], snap, ts, ts))
 
 
 def kept_entries(conn: sqlite3.Connection, live: set[str], mk: dict, now_dt: datetime) -> list[dict]:
-    """来源里已经没有、你也还没处理的邮件待办（快照）。在锁里调。"""
-    out = []
-    for r in conn.execute("SELECT ref, entry FROM todo_keep"):
-        if r["ref"] in live or (mk.get(r["ref"]) or {}).get("done_at"):
+    """来源里已经没有、你也还没处理的邮件待办（快照）。处理过 30 天以上的快照删掉（30 天内还能撤销）。在锁里调。"""
+    out, old = [], (now_dt - timedelta(days=30)).isoformat()
+    for r in conn.execute("SELECT ref, entry FROM todo_keep").fetchall():
+        done_at = (mk.get(r["ref"]) or {}).get("done_at")
+        if done_at and r["ref"] not in live and str(done_at) < old:
+            conn.execute("DELETE FROM todo_keep WHERE ref=?", (r["ref"],))
+            continue
+        if r["ref"] in live or done_at:
             continue
         try:
             snap = json.loads(r["entry"])
@@ -845,6 +853,11 @@ async def add_item(body: ItemIn):
                     (f"item:{old['id']}",)).fetchone():
                 after.update(date=before["date"], start=before["start"], end=before["end"])
                 kept.append("time")
+                try:
+                    check_when(after["date"], after["start"], after["end"], after["kind"])
+                except HTTPException:  # 留着用户的时间就不合理了（比如没日子的事改成了日程）：照这次给的
+                    after.update(date=d, start=s, end=e)
+                    kept.remove("time")
             if {k: after[k] for k in ITEM_COLS if k != "updated_at"} == {k: before[k] for k in ITEM_COLS if k != "updated_at"}:
                 return {"ok": True, "id": f"item:{old['id']}", "changed": False, "kept": kept}
             write_item(conn, after)
@@ -1119,7 +1132,12 @@ class CategoryIn(BaseModel):
 
 
 def ref_snapshot(ref: str) -> tuple[str, str | None, str | None]:
-    """(标题, 日子, 时刻)：课表的课和邮件活动从来源读，别的从「要记得的」和今天的时间线里找。"""
+    """(标题, 日子, 时刻)：自己的从表里读，课表的课和邮件活动从来源读，别的从「要记得的」和今天的时间线里找。"""
+    if ref.startswith("item:"):
+        with _lock, sdb() as conn:
+            r = conn.execute("SELECT title, date, start FROM schedule_items WHERE id=?", (ref[5:],)).fetchone()
+        if r is not None:
+            return r["title"], r["date"], r["start"]
     if ref.startswith(("ics:", "mail:")):
         try:
             d, t, title = ref_meta(ref)
@@ -1245,8 +1263,12 @@ class UndoIn(BaseModel):
     redo: bool = False
 
 
-def restore(conn: sqlite3.Connection, target: str, state: dict | None) -> tuple[str, dict | None]:
-    """把 target 恢复成 state。返回要在锁外做的事（邮件来源的写回）。"""
+MARK_VALUES = ("skip", "location", "note", "done_at", "attended", "actual_start", "actual_end", "category", "resolved")
+
+
+def restore(conn: sqlite3.Connection, target: str, state: dict | None, other: dict | None = None) -> tuple[str, dict | None]:
+    """把 target 恢复成 state（other = 这次改动另一头的样子）。返回要在锁外做的事（邮件来源的写回）。
+    标记只动这次改动动过的字段：撤销「改类别」不会把后来打的勾也抹掉，撤销打勾也不会抹掉后来改的类别。"""
     kind, _, key = target.partition(":")
     if kind == "item":
         if state is None:
@@ -1258,9 +1280,14 @@ def restore(conn: sqlite3.Connection, target: str, state: dict | None) -> tuple[
         return "", None
     if kind == "mark":
         cur = row_dict(conn.execute("SELECT * FROM schedule_marks WHERE ref=?", (key,)).fetchone())
-        write_mark(conn, key, state)
-        if key.startswith("mail:") and bool((cur or {}).get("done_at")) != bool((state or {}).get("done_at")):
-            return "done" if (state or {}).get("done_at") else "undo", {"id": key[5:]}
+        changed = [c for c in MARK_VALUES if (state or {}).get(c) != (other or {}).get(c)] or list(MARK_VALUES)
+        new = {**(cur or {c: None for c in MARK_COLS}), **{c: (state or {}).get(c) for c in changed}, "ref": key, "updated_at": now_iso()}
+        for c in ("title", "date", "time", "source"):  # 快照：现在这行没有就用那一头的
+            if new.get(c) is None and (state or {}).get(c) is not None:
+                new[c] = state[c]
+        write_mark(conn, key, None if all(new.get(c) is None for c in MARK_VALUES) else new)
+        if key.startswith("mail:") and "done_at" in changed and bool((cur or {}).get("done_at")) != bool(new.get("done_at")):
+            return "done" if new.get("done_at") else "undo", {"id": key[5:]}
         return "", None
     if kind == "mailedit":
         return "edit", {"id": key, "fields": state or {}}
@@ -1277,11 +1304,12 @@ async def undo(log_id: int, body: UndoIn | None = None):
             raise HTTPException(404, L("没有这条改动", "No such change"))
         if bool(row["undone_at"]) != redo:
             raise HTTPException(409, L("已经撤销过了" if not redo else "没撤销过", "Already undone" if not redo else "Not undone"))
-        raw_state = row["after"] if redo else row["before"]
+        raw_state, raw_other = (row["after"], row["before"]) if redo else (row["before"], row["after"])
         state = json.loads(raw_state) if raw_state else None
+        other = json.loads(raw_other) if raw_other else None
         if row["target"].startswith("mailedit:") and not redo:
             state = {k: v for k, v in (state or {}).items()}
-        todo, arg = restore(conn, row["target"], state)
+        todo, arg = restore(conn, row["target"], state, other)
         conn.execute("UPDATE schedule_log SET undone_at=? WHERE id=?", (None if redo else now_iso(), log_id))
         row = conn.execute("SELECT * FROM schedule_log WHERE id=?", (log_id,)).fetchone()
     if todo == "done" or todo == "undo":
@@ -1411,7 +1439,7 @@ def build_ics(include: dict) -> str:
         rows_canvas, _ = canvas_rows()
         events += [canvas_entry(x, mk, now()) for x in rows_canvas]
         events += [app_entry(r, mk, names, now()) for r in apps if r["deadline"] <= (t + timedelta(days=FEED_DAYS[1])).isoformat()]
-        events += [item_entry(r, mk, names, now()) for r in own if r["kind"] == "deadline"]
+        events += [item_entry(r, mk, names, now()) for r in own if r["kind"] in ("deadline", "todo")]
     if include.get("mail"):
         events += [mail_entry(x, mk, now()) for x in mail_items() if x.get("due") and x.get("type") in ("todo", "status")]
     lines = ["BEGIN:VCALENDAR", "VERSION:2.0", "PRODID:-//OpenMousse//Schedule//ZH", "CALSCALE:GREGORIAN", "METHOD:PUBLISH",

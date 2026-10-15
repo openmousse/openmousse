@@ -75,7 +75,7 @@ export function EngBoardScreen() {
       ) : view === 'progress' ? (
         <ScrollView contentContainerStyle={{ padding: space.lg, paddingTop: 0, paddingBottom: space.xxl }} refreshControl={<PullRefresh onRefresh={load} />}>
           <Progress d={data} />
-          {error ? <T v="caption" color={t.bad} style={styles.note}>{L(`未能刷新：${error}`, `Couldn't refresh: ${error}`)}</T> : null}
+          {error || data.error ? <T v="caption" color={t.bad} style={styles.note}>{L(`未能刷新：${error || data.error}`, `Couldn't refresh: ${error || data.error}`)}</T> : null}
           <T v="caption" color={t.ink3} style={[styles.note, { textAlign: 'center' }]}>
             {L('手机上只看，处理都在电脑上的 Claude Code 里。', 'This is read only. Decisions and work happen in Claude Code on the computer.')}
           </T>

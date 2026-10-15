@@ -30,22 +30,23 @@ ORIGIN_CAT = {"calendar": "study", "canvas": "study", "course": "study"}
 WORDS = {
     "study": ("作业", "考试", "期中", "期末", "小测", "测验", "论文", "自习", "复习", "预习", "课程", "上课", "讲座", "学习台", "选课", "学分",
               "成绩", "成绩单", "推荐信", "申请学校", "读研", "硕士", "博士", "文书", "小组作业", "课件", "教材", "学校",
-              "assignment", "coursework", "homework", "problem set", "quiz", "exam", "midterm", "final", "lecture", "seminar", "tutorial",
-              "office hour", "canvas", "syllabus", "module", "transcript", "recommendation", "reference letter", "writing sample",
-              "personal statement", "statement of purpose", "master", "msc", "mphil", "phd", "mba", "admission", "university", "college", "gre", "gmat", "toefl", "ielts", "essay",
-              "reading", "course", "class", "study", "school"),
+              "assignment*", "coursework", "homework", "problem set", "quiz*", "exam*", "midterm*", "final exam", "lecture*", "seminar*", "tutorial*",
+              "office hour*", "canvas", "syllabus", "module*", "transcript*", "recommendation*", "reference letter*", "writing sample*",
+              "personal statement", "statement of purpose", "master", "masters", "msc", "mfin", "meng", "mphil", "phd", "mba", "admission*", "university", "college",
+              "gre", "gmat", "toefl", "ielts", "essay*",
+              "reading*", "course*", "class*", "study", "school*"),
     "work": ("求职", "实习", "全职", "岗位", "职位", "面试", "笔试", "测评", "网申", "简历", "招聘", "校招", "内推", "雇主", "职业", "猎头",
              "薪资", "融资", "投资人", "路演", "商业计划", "商标", "律师", "授权", "发帖", "宣传", "高才通", "工签", "人才",
-             "offer", "cv", "cover letter", "career", "job", "intern", "graduate scheme", "graduate programme", "interview", "assessment",
-             "recruit", "networking", "coffee chat", "linkedin", "fellowship", "investor", "pitch", "fundrais", "vc", "bp", "openmousse",
-             "trademark", "cla", "launch", "hiring", "application", "apply"),
+             "offer*", "cv", "cover letter*", "career*", "job*", "intern*", "graduate scheme*", "graduate programme*", "interview*", "assessment*",
+             "recruit*", "networking", "coffee chat*", "linkedin", "fellowship*", "investor*", "pitch*", "fundrais*", "vc", "bp", "openmousse",
+             "trademark*", "cla", "launch*", "hiring"),
     "life": ("账单", "扣费", "扣款", "付款", "缴费", "续费", "自动续费", "订阅", "退款", "退货", "寄回", "快递", "包裹", "预约", "体检", "医生",
              "看病", "牙", "银行", "房租", "租房", "水电", "保险", "机票", "航班", "酒店", "火车", "行程", "旅行", "演唱会", "门票", "演出",
              "电影", "健身", "训练", "饮食", "体重", "体脂", "睡眠", "购物", "买", "路由器", "手机", "话费", "生日", "父母", "家人", "理发",
              "搬家", "驾照", "护照", "居留", "里程", "会员", "账户", "账号", "密码", "邮箱",
-             "bill", "invoice", "charge", "payment", "renew", "subscription", "refund", "return", "parcel", "delivery", "appointment",
-             "doctor", "dentist", "gp", "nhs", "bank", "rent", "council tax", "insurance", "flight", "hotel", "train", "trip", "travel",
-             "concert", "ticket", "gym", "workout", "passport", "brp", "router", "phone", "birthday", "account", "password"),
+             "bill*", "invoice*", "charge*", "payment*", "renew*", "subscription*", "refund*", "return*", "parcel*", "delivery", "appointment*",
+             "doctor*", "dentist*", "gp", "nhs", "bank*", "rent", "council tax", "insurance", "flight*", "hotel*", "train", "trip*", "travel*",
+             "concert*", "ticket*", "gym", "workout*", "passport*", "brp", "router*", "phone*", "birthday*", "account*", "password*"),
 }
 WORK_VISA = re.compile(r"高才通|工签|人才签|求职签|工作签|work visa|graduate visa|hpi|skilled worker|j-?find", re.I)
 VISA = re.compile(r"签证|visa", re.I)
@@ -54,7 +55,8 @@ ASCII_WORD = re.compile(r"[a-z]")
 
 def enabled() -> bool:
     """server.json 的 today.categories：「今天」页按三类显示、过期的留着、能「不用管」。"""
-    return bool((raw().get("today") or {}).get("categories"))
+    t = raw().get("today")
+    return isinstance(t, dict) and bool(t.get("categories"))
 
 
 def label(cat: str | None) -> str:
@@ -75,10 +77,12 @@ def check(v: str | None) -> str | None:
 
 
 def has_word(text: str, w: str) -> bool:
-    """中文按子串；英文词前面要是词边界（intern 能命中 internship），三个字母以内的后面也要（cla 不命中 class，bp 不命中 bpm）。"""
+    """中文按子串；英文按整词（可以带复数 s：master 不命中 Mastercard，cla 不命中 class），后面带 * 的是词根（intern* 命中 internship）。"""
     if not ASCII_WORD.search(w):
         return w in text
-    tail = r"s?(?![a-z])" if len(w) <= 3 else ""
+    stem = w.endswith("*")
+    w = w.rstrip("*")
+    tail = "" if stem else r"(?:s|es)?(?![a-z])"
     return re.search(rf"(?<![a-z]){re.escape(w)}{tail}", text) is not None
 
 

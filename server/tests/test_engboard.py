@@ -6,6 +6,7 @@ import time
 from datetime import date, datetime, timedelta
 
 import pytest
+from fastapi import HTTPException
 
 import engboard as eb
 from chat import _lock
@@ -168,3 +169,43 @@ def test_unchanged_file_is_not_reparsed(board_env, monkeypatch):
     time.sleep(0.01)
     assert eb.sync() is None
     assert calls == []
+
+
+def test_line_items(board_env):
+    eb.sync()
+    b = eb.board()
+    lid = next(x["id"] for x in b["lines"] if x["name"] == "待办合进 Grava「今天」")
+    d = eb.line_items(lid)
+    assert d["status"] == "doing"
+    assert [x["title"] for x in d["done"]] == ["三件有期限的已加进 Grava"]
+    assert {x["state"] for x in d["wait"]} == {"wait"} and len(d["wait"]) == 2
+    assert len(d["todo"]) == 2  # 搬走的、不做了的不列
+    with pytest.raises(HTTPException):
+        eb.line_items("no-such-line")
+
+
+def test_renamed_section_is_the_same_line(board_env):
+    eb.sync()
+    before = eb.board()
+    bump(board_env, SAMPLE.replace("## 待办合进 Grava「今天」：三类 + 工程看板", "## 待办合进 Grava「今天」改名了：三类 + 工程看板"))
+    eb.sync()
+    after = eb.board()
+    assert after["weekDone"] == before["weekDone"]
+    assert "待办合进 Grava「今天」改名了" in {x["name"] for x in after["lines"]}
+    assert "待办合进 Grava「今天」" not in {x["name"] for x in after["lines"] + after["older"]}
+
+
+def test_reworded_done_item_counts_once(board_env):
+    eb.sync()
+    bump(board_env, SAMPLE.replace("- [x] 三件有期限的已加进 Grava", "- [x] 把三件有截止日的事写进了 Grava 的日程层，改动号 115 到 117，能撤销"))
+    eb.sync()
+    assert eb.board()["weekDone"] == 2
+
+
+def test_unreadable_handoff_keeps_the_board(board_env):
+    eb.sync()
+    before = eb.board()
+    board_env.write_bytes(b"\xff\xfe broken")
+    assert eb.sync()  # 说读不了
+    after = eb.board()
+    assert (after["weekDone"], after["todo"], after["wait"]) == (before["weekDone"], before["todo"], before["wait"])

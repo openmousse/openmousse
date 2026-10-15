@@ -62,7 +62,7 @@ def test_undated_todo_and_category(env):
 
 
 def test_overdue_stays_and_folds_after_a_week(env):
-    a = add(title="Accenture application", kind="deadline", date=ago(3), source="leo")
+    a = add(title="Accenture interview prep", kind="deadline", date=ago(3), source="leo")
     b = add(title="寄回 EE 路由器", kind="deadline", date=ago(10), source="leo")
     d = day()
     row = next(r for r in d["pending"]["items"] if r["id"] == a)
@@ -148,3 +148,53 @@ def test_migrate_old_table(tmp_path):
     conn.execute("INSERT INTO schedule_items(id, title, date, created_at, updated_at) VALUES('ev-2', '没日子', NULL, 'x', 'x')")
     sch.migrate(conn)  # 再跑一次什么都不做
     assert conn.execute("SELECT COUNT(*) FROM schedule_items").fetchone()[0] == 2
+
+
+def test_undo_category_keeps_a_later_tick(env):
+    a = add(title="寄回路由器", kind="deadline", date=ago(1), source="leo")
+    c = asyncio.run(sch.remember_category(sch.CategoryIn(ref=a, category="work")))
+    asyncio.run(sch.remember_done(sch.DoneIn(ref=a)))
+    asyncio.run(sch.undo(c["card"]["logId"]))  # 撤销「改类别」：后来打的勾照留
+    with _lock, sch.sdb() as conn:
+        m = dict(conn.execute("SELECT * FROM schedule_marks WHERE ref=?", (a,)).fetchone())
+    assert m["done_at"] and m["resolved"] == "done" and m["category"] is None
+
+
+def test_undo_tick_keeps_a_later_category(env):
+    a = add(title="寄回路由器", kind="deadline", date=ago(1), source="leo")
+    d = asyncio.run(sch.remember_done(sch.DoneIn(ref=a, how="dismissed")))
+    asyncio.run(sch.remember_category(sch.CategoryIn(ref=a, category="work")))
+    asyncio.run(sch.undo(d["card"]["logId"]))  # 撤销「不用管」：后来改的类别照留
+    row = next(r for r in day()["pending"]["items"] if r["id"] == a)
+    assert row["category"] == "work" and not row["done"]
+
+
+def test_retyped_mail_item_is_not_kept(env):
+    _, write_mail = env
+    x = {"id": "t2:todo", "type": "todo", "title": "回信补材料", "detail": "", "due": ago(1), "source": "zxy", "thread_id": "t2",
+         "urgent": False, "first_seen": "2026-10-01T10:00:00+01:00"}
+    write_mail([x])
+    day()
+    write_mail([{**x, "type": "status"}])  # 改成了状态（edit --type status）
+    day()
+    write_mail([])
+    assert "mail:t2:todo" not in {r["id"] for r in day()["pending"]["items"]}
+
+
+def test_readd_by_key_never_stores_an_undated_event(env):
+    k = "fitness:todo:x"
+    iid = add(title="拉伸", kind="todo", date=ago(-1), key=k, source="fitness")
+    asyncio.run(sch.patch_item(iid, sch.ItemPatch(date=None)))  # 你把它改成了没日子
+    add(title="拉伸", kind="event", date=ago(-2), start="18:00", key=k, source="fitness")
+    with _lock, sch.sdb() as conn:
+        r = conn.execute("SELECT kind, date FROM schedule_items WHERE key=? AND deleted_at IS NULL", (k,)).fetchone()
+    assert r["kind"] == "event" and r["date"] == ago(-2)
+
+
+def test_engineering_card_only_when_asked(env, tmp_path, server_json):
+    todos = tmp_path / "todos.md"
+    todos.write_text("## 线（10/15）\n- [x] 做完的\n- [ ] 没做的\n", encoding="utf8")
+    server_json({"timezone": "UTC", "today": {"categories": True, "engineering": {"todos": str(todos)}}})
+    assert not [r for r in tp.build_day(sch.today(), [], {})["reports"] if r["type"] == "eng"]
+    card = next(r for r in tp.build_day(sch.today(), [], {}, eng=True)["reports"] if r["type"] == "eng")
+    assert card["body"] == "" and card["agent"] is None and card["todo"] >= 1  # 老 app 当普通卡画也不出错

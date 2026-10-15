@@ -133,7 +133,7 @@ def remember_line(e: dict, show_cat: bool) -> None:
     extra = (L("  和 ", "  clashes with ") + "、".join(e["clash"]) + L(" 撞了", "")) if e.get("clash") else ""
     mark = "✓" if e.get("done") and not e.get("dismissed") else "×" if e.get("dismissed") else "·"
     tag = " · ".join(x for x in (e.get("badge") or "", CATS.get(e.get("category") or "", "") if show_cat else "") if x)
-    print(f"  {mark} {due:<16} [{tag}] {e['title']}{extra}")
+    print(f"  {mark} {due:<16} {f'[{tag}] ' if tag else ''}{e['title']}{extra}")
     print(f"      id={e['id']}")
 
 
