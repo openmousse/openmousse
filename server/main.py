@@ -77,6 +77,7 @@ from unread import router as unread_router  # noqa: E402
 from chats import router as chats_router  # noqa: E402 — 对话列表（Grava 一边：Agent 栏、主对话、会议、项目；置顶 / 免打扰）
 from schedule import router as schedule_router  # noqa: E402
 import today as today_page  # noqa: E402 — 本文件有自己的 today()（日期），模块换个名字
+import engboard  # noqa: E402
 from boards import router as boards_router  # noqa: E402
 from views import router as views_router  # noqa: E402  — 集合块（一张表、几种视图）：import 时把 collection 接进 boards.EXTRA
 from pages import router as pages_router  # noqa: E402 — 页面（Agent 写的网页，app 放进盒子里显示）：import 时把 page 接进 boards.EXTRA
@@ -152,6 +153,7 @@ app.include_router(unread_router)
 app.include_router(chats_router)
 app.include_router(schedule_router)  # 含 /cal/<令牌>.ics（在网页版的静态文件之前注册）
 app.include_router(today_page.router)  # 「今天」页按三块分好组（待处理 / 日程 / 报告），周 / 月视图，推迟（today.py）
+app.include_router(engboard.router)  # 「今天」的工程看板：交接本 todos.md 只读同步过来（engboard.py，server.json today.engineering）
 app.include_router(alerts_router)  # 在 boards 之前：/api/alerts/… 和看板的路由互不相干，放前面只是好找
 app.include_router(packs_router)
 app.include_router(boards_router)

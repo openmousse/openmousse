@@ -4,6 +4,9 @@
 - 待处理（要动手）：等你点头的（收件箱）、可疑安全提醒、7 天内到期的待办和截止（过了期还没勾的留 3 天），按紧急程度排：
   待确认 → 安全 → 已逾期 → 按日子。右边一枚标签（今天 / 明天 / 周三 / 周五截止 / 安全 / 已逾期）。
   没日子的待办单独给（app 收在末尾）。推迟（app 里左滑）记在 today_snooze，到那天再出现。
+  开着 today.categories（todocat.py，2026-10-15）：每条带类别（学习 / 生活 / 工作，app 按它给圆圈上色、顶上三类筛选）；
+  过期的不再 3 天后消失：过期 1–7 天的在待处理里（「已逾期 N 天」），更早的单独给（stale，app 收成一行「过期没处理 · N」），
+  直到点了做完或「不用管」（左滑，记成 resolved=dismissed）；邮件里的待办来源删了照快照列（schedule.todo_keep）。
 - 日程（要到场）：课、你和 Agent 排的安排、邮件里写了时刻的活动（买了票、报了名）。同一活动去重：同一天同一时刻、
   标题相近或同一个链接的并成一条，状态并成标签（「已购票」）。过去的按实际时间放（训练用训练记录补，见 schedule.fill_training）。
   训练计划、练后复盘这类卡归到当天的训练（ATTACH），点开日程看。
@@ -11,7 +14,8 @@
   睡眠卡带近 6 天恢复分，饮食卡带这一餐的营养和当天记了没有。
 定时任务、后台任务不在这里（定时任务以后放设置；后台任务看对话页 Agent 栏的状态）。
 
-GET  /api/today?day=YYYY-MM-DD        一天；不给 = 今天。别的日子：待处理只列那天到期的，没有收件箱、安全提醒和推迟
+GET  /api/today?day=YYYY-MM-DD        一天；不给 = 今天。别的日子：待处理只列那天到期的，没有收件箱、安全提醒和推迟。
+                                      开着工程看板（today.engineering，engboard.py）时今天的报告里多一张工程看板卡
 GET  /api/today/range?from=&days=     周 / 月视图：每天的日程、截止、待办（days ≤ 42；不补实际时间，免得一次查几十天训练记录）
 POST /api/today/snooze {ref, until}   推迟一条待处理到 until（YYYY-MM-DD）；until 为 null = 取消推迟
 """
@@ -28,9 +32,11 @@ from fastapi import APIRouter, HTTPException, Query, Request
 from pydantic import BaseModel
 
 import data
+import engboard
 import inbox
 import schedule as sch
 import sources
+import todocat
 from chat import _lock, now_iso
 from i18n import L
 
@@ -100,8 +106,8 @@ def pending_sub(e: dict, status: dict[str, str]) -> str:
     return " · ".join(p for p in parts if p)
 
 
-def chip(e: dict, d0: date) -> tuple[str, str]:
-    """右边的标签和色调（app 配色：bad = 安全 / 逾期，warn = 今天，gold = 待确认，neutral = 其余）。"""
+def chip(e: dict, d0: date, days: bool = False) -> tuple[str, str]:
+    """右边的标签和色调（app 配色：bad = 安全 / 逾期，warn = 今天，gold = 待确认，neutral = 其余）。days：逾期写几天（「已逾期 2 天」）。"""
     if e["kind"] == "security":
         return L("安全", "Security"), "bad"
     if not e["date"]:
@@ -109,6 +115,8 @@ def chip(e: dict, d0: date) -> tuple[str, str]:
     due = date.fromisoformat(e["date"])
     diff = (due - d0).days
     if diff < 0:
+        if days:
+            return L(f"已逾期 {-diff} 天", f"{-diff} day{'s' if diff < -1 else ''} overdue"), "bad"
         return L("已逾期", "Overdue"), "bad"
     zh = "今天" if diff == 0 else "明天" if diff == 1 else f"周{sch.WD_ZH[due.weekday()]}"
     en = "today" if diff == 0 else "tomorrow" if diff == 1 else sch.WD_EN[due.weekday()]
@@ -116,21 +124,24 @@ def chip(e: dict, d0: date) -> tuple[str, str]:
     return label, "warn" if diff == 0 else "neutral"
 
 
-def pending_row(e: dict, d0: date, status: dict[str, str], other_day: bool = False) -> dict:
+def pending_row(e: dict, d0: date, status: dict[str, str], other_day: bool = False, cats: bool = False) -> dict:
     title = e["title"]
     if e["origin"] == "apply":  # 「Northwind · Northwind Analyst Program」：岗位名里已经有机构名就不重复
         org, _, role = title.partition(" · ")
         if role.lower().startswith(org.lower()):
             title = role
     if other_day:
-        lab, tone = ((L("已完成", "Done"), "good") if e["done"] else
+        lab, tone = ((L("不用管", "Not needed"), "neutral") if e.get("dismissed") else (L("已完成", "Done"), "good") if e["done"] else
                      (L("截止", "Due"), "neutral") if e["kind"] == "deadline" else (L("待办", "To do"), "neutral"))
     else:
-        lab, tone = chip(e, d0)
+        lab, tone = chip(e, d0, days=cats)
+    overdue = (d0 - date.fromisoformat(e["date"])).days if e["date"] else 0
     return {"id": e["id"], "ref": e["id"], "kind": e["kind"], "origin": e["origin"], "title": title, "sub": pending_sub(e, status),
-            "chip": lab, "tone": tone, "date": e["date"], "time": e["start"], "detail": e["detail"], "link": e["link"],
-            "done": e["done"], "urgent": e["urgent"], "agent": e["by"], "project": e.get("project"), "study": e.get("study"),
-            "canTick": True, "canSnooze": not other_day}
+            "chip": lab, "tone": tone, "date": e["date"], "time": e["start"], "detail": e["detail"] or e.get("note") or "", "link": e["link"],
+            "done": e["done"], "dismissed": bool(e.get("dismissed")), "urgent": e["urgent"], "agent": e["by"], "project": e.get("project"),
+            "study": e.get("study"), "category": e.get("category"), "categoryAuto": e.get("categoryAuto"), "categorySet": bool(e.get("categorySet")),
+            "overdueDays": overdue if overdue > 0 and not other_day else 0, "kept": bool(e.get("kept")),
+            "canTick": True, "canSnooze": not other_day, "canDismiss": cats and e["kind"] != "security"}
 
 
 def inbox_row(it: dict) -> dict:
@@ -138,43 +149,52 @@ def inbox_row(it: dict) -> dict:
     sub = " · ".join(x for x in (it.get("sourceName") or "", inbox.kind_label(it.get("kind") or "other")) if x)
     return {"id": f"inbox:{it['id']}", "ref": None, "kind": "inbox", "origin": "inbox", "inboxId": it["id"], "title": it.get("title") or "",
             "sub": sub, "chip": L("待确认", "Approve"), "tone": "gold", "date": None, "time": "", "detail": it.get("why") or "",
-            "link": None, "done": False, "urgent": it.get("level") == "ring", "agent": it.get("source"), "project": None, "study": None,
-            "canTick": False, "canSnooze": False}
+            "link": None, "done": False, "dismissed": False, "urgent": it.get("level") == "ring", "agent": it.get("source"), "project": None,
+            "study": None, "category": None, "categoryAuto": None, "categorySet": False, "overdueDays": 0, "kept": False,
+            "canTick": False, "canSnooze": False, "canDismiss": False}
 
 
-def gather_pending(d0: date) -> tuple[list[dict], dict[str, str], dict[str, str], dict[str, str]]:
-    """待处理的候选：课程 ddl、邮件条目、求职 / 申请、自己加的截止（带 done）。返回 (条目, 申请状态, 推迟到哪天, 出错)。"""
+def gather_pending(d0: date, keep: bool = False) -> tuple[list[dict], dict[str, str], dict[str, str], dict[str, str]]:
+    """待处理的候选：课程 ddl、邮件条目、求职 / 申请、自己加的截止和待办（带 done、category）。返回 (条目, 申请状态, 推迟到哪天, 出错)。
+    keep（开着 today.categories）：过了期的不限天数；邮件里的待办记快照，来源删了照快照列。"""
     now_dt = sch.now()
     rows_canvas, canvas_err = sch.canvas_rows()
-    lo = (d0 - timedelta(days=sch.OVERDUE_DAYS)).isoformat()
+    lo = "" if keep else (d0 - timedelta(days=sch.OVERDUE_DAYS)).isoformat()
     hi = (d0 + timedelta(days=WINDOW)).isoformat()
+    mails = sch.mail_items()
     with _lock, tdb() as conn:
         mk = sch.all_marks(conn)
         apps = sch.app_rows(conn)
         names = sch.group_names(conn)
-        own = conn.execute("SELECT * FROM schedule_items WHERE deleted_at IS NULL AND kind='deadline' AND date>=? AND date<=?",
-                           (lo, hi)).fetchall()
+        agents = todocat.agent_cats(conn)
+        own = conn.execute("SELECT * FROM schedule_items WHERE deleted_at IS NULL AND kind IN ('deadline','todo') AND "
+                           "(date IS NULL OR (date>=? AND date<=?))", (lo, hi)).fetchall()
         snoozed = {r["ref"]: r["until"] for r in conn.execute("SELECT ref, until FROM today_snooze")}
-    items = [sch.canvas_entry(x, mk, now_dt) for x in rows_canvas]
-    items += [sch.mail_entry(x, mk, now_dt) for x in sch.mail_items()]
+        items = [sch.mail_entry(x, mk, now_dt) for x in mails]
+        if keep and d0 == sch.today():
+            sch.keep_mail(conn, items)
+            items += sch.kept_entries(conn, {e["id"] for e in items}, mk, now_dt)
+    items += [sch.canvas_entry(x, mk, now_dt) for x in rows_canvas]
     items += [sch.app_entry(r, mk, names, now_dt) for r in apps if lo <= r["deadline"] <= hi]
     items += [sch.item_entry(r, mk, names, now_dt) for r in own]
     sch.with_projects(items)
+    todocat.annotate(items, mk, agents=agents)
     status = {f"app:{r['id']}": r["status"] for r in apps}
     return items, status, snoozed, ({"canvas": canvas_err} if canvas_err else {})
 
 
-def build_pending(d0: date, inbox_items: list[dict]) -> tuple[list[dict], list[dict], dict[str, str]]:
-    """(待处理, 没日子的待办, 出错)。"""
-    items, status, snoozed, errors = gather_pending(d0)
+def build_pending(d0: date, inbox_items: list[dict], cats: bool = False) -> tuple[list[dict], list[dict], list[dict], dict[str, str]]:
+    """(待处理, 没日子的待办, 过期超过 7 天没处理的（只在 cats 时有）, 出错)。"""
+    items, status, snoozed, errors = gather_pending(d0, keep=cats)
     d0s = d0.isoformat()
     if d0 != sch.today():  # 别的日子：只列那天到期的（做没做完都列）
-        rows = [pending_row(e, d0, status, other_day=True) for e in items if e["date"] == d0s and e["kind"] in ("todo", "deadline")]
+        rows = [pending_row(e, d0, status, other_day=True, cats=cats) for e in items if e["date"] == d0s and e["kind"] in ("todo", "deadline")]
         rows.sort(key=lambda r: (r["done"], r["time"] or "99:99", r["title"]))
-        return rows, [], errors
-    lo = (d0 - timedelta(days=sch.OVERDUE_DAYS)).isoformat()
+        return rows, [], [], errors
+    lo = "" if cats else (d0 - timedelta(days=sch.OVERDUE_DAYS)).isoformat()
+    stale_before = (d0 - timedelta(days=sch.STALE_DAYS)).isoformat()
     hi = (d0 + timedelta(days=WINDOW)).isoformat()
-    sec, dated, nodate = [], [], []
+    sec, dated, nodate, stale = [], [], [], []
     for e in items:
         if e["done"] or snoozed.get(e["id"], "") > d0s:
             continue
@@ -183,14 +203,17 @@ def build_pending(d0: date, inbox_items: list[dict]) -> tuple[list[dict], list[d
         elif e["kind"] in ("todo", "deadline"):
             if not e["date"]:
                 nodate.append(e)
+            elif cats and e["date"] < stale_before:
+                stale.append(e)
             elif lo <= e["date"] <= hi:
                 dated.append(e)
     sec.sort(key=lambda e: str(e.get("firstSeen") or ""))
     dated.sort(key=lambda e: (e["date"], not e["urgent"], e["start"] or "99:99", e["kind"] != "deadline", e["title"]))
     nodate.sort(key=lambda e: (not e["urgent"], str(e.get("firstSeen") or ""), e["title"]))
+    stale.sort(key=lambda e: (e["date"], e["title"]), reverse=True)  # 最近过期的在前
     rows = [inbox_row(i) for i in inbox_items]
-    rows += [pending_row(e, d0, status) for e in sec + dated]
-    return rows, [pending_row(e, d0, status) for e in nodate], errors
+    rows += [pending_row(e, d0, status, cats=cats) for e in sec + dated]
+    return rows, [pending_row(e, d0, status, cats=cats) for e in nodate], [pending_row(e, d0, status, cats=cats) for e in stale], errors
 
 
 # —— 日程：去重、归并 —————————————————————————————————————————————————————
@@ -513,17 +536,26 @@ def build_reports(d0: date, cards: list[dict], used: set[str]) -> list[dict]:
 def build_day(d0: date, inbox_items: list[dict], errors: dict[str, str]) -> dict:
     t, now_dt = sch.today(), sch.now()
     now_m = now_dt.hour * 60 + now_dt.minute if d0 == t else None
-    pending, nodate, perr = build_pending(d0, inbox_items)
+    cats = todocat.enabled()
+    pending, nodate, stale, perr = build_pending(d0, inbox_items, cats)
     events, serr, calendar = build_schedule(d0, now_m)
     cards = feed_cards(d0)
     used = attach(events, cards)
     reports = build_reports(d0, cards, used)
+    eerr: dict[str, str] = {}
+    if d0 == t:
+        eng, why = engboard.report_card()
+        if eng:
+            reports.insert(0, eng)
+        if why:
+            eerr["engineering"] = why
     timed = [e for e in events if e["slotStart"]]
     return {"ok": True, "day": d0.isoformat(), "today": t.isoformat(), "weekday": sch.weekday(d0),
             "now": hm(now_m) if now_m is not None else None,
-            "pending": {"items": pending, "nodate": nodate},
+            "pending": {"items": pending, "nodate": nodate, "stale": stale},
+            "categories": {"on": cats, "list": [{"key": k, "label": todocat.label(k)} for k in todocat.CATS]},
             "schedule": {"items": timed, "allDay": [e for e in events if not e["slotStart"]], "calendar": calendar},
-            "reports": reports, "errors": {**errors, **perr, **serr}}
+            "reports": reports, "errors": {**errors, **perr, **serr, **eerr}}
 
 
 @router.get("/api/today")
@@ -554,7 +586,7 @@ def range_row(e: dict, typ: str, status: dict[str, str]) -> dict:
             org, _, role = title.partition(" · ")
             title = role if role.lower().startswith(org.lower()) else title
     return {"id": e["id"], "refs": e.get("refs") or [e["id"]], "date": e["date"], "type": typ, "kind": e["kind"], "origin": e["origin"],
-            "title": title, "sub": sub, "start": e["start"], "end": e["end"], "allDay": e["allDay"], "done": e["done"],
+            "category": e.get("category"), "title": title, "sub": sub, "start": e["start"], "end": e["end"], "allDay": e["allDay"], "done": e["done"],
             "skip": bool(e["skip"] or e["attended"] is False), "past": e["past"], "tags": e.get("tags") or [], "agent": e["by"],
             "link": e["link"], "detail": e["detail"], "study": e.get("study"), "project": e.get("project")}
 
@@ -574,7 +606,8 @@ def build_range(lo: date, days: int) -> dict:
               for e in tl["events"] if e["kind"] in ("deadline", "todo")]
     rank = {"event": 0, "deadline": 1, "todo": 2}
     items.sort(key=lambda r: (r["date"], rank[r["type"]], not r["allDay"], r["start"] or "", r["title"]))
-    return {"ok": True, "from": lo.isoformat(), "days": days, "today": sch.today().isoformat(), "items": items, "errors": tl["errors"]}
+    return {"ok": True, "from": lo.isoformat(), "days": days, "today": sch.today().isoformat(), "items": items, "categories": todocat.enabled(),
+            "errors": tl["errors"]}
 
 
 @router.get("/api/today/range")

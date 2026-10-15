@@ -43,6 +43,9 @@ FEATURES = (
     "pages.native",     # 页面的桥也认手机 app 的 WebView（window.ReactNativeWebView 发、injectJavaScript 派回结果）；更早的服务器手机上只给说明
     "think.home",       # Zen 重排：GET /api/think/home（在想 + 记下的）、POST /api/think/done（完成 / 恢复，不调模型）、GET /api/think/finished、GET /api/think/heat；收藏带 done
     "podcast.stage",    # /api/podcast 的每一期带 stage（进度四格走到第几格）/ state（一句状态）/ waiting（等你处理）
+    "today.categories",  # 「今天」的类别和待办（todocat.py）：/api/today 带 categories、pending.stale，每行 category / overdueDays / canDismiss；
+                         # POST /api/remember/done 收 how=dismissed（不用管）、POST /api/remember/category；/api/schedule 收 kind todo（可以没日子）、category；
+                         # GET /api/today/eng（工程看板，engboard.py）。开没开看 /api/today 的 categories.on（server.json today.categories）
 )
 
 

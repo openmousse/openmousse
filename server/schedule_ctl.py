@@ -3,20 +3,25 @@
 
 读
   python3 schedule_ctl.py day [--date 今天|明天|YYYY-MM-DD] [--days N] [--json]   # 合并后的日程：课表 + 自己的 + 当天的截止
-  python3 schedule_ctl.py remember [--all] [--json]                               # 要记得的：作业、邮件里的事、求职 / 申请的 ddl
+  python3 schedule_ctl.py remember [--all] [--by-category] [--json]               # 要记得的：作业、邮件里的事、求职 / 申请的 ddl、待办
   python3 schedule_ctl.py log [--limit N]                                         # 最近的改动（谁改了什么）
 改（改完回复下面自动出一张日程卡，能撤销；输出里有改动号）
   python3 schedule_ctl.py add --title "训练 · Push A" --date 今天 --start 17:30 --end 18:30 [--location …] [--note …] [--deadline] [--key 幂等键]
-  python3 schedule_ctl.py update <id> [--title …] [--date …] [--start HH:MM] [--end HH:MM] [--all-day] [--location …] [--note …]
+  python3 schedule_ctl.py add --todo --title "量一次体脂" [--date …] --category life [--note …]   # 待办：可以没有日子（收在「无日期」）
+  python3 schedule_ctl.py update <id> [--title …] [--date …|--no-date] [--start HH:MM] [--end HH:MM] [--all-day] [--location …] [--note …] [--category …]
   python3 schedule_ctl.py delete <id>
   python3 schedule_ctl.py skip <课的 id> [--every-week] [--undo]                 # 课「不去」（--undo = 照去）；课表本身不动
   python3 schedule_ctl.py attend <id> yes|no [--actual 17:40-18:35]               # 过去的：去没去 / 做没做、实际时间
   python3 schedule_ctl.py place <课的 id> [--location …] [--note …]                # 课改地点、加备注
-  python3 schedule_ctl.py done <要记得的 id> [--undo]                              # 打勾：做完了 / 不用管
+  python3 schedule_ctl.py done <要记得的 id> [--undo]                              # 打勾：做完了
+  python3 schedule_ctl.py dismiss <要记得的 id> [--undo]                           # 不用管了（和做完分开记）
+  python3 schedule_ctl.py category <id> study|life|work|auto                      # 改类别（学习 / 生活 / 工作；auto = 回到自动分）
   python3 schedule_ctl.py edit <mail:… 或 item:…> [--title …] [--due "YYYY-MM-DD[ HH:MM]" | --no-due] [--detail …] [--type todo|money|status|security]
   python3 schedule_ctl.py undo <改动号> [--redo]
 
 id 从 day / remember 的输出里拿：item:… 自己的，ics:… 课，canvas:… 作业，mail:… 邮件条目，app:… 求职 / 申请。
+类别：每条都有一类，学习 study / 生活 life / 工作 work。加的时候给 --category；不给按来源和字面分（作业、课表、申请学校 → 学习，
+求职、工签 → 工作，账单、退货、预约、健身、饮食 → 生活）。写代码、改系统这类工程的事不记在这里（Claude Code 的交接本里）。
 --key：同一个 key 再 add 就是改那一条（健身排训练用 fitness:training:<日期>）。
 不给 --source：当前目录在哪个 Agent 的工作区里就算它的，否则是 main。
 """
@@ -39,20 +44,24 @@ def description() -> str:
 
 Read
   python3 schedule_ctl.py day [--date today|tomorrow|YYYY-MM-DD] [--days N] [--json]   # merged schedule: timetable + own items + deadlines due that day
-  python3 schedule_ctl.py remember [--all] [--json]                                   # to remember: coursework, things from email, application deadlines
+  python3 schedule_ctl.py remember [--all] [--by-category] [--json]                   # to remember: coursework, things from email, application deadlines, to-dos
   python3 schedule_ctl.py log [--limit N]                                             # recent changes
 Change (a schedule card with Undo appears under your reply; the output has the change number)
   python3 schedule_ctl.py add --title "Workout · Push A" --date today --start 17:30 --end 18:30 [--location …] [--note …] [--deadline] [--key KEY]
-  python3 schedule_ctl.py update <id> [--title …] [--date …] [--start HH:MM] [--end HH:MM] [--all-day] [--location …] [--note …]
+  python3 schedule_ctl.py add --todo --title "Book a dentist" [--date …] --category life [--note …]   # a to-do; the date is optional
+  python3 schedule_ctl.py update <id> [--title …] [--date …|--no-date] [--start HH:MM] [--end HH:MM] [--all-day] [--location …] [--note …] [--category …]
   python3 schedule_ctl.py delete <id>
   python3 schedule_ctl.py skip <class id> [--every-week] [--undo]
   python3 schedule_ctl.py attend <id> yes|no [--actual 17:40-18:35]
   python3 schedule_ctl.py place <class id> [--location …] [--note …]
   python3 schedule_ctl.py done <reminder id> [--undo]
+  python3 schedule_ctl.py dismiss <reminder id> [--undo]                              # not needed (recorded apart from done)
+  python3 schedule_ctl.py category <id> study|life|work|auto                          # change the category (auto = back to automatic)
   python3 schedule_ctl.py edit <mail:… or item:…> [--title …] [--due "YYYY-MM-DD[ HH:MM]" | --no-due] [--detail …] [--type todo|money|status|security]
   python3 schedule_ctl.py undo <change number> [--redo]
 
 Ids come from day / remember: item:… your own, ics:… a class, canvas:… coursework, mail:… an email entry, app:… an application.
+Categories: every entry is study, life or work. Give --category when adding; otherwise it follows the source and the wording.
 --key: adding again with the same key updates that item. Without --source: the Agent whose workspace contains the current directory, otherwise main.
 """)
 
@@ -101,8 +110,10 @@ def show_day(d: dict) -> None:
             flags.append(L("暂定", "tentative"))
         if e.get("free"):
             flags.append("FREE")
-        kind = {"class": L("课", "class"), "event": L("日程", "event"), "deadline": L("截止", "due")}.get(e["kind"], e["kind"])
+        kind = {"class": L("课", "class"), "event": L("日程", "event"), "deadline": L("截止", "due"), "todo": L("待办", "to-do")}.get(e["kind"], e["kind"])
         who = f" · {e['badge']}" if e.get("badge") else ""
+        if e.get("category") in CATS:
+            who += f" · {CATS[e['category']]}"
         loc = f" @ {e['location']}" if e.get("location") else ""
         print(f"  {when(e):<12} [{kind}{who}] {e['title']}{loc}" + (f"  ({'; '.join(flags)})" if flags else ""))
         print(f"               id={e['id']}")
@@ -112,19 +123,44 @@ def show_day(d: dict) -> None:
 
 
 GROUPS = {"security": L("可疑的安全提醒", "Security alerts"), "overdue": L("过了的", "Overdue"), "tomorrow": L("明天", "Tomorrow"),
-          "week": L("一周内", "This week"), "later": L("以后", "Later"), "nodate": L("没定日子的", "No date"), "news": L("邮件动态", "Email updates")}
+          "week": L("一周内", "This week"), "later": L("以后", "Later"), "nodate": L("没定日子的", "No date"),
+          "stale": L("过期没处理（超过 7 天）", "Overdue for over a week"), "news": L("邮件动态", "Email updates")}
+CATS = {"study": L("学习", "Study"), "life": L("生活", "Life"), "work": L("工作", "Work")}
 
 
-def show_remember(d: dict) -> None:
-    last = None
-    for e in d.get("items") or []:
-        if e["group"] != last:
-            last = e["group"]
-            print(f"\n{GROUPS.get(last, last)}")
-        due = f"{e['date']} {e['start']}".strip() if e.get("date") else "-"
-        extra = (L("  和 ", "  clashes with ") + "、".join(e["clash"]) + L(" 撞了", "")) if e.get("clash") else ""
-        print(f"  {'✓' if e.get('done') else '·'} {due:<16} [{e['badge']}] {e['title']}{extra}")
-        print(f"      id={e['id']}")
+def remember_line(e: dict, show_cat: bool) -> None:
+    due = f"{e['date']} {e['start']}".strip() if e.get("date") else "-"
+    extra = (L("  和 ", "  clashes with ") + "、".join(e["clash"]) + L(" 撞了", "")) if e.get("clash") else ""
+    mark = "✓" if e.get("done") and not e.get("dismissed") else "×" if e.get("dismissed") else "·"
+    tag = " · ".join(x for x in (e.get("badge") or "", CATS.get(e.get("category") or "", "") if show_cat else "") if x)
+    print(f"  {mark} {due:<16} [{tag}] {e['title']}{extra}")
+    print(f"      id={e['id']}")
+
+
+def show_remember(d: dict, by_category: bool = False) -> None:
+    items = d.get("items") or []
+    if by_category:
+        for cat, name in CATS.items():
+            rows = [e for e in items if e.get("category") == cat]
+            print(f"\n## {name} · {len(rows)}")
+            last = None
+            for e in rows:
+                if e["group"] != last:
+                    last = e["group"]
+                    print(f"{GROUPS.get(last, last)}")
+                remember_line(e, False)
+        rest = [e for e in items if e.get("category") not in CATS]
+        if rest:
+            print(L(f"\n## 其他 · {len(rest)}", f"\n## Other · {len(rest)}"))
+            for e in rest:
+                remember_line(e, False)
+    else:
+        last = None
+        for e in items:
+            if e["group"] != last:
+                last = e["group"]
+                print(f"\n{GROUPS.get(last, last)}")
+            remember_line(e, True)
     for k, v in (d.get("errors") or {}).items():
         print(L(f"\n注意：{k} 读不到：{v}", f"\nNote: couldn't read {k}: {v}"))
 
@@ -158,23 +194,29 @@ def main() -> None:
     s.add_argument("--json", action="store_true")
     s = parser("remember")
     s.add_argument("--all", action="store_true")
+    s.add_argument("--by-category", action="store_true")
     s.add_argument("--json", action="store_true")
     s = parser("log")
     s.add_argument("--limit", type=int, default=15)
     s = parser("add")
     s.add_argument("--title", required=True)
-    s.add_argument("--date", required=True)
+    s.add_argument("--date", help=L("待办（--todo）可以不写", "optional for --todo"))
     s.add_argument("--start")
     s.add_argument("--end")
     s.add_argument("--location", default="")
     s.add_argument("--note", default="")
-    s.add_argument("--deadline", action="store_true")
+    kinds = s.add_mutually_exclusive_group()
+    kinds.add_argument("--deadline", action="store_true")
+    kinds.add_argument("--todo", action="store_true")
+    s.add_argument("--category", choices=["study", "life", "work"])
     s.add_argument("--key")
     s = parser("update")
     s.add_argument("id")
     for f in ("--title", "--date", "--start", "--end", "--location", "--note"):
         s.add_argument(f)
     s.add_argument("--all-day", action="store_true")
+    s.add_argument("--no-date", action="store_true")
+    s.add_argument("--category", choices=["study", "life", "work", "auto"])
     s = parser("delete")
     s.add_argument("id")
     s = parser("skip")
@@ -192,6 +234,12 @@ def main() -> None:
     s = parser("done")
     s.add_argument("id")
     s.add_argument("--undo", action="store_true")
+    s = parser("dismiss")
+    s.add_argument("id")
+    s.add_argument("--undo", action="store_true")
+    s = parser("category")
+    s.add_argument("id")
+    s.add_argument("category", choices=["study", "life", "work", "auto"])
     s = parser("edit")
     s.add_argument("id")
     s.add_argument("--title")
@@ -216,15 +264,20 @@ def main() -> None:
         if a.json:
             print(json.dumps(d, ensure_ascii=False, indent=1))
         else:
-            show_remember(d)
+            show_remember(d, a.by_category)
     elif a.cmd == "log":
         for c in call("GET", f"/api/schedule/log?limit={a.limit}")["changes"]:
             print(f"{c['logId']:>5}  {c['createdAt'][5:16].replace('T', ' ')}  {c['actor']:<8} {c['title']} · {c['summary']}"
                   + (L("（已撤销）", " (undone)") if c["status"] == "undone" else ""))
     elif a.cmd == "add":
-        changed(call("POST", "/api/schedule", {"title": a.title, "date": parse_day(a.date), "start": a.start, "end": a.end,
-                                               "location": a.location, "note": a.note, "kind": "deadline" if a.deadline else "event",
-                                               "key": a.key, "source": src}))
+        if not a.date and not a.todo:
+            sys.exit(L("要写 --date；没有日子的待办用 --todo", "--date is required; use --todo for an undated to-do"))
+        body = {"title": a.title, "date": parse_day(a.date) if a.date else None, "start": a.start, "end": a.end,
+                "location": a.location, "note": a.note, "kind": "deadline" if a.deadline else "todo" if a.todo else "event",
+                "key": a.key, "source": src}
+        if a.category:
+            body["category"] = a.category
+        changed(call("POST", "/api/schedule", body))
     elif a.cmd == "update":
         body: dict = {"source": src}
         for k in ("title", "location", "note", "start", "end"):
@@ -232,8 +285,12 @@ def main() -> None:
                 body[k] = getattr(a, k)
         if a.date:
             body["date"] = parse_day(a.date)
+        elif a.no_date:
+            body["date"] = None
         if a.all_day:
             body["start"] = ""
+        if a.category:
+            body["category"] = None if a.category == "auto" else a.category
         changed(call("PATCH", "/api/schedule/" + urllib.parse.quote(a.id, safe=":"), body))
     elif a.cmd == "delete":
         changed(call("DELETE", "/api/schedule/" + urllib.parse.quote(a.id, safe=":") + f"?source={urllib.parse.quote(src)}"))
@@ -259,6 +316,10 @@ def main() -> None:
         changed(call("POST", "/api/schedule/mark", body))
     elif a.cmd == "done":
         changed(call("POST", "/api/remember/done", {"ref": a.id, "done": not a.undo, "source": src}))
+    elif a.cmd == "dismiss":
+        changed(call("POST", "/api/remember/done", {"ref": a.id, "done": not a.undo, "how": "dismissed", "source": src}))
+    elif a.cmd == "category":
+        changed(call("POST", "/api/remember/category", {"ref": a.id, "category": None if a.category == "auto" else a.category, "source": src}))
     elif a.cmd == "edit":
         body = {"ref": a.id, "source": src}
         for k in ("title", "detail", "type"):

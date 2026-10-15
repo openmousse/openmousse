@@ -5,11 +5,15 @@
 + 自己加的截止。一件事只出现一次：到期那天在那天的时间线里（带勾），之前在「要记得的」里；没日期的钱 / 状态类邮件折成「邮件动态」。
 
 表（grava.db）
-- schedule_items：自己的日程。kind = event（一段安排）/ deadline（截止，进「要记得的」）。source = 谁加的（leo / main / Agent id）；
+- schedule_items：自己的日程。kind = event（一段安排）/ deadline（截止，进「要记得的」）/ todo（待办：可以没有日子，没日子的收在「无日期」）。
+  source = 谁加的（leo / main / Agent id）；category = 加的时候给的类别（学习 / 生活 / 工作，见 todocat.py；没给按来源和字面分）；
   key = Agent 的幂等键，同一个 key 再加一次就是改那一条（比如 fitness:training:2026-09-28）。删除是软删（deleted_at），能撤销。
   过去的记实际发生的：attended（1 做了 / 0 没做）、actual_start / actual_end。
 - schedule_marks：源头改不了的东西在这一层的标记，按 ref 一行。课：skip 不去（1）/ 照去（0，盖过每周那一行）、改地点、备注、
-  去没去、实际时间；「要记得的」打勾 = done_at。title / date / time 是快照：源头没了以后（作业交了、邮件条目过期）过去的日子还显示得出来。
+  去没去、实际时间；「要记得的」打勾 = done_at，resolved 分开记是做完了（done）还是不用管（dismissed，别的读 done_at 的照样当它处理过了）；
+  category = 你改过的类别（以你为准）。title / date / time 是快照：源头没了以后（作业交了、邮件条目过期）过去的日子还显示得出来。
+- todo_keep：邮件里的待办（kind todo）的快照。邮件条目到期后一天、没日子的 7 天就从来源里删了，开着 today.categories 时「今天」
+  照快照接着列，直到你点了做完或不用管（「过期的不会自己消失」）。
 - schedule_log：每次改动一行（谁、改了什么、之前 / 之后），给对话里的日程卡和撤销用。Agent 在一次回复里改的，
   回复结束时挂到那条回复下面（message_id，见 cards.on_run_end）；回复进行中当场发一张卡（SSE card）。
 
@@ -51,6 +55,7 @@ from pydantic import BaseModel
 import chat
 import sources
 import study
+import todocat
 from chat import _lock, db, now_iso
 from config import TZ, raw, settings
 from i18n import L
@@ -62,7 +67,9 @@ ID_RE = re.compile(r"^[a-z0-9_-]{1,40}$")
 WD_ZH, WD_EN = "一二三四五六日", ("Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun")
 MAIL_KINDS = ("todo", "money", "status", "security")
 REMEMBER_DAYS = {"apply": 30, "own": 60}   # 「要记得的」看多远：求职 / 申请 30 天内的，自己加的截止 60 天内的（课程和邮件由来源自己限）
-OVERDUE_DAYS = 3                           # 过了期还没勾的，留几天（「过了的」）
+OVERDUE_DAYS = 3                           # 过了期还没勾的，留几天（「过了的」）；开着 today.categories 时不限，见 STALE_DAYS
+STALE_DAYS = 7                             # 开着 today.categories：过期超过这么多天还没处理的收成一行「过期没处理」
+KINDS = ("event", "deadline", "todo")
 FEED_DAYS = (14, 60)                       # 订阅里往前 / 往后放多少天
 TRAINS_ON = None                           # main.py 塞进来：某天训记里的训练（过去的训练日程补实际时间）
 
@@ -72,31 +79,60 @@ TRAINS_ON = None                           # main.py 塞进来：某天训记里
 _ready = False
 
 
+ITEMS_TABLE = """CREATE TABLE IF NOT EXISTS {name} (id TEXT PRIMARY KEY, kind TEXT NOT NULL DEFAULT 'event', title TEXT NOT NULL,
+            date TEXT, start TEXT, end TEXT, location TEXT NOT NULL DEFAULT '', note TEXT NOT NULL DEFAULT '',
+            source TEXT NOT NULL DEFAULT 'leo', key TEXT, attended INTEGER, actual_start TEXT, actual_end TEXT,
+            created_at TEXT NOT NULL, updated_at TEXT NOT NULL, deleted_at TEXT, category TEXT)"""
+
+
 def sdb() -> sqlite3.Connection:
     global _ready
     conn = db()
     if not _ready:
-        conn.executescript("""
-        CREATE TABLE IF NOT EXISTS schedule_items (id TEXT PRIMARY KEY, kind TEXT NOT NULL DEFAULT 'event', title TEXT NOT NULL,
-            date TEXT NOT NULL, start TEXT, end TEXT, location TEXT NOT NULL DEFAULT '', note TEXT NOT NULL DEFAULT '',
-            source TEXT NOT NULL DEFAULT 'leo', key TEXT, attended INTEGER, actual_start TEXT, actual_end TEXT,
-            created_at TEXT NOT NULL, updated_at TEXT NOT NULL, deleted_at TEXT);
+        conn.executescript(ITEMS_TABLE.format(name="schedule_items") + """;
         CREATE INDEX IF NOT EXISTS schedule_items_date ON schedule_items(date);
         CREATE INDEX IF NOT EXISTS schedule_items_key ON schedule_items(key);
         CREATE TABLE IF NOT EXISTS schedule_marks (ref TEXT PRIMARY KEY, skip INTEGER, location TEXT, note TEXT, done_at TEXT,
-            attended INTEGER, actual_start TEXT, actual_end TEXT, title TEXT, date TEXT, time TEXT, source TEXT, updated_at TEXT NOT NULL);
+            attended INTEGER, actual_start TEXT, actual_end TEXT, title TEXT, date TEXT, time TEXT, source TEXT, updated_at TEXT NOT NULL,
+            category TEXT, resolved TEXT);
         CREATE TABLE IF NOT EXISTS schedule_log (id INTEGER PRIMARY KEY AUTOINCREMENT, at TEXT NOT NULL, actor TEXT NOT NULL,
             thread TEXT, message_id INTEGER, target TEXT NOT NULL, action TEXT NOT NULL, title TEXT NOT NULL, summary TEXT NOT NULL,
             before TEXT, after TEXT, undone_at TEXT);
         CREATE INDEX IF NOT EXISTS schedule_log_thread ON schedule_log(thread, id);
+        CREATE TABLE IF NOT EXISTS todo_keep (ref TEXT PRIMARY KEY, entry TEXT NOT NULL, first_seen TEXT NOT NULL, last_seen TEXT NOT NULL);
         """)
+        migrate(conn)
         _ready = True
     return conn
 
 
+def migrate(conn: sqlite3.Connection) -> None:
+    """2026-10-15 以前建的表补上：日子可以空（没日子的待办）、类别、标记里的类别和「不用管」。只在启动后第一次打开时查一次。
+    SQLite 改不了 NOT NULL：整张表照原样抄一份新的再换名（一个事务里，几十行，瞬间的事）。"""
+    cols = {r[1]: r for r in conn.execute("PRAGMA table_info(schedule_items)")}
+    if cols["date"][3]:  # notnull
+        old = ", ".join(cols)  # 新表的列是老表的超集
+        conn.executescript(f"""BEGIN;
+        {ITEMS_TABLE.format(name="schedule_items_v2")};
+        INSERT INTO schedule_items_v2({old}) SELECT {old} FROM schedule_items;
+        DROP TABLE schedule_items;
+        ALTER TABLE schedule_items_v2 RENAME TO schedule_items;
+        CREATE INDEX IF NOT EXISTS schedule_items_date ON schedule_items(date);
+        CREATE INDEX IF NOT EXISTS schedule_items_key ON schedule_items(key);
+        COMMIT;""")
+    elif "category" not in cols:
+        conn.execute("ALTER TABLE schedule_items ADD COLUMN category TEXT")
+    marks = {r[1] for r in conn.execute("PRAGMA table_info(schedule_marks)")}
+    for c in ("category", "resolved"):
+        if c not in marks:
+            conn.execute(f"ALTER TABLE schedule_marks ADD COLUMN {c} TEXT")
+    conn.commit()
+
+
 ITEM_COLS = ("id", "kind", "title", "date", "start", "end", "location", "note", "source", "key", "attended", "actual_start", "actual_end",
-             "created_at", "updated_at", "deleted_at")
-MARK_COLS = ("ref", "skip", "location", "note", "done_at", "attended", "actual_start", "actual_end", "title", "date", "time", "source", "updated_at")
+             "created_at", "updated_at", "deleted_at", "category")
+MARK_COLS = ("ref", "skip", "location", "note", "done_at", "attended", "actual_start", "actual_end", "title", "date", "time", "source", "updated_at",
+             "category", "resolved")
 
 
 def row_dict(r: sqlite3.Row | None) -> dict | None:
@@ -294,7 +330,7 @@ def entry(**kw) -> dict:
     base = {"id": "", "kind": "event", "origin": "own", "title": "", "detail": "", "location": "", "note": "", "date": None,
             "start": "", "end": "", "allDay": False, "badge": "", "by": None, "link": None, "done": False, "skip": False, "series": False,
             "attended": None, "actualStart": "", "actualEnd": "", "past": False, "tentative": False, "free": False, "clash": [],
-            "editable": False, "group": None, "urgent": False}
+            "editable": False, "group": None, "urgent": False, "category": None}
     base.update(kw)
     return base
 
@@ -314,14 +350,17 @@ def class_entry(c: dict, mk: dict, now_dt: datetime) -> dict:
 
 
 def item_entry(r: sqlite3.Row | dict, mk: dict, names: dict[str, str], now_dt: datetime) -> dict:
+    """自己的一条。待办（kind todo）可以没有日子：没日子的不算过去，也不进时间线（只在待处理的「无日期」里）。"""
     ref = f"item:{r['id']}"
     m = mk.get(ref) or {}
-    end = at(r["date"], r["end"] or r["start"], end_of_day=not (r["end"] or r["start"]))
-    return entry(id=ref, kind="deadline" if r["kind"] == "deadline" else "event", origin="own", title=r["title"], location=r["location"],
-                 note=r["note"], date=r["date"], start=r["start"] or "", end=r["end"] or "", allDay=not r["start"],
-                 badge=who_name(r["source"], names), by=r["source"], done=bool(m.get("done_at")),
+    d = r["date"] or None
+    past = bool(d) and at(d, r["end"] or r["start"], end_of_day=not (r["end"] or r["start"])) < now_dt
+    return entry(id=ref, kind=r["kind"] if r["kind"] in ("deadline", "todo") else "event", origin="own", title=r["title"], location=r["location"],
+                 note=r["note"], date=d, start=r["start"] or "", end=r["end"] or "", allDay=not r["start"],
+                 badge=who_name(r["source"], names), by=r["source"], done=bool(m.get("done_at")), dismissed=m.get("resolved") == "dismissed",
                  attended=None if r["attended"] is None else bool(r["attended"]), actualStart=r["actual_start"] or "",
-                 actualEnd=r["actual_end"] or "", past=end < now_dt, editable=True, key=r["key"])
+                 actualEnd=r["actual_end"] or "", past=past, editable=True, key=r["key"],
+                 category=r["category"] if "category" in r.keys() else None)
 
 
 def canvas_ref(x: dict) -> str:
@@ -338,8 +377,8 @@ def course_entry(x: dict, mk: dict, now_dt: datetime) -> dict:
     return entry(id=ref, kind="deadline", origin="course", title=str(x.get("title") or "").strip(),
                  detail=L(f"{course}{' ' if course[-1:].isascii() else ''}的{cf.ddl_label(x.get('kind'))}，在学习台的课程档案里。", f"{cf.ddl_label(x.get('kind'))} for {course}, from the study desk's course profile."),
                  date=d, start=t, allDay=not t, badge=x.get("code") or course_short(course), link=None,
-                 done=bool(x.get("done") or (mk.get(ref) or {}).get("done_at")), past=at(d, t or None, end_of_day=not t) < now_dt, course=course,
-                 study={"course": x.get("course_id"), "session": x.get("session_id")})
+                 done=bool(x.get("done") or (mk.get(ref) or {}).get("done_at")), dismissed=(mk.get(ref) or {}).get("resolved") == "dismissed",
+                 past=at(d, t or None, end_of_day=not t) < now_dt, course=course, study={"course": x.get("course_id"), "session": x.get("session_id")})
 
 
 def canvas_entry(x: dict, mk: dict, now_dt: datetime) -> dict:
@@ -351,6 +390,7 @@ def canvas_entry(x: dict, mk: dict, now_dt: datetime) -> dict:
     return entry(id=ref, kind="deadline", origin="canvas", title=str(x.get("title") or "").strip(),
                  detail=L(f"{course} 的作业，交了会自动消失。", f"Assignment for {course}; it disappears once submitted."),
                  date=d, start=t, allDay=not t, badge=course_short(course), link=x.get("url"), done=bool((mk.get(ref) or {}).get("done_at")),
+                 dismissed=(mk.get(ref) or {}).get("resolved") == "dismissed",
                  past=at(d, t or None, end_of_day=not t) < now_dt, course=course, study={"course": study_course_of(course), "session": None})
 
 
@@ -379,10 +419,12 @@ def short_title(t: str) -> str:
 def mail_entry(x: dict, mk: dict, now_dt: datetime) -> dict:
     ref, due = f"mail:{x['id']}", str(x.get("due") or "")
     d, t = (due[:10], due[11:16]) if due else (None, "")
+    m = mk.get(ref) or {}
     return entry(id=ref, kind=x["type"], origin="mail", title=short_title(str(x.get("title") or "")), detail=str(x.get("detail") or ""),
                  date=d, start=t, allDay=bool(d) and not t, badge=mail_label(x.get("source")), link=mail_link(x),
-                 done=bool(x.get("done") or (mk.get(ref) or {}).get("done_at")), urgent=bool(x.get("urgent")),
-                 past=bool(d) and at(d, t or None, end_of_day=not t) < now_dt, firstSeen=x.get("first_seen"))
+                 done=bool(x.get("done") or m.get("done_at")), dismissed=m.get("resolved") == "dismissed", urgent=bool(x.get("urgent")),
+                 past=bool(d) and at(d, t or None, end_of_day=not t) < now_dt, firstSeen=x.get("first_seen"),
+                 category=x.get("category") if x.get("category") in todocat.CATS else None)
 
 
 def app_entry(r: sqlite3.Row, mk: dict, names: dict[str, str], now_dt: datetime) -> dict:
@@ -390,7 +432,8 @@ def app_entry(r: sqlite3.Row, mk: dict, names: dict[str, str], now_dt: datetime)
     agent = "masters" if r["kind"] == "masters" else "apply"
     return entry(id=ref, kind="deadline", origin="apply", title=f"{r['org']} · {r['role']}", detail=r["next_step"] or "",
                  date=r["deadline"], allDay=True, badge=names.get(agent, agent), by=agent, link=r["link"] or None,
-                 done=bool((mk.get(ref) or {}).get("done_at")), past=at(r["deadline"], None, end_of_day=True) < now_dt)
+                 done=bool((mk.get(ref) or {}).get("done_at")), dismissed=(mk.get(ref) or {}).get("resolved") == "dismissed",
+                 past=at(r["deadline"], None, end_of_day=True) < now_dt)
 
 
 SNAP_ORIGIN = {"canvas": "canvas", "mail": "mail", "app": "apply", "item": "own", "course": "course"}
@@ -399,7 +442,7 @@ SNAP_ORIGIN = {"canvas": "canvas", "mail": "mail", "app": "apply", "item": "own"
 def snapshot_entry(m: dict) -> dict:
     """打过勾、源头已经没了的（作业交了、邮件条目过期）：过去的日子照快照显示。"""
     return entry(id=m["ref"], kind="deadline", origin=SNAP_ORIGIN.get(m["ref"].split(":", 1)[0], "own"), title=m.get("title") or "",
-                 date=m["date"], start=m.get("time") or "", allDay=not m.get("time"), done=True, past=True)
+                 date=m["date"], start=m.get("time") or "", allDay=not m.get("time"), done=True, dismissed=m.get("resolved") == "dismissed", past=True)
 
 
 def mark_clashes(events: list[dict]) -> None:
@@ -459,6 +502,7 @@ def build_timeline(lo: date, days: int, actual: bool = True) -> dict:
         own = conn.execute("SELECT * FROM schedule_items WHERE deleted_at IS NULL AND date>=? AND date<?", (lo_s, hi_s)).fetchall()
         apps = app_rows(conn)
         names = group_names(conn)
+        agents = todocat.agent_cats(conn)
     out = [class_entry(c, mk, now_dt) for c in cls]
     out += [item_entry(r, mk, names, now_dt) for r in own]
     out += [canvas_entry(x, mk, now_dt) for x in rows_canvas if lo_s <= str(x["due"])[:10] < hi_s]
@@ -474,6 +518,7 @@ def build_timeline(lo: date, days: int, actual: bool = True) -> dict:
     for e in out:
         e["weekday"] = weekday(date.fromisoformat(e["date"]))
     with_projects(out)
+    todocat.annotate(out, mk, agents=agents)
     errors = {k: v for k, v in (("calendar", cal_err), ("canvas", canvas_err)) if v}
     return {"ok": True, "from": lo_s, "days": days, "timezone": settings.timezone, "calendar": sources.calendar_ics is not None,
             "events": out, "errors": errors}
@@ -481,14 +526,17 @@ def build_timeline(lo: date, days: int, actual: bool = True) -> dict:
 
 # —— 要记得的 ————————————————————————————————————————————————————————
 
-def group_of(e: dict, t: date) -> str | None:
-    """security 置顶；过了的（3 天内）；明天；一周内；以后；没日期的要办 = nodate，没日期的钱 / 状态 = news。今天到期的在今天的时间线里，这里不放。"""
+def group_of(e: dict, t: date, keep: bool = False) -> str | None:
+    """security 置顶；过了的（3 天内）；明天；一周内；以后；没日期的要办 = nodate，没日期的钱 / 状态 = news。今天到期的在今天的时间线里，这里不放。
+    keep（开着 today.categories）：过了期的待办和截止一直留着，7 天内是 overdue，再早的是 stale（「过期没处理」）。"""
     if e["kind"] == "security":
         return "security"
     if not e["date"]:
         return "nodate" if e["kind"] in ("todo", "deadline") else "news"
     diff = (date.fromisoformat(e["date"]) - t).days
     if diff < 0:
+        if keep and e["kind"] in ("todo", "deadline"):
+            return "overdue" if diff >= -STALE_DAYS else "stale"
         return "overdue" if diff >= -OVERDUE_DAYS else None
     if diff == 0:
         return None
@@ -497,23 +545,65 @@ def group_of(e: dict, t: date) -> str | None:
     return "week" if diff <= 7 else "later"
 
 
+KEEP_FIELDS = ("id", "kind", "origin", "title", "detail", "date", "start", "allDay", "badge", "link", "urgent", "firstSeen", "category")
+
+
+def keep_mail(conn: sqlite3.Connection, entries: list[dict]) -> None:
+    """开着 today.categories：邮件里的待办记一份快照，来源到期删了照样列；来源里标了做完的删掉快照。在锁里调。"""
+    ts = now_iso()
+    for e in entries:
+        if e["origin"] != "mail" or e["kind"] != "todo":
+            continue
+        if e["done"]:
+            conn.execute("DELETE FROM todo_keep WHERE ref=?", (e["id"],))
+            continue
+        snap = json.dumps({k: e.get(k) for k in KEEP_FIELDS}, ensure_ascii=False)
+        conn.execute("INSERT INTO todo_keep(ref, entry, first_seen, last_seen) VALUES(?,?,?,?) ON CONFLICT(ref) DO UPDATE SET "
+                     "entry=excluded.entry, last_seen=excluded.last_seen WHERE todo_keep.entry != excluded.entry", (e["id"], snap, ts, ts))
+
+
+def kept_entries(conn: sqlite3.Connection, live: set[str], mk: dict, now_dt: datetime) -> list[dict]:
+    """来源里已经没有、你也还没处理的邮件待办（快照）。在锁里调。"""
+    out = []
+    for r in conn.execute("SELECT ref, entry FROM todo_keep"):
+        if r["ref"] in live or (mk.get(r["ref"]) or {}).get("done_at"):
+            continue
+        try:
+            snap = json.loads(r["entry"])
+        except ValueError:
+            continue
+        e = entry(**{k: snap.get(k) for k in KEEP_FIELDS if k in snap})
+        d, t = e["date"], e["start"] or None
+        e.update(done=False, kept=True, past=bool(d) and at(d, t, end_of_day=not t) < now_dt)
+        out.append(e)
+    return out
+
+
 def build_remember(include_done: bool = False) -> dict:
+    """keep（开着 today.categories）：过了期的待办和截止一直留着（7 天以前的 group = stale），每条带 category。"""
     t, now_dt = today(), now()
+    keep = todocat.enabled()
     rows_canvas, canvas_err = canvas_rows()
     lo = (t - timedelta(days=OVERDUE_DAYS)).isoformat()
+    own_hi = (t + timedelta(days=REMEMBER_DAYS["own"])).isoformat()
+    mails = mail_items()
     with _lock, sdb() as conn:
         mk = all_marks(conn)
         apps = app_rows(conn)
         names = group_names(conn)
-        own = conn.execute("SELECT * FROM schedule_items WHERE deleted_at IS NULL AND kind='deadline' AND date>=? AND date<=?",
-                           (lo, (t + timedelta(days=REMEMBER_DAYS["own"])).isoformat())).fetchall()
-    items = [canvas_entry(x, mk, now_dt) for x in rows_canvas]
-    items += [mail_entry(x, mk, now_dt) for x in mail_items()]
+        agents = todocat.agent_cats(conn)
+        own = conn.execute("SELECT * FROM schedule_items WHERE deleted_at IS NULL AND kind IN ('deadline','todo') AND "
+                           "(date IS NULL OR (date>=? AND date<=?))", ("" if keep else lo, own_hi)).fetchall()
+        items = [mail_entry(x, mk, now_dt) for x in mails]
+        if keep:
+            keep_mail(conn, items)
+            items += kept_entries(conn, {e["id"] for e in items}, mk, now_dt)
+    items += [canvas_entry(x, mk, now_dt) for x in rows_canvas]
     app_hi = (t + timedelta(days=REMEMBER_DAYS["apply"])).isoformat()
-    items += [app_entry(r, mk, names, now_dt) for r in apps if lo <= r["deadline"] <= app_hi]
+    items += [app_entry(r, mk, names, now_dt) for r in apps if ("" if keep else lo) <= r["deadline"] <= app_hi]
     items += [item_entry(r, mk, names, now_dt) for r in own]
     for e in items:
-        e["group"] = group_of(e, t)
+        e["group"] = group_of(e, t, keep)
     items = [e for e in items if e["group"] and (include_done or not e["done"])]
     # 邮件里写了时间的（面试、咨询、活动）：和那天的课撞了就标出来
     timed = [e for e in items if e["origin"] == "mail" and e["start"] and e["kind"] != "money"]
@@ -528,7 +618,7 @@ def build_remember(include_done: bool = False) -> dict:
                     ce = minutes(c["end"]) if c["end"] else cs + 60
                     if s < ce and cs < s + 60:
                         e["clash"].append(c["title"])
-    rank = {"security": 0, "overdue": 1, "tomorrow": 2, "week": 3, "later": 4, "nodate": 5, "news": 6}
+    rank = {"security": 0, "overdue": 1, "tomorrow": 2, "week": 3, "later": 4, "nodate": 5, "stale": 6, "news": 7}
     kind_rank = {"money": 0, "status": 1}
     items.sort(key=lambda e: (rank[e["group"]], kind_rank.get(e["kind"], 0) if e["group"] == "news" else 0,
                               not e["urgent"] if e["group"] == "nodate" else False, e["date"] or "", e["start"] or "",
@@ -537,7 +627,8 @@ def build_remember(include_done: bool = False) -> dict:
         if e["date"]:
             e["weekday"] = weekday(date.fromisoformat(e["date"]))
     with_projects(items)
-    return {"ok": True, "today": t.isoformat(), "items": items, "errors": {"canvas": canvas_err} if canvas_err else {}}
+    todocat.annotate(items, mk, agents=agents)
+    return {"ok": True, "today": t.isoformat(), "items": items, "categories": keep, "errors": {"canvas": canvas_err} if canvas_err else {}}
 
 
 def with_projects(entries: list[dict]) -> None:
@@ -575,7 +666,7 @@ def log_change(conn: sqlite3.Connection, actor: str, run: chat.Run | None, targe
     return int(cur.lastrowid or 0)
 
 
-AREA_REMEMBER = ("done", "undone", "edit")
+AREA_REMEMBER = ("done", "undone", "edit", "dismiss", "category")
 
 
 def change_json(r: sqlite3.Row) -> dict:
@@ -640,9 +731,16 @@ def write_mark(conn: sqlite3.Connection, ref: str, state: dict | None) -> None:
                  tuple(state.get(c) if c != "ref" else ref for c in MARK_COLS))
 
 
+def when_text(d: str | None, s: str | None) -> str:
+    """改动摘要里的什么时候：10/20 17:30 / 明天 全天 / 无日期。"""
+    return span(d, s) if d else L("无日期", "no date")
+
+
 def item_summary(before: dict, after: dict) -> tuple[str, str]:
-    """(action, 一行摘要)：挪时间 / 改名 / 改地点 / 记实际 / 改备注。"""
+    """(action, 一行摘要)：挪时间 / 改名 / 改地点 / 记实际 / 改类别 / 改备注。"""
     if (before["date"], before["start"], before["end"]) != (after["date"], after["start"], after["end"]):
+        if not before["date"] or not after["date"]:
+            return "move", f"{when_text(before['date'], before['start'])} → {when_text(after['date'], after['start'])}"
         if before["date"] == after["date"]:
             a, b = before["start"] or L("全天", "all day"), after["start"] or L("全天", "all day")
             return "move", f"{a} → {b}" if a != b else f"{span(None, after['start'], after['end'])}"
@@ -657,8 +755,23 @@ def item_summary(before: dict, after: dict) -> tuple[str, str]:
     if before["location"] != after["location"]:
         return "update", L(f"地点 · {after['location'] or '去掉了'}", f"Location · {after['location'] or 'removed'}")
     if before["kind"] != after["kind"]:
-        return "update", L("改成截止" if after["kind"] == "deadline" else "改成普通日程", "Now a deadline" if after["kind"] == "deadline" else "Now an event")
+        zh = {"deadline": "改成截止", "todo": "改成待办"}.get(after["kind"], "改成普通日程")
+        en = {"deadline": "Now a deadline", "todo": "Now a to-do"}.get(after["kind"], "Now an event")
+        return "update", L(zh, en)
+    if before.get("category") != after.get("category"):
+        return "category", category_summary(after.get("category"))
     return "update", L(f"备注 · {after['note'] or '去掉了'}", f"Note · {after['note'] or 'removed'}")
+
+
+def category_summary(cat: str | None) -> str:
+    return L(f"类别 · {todocat.label(cat)}", f"Category · {todocat.label(cat)}") if cat else L("类别 · 改回自动", "Category · automatic")
+
+
+def clean_category(v: str | None) -> str | None:
+    try:
+        return todocat.check(v)
+    except ValueError:
+        raise HTTPException(400, L("category 只能是 study / life / work（学习 / 生活 / 工作）", "category must be study, life or work")) from None
 
 
 # —— 接口：时间线、自己的日程 —————————————————————————————————————————————
@@ -674,7 +787,7 @@ async def get_schedule(days: int = 1, from_: str | None = Query(None, alias="fro
 
 class ItemIn(BaseModel):
     title: str
-    date: str
+    date: str | None = None    # 只有待办（kind todo）可以不写
     start: str | None = None
     end: str | None = None
     kind: str = "event"
@@ -682,6 +795,7 @@ class ItemIn(BaseModel):
     note: str = ""
     key: str | None = None
     source: str | None = None
+    category: str | None = None  # study / life / work；不写按来源和字面分（todocat.py）
 
 
 def clean_item(title: str | None, kind: str | None) -> tuple[str | None, str | None]:
@@ -689,9 +803,21 @@ def clean_item(title: str | None, kind: str | None) -> tuple[str | None, str | N
         title = " ".join(title.split())[:120]
         if not title:
             raise HTTPException(400, L("标题不能空", "Title can't be empty"))
-    if kind is not None and kind not in ("event", "deadline"):
-        raise HTTPException(400, L("kind 只能是 event 或 deadline", "kind must be event or deadline"))
+    if kind is not None and kind not in KINDS:
+        raise HTTPException(400, L("kind 只能是 event、deadline 或 todo", "kind must be event, deadline or todo"))
     return title, kind
+
+
+def check_when(d: str | None, s: str | None, e: str | None, kind: str) -> None:
+    """日子和时刻合不合理：没日子只给待办，没日子就不能有时刻；有结束要有开始、结束晚于开始。"""
+    if not d and kind != "todo":
+        raise HTTPException(400, L("要写日子（date）；没日子的待办用 kind todo", "date is required; use kind todo for an undated to-do"))
+    if not d and (s or e):
+        raise HTTPException(400, L("没日子的待办不能有时刻", "An undated to-do can't have a time"))
+    if e and not s:
+        raise HTTPException(400, L("有结束时间就要有开始时间", "An end time needs a start time"))
+    if s and e and minutes(e) <= minutes(s):
+        raise HTTPException(400, L("结束要晚于开始", "End must be after start"))
 
 
 @router.post("/api/schedule")
@@ -699,11 +825,10 @@ async def add_item(body: ItemIn):
     """加一条。带 key 且已经有（没删的）= 改那一条（Agent 重排训练时用）；用户在 app 里挪过时间的，Agent 重排不改时间（kept 里写 time）。"""
     actor = actor_of(body.source)
     title, kind = clean_item(body.title, body.kind)
-    d, s, e = check_date(body.date), check_time(body.start), check_time(body.end, "end")
-    if e and not s:
-        raise HTTPException(400, L("有结束时间就要有开始时间", "An end time needs a start time"))
-    if s and e and minutes(e) <= minutes(s):
-        raise HTTPException(400, L("结束要晚于开始", "End must be after start"))
+    d, s, e = check_date(body.date) if body.date else None, check_time(body.start), check_time(body.end, "end")
+    check_when(d, s, e, kind or "event")
+    cat_sent = "category" in body.model_fields_set
+    cat = clean_category(body.category) if cat_sent else None
     key = (body.key or "").strip()[:120] or None
     run = run_of(actor)
     ts = now_iso()
@@ -713,7 +838,7 @@ async def add_item(body: ItemIn):
         if old:
             before = dict(old)
             after = {**before, "title": title, "kind": kind, "date": d, "start": s, "end": e, "location": body.location.strip()[:200],
-                     "note": body.note.strip()[:500], "updated_at": ts}
+                     "note": body.note.strip()[:500], "updated_at": ts, "category": cat if cat_sent else before.get("category")}
             # 用户自己挪过的时间，Agent 重排时不覆盖（改名字、备注照改）
             if actor != "leo" and (before["date"], before["start"], before["end"]) != (d, s, e) and conn.execute(
                     "SELECT 1 FROM schedule_log WHERE target=? AND actor='leo' AND action='move' AND undone_at IS NULL LIMIT 1",
@@ -730,10 +855,16 @@ async def add_item(body: ItemIn):
             iid = f"ev-{uuid.uuid4().hex[:8]}"
             after = {"id": iid, "kind": kind, "title": title, "date": d, "start": s, "end": e, "location": body.location.strip()[:200],
                      "note": body.note.strip()[:500], "source": actor, "key": key, "attended": None, "actual_start": None,
-                     "actual_end": None, "created_at": ts, "updated_at": ts, "deleted_at": None}
+                     "actual_end": None, "created_at": ts, "updated_at": ts, "deleted_at": None, "category": cat}
             write_item(conn, after)
-            summary = L(f"加了截止 · {span(d, s)}", f"Added a deadline · {span(d, s)}") if kind == "deadline" else \
-                L(f"加了 · {span(d, s, e)}", f"Added · {span(d, s, e)}")
+            if kind == "deadline":
+                summary = L(f"加了截止 · {span(d, s)}", f"Added a deadline · {span(d, s)}")
+            elif kind == "todo":
+                summary = L(f"加了待办 · {when_text(d, s)}", f"Added a to-do · {when_text(d, s)}")
+            else:
+                summary = L(f"加了 · {span(d, s, e)}", f"Added · {span(d, s, e)}")
+            if cat:
+                summary += f" · {todocat.label(cat)}"
             log = log_change(conn, actor, run, f"item:{iid}", "add", title or "", summary, None, after)
     card = announce(log, run, actor)
     return {"ok": True, "id": f"item:{iid}", "changed": True, "card": card, "kept": kept}
@@ -741,7 +872,8 @@ async def add_item(body: ItemIn):
 
 class ItemPatch(BaseModel):
     title: str | None = None
-    date: str | None = None
+    date: str | None = None      # 给 null（只有待办）= 改成没日子
+    category: str | None = None  # 给 null = 回到自动分
     start: str | None = None
     end: str | None = None
     kind: str | None = None
@@ -755,10 +887,12 @@ class ItemPatch(BaseModel):
 
 @router.patch("/api/schedule/{iid}")
 async def patch_item(iid: str, body: ItemPatch):
-    """改自己的日程。给了哪个字段改哪个；start 给空字符串 = 改成全天；attended 给 null = 清掉「做没做」。"""
+    """改自己的日程。给了哪个字段改哪个；start 给空字符串 = 改成全天；attended 给 null = 清掉「做没做」；
+    date 给 null = 待办改成没日子；category 给 null = 回到自动分。"""
     actor = actor_of(body.source)
     sent = body.model_fields_set
     title, kind = clean_item(body.title, body.kind)
+    cat = clean_category(body.category) if "category" in sent else None
     run = run_of(actor)
     with _lock, sdb() as conn:
         before = dict(item_by_id(conn, iid))
@@ -767,8 +901,12 @@ async def patch_item(iid: str, body: ItemPatch):
             after["title"] = title
         if kind is not None:
             after["kind"] = kind
-        if body.date is not None:
-            after["date"] = check_date(body.date)
+        if "date" in sent:
+            after["date"] = check_date(body.date) if body.date else None
+            if not after["date"]:
+                after["start"] = after["end"] = None
+        if "category" in sent:
+            after["category"] = cat
         if "start" in sent:
             after["start"] = check_time(body.start)
             if not after["start"]:
@@ -785,10 +923,7 @@ async def patch_item(iid: str, body: ItemPatch):
             after["actual_start"] = check_time(body.actualStart, "actualStart")
         if "actualEnd" in sent:
             after["actual_end"] = check_time(body.actualEnd, "actualEnd")
-        if after["end"] and not after["start"]:
-            raise HTTPException(400, L("有结束时间就要有开始时间", "An end time needs a start time"))
-        if after["start"] and after["end"] and minutes(after["end"]) <= minutes(after["start"]):
-            raise HTTPException(400, L("结束要晚于开始", "End must be after start"))
+        check_when(after["date"], after["start"], after["end"], after["kind"])
         if after == before:
             return {"ok": True, "id": f"item:{before['id']}", "changed": False}
         after["updated_at"] = now_iso()
@@ -807,8 +942,8 @@ async def delete_item(iid: str, source: str | None = None):
         before = dict(item_by_id(conn, iid))
         after = {**before, "deleted_at": now_iso()}
         write_item(conn, after)
-        log = log_change(conn, actor, run, f"item:{before['id']}", "delete", before["title"],
-                         L(f"删了 · {span(before['date'], before['start'])}", f"Deleted · {span(before['date'], before['start'])}"), before, after)
+        when = when_text(before["date"], before["start"])
+        log = log_change(conn, actor, run, f"item:{before['id']}", "delete", before["title"], L(f"删了 · {when}", f"Deleted · {when}"), before, after)
     card = announce(log, run, actor)
     return {"ok": True, "card": card}
 
@@ -921,6 +1056,7 @@ async def remember(all: int = 0):  # noqa: A002 — 查询参数名
 class DoneIn(BaseModel):
     ref: str
     done: bool = True
+    how: str = "done"   # done 做完了 / dismissed 不用管：都从待处理收走、别处都当它处理过了，分开记好回看
     title: str | None = None
     date: str | None = None
     time: str | None = None
@@ -941,11 +1077,14 @@ def snapshot_of(ref: str) -> dict:
 
 @router.post("/api/remember/done")
 async def remember_done(body: DoneIn):
-    """打勾（done=false 取消）。邮件条目同时写回来源；课程 ddl、求职、自己加的只在这一层记。"""
+    """打勾（done=false 取消）。how=dismissed =「不用管」（左滑），和做完分开记。邮件条目同时写回来源；课程 ddl、求职、自己加的只在这一层记。"""
     actor = actor_of(body.source)
     ref = body.ref.strip()
     if ref.split(":", 1)[0] not in SNAP_ORIGIN:
         raise HTTPException(400, L("只有要记得的条目能打勾（canvas: / mail: / app: / item:）", "Only reminder entries can be ticked (canvas: / mail: / app: / item:)"))
+    if body.how not in ("done", "dismissed"):
+        raise HTTPException(400, L("how 只能是 done 或 dismissed", "how must be done or dismissed"))
+    how = body.how if body.done else None
     snap = {"title": body.title, "date": check_date(body.date) if body.date else None, "time": check_time(body.time, "time")}
     if not snap["title"]:
         snap = await asyncio.to_thread(snapshot_of, ref) or snap
@@ -954,16 +1093,15 @@ async def remember_done(body: DoneIn):
     with _lock, sdb() as conn:
         before = row_dict(conn.execute("SELECT * FROM schedule_marks WHERE ref=?", (ref,)).fetchone())
         was = bool(before and before.get("done_at"))
-        if was == body.done:
-            unchanged = True
-        else:
-            unchanged = False
+        was_how = ((before or {}).get("resolved") or "done") if was else None
+        unchanged = was == body.done and was_how == how
         if not unchanged:
-            after = {**(before or {c: None for c in MARK_COLS}), "ref": ref, "done_at": now_iso() if body.done else None,
+            after = {**(before or {c: None for c in MARK_COLS}), "ref": ref, "done_at": now_iso() if body.done else None, "resolved": how,
                      "title": title, "date": snap.get("date"), "time": snap.get("time"), "source": actor, "updated_at": now_iso()}
             write_mark(conn, ref, after)
-            log = log_change(conn, actor, run, f"mark:{ref}", "done" if body.done else "undone", title,
-                             L("勾掉了", "Ticked off") if body.done else L("放回要记得的", "Back on the list"), before, after)
+            action = ("dismiss" if how == "dismissed" else "done") if body.done else "undone"
+            summary = {"dismiss": L("不用管了", "Not needed"), "done": L("勾掉了", "Ticked off"), "undone": L("放回要记得的", "Back on the list")}[action]
+            log = log_change(conn, actor, run, f"mark:{ref}", action, title, summary, before, after)
     if ref.startswith("mail:"):  # 邮件条目的来源也记一笔（已经一致的再写一次也无妨）
         ok, msg = await asyncio.to_thread(mail_cmd, "--done" if body.done else "--undo", ref[5:])
         if not ok:
@@ -972,6 +1110,48 @@ async def remember_done(body: DoneIn):
         return {"ok": True, "changed": False}
     card = announce(log, run, actor)
     return {"ok": True, "changed": True, "card": card}
+
+
+class CategoryIn(BaseModel):
+    ref: str
+    category: str | None = None   # study / life / work；null 或 auto = 回到自动分
+    source: str | None = None
+
+
+def ref_snapshot(ref: str) -> tuple[str, str | None, str | None]:
+    """(标题, 日子, 时刻)：课表的课和邮件活动从来源读，别的从「要记得的」和今天的时间线里找。"""
+    if ref.startswith(("ics:", "mail:")):
+        try:
+            d, t, title = ref_meta(ref)
+            return title, d, t
+        except HTTPException:
+            pass
+    snap = snapshot_of(ref)
+    return snap.get("title") or ref, snap.get("date"), snap.get("time")
+
+
+@router.post("/api/remember/category")
+async def remember_category(body: CategoryIn):
+    """改一条的类别（学习 / 生活 / 工作）：待处理、日程、周和月里的任何一条（作业、邮件、求职、自己的、课表的课）。
+    记在 schedule_marks.category，以你改的为准（盖过写入时给的和自动分的）；能撤销。"""
+    actor = actor_of(body.source)
+    ref = body.ref.strip()[:400]
+    if ref.split(":", 1)[0] not in (*SNAP_ORIGIN, "ics"):
+        raise HTTPException(400, L("ref 要是日程或要记得的里的一条（item: / canvas: / course: / mail: / app: / ics:）",
+                                   "ref must be a schedule or reminder entry (item: / canvas: / course: / mail: / app: / ics:)"))
+    cat = clean_category(body.category)
+    title, d, t = await asyncio.to_thread(ref_snapshot, ref)
+    run = run_of(actor)
+    with _lock, sdb() as conn:
+        before = row_dict(conn.execute("SELECT * FROM schedule_marks WHERE ref=?", (ref,)).fetchone())
+        if (before or {}).get("category") == cat:
+            return {"ok": True, "changed": False, "category": cat}
+        base = before or {**{c: None for c in MARK_COLS}, "title": title, "date": d, "time": t}
+        after = {**base, "ref": ref, "category": cat, "source": actor, "updated_at": now_iso()}
+        write_mark(conn, ref, after)
+        log = log_change(conn, actor, run, f"mark:{ref}", "category", base.get("title") or title, category_summary(cat), before, after)
+    card = announce(log, run, actor)
+    return {"ok": True, "changed": True, "category": cat, "card": card}
 
 
 class EditIn(BaseModel):
@@ -998,6 +1178,8 @@ async def remember_edit(body: EditIn):
             if not DUE_RE.match(body.due.strip()):
                 raise HTTPException(400, L("due 要写成 YYYY-MM-DD 或 YYYY-MM-DD HH:MM", "due must be YYYY-MM-DD or YYYY-MM-DD HH:MM"))
             kw.update(date=body.due.strip()[:10], start=body.due.strip()[11:16] or "")
+        elif "due" in sent:  # --no-due：待办改成没日子（别的种类 patch_item 会说不行）
+            kw["date"] = None
         if body.detail is not None:
             kw["note"] = body.detail
         return await patch_item(ref, ItemPatch(**kw))
