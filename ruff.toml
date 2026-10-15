@@ -1,0 +1,10 @@
+# One set of lint rules for local runs and CI (`ruff check`). CI used pyflakes before,
+# which ignores `# noqa` and had been failing on an intentional import since 2026-09-30.
+# 本地和 CI 用同一套规矩：ruff 默认规则，去掉代码里一直在用的两种写法。
+target-version = "py311"  # install.sh accepts 3.11+
+
+[lint]
+extend-ignore = [
+  "E702",  # several statements on one line (semicolons)
+  "E731",  # assigning a lambda to a name
+]
