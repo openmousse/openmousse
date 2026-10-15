@@ -20,6 +20,7 @@ import { EditGroupScreen } from './screens/EditGroupScreen';
 import { TaskScreen, TasksScreen } from './screens/TasksScreen';
 import { ScheduleFeedScreen } from './screens/ScheduleFeedScreen';
 import { TodayScreen } from './screens/TodayScreen';
+import { EngBoardScreen } from './screens/EngBoardScreen';
 import { OutputsTabBar } from './components/outputs/FloatTab';
 import { HistoryDayScreen, HistoryScreen } from './screens/HistoryScreen';
 import { ConnectScreen } from './screens/ConnectScreen';
@@ -302,6 +303,8 @@ export function RootNavigator() {
         <Stack.Screen name="Avatar" component={AvatarScreen} />
         <Stack.Screen name="Tasks" component={TasksScreen} />
         <Stack.Screen name="ScheduleFeed" component={ScheduleFeedScreen} />
+        {/* 工程看板（2026-10-15）：「今天」报告里的工程看板卡点进来，交接本 todos.md 只读同步（server/engboard.py） */}
+        <Stack.Screen name="EngBoard" component={EngBoardScreen} />
         <Stack.Screen name="Task" component={TaskScreen} />
         {/* 设置（「我」）：2026-09-27 从 tab 挪到侧栏底部，2026-10-13 起在「对话」页右上角 */}
         <Stack.Screen name="Me" component={MeScreen} />

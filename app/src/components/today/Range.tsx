@@ -1,5 +1,6 @@
 // 「今天」页的周 / 月视图（/api/today/range）：同一批事项换个范围看。
 // 周 = 按天列表；月 = 日历（日程 / 截止 / 待办三色点 + 图例），点一天在下面列出那天的。点一条回到日视图的那一天。
+// 开着类别（2026-10-15）：颜色改按类别（学习 / 生活 / 工作）：周视图顶上一张每天各类几件的堆叠柱，月历的点按类别。
 import React, { useEffect, useState } from 'react';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
 import { loadRange, type RangeItem } from '../../api/today';
@@ -7,7 +8,8 @@ import { L } from '../../i18n';
 import { radius, space, useTheme, type Theme } from '../../theme';
 import { ChevronLeft, ChevronRight } from '../icons';
 import { T, useScaledWidth } from '../ui';
-import { MonthCalendar, seriesColor, type CalKind } from '../viz';
+import { MonthCalendar, StackedBar, seriesColor, type CalKind } from '../viz';
+import { CATS, CAT_SLOT, catColor, catLabel } from './Cats';
 import { BlockHeader, addDays, isoOf, monthDay, monthStart, mondayOf, parseIso, shortWeekday, weekdayOf } from './parts';
 
 const cache = new Map<string, RangeItem[]>();
@@ -41,9 +43,11 @@ function NavRow({ title, onPrev, onNext, prevLabel, nextLabel }: { title: string
   );
 }
 
-/** 一行：左边一道类别色，时间，标题和来源。截止写「截止：」。 */
-function Row({ r, last, onPress }: { r: RangeItem; last: boolean; onPress: () => void }) {
+/** 一行：左边一道类别色，时间，标题和来源。截止写「截止：」。cats：按学习 / 生活 / 工作上色（灰字前面写类别）。 */
+function Row({ r, last, onPress, cats }: { r: RangeItem; last: boolean; onPress: () => void; cats?: boolean }) {
   const t = useTheme();
+  const bar = cats && r.category ? catColor(t, r.category) : typeColor(t, r.type);
+  const sub = cats && r.category ? [catLabel(r.category), r.sub].filter(Boolean).join(' · ') : r.sub;
   const timeW = useScaledWidth(46);
   const when = r.type === 'event' ? (r.allDay || !r.start ? L('全天', 'All day') : r.start) : r.start || '';
   const title = r.type === 'deadline' ? L(`截止：${r.title}`, `Due: ${r.title}`) : r.title;
@@ -51,19 +55,19 @@ function Row({ r, last, onPress }: { r: RangeItem; last: boolean; onPress: () =>
   return (
     <Pressable onPress={onPress} accessibilityRole="button" accessibilityLabel={`${when} ${title}`}
       style={({ pressed }) => [styles.row, !last && { borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: t.line }, { opacity: pressed ? 0.6 : 1 }]}>
-      <View style={[styles.bar, { backgroundColor: typeColor(t, r.type), opacity: dim ? 0.4 : 1 }]} />
+      <View style={[styles.bar, { backgroundColor: bar, opacity: dim ? 0.4 : 1 }]} />
       <Text style={[styles.time, { width: timeW, color: t.ink2 }]} numberOfLines={1} adjustsFontSizeToFit minimumFontScale={0.6}>{when}</Text>
       <View style={{ flex: 1, minWidth: 0, gap: 2 }}>
         <Text style={[styles.title, { color: dim ? t.ink3 : t.ink }, dim && { textDecorationLine: 'line-through' }]} numberOfLines={1}>{title}</Text>
-        {r.sub ? <Text style={[styles.sub, { color: t.ink3 }]} numberOfLines={1}>{r.sub}</Text> : null}
+        {sub ? <Text style={[styles.sub, { color: t.ink3 }]} numberOfLines={1}>{sub}</Text> : null}
       </View>
       <ChevronRight size={16} color={t.ink3} />
     </Pressable>
   );
 }
 
-export function WeekView({ anchor, today, bump, onAnchor, onPickDay }: {
-  anchor: string; today: string; bump: number; onAnchor: (iso: string) => void; onPickDay: (iso: string) => void;
+export function WeekView({ anchor, today, bump, onAnchor, onPickDay, cats = false }: {
+  anchor: string; today: string; bump: number; onAnchor: (iso: string) => void; onPickDay: (iso: string) => void; cats?: boolean;
 }) {
   const t = useTheme();
   const from = mondayOf(anchor);
@@ -75,6 +79,7 @@ export function WeekView({ anchor, today, bump, onAnchor, onPickDay }: {
     <View>
       <NavRow title={title} onPrev={() => onAnchor(addDays(anchor, -7))} onNext={() => onAnchor(addDays(anchor, 7))} prevLabel={L('上一周', 'Previous week')} nextLabel={L('下一周', 'Next week')} />
       {error ? <T v="callout" color={t.bad} style={{ paddingHorizontal: space.xs }}>{L(`无法加载：${error}`, `Couldn't load: ${error}`)}</T> : null}
+      {cats && items ? <WeekBars items={items} days={days} today={today} /> : null}
       {!items ? <T v="callout" color={t.ink2} style={{ padding: space.xs }}>{L('正在加载…', 'Loading…')}</T> : days.map((d) => {
         const rows = items.filter((r) => r.date === d);
         const head = `${shortWeekday(d)} ${monthDay(d)}${d === today ? L(' · 今天', ' · Today') : ''}`;
@@ -83,7 +88,7 @@ export function WeekView({ anchor, today, bump, onAnchor, onPickDay }: {
             <BlockHeader title={rows.length ? `${head} · ${rows.length}` : head} accent={d === today} />
             {rows.length ? (
               <View style={[styles.card, { backgroundColor: t.surface }]}>
-                {rows.map((r, i) => <Row key={`${r.type}:${r.id}`} r={r} last={i === rows.length - 1} onPress={() => onPickDay(d)} />)}
+                {rows.map((r, i) => <Row key={`${r.type}:${r.id}`} r={r} last={i === rows.length - 1} onPress={() => onPickDay(d)} cats={cats} />)}
               </View>
             ) : <T v="callout" color={t.ink3} style={{ paddingHorizontal: space.xs }}>{L('无安排', 'Nothing scheduled')}</T>}
           </View>
@@ -93,8 +98,22 @@ export function WeekView({ anchor, today, bump, onAnchor, onPickDay }: {
   );
 }
 
-export function MonthView({ anchor, today, bump, onAnchor, onPickDay }: {
-  anchor: string; today: string; bump: number; onAnchor: (iso: string) => void; onPickDay: (iso: string) => void;
+/** 这周每天各类几件（做完的、跳过的不算）：素材库的堆叠柱，图例里是这周每类合计。 */
+function WeekBars({ items, days, today }: { items: RangeItem[]; days: string[]; today: string }) {
+  const t = useTheme();
+  const live = items.filter((r) => !r.done && !r.skip && r.category);
+  if (!live.length) return null;
+  return (
+    <View style={[styles.bars, { backgroundColor: t.surface }]}>
+      <StackedBar height={96} axis={false} totals="all"
+        categories={days.map((d) => ({ key: d, label: shortWeekday(d).replace(/^周/, ''), name: `${shortWeekday(d)} ${monthDay(d)}`, current: d === today }))}
+        series={CATS.map((c) => ({ key: c, label: catLabel(c), slot: CAT_SLOT[c], values: days.map((d) => live.filter((r) => r.date === d && r.category === c).length) }))} />
+    </View>
+  );
+}
+
+export function MonthView({ anchor, today, bump, onAnchor, onPickDay, cats = false }: {
+  anchor: string; today: string; bump: number; onAnchor: (iso: string) => void; onPickDay: (iso: string) => void; cats?: boolean;
 }) {
   const t = useTheme();
   const a = parseIso(anchor);
@@ -103,12 +122,16 @@ export function MonthView({ anchor, today, bump, onAnchor, onPickDay }: {
   // 选中的一天：换月时落到那个月的 anchor 那天（今天所在的月就是今天）
   const [picked, setPicked] = useState<string | null>(null);
   const selected = picked && picked.slice(0, 7) === anchor.slice(0, 7) ? picked : anchor;
-  // 每天每类一个记号（日程 / 截止 / 待办：颜色加形状），做完的、跳过的不算
+  // 每天每类一个记号（日程 / 截止 / 待办，开着类别时是学习 / 生活 / 工作：颜色加形状），做完的、跳过的不算
   const marks: Record<string, string[]> = {};
-  for (const r of items ?? []) if (!r.done && !r.skip) (marks[r.date] ??= []).push(r.type);
+  for (const r of items ?? []) {
+    const k = cats ? r.category : r.type;
+    if (!r.done && !r.skip && k) (marks[r.date] ??= []).push(k);
+  }
   const rows = (items ?? []).filter((r) => r.date === selected);
   const move = (n: number) => onAnchor(isoOf(new Date(y, m + n, 1)));
-  const kinds: CalKind[] = [{ key: 'event', label: L('日程', 'Events') }, { key: 'deadline', label: L('截止', 'Deadlines') }, { key: 'todo', label: L('待办', 'To-dos') }];
+  const kinds: CalKind[] = cats ? CATS.map((c) => ({ key: c, label: catLabel(c), slot: CAT_SLOT[c] }))
+    : [{ key: 'event', label: L('日程', 'Events') }, { key: 'deadline', label: L('截止', 'Deadlines') }, { key: 'todo', label: L('待办', 'To-dos') }];
   return (
     <View>
       <NavRow title={L(`${y}年${m + 1}月`, a.toLocaleDateString('en', { month: 'long', year: 'numeric' }))} onPrev={() => move(-1)} onNext={() => move(1)}
@@ -119,7 +142,7 @@ export function MonthView({ anchor, today, bump, onAnchor, onPickDay }: {
       {!items ? <T v="callout" color={t.ink2} style={{ padding: space.xs }}>{L('正在加载…', 'Loading…')}</T>
         : rows.length ? (
           <View style={[styles.card, { backgroundColor: t.surface }]}>
-            {rows.map((r, i) => <Row key={`${r.type}:${r.id}`} r={r} last={i === rows.length - 1} onPress={() => onPickDay(selected)} />)}
+            {rows.map((r, i) => <Row key={`${r.type}:${r.id}`} r={r} last={i === rows.length - 1} onPress={() => onPickDay(selected)} cats={cats} />)}
           </View>
         ) : <T v="callout" color={t.ink3} style={{ paddingHorizontal: space.xs }}>{L('无安排', 'Nothing scheduled')}</T>}
     </View>
@@ -130,6 +153,7 @@ const styles = StyleSheet.create({
   navRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingLeft: space.xs, paddingTop: space.lg, paddingBottom: space.sm },
   navBtn: { width: 32, height: 32, borderRadius: 16, alignItems: 'center', justifyContent: 'center' },
   card: { borderRadius: radius.lg, overflow: 'hidden' },
+  bars: { borderRadius: radius.lg, padding: space.md, marginTop: space.xs },
   row: { flexDirection: 'row', alignItems: 'center', gap: 10, paddingRight: 14, paddingVertical: 11 },
   bar: { width: 3, alignSelf: 'stretch', borderRadius: 2, marginLeft: 12, marginRight: 2 },
   time: { fontSize: 13, fontWeight: '600', fontVariant: ['tabular-nums'] },

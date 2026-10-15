@@ -18,6 +18,8 @@ export interface DayBlock {
   sub?: string;
   /** 颜色：第几个分类色（按种类，不按先后） */
   slot?: number;
+  /** 淡下去（筛选时不属于这一类的，位置照留） */
+  dim?: boolean;
 }
 
 const toMin = (hm: string) => { const [h, m] = hm.split(':').map(Number); return h * 60 + (m || 0); };
@@ -138,7 +140,7 @@ export function DayGrid({ items, now, from, to, hourHeight = 52, collapse = 2, o
             return (
               <Pressable key={it.key} onPress={onPressItem ? () => onPressItem(it) : undefined} disabled={!onPressItem}
                 accessibilityRole={onPressItem ? 'button' : 'text'} accessibilityLabel={`${it.title} ${sub}`}
-                style={{ position: 'absolute', top, height: h, left: `${(c / n) * 100}%`, width: `${100 / n}%`, paddingRight: c < n - 1 ? 2 : 0 }}>
+                style={{ position: 'absolute', top, height: h, left: `${(c / n) * 100}%`, width: `${100 / n}%`, paddingRight: c < n - 1 ? 2 : 0, opacity: it.dim ? 0.3 : 1 }}>
                 <View style={{ flex: 1, flexDirection: 'row', overflow: 'hidden', borderRadius: 7, backgroundColor: withAlpha(color, t.mode === 'dark' ? 0.18 : 0.12) }}>
                   <View style={{ width: 3, backgroundColor: color }} />
                   <View style={{ flex: 1, paddingHorizontal: 8, justifyContent: 'center' }}>

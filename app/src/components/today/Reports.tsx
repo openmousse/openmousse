@@ -1,12 +1,13 @@
 // 「今天」页 · 报告（要阅读的）：Agent 的报告卡和邮件摘要，横向滑动的小卡片，每张一个小图。
 // 点开 = useOpenReport：服务器有产出小板子（supports('outputs')）时打开同一块小板子，老服务器是弹层里的全文。
+// 工程看板卡（2026-10-15，server/engboard.py）排在最前：这周做完 / 没做 / 等你三个数 + 一条比例条 + 主线几步，点进 EngBoard 页（只读）。
 import React, { useState } from 'react';
 import { Linking, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import * as todayApi from '../../api/today';
-import type { CardReport, MailReport, Report } from '../../api/today';
+import type { CardReport, EngReport, MailReport, Report } from '../../api/today';
 import type { MealPlan } from '../../data/types';
 import { L } from '../../i18n';
-import { openThread } from '../../navigation';
+import { navigationRef, openThread } from '../../navigation';
 import { useStore } from '../../store';
 import { radius, space, useTheme, vizMark } from '../../theme';
 import { Check, ChevronRight } from '../icons';
@@ -18,7 +19,8 @@ import { useSheet } from '../Sheet';
 import { useSourceName } from '../SourceBadge';
 import { supports } from '../../api/version';
 import { T, showError } from '../ui';
-import { Legend, Sparkline, seriesColor } from '../viz';
+import { Legend, Sparkline, seriesColor, withAlpha } from '../viz';
+import { ENG_SLOT } from './Cats';
 import { BlockHeader } from './parts';
 
 const CARD_W = 250;
@@ -43,7 +45,8 @@ export function ReportsBlock({ reports }: { reports: Report[] }) {
           const fresh = r.type === 'card' && r.unseen && !seen[r.id];
           const onPress = () => { open(r); if (r.type === 'card') setSeen((m) => ({ ...m, [r.id]: true })); };
           return r.type === 'mail' ? <MailCard key={r.id} r={r} onPress={onPress} />
-            : r.sleep ? <SleepCard key={r.id} r={r} fresh={fresh} onPress={onPress} />
+            : r.type === 'eng' ? <EngCard key={r.id} r={r} onPress={onPress} />
+              : r.sleep ? <SleepCard key={r.id} r={r} fresh={fresh} onPress={onPress} />
               : r.meal ? <MealCard key={r.id} r={r} fresh={fresh} onPress={onPress} />
                 : <PlainCard key={r.id} r={r} fresh={fresh} onPress={onPress} />;
         })}
@@ -173,6 +176,50 @@ function MailCard({ r, onPress }: { r: MailReport; onPress: () => void }) {
   );
 }
 
+/** 工程看板：交接本里这周做完的、没做的、等你的，一条比例条，最底下主线做到哪。只读，处理在电脑上。 */
+function EngCard({ r, onPress }: { r: EngReport; onPress: () => void }) {
+  const t = useTheme();
+  const cyan = seriesColor(t, ENG_SLOT);
+  const parts = [{ key: 'done', v: r.weekDone, c: cyan }, { key: 'todo', v: r.todo, c: t.track }, { key: 'wait', v: r.wait, c: seriesColor(t, 1) }].filter((p) => p.v > 0);
+  const step = r.main.find((m) => m.done < m.total) ?? r.main[r.main.length - 1];
+  const stats: [number, string, string][] = [[r.weekDone, L('这周做完', 'Done this week'), t.cyan], [r.todo, L('没做', 'Not started'), t.ink], [r.wait, L('等你', 'Waiting on you'), t.warn]];
+  return (
+    <Shell onPress={onPress} label={L(`${r.title}：这周做完 ${r.weekDone}，没做 ${r.todo}，等你 ${r.wait}`, `${r.title}: ${r.weekDone} done this week, ${r.todo} not started, ${r.wait} waiting on you`)}>
+      <View style={styles.head}>
+        <View style={[styles.engIcon, { backgroundColor: withAlpha(cyan, t.mode === 'dark' ? 0.2 : 0.14) }]}>
+          <View style={[styles.engRing, { borderColor: cyan }]}><View style={[styles.engDot, { backgroundColor: cyan }]} /></View>
+        </View>
+        <T v="caption" color={t.ink2} style={{ flex: 1, fontWeight: '400' }} numberOfLines={1}>{r.title}</T>
+        <T v="caption" color={t.ink3} style={{ fontWeight: '400' }}>{r.time}</T>
+      </View>
+      <View style={styles.engStats}>
+        {stats.map(([n, label, color]) => (
+          <View key={label} style={{ flex: 1, gap: 1 }}>
+            <Text style={[styles.engNum, { color }]}>{n}</Text>
+            <T v="caption" color={t.ink2} style={{ fontWeight: '400', fontSize: 11.5 }} numberOfLines={1}>{label}</T>
+          </View>
+        ))}
+      </View>
+      {parts.length ? (
+        <View style={styles.split}>
+          {parts.map((p, i) => (
+            <View key={p.key} style={{ flex: Math.max(p.v, 1), height: 8, backgroundColor: p.c,
+              borderTopLeftRadius: i === 0 ? vizMark.radius : 0, borderBottomLeftRadius: i === 0 ? vizMark.radius : 0,
+              borderTopRightRadius: i === parts.length - 1 ? vizMark.radius : 0, borderBottomRightRadius: i === parts.length - 1 ? vizMark.radius : 0 }} />
+          ))}
+        </View>
+      ) : null}
+      <View style={{ flex: 1 }} />
+      <View style={styles.foot}>
+        <T v="caption" color={t.ink2} style={{ fontWeight: '400', flex: 1 }} numberOfLines={1}>
+          {step ? L(`主线 · ${step.name} ${step.done}/${step.total}`, `Main line · ${step.name} ${step.done}/${step.total}`) : L('只读，处理在电脑上', 'Read only; work happens on the computer')}
+        </T>
+        <ChevronRight size={16} color={t.ink3} />
+      </View>
+    </Shell>
+  );
+}
+
 function PlainCard({ r, fresh, onPress }: { r: CardReport; fresh: boolean; onPress: () => void }) {
   const t = useTheme();
   const line = r.body.replace(/[#*>`_-]/g, '').split('\n').map((x) => x.trim()).find(Boolean) ?? '';
@@ -197,6 +244,10 @@ export function useOpenReport() {
   const name = useSourceName();
   const openBoard = useOutputBoard();
   return (r: Report) => {
+    if (r.type === 'eng') {
+      navigationRef.navigate('EngBoard');
+      return;
+    }
     if (r.type === 'mail') {
       sheet.open({ title: r.title, content: () => <MailDigest r={r} /> });
       return;
@@ -293,6 +344,11 @@ const styles = StyleSheet.create({
   big: { flexDirection: 'row', alignItems: 'baseline', gap: 6 },
   bigNum: { fontSize: 28, fontWeight: '700', fontVariant: ['tabular-nums'] },
   split: { flexDirection: 'row', gap: vizMark.gap },
+  engIcon: { width: 22, height: 22, borderRadius: 11, alignItems: 'center', justifyContent: 'center' },
+  engRing: { width: 12, height: 12, borderRadius: 6, borderWidth: 2, alignItems: 'center', justifyContent: 'center' },
+  engDot: { width: 4, height: 4, borderRadius: 2 },
+  engStats: { flexDirection: 'row', gap: 6, marginTop: 4 },
+  engNum: { fontSize: 22, fontWeight: '700', fontVariant: ['tabular-nums'] },
   foot: { flexDirection: 'row', alignItems: 'center', gap: 8, minHeight: 20 },
   logBtn: { height: 24, paddingHorizontal: 12, borderRadius: 12, alignItems: 'center', justifyContent: 'center' },
   chips: { flexDirection: 'row', flexWrap: 'wrap', gap: 6 },

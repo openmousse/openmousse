@@ -1,5 +1,6 @@
 // 「今天」页 · 日程（要到场的）：按时长比例的时间格，空闲收成一行，金线是现在；过去的放在实际时间，旁边写原定。
 // 同一活动服务器已经并成一条（状态成了标签「已购票」），训练计划、练后记录归在训练那一条里：点开看，跳过 / 改时间 / 备注。
+// 开着类别（2026-10-15）：色条按类别（学习 / 生活 / 工作），顶上筛了一类时别的淡下去（位置照留）。
 import React, { useState } from 'react';
 import { Linking, Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
 import { agentName } from '../../brand';
@@ -18,7 +19,8 @@ import { TrainingPlanCard, isTrainingPlan } from '../Records';
 import { AddScheduleButton, ClassEditor, ItemEditor } from '../Schedule';
 import { useSheet } from '../Sheet';
 import { Btn, T, showError } from '../ui';
-import { DayGrid, seriesColor, type DayBlock } from '../viz';
+import { DayGrid, seriesColor, withAlpha, type DayBlock } from '../viz';
+import { CAT_SLOT, type CatFilterValue, catColor } from './Cats';
 import { BlockHeader, hhmm, toMin } from './parts';
 
 /** 这一条是哪个 Agent 排的（课表、邮件、你自己加的、主对话加的都不算）。 */
@@ -35,11 +37,18 @@ function useTint() {
   };
 }
 
-export function ScheduleBlock({ events, allDay, day, today, now, onChanged, onOpen: open }: {
+export function ScheduleBlock({ events, allDay, day, today, now, onChanged, onOpen: open, cats = false, filter = 'all' }: {
   events: DayEvent[]; allDay: DayEvent[]; day: string; today: string; now: number | null; onChanged: () => void; onOpen: (e: DayEvent) => void;
+  cats?: boolean; filter?: CatFilterValue;
 }) {
   const t = useTheme();
-  const tint = useTint();
+  const agentTintOf = useTint();
+  const tint = (e: DayEvent) => {
+    if (!cats || !e.category) return agentTintOf(e);
+    const fg = catColor(t, e.category);
+    return { soft: withAlpha(fg, t.mode === 'dark' ? 0.18 : 0.12), fg };
+  };
+  const dim = (e: DayEvent) => cats && filter !== 'all' && e.category !== filter;
   const past = day < today;
   const n = events.length + allDay.length;
   const add = <AddScheduleButton day={day} past={past} onChanged={onChanged} />;
@@ -47,9 +56,9 @@ export function ScheduleBlock({ events, allDay, day, today, now, onChanged, onOp
     // 没有安排：不画空卡，只留小标题和「添加」（过去的日子连小标题也不留）
     return past ? null : <BlockHeader title={L('日程 · 无安排', 'Schedule · Nothing yet')} right={add} />;
   }
-  // 时间格（素材库 DayGrid）：一律日程色（月历里「日程」也是这个色）；过去的按实际时间放，第二行写实际时间和原定
+  // 时间格（素材库 DayGrid）：一律日程色（月历里「日程」也是这个色），开着类别时按类别；过去的按实际时间放，第二行写实际时间和原定
   const blocks: DayBlock[] = events.filter((e) => toMin(e.slotStart) != null).map((e) => ({
-    key: e.id, title: e.title, start: e.slotStart, end: e.slotEnd, slot: 0,
+    key: e.id, title: e.title, start: e.slotStart, end: e.slotEnd, slot: cats && e.category ? CAT_SLOT[e.category] : 0, dim: dim(e),
     sub: [e.moved ? span(e.actualStart, e.actualEnd) : span(e.start, e.end), e.moved ? L(`原定 ${e.start}`, `planned ${e.start}`) : '', ...e.tags,
       skipped(e) ? L('已跳过', 'Skipped') : ''].filter(Boolean).join(' · '),
   }));
@@ -63,7 +72,7 @@ export function ScheduleBlock({ events, allDay, day, today, now, onChanged, onOp
       <BlockHeader title={L(`日程 · ${n}`, `Schedule · ${n}`)} right={add} />
       <View style={[styles.card, { backgroundColor: t.surface }]}>
         {allDay.map((e) => (
-          <Pressable key={e.id} onPress={() => open(e)} accessibilityRole="button" style={({ pressed }) => [styles.allDay, { backgroundColor: tint(e).soft, opacity: (skipped(e) ? 0.55 : 1) * (pressed ? 0.75 : 1) }]}>
+          <Pressable key={e.id} onPress={() => open(e)} accessibilityRole="button" style={({ pressed }) => [styles.allDay, { backgroundColor: tint(e).soft, opacity: (skipped(e) ? 0.55 : 1) * (dim(e) ? 0.3 : 1) * (pressed ? 0.75 : 1) }]}>
             <View style={[styles.bar, { backgroundColor: tint(e).fg }]} />
             <Text style={[styles.allDayText, { color: t.ink }, skipped(e) && { textDecorationLine: 'line-through' }]} numberOfLines={1}>{e.title}</Text>
             <Text style={[styles.allDayTag, { color: t.ink2 }]}>{[L('全天', 'All day'), ...e.tags].join(' · ')}</Text>

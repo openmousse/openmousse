@@ -56,15 +56,16 @@ export function ProgressBar({ value, target, height = 8, color, track, label, st
 
 export interface SegmentItem { label: string; done: number; total: number; text?: string }
 
-/** 一排格子：做了的上色，没做的是轨道色，格子之间留 2px。total 太大（> 24）时改画进度条，格子会细得看不清。 */
-export function Segments({ done, total, height = 8, color, label }: { done: number; total: number; height?: number; color?: string; label?: string }) {
+/** 一排格子：做了的上色，没做的是轨道色，格子之间留 2px。total 太大（> 24）时改画进度条，格子会细得看不清。
+ *  cells：每一格做没做（不一定从头连着做，比如主线第 3 步先做完了）；不给就前 done 格上色。 */
+export function Segments({ done, total, height = 8, color, label, cells }: { done: number; total: number; height?: number; color?: string; label?: string; cells?: boolean[] }) {
   const t = useTheme();
   const c = color ?? seriesColor(t, 0);
   if (total > 24) return <ProgressBar value={done} target={total} height={height} color={c} label={label} />;
   return (
     <View style={{ flexDirection: 'row', gap: vizMark.gap }} accessible={!!label} accessibilityLabel={label}>
       {Array.from({ length: Math.max(0, total) }, (_, i) => (
-        <View key={i} style={{ flex: 1, height, borderRadius: 2, backgroundColor: i < done ? c : t.track }} />
+        <View key={i} style={{ flex: 1, height, borderRadius: 2, backgroundColor: (cells ? cells[i] : i < done) ? c : t.track }} />
       ))}
     </View>
   );

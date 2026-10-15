@@ -251,10 +251,10 @@ function Detail({ e }: { e: ScheduleEntry }) {
 
 // —— 要记得的 ————————————————————————————————————————————————————————
 
-const FOLDED: RememberGroup[] = ['later', 'nodate', 'news'];
+const FOLDED: RememberGroup[] = ['later', 'nodate', 'stale', 'news'];
 const groupName = (g: RememberGroup) => ({
   security: L('可疑安全提醒', 'Security alerts'), overdue: L('已过期', 'Overdue'), tomorrow: L('明天', 'Tomorrow'), week: L('一周内', 'This week'),
-  later: L('一周后', 'Later'), nodate: L('未定日期', 'No date yet'), news: L('邮件动态', 'Email updates'),
+  later: L('一周后', 'Later'), nodate: L('未定日期', 'No date yet'), stale: L('过期没处理', 'Overdue for over a week'), news: L('邮件动态', 'Email updates'),
 })[g];
 
 /** 一行的时间：组名已经是「明天」就只写几点；截止写「截止」。 */
@@ -289,7 +289,7 @@ export function RememberCard({ items, errors, today }: { items: ScheduleEntry[];
       showError(L('标记失败', "Couldn't tick off"), err);
     }
   };
-  const groups: RememberGroup[] = ['security', 'overdue', 'tomorrow', 'week', 'later', 'nodate', 'news'];
+  const groups: RememberGroup[] = ['security', 'overdue', 'tomorrow', 'week', 'later', 'nodate', 'stale', 'news'];
   const by = (g: RememberGroup) => items.filter((e) => e.group === g);
   const canvasErr = errors.canvas;
   if (!items.length && !canvasErr) {

@@ -633,7 +633,9 @@ export interface SearchHit { kind: 'message' | 'card' | 'journal' | 'friend'; id
   friend?: { id: string; name: string } }
 
 /** 「要记得的」的分组：可疑的安全提醒置顶 / 过了的 / 明天 / 一周内 / 以后 / 没定日子的要办 / 邮件动态（没日子的钱和状态）。 */
-export type RememberGroup = 'security' | 'overdue' | 'tomorrow' | 'week' | 'later' | 'nodate' | 'news';
+export type RememberGroup = 'security' | 'overdue' | 'tomorrow' | 'week' | 'later' | 'nodate' | 'stale' | 'news';
+/** 待办的类别（server/todocat.py）：学习 / 生活 / 工作。工程不在这里（「今天」页的工程看板）。 */
+export type TodoCat = 'study' | 'life' | 'work';
 
 /**
  * 日程和「要记得的」里的一行（GET /api/schedule、/api/remember）。
@@ -686,6 +688,8 @@ export interface ScheduleEntry {
   project?: { id: string; title: string };
   /** 课程的截止（课程网站的作业、学习台课程档案里的）：学习台里是哪门课、哪一节，点「去学习台」直接到那儿 */
   study?: { course: string | null; session: string | null };
+  /** 类别（服务器开着 today.categories 时 app 才按它上色） */
+  category?: TodoCat | null;
 }
 
 /** iPhone 日历订阅：链接路径（接在服务器地址后面）和四类开关。 */

@@ -2,6 +2,8 @@
 // 日 = 三块，各按一条标准，一件事只在一块里：待处理（要动手）、日程（要到场）、报告（要阅读）；没有内容的块整块不显示。
 // 周 = 按天列表，月 = 日历。数据由服务器分好组（server/today.py），app 只画。定时任务、后台任务不在这一页。
 // 服务器没有这套（supports('today') 为 false）时用老页面 TodayLegacy。
+// 2026-10-15 类别（服务器开着 today.categories 时）：日视图顶上一排筛选（全部 / 学习 / 生活 / 工作），待处理和日程按类别上色；
+// 报告里多一张工程看板卡（只读，点进 EngBoard）。
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { AppState, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { useIsFocused, useRoute } from '@react-navigation/native';
@@ -15,6 +17,7 @@ import { EventDetail, ScheduleBlock } from '../components/today/DaySchedule';
 import { InboxLive, PendingBlock } from '../components/today/Pending';
 import { MonthView, WeekView } from '../components/today/Range';
 import { ReportsBlock, useOpenReport } from '../components/today/Reports';
+import { CATS, CatFilter, type CatFilterValue } from '../components/today/Cats';
 import { addDays, dayTitle, daySub, toMin } from '../components/today/parts';
 import { L } from '../i18n';
 import { todayIso, useStore } from '../store';
@@ -51,6 +54,7 @@ function TodayPage() {
   const openReport = useOpenReport();
   const { connected, booting, inbox, feed, schedule, remember, reload, refreshLive } = useStore();
   const [mode, setMode] = useState<Mode>('day');
+  const [filter, setFilter] = useState<CatFilterValue>('all');  // 顶上选的类别（开着类别时）
   const [picked, setPicked] = useState<string | null>(null);  // 翻到的日子；null = 今天
   const [bump, setBump] = useState(0);
   const [visit, setVisit] = useState(0);
@@ -112,8 +116,12 @@ function TodayPage() {
   const isDay = mode === 'day';
   const pickDay = (iso: string) => { setDay(iso); setMode('day'); scroller.current?.scrollTo({ y: 0, animated: false }); };
   const refresh = () => (connected ? reload('inbox', 'feed', 'schedule', 'remember', 'wake').then(() => setBump((n) => n + 1)) : refreshLive());
-  const empty = !!data && !data.pending.items.length && !data.pending.nodate.length && !data.schedule.items.length && !data.schedule.allDay.length && !data.reports.length;
+  const empty = !!data && !data.pending.items.length && !data.pending.nodate.length && !data.pending.stale.length && !data.schedule.items.length && !data.schedule.allDay.length && !data.reports.length;
   const issues = data ? Object.values(data.errors).filter(Boolean) : [];
+  // 类别：服务器开着才有。筛选的条数 = 待处理（含无日期）里每类几件；「全部」连等你点头的一起数
+  const cats = !!data?.categories.on;
+  const counted = data ? [...data.pending.items, ...data.pending.nodate] : [];
+  const counts = { all: counted.length, ...Object.fromEntries(CATS.map((c) => [c, counted.filter((r) => r.category === c).length])) } as Record<CatFilterValue, number>;
   return (
     <Screen>
       <ScrollView ref={scroller} contentContainerStyle={{ paddingBottom: space.xxl }} refreshControl={<PullRefresh onRefresh={refresh} />}>
@@ -127,6 +135,7 @@ function TodayPage() {
         ) : undefined} />
         <View style={{ paddingHorizontal: space.lg }}>
           <ModeSwitch value={mode} onChange={setMode} />
+          {cats && isDay && data ? <CatFilter value={filter} onChange={setFilter} counts={counts} /> : null}
           {isDay && day !== today ? (
             <Pressable onPress={() => setPicked(null)} accessibilityRole="button" hitSlop={6} style={styles.back}>
               <T v="callout" color={t.gold} style={{ fontWeight: '600' }}>{L('返回今天', 'Back to today')}</T>
@@ -136,8 +145,8 @@ function TodayPage() {
             <Card style={{ marginTop: space.lg }}><T v="callout" color={t.ink2}>{booting
               ? L('正在连接服务器…', 'Connecting to the server…')
               : L('未连接服务器。请检查「设置 → 我的 claw」，然后下拉刷新。', 'Not connected to the server. Check Settings → My claws, then pull down to refresh.')}</T></Card>
-          ) : mode === 'week' ? <WeekView anchor={day} today={today} bump={bump} onAnchor={setDay} onPickDay={pickDay} />
-            : mode === 'month' ? <MonthView anchor={day} today={today} bump={bump} onAnchor={setDay} onPickDay={pickDay} />
+          ) : mode === 'week' ? <WeekView anchor={day} today={today} bump={bump} onAnchor={setDay} onPickDay={pickDay} cats={cats} />
+            : mode === 'month' ? <MonthView anchor={day} today={today} bump={bump} onAnchor={setDay} onPickDay={pickDay} cats={cats} />
               : !data ? (
                 error ? (
                   <Card style={{ marginTop: space.lg, gap: space.md }}>
@@ -148,8 +157,10 @@ function TodayPage() {
               ) : (
                 <>
                   {day === today ? <WakeCard /> : null}
-                  <PendingBlock key={`p:${day}:${visit}`} rows={data.pending.items} nodate={data.pending.nodate} day={data.day} today={data.today} />
-                  <ScheduleBlock events={data.schedule.items} allDay={data.schedule.allDay} day={data.day} today={data.today} now={nowMin} onChanged={changed} onOpen={openEvent} />
+                  <PendingBlock key={`p:${day}:${visit}`} rows={data.pending.items} nodate={data.pending.nodate} stale={data.pending.stale} day={data.day} today={data.today}
+                    cats={cats} filter={filter} onChanged={changed} />
+                  <ScheduleBlock events={data.schedule.items} allDay={data.schedule.allDay} day={data.day} today={data.today} now={nowMin} onChanged={changed} onOpen={openEvent}
+                    cats={cats} filter={filter} />
                   <ReportsBlock key={`r:${day}:${visit}`} reports={data.reports} />
                   {empty ? <T v="callout" color={t.ink3} style={styles.note}>{day === today ? L('今日暂无待处理事项、日程和报告。', 'Nothing to do, attend or read today.') : L('当日暂无事项。', 'Nothing on this day.')}</T> : null}
                   {error ? <T v="caption" color={t.bad} style={styles.note}>{L(`未能刷新：${error}`, `Couldn't refresh: ${error}`)}</T> : null}
