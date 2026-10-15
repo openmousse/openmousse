@@ -8,11 +8,14 @@
 // - 桥：页面经 window.ReactNativeWebView.postMessage 发 JSON 字符串（服务器的 bridge_js 认得这个盒子），
 //   结果用 injectJavaScript 派一个 message 事件回去，形状和网页版一样。摄像头、麦克风、弹窗由桥在页面脚本之前拿掉。
 import React, { useMemo, useRef } from 'react';
-import { StyleSheet } from 'react-native';
+import { Platform, StyleSheet } from 'react-native';
 import { WebView, type WebViewMessageEvent, type WebViewNavigation } from 'react-native-webview';
 import { bridgeMsg, bridgeResult, type PageHostProps, type PageStop } from './pageBridge';
 
 const HERE = /^about:(blank|srcdoc)(#|$)/;
+// 安卓在同一份文档里跳锚点、history.back 时报的地址是加载用的 data:text/html…（不带 #、也不报 navigationType；10/14 模拟器上量的）。
+// 真要离开的跳转会先经过 onShouldStart 被拦下，走不到这里，所以这两种在安卓上不算新文档
+const SAME_DOC_ANDROID = /^(about:blank|data:text\/html)/;
 const ANY = ['*'];           // originWhitelist：全部交给 onShouldStart 判断（见上）
 const MAX_PER_SEC = 40;      // 桥一秒内最多收这么多条（正常页面远到不了）
 const MAX_MSG = 32 * 1024;   // 一条消息的上限：要数据、放一句话、报错都很短
@@ -45,6 +48,7 @@ export function PageHost({ html, title, onBridge, onStop }: PageHostProps) {
     const { url, navigationType } = e.nativeEvent;
     // 同一份文档里跳锚点、前进后退也会报开始加载（iOS 在放行时报，安卓每改一次历史记录报一次）：不算新文档
     if (loads.current > 0 && navigationType !== 'reload' && (url.includes('#') || navigationType === 'backforward')) return;
+    if (loads.current > 0 && Platform.OS === 'android' && SAME_DOC_ANDROID.test(url)) return;
     loads.current += 1;
     if (loads.current > 1) stop('left');
   };
