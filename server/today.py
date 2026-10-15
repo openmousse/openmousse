@@ -209,7 +209,8 @@ def build_pending(d0: date, inbox_items: list[dict], cats: bool = False) -> tupl
                 dated.append(e)
     sec.sort(key=lambda e: str(e.get("firstSeen") or ""))
     dated.sort(key=lambda e: (e["date"], not e["urgent"], e["start"] or "99:99", e["kind"] != "deadline", e["title"]))
-    nodate.sort(key=lambda e: (not e["urgent"], str(e.get("firstSeen") or ""), e["title"]))
+    cat_rank = {c: i for i, c in enumerate(todocat.CATS)} if cats else {}
+    nodate.sort(key=lambda e: (not e["urgent"], cat_rank.get(e.get("category"), 0), str(e.get("firstSeen") or ""), e["title"]))
     stale.sort(key=lambda e: (e["date"], e["title"]), reverse=True)  # 最近过期的在前
     rows = [inbox_row(i) for i in inbox_items]
     rows += [pending_row(e, d0, status, cats=cats) for e in sec + dated]

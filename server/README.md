@@ -212,6 +212,25 @@ python3 schedule_ctl.py undo 42
 | `GET /api/today/range?from=&days=` | Week / month views (1–42 days): `{date, type: event / deadline / todo, title, sub, start, end, allDay, done, skip, …}` per entry, events merged the same way; no actual times |
 | `POST /api/today/snooze` | `{ref, until}` postpones to `until` (YYYY-MM-DD); `until: null` cancels |
 
+### Categories and to-dos (2026-10-15, optional)
+
+Turn it on with `"today": {"categories": true}` in `server.json` (without it Today works as above; the feature `today.categories` in `/api/health` only says the server knows it):
+
+- **Three categories**: every to-do, deadline and schedule entry has a `category` (`study` / `life` / `work`, see [`todocat.py`](todocat.py)); the app colours circles, schedule blocks and week/month marks by it and can filter by one. Who decides: your own change in the app (`schedule_marks.category`) > what the writer gave (`schedule_items.category`, a mail item's `category`) > the source (timetable and coursework → study; school applications → study, other applications → work; an Agent's items follow its dashboard: fitness, diet, sleep → life) > the wording (bills, returns, appointments, travel visas → life; jobs, interviews, work visas → work; coursework, exams, recommendation letters → study) > life.
+- **Undated to-dos**: with `schedule_items.kind = todo` the `date` may be empty; they fold into "No date" at the end of To do (`schedule_ctl.py add --todo --category life --title …`).
+- **Overdue items stay**: they no longer disappear after 3 days. 1–7 days overdue stay in To do (`chip` "N days overdue", `overdueDays`), older ones come in `pending.stale` (the app folds them into "Overdue, not handled · N") until you tick them done or dismiss them. Mail items are dropped by their source after the due date; a snapshot (`todo_keep`) keeps them listed, with `kept: true`.
+- **Dismiss**: `POST /api/remember/done {ref, how: "dismissed"}`, recorded apart from done (`schedule_marks.resolved`); anything reading `done_at` still treats it as handled. Change a category: `POST /api/remember/category {ref, category}` (`null` = back to automatic). Both can be undone.
+- `/api/today` adds `categories: {on, list}` and `pending.stale`, and each row `category` / `categoryAuto` / `categorySet` / `overdueDays` / `kept` / `canDismiss`; `/api/today/range` adds `category`; `/api/remember` has one more `group`, `stale`, and `schedule_ctl.py remember --by-category` prints the three categories apart.
+
+### Engineering board (2026-10-15, optional)
+
+`"today": {"engineering": {"todos": "path to the handoff file", "archive": "glob of archived files (optional)"}}` syncs Claude Code's handoff file (markdown: each `## ` section is a line of work, each `- [ ]` / `- [x]` a task) into `eng_lines` / `eng_items`, read only ([`engboard.py`](engboard.py)), re-reading only when the file changes (no timer). Today's reports get an engineering card (`type: eng`: done this week / not started / waiting on you, and the main line), which opens the board page. Unticked tasks that need you (waiting on you, you decide, sign-off …) count as waiting; ones marked "→ moved to …" or dropped don't count; tasks done in a section that was later moved out still count.
+
+| Route | What it does |
+|---|---|
+| `GET /api/today/eng` | `{weekDone, todo, wait, main, mainCells, mainNote, lines, older, columns}`: the main line's steps, each line (done / total, status doing / waiting / queued / done) and three columns (not started / waiting / done this week) |
+| `GET /api/today/eng/line/{id}` | One line's tasks: not started, waiting, done |
+
 ## Projects
 
 Things with an end: they run for days or weeks and have a goal and deadlines (a group assignment, a job-hunt sprint). A project is a chat thread (the old "side chat", id `sc-…`) with a **project card** on top: goal, deadlines, next steps, decisions, progress, the tasks started inside it, and a summary once it's archived. See [`projects.py`](projects.py).

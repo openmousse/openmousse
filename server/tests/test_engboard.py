@@ -59,14 +59,14 @@ SAMPLE = f"""# 待办事项
 def board_env(tmp_path, server_json):
     todos = tmp_path / "todos.md"
     todos.write_text(SAMPLE, encoding="utf8")
-    server_json({"timezone": str(TZ), "today": {"engineering": {"todos": str(todos)}}})
+    server_json({"timezone": str(TZ), "user_name": "Leo", "today": {"engineering": {"todos": str(todos)}}})
     with _lock, eb.edb() as conn:
         conn.executescript("DELETE FROM eng_lines; DELETE FROM eng_items; DELETE FROM eng_sync;")
     return todos
 
 
 def test_parse_lines_and_states():
-    lines = eb.parse(SAMPLE, TODAY)
+    lines = eb.parse(SAMPLE, TODAY, names=("Leo",))
     names = [x.name for x in lines]
     assert names == ["主线", "待办合进 Grava「今天」", "设计系统"]
     main = lines[0]
@@ -80,6 +80,15 @@ def test_parse_lines_and_states():
     assert len(todo.items) == 7  # 代码块里的不算
 
 
+def test_moved_notes():
+    assert eb.item_state(False, "SOP：等 Jay 改完 → 已搬到 Grava（item:ev-1），以后状态看 Grava") == "moved"
+    assert eb.item_state(False, "杰哥推荐信 → 剩下的已搬到 Grava（item:ev-2）") == "moved"
+    assert eb.item_state(False, "QDA 小组展示 → 已在 Grava（Canvas：QDA Group assignment）") == "moved"
+    assert eb.item_state(False, "批阅完出下一版 CV → 不搬：还没投的几家在 Grava 求职表里") == "moved"
+    # 括号里说的是一半搬走了，这一条还开着
+    assert eb.item_state(False, "Notion 没接（体脂这一半 → 已搬到 Grava（item:ev-3）；Notion 那一半是工程，留在这里）") == "todo"
+
+
 def test_line_names():
     assert eb.line_name("开发设备分工：Mac、服务器、GitHub（10/15 · CC）") == "开发设备分工"
     assert eb.line_name("OpenMousse：第一个朋友试用后的四项优化（10/5）") == "OpenMousse：第一个朋友试用后的四项优化"
@@ -88,7 +97,15 @@ def test_line_names():
     assert eb.line_name("2026-09-26 新增：学习台 + Canvas（Claude Code）") == "学习台 + Canvas"
 
 
-def test_short_title():
+def test_owner_name_comes_from_config():
+    # 没设 user_name：只认「等你」「拍板 ·」这类，不认名字
+    assert eb.item_state(False, "等 Leo 定：A / B", names=()) == "todo"
+    assert eb.item_state(False, "等你定：A / B", names=()) == "wait"
+    assert eb.item_state(False, "等 Ada 定：A / B", names=("Ada",)) == "wait"
+
+
+def test_short_title(server_json):
+    server_json({"user_name": "Leo"})
     assert eb.short_title("1 第 0 步 · 原型 + 定合同：分支 `engine-builtin`，`server/engine/`（循环、会话树、插话 / 中止）+ Anthropic 和 OpenAI 兼容两家接口；名片 Agent") \
         == "第 0 步 · 原型 + 定合同"
     assert eb.short_title("拍板 · 正式 CLA、律师看商业授权、注册商标 （出处：下一个 session（9/28 16:35））") == "正式 CLA、律师看商业授权、注册商标"

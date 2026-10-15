@@ -211,6 +211,25 @@ python3 schedule_ctl.py undo 42
 | `GET /api/today/range?from=&days=` | 周 / 月视图（1–42 天）：每条 `{date, type: event / deadline / todo, title, sub, start, end, allDay, done, skip, …}`，日程同样去重；不补实际时间 |
 | `POST /api/today/snooze` | `{ref, until}` 推迟到 `until`（YYYY-MM-DD）；`until: null` = 取消 |
 
+### 类别和待办（2026-10-15，可选）
+
+`server.json` 写 `"today": {"categories": true}` 打开（不写 = 上面的老样子，`/api/health` 的 features 带 `today.categories` 只说服务器认得它）：
+
+- **三类**：每条待办、截止、日程都有一类 `category`（`study` 学习 / `life` 生活 / `work` 工作，见 [`todocat.py`](todocat.py)），app 给圆圈、色条、周和月的小点上色，顶上能按一类筛。谁说了算：你在 app 里改的（`schedule_marks.category`）> 写入时给的（`schedule_items.category`、邮件条目的 `category`）> 来源（课表、课程作业 → 学习；申请学校 → 学习，别的求职 / 申请 → 工作；Agent 排的按它的看板：健身、饮食、睡眠 → 生活）> 字面（账单、退货、预约、旅行签证 → 生活；求职、面试、求职签证 → 工作；作业、考试、推荐信 → 学习）> 生活。
+- **没日子的待办**：`schedule_items.kind = todo` 时 `date` 可以空，收在待处理末尾的「无日期」（`schedule_ctl.py add --todo --category life --title …`）。
+- **过期的留着**：不再 3 天后消失。过期 1–7 天的在待处理里（`chip`「已逾期 N 天」、`overdueDays`），更早的在 `pending.stale`（app 收成一行「过期没处理 · N」），直到点了做完或「不用管」。邮件条目到期后来源会删掉，这里记一份快照（`todo_keep`）接着列，`kept: true`。
+- **不用管**：`POST /api/remember/done {ref, how: "dismissed"}`，和做完分开记（`schedule_marks.resolved`），别处读 `done_at` 的照样当它处理过了。改类别：`POST /api/remember/category {ref, category}`（`null` = 回到自动分），都能撤销。
+- `/api/today` 多给 `categories: {on, list}` 和 `pending.stale`，每行多 `category` / `categoryAuto` / `categorySet` / `overdueDays` / `kept` / `canDismiss`；`/api/today/range` 每条多 `category`；`/api/remember` 的 `group` 多一种 `stale`，`schedule_ctl.py remember --by-category` 按三类分开打印。
+
+### 工程看板（2026-10-15，可选）
+
+`"today": {"engineering": {"todos": "交接本的路径", "archive": "归档文件的 glob（可选）"}}`：把 Claude Code 的交接本（一份 markdown，`## ` 一节 = 一条线，`- [ ]` / `- [x]` = 一件事）只读同步进 `eng_lines` / `eng_items`（[`engboard.py`](engboard.py)），文件改了才重读，不加定时器。今天的报告里多一张工程看板卡（`type: eng`：这周做完 / 没做 / 等你三个数、主线几步），点进看板页。没打勾、写着要你定 / 要你动手的（等 Leo、Leo 定、拍板 ·……）算「等你」，写着「→ 已搬到…」「不做了」的不算；整节挪走以后做完的照样算。
+
+| 接口 | 做什么 |
+|---|---|
+| `GET /api/today/eng` | `{weekDone, todo, wait, main, mainCells, mainNote, lines, older, columns}`：主线分格、各条线（做完 / 总数、状态 在做 / 等你 / 排队 / 做完）、三列（没做 / 等你 / 这周做完） |
+| `GET /api/today/eng/line/{id}` | 一条线里没做的、等你的、做完的 |
+
 ## 项目
 
 有始有终的事：持续几天到几周、有目标和截止（小组作业、求职冲刺）。一个项目 = 一个对话线程（以前的「独立空间」，id `sc-…`）+ 顶上一张**项目卡**：目标、截止、下一步、已定的、进度、在项目里派的任务，归档后加一份结论。见 [`projects.py`](projects.py)。

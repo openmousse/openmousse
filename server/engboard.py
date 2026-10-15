@@ -3,7 +3,8 @@
 数据从 Claude Code 的交接本 todos.md 单向同步过来（只读：拍板、动手、改状态都在电脑上的 Claude Code 里），
 记进 grava.db 的 eng_lines / eng_items：整节挪进 archive 以后，记过的「做完了」照样看得到。
 - 一条线 = todos.md 的一节（## 标题）。名字取标题里括号和冒号前面那段；主线（标题以「主线」开头）按节里的粗体小标题分格。
-- 一条事 = 一个勾选框（- [ ] / - [x]）。状态：[x] = 做完；没打勾、写着要 Leo（等 Leo、Leo 定 / 选 / 看、拍板、你做……）的 = 等你；
+- 一条事 = 一个勾选框（- [ ] / - [x]）。状态：[x] = 做完；没打勾、写着要你的（你 = server.json 的 user_name：等你、<名字> 定 / 选 / 看、
+  拍板 ·、你做 ·……）= 等你；
   其余没打勾 = 没做；写着「→ 搬到…」的（挪到别处了）和「不做了」的不算。
 - 线的状态：节里写了「状态：在做 / 等你 / 排队 / 做完」就按它；否则全做完 = 做完，写着「从这里开始」= 在做，有等你的 = 等你，其余 = 排队。
 - 做完的日子：第一次看到它打了勾时，条目里写的最近的日子（「10/15 核对：…」），没写就用文件的修改日子；
@@ -20,6 +21,7 @@ GET /api/today/eng/line/{id}   点开一条线：没做的、等你的、做完�
 from __future__ import annotations
 
 import difflib
+import functools
 import glob
 import hashlib
 import re
@@ -47,13 +49,15 @@ BOLD_HEAD = re.compile(r"^\*\*(.+?)\*\*")
 STATUS_LINE = re.compile(r"^>?\s*\**状态\**\s*[:：]\s*\**(在做|等你|排队|做完|暂停)")
 START_HERE = re.compile(r"(下一个|下个) ?session 从这里开始|在做|进行中")
 START_HERE_BODY = re.compile(r"(下一个|下个) ?session 从这里开始")
-MOVED = re.compile(r"→\s*(已)?(搬|挪|移|并)(到|进)")
+# 「→ 已搬到 Grava（item:…）」「→ 剩下的已搬到…」「→ 已在 Grava」「→ 不搬：…」= 挪到别处或别处已经有了；写在括号里的（「（体脂这一半 → 已搬到…）」）
+# 只说了一半，这一条还算开着
+MOVED = re.compile(r"→[^→（(]{0,8}?(已在|不搬|已?(搬|挪|移|并)(到|进))")
 DROPPED = re.compile(r"不做了|^~~")
-# 「写着要 Leo」：等 Leo / 等你 / Leo 定、选、看、点、拍板、决定、确认、动手的 / 要 Leo / 问 Leo / 拍板 · / 你做 ·（括号里的补充、
-# 「」里引的原话不算；「上线前先问 Leo」这种做事的规矩也不算）
-WAIT = re.compile(r"等\s*(Leo|你)|(要|问|让|请)\s*Leo|Leo\s*(来|自己|亲自)?\s*(定|选|看|点|拍板|决定|确认|真机|手动|手机|登录|装|开|批|同意|"
-                  r"回复|答|填|签|在|用)|^Leo\s*[:：]|^(拍板|你做)\s*·|Leo 的事|只有 Leo")
-PROCEDURE = re.compile(r"(之前|以前|前|先)\s*(用选项)?(问|告诉)\s*Leo")
+# 「写着要你」（名字是 server.json 的 user_name）：等 <名字> / 等你 / <名字> 定、选、看、点、拍板、决定、确认、动手的 / 要 <名字> / 问 <名字> /
+# 拍板 · / 你做 ·。括号里的补充、「」里引的原话不算；「上线前先问 <名字>」这种做事的规矩也不算
+WAIT_TPL = (r"等\s*({who}|你)|(要|问|让|请)\s*({who})|({who})\s*(来|自己|亲自)?\s*(定|选|看|点|拍板|决定|确认|真机|手动|手机|登录|装|开|批|同意|"
+            r"回复|答|填|签|在|用)|^({who})\s*[:：]|^(拍板|你做)\s*·|({who}) 的事|只有 ({who})")
+PROCEDURE_TPL = r"(之前|以前|前|先)\s*(用选项)?(问|告诉)\s*({who})"
 QUOTE = re.compile(r"「[^「」]*」")
 DATE_MD = re.compile(r"(?<![\d/.])(1[0-2]|0?[1-9])/(3[01]|[12]\d|0?[1-9])(?![\d/])")
 DATE_ISO = re.compile(r"(20\d\d)-(1[0-2]|0[1-9])-(3[01]|[12]\d|0[1-9])")
@@ -149,6 +153,19 @@ def days_in(text: str, today: date) -> list[date]:
     return out
 
 
+def owner_names() -> tuple[str, ...]:
+    """交接本里怎么称呼你：server.json 的 user_name（没设就只认「你」）。"""
+    n = str(raw().get("user_name") or "").strip()
+    return (n,) if n else ()
+
+
+@functools.lru_cache(maxsize=8)
+def patterns(names: tuple[str, ...]) -> tuple[re.Pattern, re.Pattern, re.Pattern]:
+    """(写着要你, 做事的规矩, 开头的「<名字>：」)。"""
+    who = "|".join(re.escape(n) for n in names) or r"(?!)"
+    return re.compile(WAIT_TPL.format(who=who)), re.compile(PROCEDURE_TPL.format(who=who)), re.compile(rf"^({who})\s*[:：]\s*")
+
+
 def strip_parens(t: str) -> str:
     while True:
         t2 = PARENS.sub("", t)
@@ -157,21 +174,23 @@ def strip_parens(t: str) -> str:
         t = t2
 
 
-def item_state(checked: bool, text: str) -> str:
+def item_state(checked: bool, text: str, names: tuple[str, ...] | None = None) -> str:
     """「」里引的字不算（「搬完写『→ 已搬到…』」说的是做法，不是它自己搬走了）。"""
     if checked:
         return "done"
     t = QUOTE.sub("", plain(text))
-    if MOVED.search(t):
+    if MOVED.search(strip_parens(t)):
         return "moved"
     if DROPPED.search(text.strip()) or DROPPED.search(t):
         return "dropped"
-    core = PROCEDURE.sub("", strip_parens(t))
-    return "wait" if WAIT.search(core) else "todo"
+    wait, procedure, _ = patterns(owner_names() if names is None else names)
+    core = procedure.sub("", strip_parens(t))
+    return "wait" if wait.search(core) else "todo"
 
 
-def parse(text: str, today: date) -> list[PLine]:
-    """一份 markdown → 各节和里面的勾选框。代码块里的不算；### 小标题和行首的粗体小标题当分格（主线用）。"""
+def parse(text: str, today: date, names: tuple[str, ...] | None = None) -> list[PLine]:
+    """一份 markdown → 各节和里面的勾选框。代码块里的不算；### 小标题和行首的粗体小标题当分格（主线用）。names = 交接本里怎么称呼你。"""
+    names = owner_names() if names is None else names
     lines: list[PLine] = []
     cur: PLine | None = None
     group = ""
@@ -212,7 +231,7 @@ def parse(text: str, today: date) -> list[PLine]:
         c = CHECK.match(raw_line)
         if c:
             body = c.group(3).strip()
-            cur.items.append(PItem(text=body, state=item_state(c.group(2) != " ", body), group=group, pos=n))
+            cur.items.append(PItem(text=body, state=item_state(c.group(2) != " ", body, names), group=group, pos=n))
             n += 1
     return lines
 
@@ -222,7 +241,7 @@ def short_title(text: str) -> str:
     t = strip_parens(URL.sub("", plain(text)))
     t = re.sub(r"^\d{1,2}\s+(?=\S)", "", t.strip())                 # 主线的「1 第 0 步…」
     t = re.sub(r"^(拍板|你做|CC)\s*·\s*", "", t)
-    t = re.sub(r"^Leo\s*[:：]\s*", "", t)
+    t = patterns(owner_names())[2].sub("", t)
     t = re.sub(r"^✅\s*", "", t)
     t = re.split(r"[；;。→]", t, maxsplit=1)[0]
     head, sep, _ = t.partition("：")
@@ -492,7 +511,7 @@ def board(full: bool = True) -> dict:
             if nxt is not None and not note:
                 note = L(f"{main_name(g)}下一步：{short_title(nxt['text'])}", f"Next in {main_name(g)}: {short_title(nxt['text'])}")
     summary = {"weekDone": len(done_week), "todo": len(todo), "wait": len(wait), "main": [{k: m[k] for k in ("name", "done", "total")} for m in main],
-               "syncedAt": synced}
+               "syncedAt": synced, "syncedLabel": synced_label(synced, today)}
     if not full:
         return summary
     recent_from = (today - timedelta(days=RECENT_DAYS)).isoformat()
@@ -528,6 +547,17 @@ def board(full: bool = True) -> dict:
                         column("done", L("这周做完", "Done this week"), 0, done_week)]}
 
 
+def synced_label(synced: str | None, today: date) -> str:
+    """交接本最后一次改动后同步的时间：今天的写几点，更早的写日子。"""
+    try:
+        at = datetime.fromisoformat(synced).astimezone(TZ) if synced else None
+    except ValueError:
+        return ""
+    if at is None:
+        return ""
+    return at.strftime("%H:%M") if at.date() == today else f"{at.month}/{at.day}"
+
+
 def report_card() -> tuple[dict | None, str | None]:
     """「今天」报告里的工程看板卡（没配 = (None, None)）。"""
     if not cfg():
@@ -539,12 +569,7 @@ def report_card() -> tuple[dict | None, str | None]:
         s = board(full=False)
     except (OSError, sqlite3.Error, ValueError) as e:
         return None, L(f"工程看板读不出来：{e}", f"Couldn't read the engineering board: {e}")[:200]
-    synced = s.get("syncedAt") or ""
-    try:
-        time = datetime.fromisoformat(synced).astimezone(TZ).strftime("%H:%M") if synced else ""
-    except ValueError:
-        time = ""
-    return {"type": "eng", "id": "eng-board", "kind": "eng_board", "title": L("工程看板", "Engineering"), "time": time,
+    return {"type": "eng", "id": "eng-board", "kind": "eng_board", "title": L("工程看板", "Engineering"), "time": s["syncedLabel"],
             "weekDone": s["weekDone"], "todo": s["todo"], "wait": s["wait"], "main": s["main"]}, None
 
 

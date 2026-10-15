@@ -56,6 +56,8 @@ export interface EngColumn { key: string; id: string; label: string; count: numb
 /** 工程看板页（GET /api/today/eng）。 */
 export interface EngBoard {
   weekDone: number; todo: number; wait: number; main: EngMain[]; mainCells: EngMain[]; mainNote: string; syncedAt: string | null;
+  /** 交接本最后一次改动后同步的时间（今天的写几点，更早的写日子） */
+  syncedLabel: string;
   lines: EngLine[]; older: EngLine[]; columns: EngColumn[];
 }
 
@@ -139,7 +141,7 @@ export async function loadEng(): Promise<EngBoard> {
   const j = await request<Partial<EngBoard>>('/api/today/eng');
   return {
     weekDone: Number(j.weekDone ?? 0), todo: Number(j.todo ?? 0), wait: Number(j.wait ?? 0), main: arr<EngMain>(j.main),
-    mainCells: arr<EngMain>(j.mainCells), mainNote: String(j.mainNote ?? ''), syncedAt: j.syncedAt ?? null,
+    mainCells: arr<EngMain>(j.mainCells), mainNote: String(j.mainNote ?? ''), syncedAt: j.syncedAt ?? null, syncedLabel: String(j.syncedLabel ?? ''),
     lines: arr<EngLine>(j.lines), older: arr<EngLine>(j.older), columns: arr<EngColumn>(j.columns),
   };
 }

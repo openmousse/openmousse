@@ -35,7 +35,7 @@ export function EngBoardScreen() {
     const c = data?.columns.flatMap((x) => x.cards).find((x) => x.id === card.key);
     if (c) sheet.open({ title: c.title, content: () => <CardText c={c} /> });
   };
-  const synced = data?.syncedAt ? data.syncedAt.slice(11, 16) : '';
+  const synced = data?.syncedLabel ?? '';
   return (
     <Screen>
       <View style={styles.header}>
