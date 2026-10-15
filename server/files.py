@@ -42,6 +42,11 @@ PREVIEW_BYTES = 8 * 1024 * 1024
 WEB_IMAGES = {"image/jpeg", "image/png", "image/gif", "image/webp"}
 # ?inline=1（「用浏览器打开」）只对浏览器自己能安全显示的类型生效；别的照旧下载，上传时报的类型不可信（text/html 不能在这个源上跑）
 INLINE_TYPES = WEB_IMAGES | {"application/pdf", "text/plain"}
+# 能跑脚本的类型：网页、SVG、XML（还有所有 *+xml）。直接打开时脚本在 app 的源上跑，读得到网页版存在 localStorage 的令牌、调得了 /api。
+# 不可信的文件（上传的、Agent 写的、课程平台和网页来的）发给浏览器时给它们加 CSP sandbox：不带 allow-scripts = 不透明源 + 不跑脚本，
+# 直接打开地址也一样；<img> 嵌的 SVG 照常显示（img 里本来就不跑脚本）。见 untrusted_headers
+ACTIVE_TYPES = {"text/html", "application/xhtml+xml", "image/svg+xml", "text/xml", "application/xml", "text/xsl"}
+SANDBOX_CSP = "sandbox; default-src 'none'; img-src 'self' data:; style-src 'unsafe-inline'; font-src 'self' data:; media-src 'self'"
 IMMUTABLE = {"Cache-Control": "private, max-age=604800"}   # 缩略图、大图：附件不会变（换了文件就是新 id），让手机缓存一周
 TEXT_CHARS_PER_FILE = 60_000
 TEXT_CHARS_TOTAL = 150_000
@@ -346,12 +351,21 @@ def get_file(fid: str, thumb: int = 0, preview: int = 0, inline: int = 0):
     return original(path, r["mime"], r["name"], inline)
 
 
+def untrusted_headers(media: str) -> dict[str, str]:
+    """不可信的文件原样发给浏览器时带的头：一律 nosniff（不许浏览器猜成网页），能跑脚本的类型再加 CSP sandbox（见 ACTIVE_TYPES）。"""
+    base = media.split(";")[0].strip().lower()
+    if base in ACTIVE_TYPES or base.endswith("+xml"):
+        return {"X-Content-Type-Options": "nosniff", "Content-Security-Policy": SANDBOX_CSP}
+    return {"X-Content-Type-Options": "nosniff"}
+
+
 def original(path: Path, mime: str | None, name: str, inline: int = 0) -> FileResponse:
-    """把原件发出去。inline=1：浏览器里直接显示（只限 INLINE_TYPES 和音视频），别的一律下载。Zen 的收藏、想法的附件也用它。"""
+    """把原件发出去。inline=1：浏览器里直接显示（只限 INLINE_TYPES 和音视频），别的一律下载。Zen 的收藏、想法的附件也用它。
+    下载的网页 / SVG 也带 CSP sandbox：万一哪个浏览器不理 attachment 当场显示，脚本也不在这个源上跑。"""
     media = (mime or "application/octet-stream").lower()
     show = bool(inline) and (media in INLINE_TYPES or media.startswith(("audio/", "video/")))
     return FileResponse(str(path), media_type=media, filename=name, content_disposition_type="inline" if show else "attachment",
-                        headers={"X-Content-Type-Options": "nosniff"})
+                        headers=untrusted_headers(media))
 
 
 # —— 给模型拼消息 ——

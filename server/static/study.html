@@ -669,6 +669,9 @@ async function api(path, opts = {}) {
 }
 const fileSrc = (path, where) => '/api/study/file?' + qs({ course: S.course, path, where });
 const blobs = new Map();
+// blob: 地址和学习台同源，服务器给网页 / SVG 加的 CSP sandbox 跟不过来：只有 PDF、图片、音视频按原类型，
+// 别的换成 octet-stream，「下载」链接在新标签打开也只是下载，里面的脚本不会在这个源上跑
+const BLOB_TYPES = /^(application\/pdf|image\/(png|jpeg|gif|webp)|audio\/|video\/)/i;
 async function fileUrl(path, where) {
   // 本机在免令牌名单里时直接给地址（浏览器能边下边显示大 PDF）；用令牌时 iframe 带不了请求头，先取成 blob
   if (!TOKEN) return fileSrc(path, where);
@@ -676,7 +679,8 @@ async function fileUrl(path, where) {
   if (blobs.has(key)) return blobs.get(key);
   const r = await fetch(fileSrc(path, where), { headers: hdrs() });
   if (!r.ok) throw new Error('HTTP ' + r.status);
-  const url = URL.createObjectURL(await r.blob());
+  const b = await r.blob();
+  const url = URL.createObjectURL(BLOB_TYPES.test(b.type) ? b : new Blob([b], { type: 'application/octet-stream' }));
   blobs.set(key, url);
   return url;
 }
