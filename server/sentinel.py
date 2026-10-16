@@ -29,6 +29,7 @@ import json
 import re
 import time
 
+import engine
 from config import settings
 from i18n import L
 
@@ -53,15 +54,18 @@ def cfg() -> dict | bool:
     return s if isinstance(s, (dict, bool)) else True
 
 
-def backend() -> str:
-    """复查走哪条路：sentinel-llm（card.sentinel.llm）/ llm（card.llm）/ llm-task / off（只过规则）。"""
+def backend(builtin: bool = True) -> str:
+    """复查走哪条路：builtin（自己的内核，server.json 的 engine.use.doorman）/ sentinel-llm（card.sentinel.llm）/ llm（card.llm）
+    / llm-task / off（只过规则）。builtin=False：不算内核那条（内核出错退回时用）。"""
     import cardagent
     s = cfg()
     if s is False:
         return "off"
+    if builtin and engine.route("doorman"):
+        return "builtin"
     if isinstance(s, dict) and isinstance(s.get("llm"), dict) and s["llm"].get("url"):
         return "sentinel-llm"
-    b = cardagent.backend()
+    b = cardagent.backend(builtin=False)
     return b if b in ("llm", "llm-task") else "off"
 
 
@@ -194,6 +198,14 @@ def model_input(peer: dict, scope: dict, mats: list[dict], history: list[dict], 
 async def ask_model(inp: dict, timeout: float) -> tuple[dict, str]:
     import cardagent
     b, s = backend(), cfg()
+    if b == "builtin":
+        t0 = time.monotonic()
+        try:
+            return await cardagent.via_builtin(prompt(), inp, timeout, need="verdict", purpose="doorman")
+        except cardagent.CardLLMError:
+            b, timeout = backend(builtin=False), timeout - (time.monotonic() - t0)
+            if not engine.fallback_allowed() or b == "off" or timeout < 5:  # 退不了：照旧当「复查没做成」，不放行
+                raise
     if b == "sentinel-llm":
         return await cardagent.via_openai(s["llm"], prompt(), inp, timeout, need="verdict")  # type: ignore[index]
     if b == "llm":

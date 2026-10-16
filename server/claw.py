@@ -2,6 +2,8 @@
 
 server.json 的 claw 段（没有这一段 = OpenClaw，和以前完全一样）：
   kind      "openclaw"（默认）| "openai"：任何有 OpenAI 兼容对话接口（POST <url>/chat/completions，SSE 流式）的 claw 或 agent
+            | "builtin"：OpenMousse 自己的内核（engine/，模型和密钥在 server.json 的 engine 段）。内核第 0 步的骨架：
+              只会对话和停止（history 模式，零工具），工具、关卡、备料在后面几步
   name      界面上怎么叫它（默认 OpenClaw / "your claw"）
   url       openai：接口的根，一直写到 /v1，比如 http://127.0.0.1:8642/v1
   token     openai：Bearer 令牌；也可以写 token_env = 环境变量名（先看进程环境，再看 claw 段的 env_file，再看 server.json 的 env_file）
@@ -36,7 +38,7 @@ import httpx
 
 from config import raw, settings
 
-KINDS = ("openclaw", "openai")
+KINDS = ("openclaw", "openai", "builtin")
 DEFAULT_TURNS = 40
 # OpenClaw 的 channels 里不是人聊天的：a2a 是 agent 之间的协议（2026.9 的 onboard 默认就开着），不算「主对话和 X 共用」，也不进「连接」页
 NOT_CHAT_CHANNELS = frozenset({"a2a"})
@@ -67,8 +69,12 @@ def is_openclaw() -> bool:
     return kind() == "openclaw"
 
 
+def is_builtin() -> bool:
+    return kind() == "builtin"
+
+
 def name() -> str:
-    return str(cfg().get("name") or "").strip() or ("OpenClaw" if is_openclaw() else "your claw")
+    return str(cfg().get("name") or "").strip() or ("OpenClaw" if is_openclaw() else settings.app_name if is_builtin() else "your claw")
 
 
 def base_url() -> str:
@@ -76,6 +82,9 @@ def base_url() -> str:
 
 
 def model() -> str:
+    if is_builtin():
+        import engine
+        return str(cfg().get("model") or "").strip() or engine.default_model() or "default"
     return str(cfg().get("model") or "").strip() or "default"
 
 
@@ -88,6 +97,9 @@ def send_model() -> bool:
 def models() -> list[str]:
     """app 里能选的模型（通用 claw）：models 列表，没有就只有 model 一个。"""
     ms = [str(m).strip() for m in cfg().get("models") or [] if str(m).strip()]
+    if not ms and is_builtin():
+        from engine import models as engine_models
+        ms = engine_models.models()
     return ms or [model()]
 
 
@@ -97,8 +109,9 @@ def session_cfg() -> dict:
 
 
 def session_mode() -> tuple[str, str, int]:
-    """(mode, name, turns)。mode：history（默认）| header | body | user；name = 请求头名（header）或请求体字段名（body）。"""
-    s = session_cfg()
+    """(mode, name, turns)。mode：history（默认）| header | body | user；name = 请求头名（header）或请求体字段名（body）。
+    builtin 一律 history（会话树接主对话是后面几步的事）。"""
+    s = {} if is_builtin() else session_cfg()
     mode = str(s.get("mode") or "history").lower()
     if mode not in ("history", "header", "body", "user"):
         mode = "history"
@@ -160,7 +173,7 @@ def caps() -> dict:
                 "channels": True, "rewind": True, "modelSwitch": True}
     mode, _, _ = session_mode()
     return {"steer": False, "agentWorkspaces": False, "tasks": False, "approvals": False, "cron": False, "billing": False,
-            "channels": False, "rewind": mode == "history", "modelSwitch": len(models()) > 1}
+            "channels": False, "rewind": mode == "history", "modelSwitch": len(models()) > 1}  # builtin 第 0 步也只有这些
 
 
 def info() -> dict:
@@ -205,7 +218,15 @@ def request_body(messages: list[dict], key: str, model_: str | None, stream: boo
 
 
 async def stream(messages: list[dict], key: str, model_: str | None, on_delta: Callable[[str], None], timeout: float = 600) -> None:
-    """发给 claw、流式把回复一段段交给 on_delta。接口不支持流式、直接回整段 JSON 的也认。出错抛 ClawError / httpx.HTTPError。"""
+    """发给 claw、流式把回复一段段交给 on_delta。接口不支持流式、直接回整段 JSON 的也认。出错抛 ClawError / httpx.HTTPError。
+    builtin：交给自己的内核跑一轮主人回合（engine/owner.py）。"""
+    if is_builtin():
+        from engine import EngineError, owner
+        try:
+            await owner.stream(messages, key, model_, on_delta, timeout)
+        except EngineError as e:
+            raise ClawError(str(e)) from e
+        return
     url = base_url()
     if not url:
         raise ClawError("server.json 的 claw.url 没填 / claw.url is not set in server.json")
@@ -250,7 +271,14 @@ async def complete(prompt: str, key: str, model_: str | None = None, timeout: fl
 
 
 async def probe(timeout: float = 5) -> tuple[bool, str]:
-    """连得上吗：GET <url>/models（多数 OpenAI 兼容接口都有；没有这个接口、回 404 也算连得上）。→ (ok, 一句说明)。"""
+    """连得上吗：GET <url>/models（多数 OpenAI 兼容接口都有；没有这个接口、回 404 也算连得上）。→ (ok, 一句说明)。
+    builtin：默认模型配了、密钥在不在（不真去调模型）。"""
+    if is_builtin():
+        from engine import models as engine_models
+        ref = model()
+        if not engine_models.valid_ref(ref):
+            return False, "engine.model is not set in server.json"
+        return (True, f"built-in engine · {ref}") if engine_models.has_key(ref) else (False, f"no API key for {ref}")
     url = base_url()
     if not url:
         return False, "claw.url is not set"

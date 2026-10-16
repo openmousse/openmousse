@@ -105,6 +105,7 @@ import diet  # noqa: E402
 from diet import router as diet_router  # noqa: E402 — 饮食记录、个人食物库、营养目标、查营养（diet.py + nutrition.py）
 from outputs import router as outputs_router  # noqa: E402 — Agent 的产出：浮动标签、小板子、对话里的产出卡片（2026-10-13）
 from meetings import router as meetings_router  # noqa: E402 — Agent 会议：/api/meetings…（几个 Agent 轮流发言、Grava 写纪要，见 meetings.py）
+from engine.api import router as engine_router  # noqa: E402 — 自己的内核：/api/engine/…（状态、一轮轮的记录、赛博的测试入口）
 
 DIST = settings.dist
 settings.db.parent.mkdir(parents=True, exist_ok=True)  # 新实例第一次启动：数据目录还不存在
@@ -178,6 +179,7 @@ app.include_router(egress_router)
 app.include_router(diet_router)
 app.include_router(outputs_router)
 app.include_router(meetings_router)  # /api/meetings/suggest 在 /api/meetings/{mid} 之前定义（同一个 router 里按顺序）
+app.include_router(engine_router)
 if apps is not None:
     app.include_router(apps.router)
 app.add_exception_handler(sources.NoSource, sources.no_source_handler)

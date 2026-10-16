@@ -47,6 +47,7 @@ from fastapi import APIRouter, HTTPException
 
 import chat
 import claw
+import engine
 import inbox
 import schedule
 import sentinel
@@ -505,17 +506,36 @@ async def via_llm_task(prompt: str, input_: dict, timeout: float, *, schema: dic
     return parse_json(text or "", need), "llm-task"
 
 
+async def via_builtin(prompt: str, input_: dict, timeout: float, *, need: str = "reply", purpose: str = "card",
+                      effort: str | None = None) -> tuple[dict, str]:
+    """自己的内核（engine/oneshot.py）：外人回合，零工具、新会话，能换模型（server.json 的 engine.use.card / doorman）。
+    名片 agent 的模型：card.model 写的是合法的模型引用就用它，否则用 engine 那边给这件事配的。"""
+    ref = engine.route(purpose, cfg().get("model") if purpose == "card" else None)
+    if not ref:
+        raise CardLLMError(f"engine.use.{purpose} is not set")
+    try:
+        v, via = await engine.ask_json(prompt, input_, model=ref, purpose=purpose, need=need, timeout=timeout, effort=effort)
+    except engine.EngineError as e:
+        raise CardLLMError(str(e)[:200]) from e
+    if not isinstance(v, dict):
+        raise CardLLMError("unexpected JSON")
+    return v, via
+
+
 def available() -> bool:
     """有没有模型可用（第二层据此决定分享的追问要不要自动代答；没有就只给你看）。llm-task 最近一小时报过「没开」也算没有。"""
     b = backend()
-    if b == "llm":
+    if b in ("llm", "builtin"):
         return True
     e = _last_error
     return b == "llm-task" and not (e and e[1] == "llm-task" and "not enabled" in e[2] and time.time() - e[3] < 3600)
 
 
-def backend() -> str:
-    """现在走哪条路：llm（card.llm）/ llm-task（OpenClaw）/ template（都没有）。"""
+def backend(builtin: bool = True) -> str:
+    """现在走哪条路：builtin（自己的内核，server.json 的 engine.use.card）/ llm（card.llm）/ llm-task（OpenClaw）/ template（都没有）。
+    builtin=False：不算内核那条（内核出错退回时、Doorman 没配内核时用）。"""
+    if builtin and engine.route("card", cfg().get("model")):
+        return "builtin"
     if isinstance(cfg().get("llm"), dict) and cfg()["llm"].get("url"):
         return "llm"
     if claw.is_openclaw() and cfg().get("llm_task", True) is not False:
@@ -540,12 +560,17 @@ async def think(peer: dict, mats: list[dict], history: list[dict], question: str
         if timeout < 5:
             break
         try:
+            if b == "builtin":
+                return await via_builtin(prompt, input_, timeout)
             if b == "llm":
                 return await via_openai(cfg()["llm"], prompt, input_, timeout)
             if b == "llm-task":
                 return await via_llm_task(prompt, input_, max(5.0, timeout - 15))  # llm-task 外面还有 15 秒的 HTTP 余量
         except CardLLMError as e:
             _last_error = (now_iso(), b, str(e)[:200], time.time())
+            if b == "builtin" and engine.fallback_allowed() and backend(builtin=False) != "template" and left() >= 10:
+                b = backend(builtin=False)  # 内核那条路没走通（它自己已经再问过一次）：照旧走原来的路
+                continue
             if attempt == 2 or not retryable(e) or left() < 10:
                 break
     return template_reply(mats, question, lang), "template"
@@ -554,7 +579,8 @@ async def think(peer: dict, mats: list[dict], history: list[dict], question: str
 def retryable(e: CardLLMError) -> bool:
     """值得再问一次的：模型回的不像样、超时。没开 llm-task、没令牌、HTTP 4xx 这类再问也一样。"""
     msg = str(e)
-    return not any(k in msg for k in ("not enabled", "no gateway token", "is not set", "HTTP 401", "HTTP 403", "HTTP 404", "Timeout", "timed out"))
+    return not any(k in msg for k in ("not enabled", "no gateway token", "is not set", "HTTP 401", "HTTP 403", "HTTP 404", "Timeout", "timed out",
+                                      "API key", "unknown model provider", "took longer than"))
 
 
 _last_error: tuple[str, str, str, float] | None = None  # (什么时候, 哪条路, 什么错, 时间戳)

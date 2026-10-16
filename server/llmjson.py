@@ -8,6 +8,8 @@
 schema 只卡最外层（是个对象、有哪几个键）：llm-task 严格校验，模型多一个键、一个数字写成字符串，整句就作废（名片 agent 和播客都踩过）。
 字段的样子写在提示词里，调用方自己清理。校验还是没过（或者这一次模型出错）就不带 schema 再问一次。
 llm-task 不许覆盖模型（Plugin LLM completion cannot override the target model）：model 只给别的路子用。
+  0. server.json 的 engine.use.json 开了：先走自己的内核（engine/oneshot.py，外人回合：零工具、能换模型，model 也认）；
+     出错时照旧往下走（engine.fallback 是 false 就不往下走，直接报错）。
 失败抛 LLMError（带一句原因，不带令牌）。
 """
 from __future__ import annotations
@@ -22,6 +24,7 @@ from fastapi import HTTPException
 
 import chat
 import claw
+import engine
 from config import settings
 
 _no_task_until = 0.0
@@ -111,7 +114,15 @@ async def ask(prompt: str, input_: dict, schema: dict | None = None, *, timeout:
     fallback_input：退回 think.complete（带工具的对话回合）时换用的资料：input 里有别人的话（朋友的聊天、约朋友录的逐字稿、朋友画像）
     就给一份不带它的，那种回合里模型能用工具，别人的一句话不能跟着进去。
     tool_free_only：只许走 llm-task（整个 input 都是别人的话，比如给朋友记画像）；用不了就抛 LLMError，不退回。
-    max_tokens：这一次最多输出多少 token（只给 llm-task；长的输出要给够）。"""
+    max_tokens：这一次最多输出多少 token（llm-task 和内核；长的输出要给够）。"""
+    if ref := engine.route("json", model):
+        required = tuple(schema.get("required") or ()) if isinstance(schema, dict) and schema.get("type") == "object" else ()
+        try:
+            return await engine.ask_json(prompt, input_, model=ref, purpose="json", required=required, timeout=timeout,
+                                         effort=thinking if thinking in ("low", "medium", "high") else None, max_tokens=max_tokens)
+        except engine.EngineError as e:
+            if not engine.fallback_allowed():
+                raise LLMError(str(e)[:200]) from e
     if claw.is_openclaw() and time.time() >= _no_task_until:
         try:
             return await via_llm_task(prompt, input_, schema, timeout, thinking, None, max_tokens)

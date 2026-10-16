@@ -44,6 +44,7 @@ from urllib.parse import parse_qsl, unquote_plus, urlsplit
 from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel
 
+import engine
 import inbox
 from chat import _lock, db, log_activity, now_iso
 from config import TZ, raw, settings
@@ -275,10 +276,21 @@ async def judge(req: CheckIn, task: str) -> tuple[str, str]:
     prompt = JUDGE_PROMPT.format(agent=L("代办", "Errand"), owner=owner, lang=L("Chinese (简体中文)", "English"))
     inp = {"errand": task or "", "request": {k: v for k, v in summary_of(req).items() if k != "headers"},
            "fetch": {k: v for k, v in req.headers.items() if k.startswith("sec-fetch")}}
+    timeout = float(c.get("timeout") or 30)
     try:
-        v, _via = await cardagent.via_llm_task(prompt, inp, float(c.get("timeout") or 30), schema=JUDGE_SCHEMA, need="verdict",
-                                               thinking=str(c.get("thinking") or "low"), agent=str(c.get("agent") or "main"),
-                                               card_settings=False)
+        v = None
+        if engine.route("doorman"):  # 自己的内核（server.json 的 engine.use.doorman）：外人回合，零工具，能换模型
+            t0 = time.monotonic()
+            try:
+                v, _via = await cardagent.via_builtin(prompt, inp, timeout, need="verdict", purpose="doorman")
+            except cardagent.CardLLMError:
+                timeout -= time.monotonic() - t0
+                if not engine.fallback_allowed() or timeout < 5:
+                    raise
+        if v is None:
+            v, _via = await cardagent.via_llm_task(prompt, inp, timeout, schema=JUDGE_SCHEMA, need="verdict",
+                                                   thinking=str(c.get("thinking") or "low"), agent=str(c.get("agent") or "main"),
+                                                   card_settings=False)
     except Exception as e:  # noqa: BLE001 — 模型不在、超时、回的不像样：一律扣下
         global _last_error
         _last_error = (now_iso(), str(e)[:200])

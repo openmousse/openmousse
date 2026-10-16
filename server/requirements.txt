@@ -14,3 +14,4 @@ markdown-it-py>=3
 aiohttp>=3.9
 cryptography>=41
 mcp>=1.23,<2  # /mcp（mcp_bridge.py）；和 tree/ 一样卡在 1.x
+anthropic>=1.15,<2  # 自己的内核接 Claude（engine/provider_anthropic.py，只用 API 密钥）；用到时才导入
