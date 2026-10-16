@@ -70,8 +70,10 @@ async def ask_json(prompt: str, input_: Any, *, model: str, purpose: str = "json
         if res.status == "refused":
             raise EngineError(f"{model} declined to answer", kind="refusal")
         if res.status == "error":
-            raise EngineError(res.error or "model error", kind="http", retryable=False)
-        if res.status not in ("done", "length"):
+            raise EngineError(res.error or "model error", kind=res.error_kind or "http", retryable=res.retryable)
+        if res.status == "length":  # 写到上限被截断：同样的上限再问一次还是截断（OpenClaw 的经验），直接报
+            raise EngineError(f"{model}'s reply was cut off (max_tokens)", kind="output")
+        if res.status != "done":
             raise EngineError(f"turn ended as {res.status}", kind="output")
         try:
             v = parse(res.text)

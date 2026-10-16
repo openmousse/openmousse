@@ -83,5 +83,5 @@ async def chat(cyber: dict, text: str, *, on_event=None, control: Control | None
         prompt.append(system_note(CHANGED + rules))
     spec = Spec(kind="cyber", model=model, system=session.system, conversation=f"cyber:{cid}", agent=cid, origin=origin,
                 effort=cyber.get("effort") if cyber.get("effort") in ("low", "medium", "high", "xhigh", "max") else None,
-                display="summarized")
+                display="summarized", cache_ttl="1h")
     return await run_turn(spec, session, prompt, on_event=on_event, control=control)

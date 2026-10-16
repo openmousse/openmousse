@@ -25,6 +25,7 @@ class Request:
     display: str | None = None      # Claude 的 thinking.display：summarized / omitted / updates
     json: bool = False              # 要一个 JSON（兼容接口带 response_format json_object；Claude 靠提示词，不许预填）
     timeout: float = 600
+    cache_ttl: str | None = None    # Claude 的缓存：None = 5 分钟；"1h" = 1 小时（隔几分钟才一句的聊天）
 
 
 async def stream(ref: str, req: Request) -> AsyncIterator[dict]:

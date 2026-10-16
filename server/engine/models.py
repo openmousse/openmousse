@@ -1,10 +1,11 @@
-"""模型和接口：引用一律写成「provider/model」（和 OpenClaw 一样：anthropic/claude-opus-5-5、moonshot/kimi-k3、deepseek/deepseek-chat）。
+"""模型和接口：引用一律写成「provider/model」（和 OpenClaw 一样：anthropic/claude-opus-5-5、moonshot/kimi-k3、deepseek/deepseek-flash）。
 
 provider = 谁家的接口、地址、密钥放哪。三处按顺序叠（后面的盖前面的）：
   1. 内置的常见几家（PROVIDERS）
   2. openclaw.json 的 models.providers（这台机器装着 OpenClaw 时：地址、接口类型、apiKey 写成 ${VAR} 就认这个变量名）
   3. server.json 的 engine.providers：{"名字": {"api": "openai" | "anthropic", "url": ".../v1", "key_env": "变量名", "headers": {…},
-     "json_mode": true, "reasoning_effort": false, "fallbacks": true}}，可以加新的（本机的 Ollama、公司的代理）
+     "json_mode": true, "reasoning_effort": false, "fallbacks": true, "block_binding": "drop_block", …各家脾气见 PROVIDERS}}，
+     可以加新的（本机的 Ollama、公司的代理），也可以只改一项（比如 moonshot 换成国内地址 https://api.moonshot.cn/v1）
 api：anthropic = 官方 SDK（只认 API 密钥：Anthropic 条款不许第三方产品借 Claude 订阅登录）；openai = OpenAI 兼容的 /chat/completions
 （Kimi、DeepSeek、Qwen、Gemini、OpenRouter、Ollama、LM Studio、vLLM…）。
 密钥：key_env 指环境变量名（默认 <PROVIDER>_API_KEY），先看进程环境、再看 server.json 的 env_file（默认 <openclaw_home>/.env）。
@@ -12,8 +13,8 @@ api：anthropic = 官方 SDK（只认 API 密钥：Anthropic 条款不许第三�
 
 server.json 的 engine 段（不写这一段 = 内核不接管任何事，全部照旧）：
   "engine": {
-    "model": "deepseek/deepseek-chat",        默认模型
-    "models": ["deepseek/deepseek-chat", …],  claw 选 builtin 时 app 里能切换的模型（不写就只有 model）
+    "model": "deepseek/deepseek-flash",       默认模型（DeepSeek 10/16 列出来的只有 deepseek-flash、deepseek-v4-pro）
+    "models": ["deepseek/deepseek-flash", …], claw 选 builtin 时 app 里能切换的模型（不写就只有 model）
     "use": {"card": true, "doorman": "moonshot/kimi-k3", "json": false},
                                                哪些事改走内核：true = 用默认模型，写模型 = 用它；不写 / false = 照旧（llm-task 等）
                                                card = 名片 Agent（含 A2A）；doorman = Doorman 复查（名片回复 + 代办出网）；json = llmjson.ask
@@ -35,21 +36,23 @@ from .errors import EngineError
 
 ANTHROPIC, OPENAI = "anthropic", "openai"
 
+# 各家的脾气（provider_openai.py 开头有每一项的意思；10/16 对照 pi、OpenClaw、Hermes 的源码 + 真调核对）
 PROVIDERS: dict[str, dict] = {
     "anthropic": {"api": ANTHROPIC, "key_env": "ANTHROPIC_API_KEY"},
     "openai": {"api": OPENAI, "url": "https://api.openai.com/v1", "key_env": "OPENAI_API_KEY", "max_tokens_field": "max_completion_tokens",
-               "reasoning_effort": True},
-    "moonshot": {"api": OPENAI, "url": "https://api.moonshot.ai/v1", "key_env": "MOONSHOT_API_KEY"},
-    "deepseek": {"api": OPENAI, "url": "https://api.deepseek.com", "key_env": "DEEPSEEK_API_KEY"},
+               "reasoning_effort": True, "effort_map": {}, "tool_id_max": 40},
+    "moonshot": {"api": OPENAI, "url": "https://api.moonshot.ai/v1", "key_env": "MOONSHOT_API_KEY", "reasoning_replay": "all", "mid_system": True,
+                 "reasoning_effort": True, "effort_map": {"xhigh": "high"}, "schema_fix": True},
+    "deepseek": {"api": OPENAI, "url": "https://api.deepseek.com", "key_env": "DEEPSEEK_API_KEY", "reasoning_replay": "all", "images": False},
     "dashscope": {"api": OPENAI, "url": "https://dashscope-intl.aliyuncs.com/compatible-mode/v1", "key_env": "DASHSCOPE_API_KEY"},
     "google": {"api": OPENAI, "url": "https://generativelanguage.googleapis.com/v1beta/openai", "key_env": "GEMINI_API_KEY"},
     "openrouter": {"api": OPENAI, "url": "https://openrouter.ai/api/v1", "key_env": "OPENROUTER_API_KEY"},
     "xai": {"api": OPENAI, "url": "https://api.x.ai/v1", "key_env": "XAI_API_KEY"},
-    "mistral": {"api": OPENAI, "url": "https://api.mistral.ai/v1", "key_env": "MISTRAL_API_KEY"},
-    "groq": {"api": OPENAI, "url": "https://api.groq.com/openai/v1", "key_env": "GROQ_API_KEY"},
-    "ollama": {"api": OPENAI, "url": "http://127.0.0.1:11434/v1", "key_env": ""},
-    "lmstudio": {"api": OPENAI, "url": "http://127.0.0.1:1234/v1", "key_env": ""},
-    "vllm": {"api": OPENAI, "url": "http://127.0.0.1:8000/v1", "key_env": ""},
+    "mistral": {"api": OPENAI, "url": "https://api.mistral.ai/v1", "key_env": "MISTRAL_API_KEY", "tool_id": "mistral9", "reasoning_replay": "none"},
+    "groq": {"api": OPENAI, "url": "https://api.groq.com/openai/v1", "key_env": "GROQ_API_KEY", "reasoning_replay": "none"},
+    "ollama": {"api": OPENAI, "url": "http://127.0.0.1:11434/v1", "key_env": "", "require_finish": False},
+    "lmstudio": {"api": OPENAI, "url": "http://127.0.0.1:1234/v1", "key_env": "", "require_finish": False},
+    "vllm": {"api": OPENAI, "url": "http://127.0.0.1:8000/v1", "key_env": "", "require_finish": False},
 }
 OPENCLAW_API = {"openai-completions": OPENAI, "openai-responses": OPENAI, "anthropic-messages": ANTHROPIC}
 ENV_REF = re.compile(r"^\$\{([A-Z_][A-Z0-9_]*)\}$")

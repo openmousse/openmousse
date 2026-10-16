@@ -7,7 +7,7 @@ import asyncio
 import pytest
 
 import engine
-from engine import events, models, oneshot, providers
+from engine import events, loop, models, oneshot, providers
 from engine.errors import EngineError
 from engine.session import DbSession, MemorySession, system_note, text_of, user
 
@@ -69,7 +69,7 @@ def echo_tool(log: list, kinds=("owner",), delay: float = 0.0) -> engine.Tool:
 def test_plain_turn_records_turn_and_steps(fake):
     fake([{"chunks": ["你", "好"]}])
     seen: list = []
-    res = run(engine.run_turn(engine.Spec(kind="owner", model="deepseek/deepseek-chat", conversation="t-plain"), MemorySession(), user("hi"),
+    res = run(engine.run_turn(engine.Spec(kind="owner", model="deepseek/deepseek-flash", conversation="t-plain"), MemorySession(), user("hi"),
                               on_event=seen.append))
     assert res.status == "done" and res.text == "你好"
     assert [e["text"] for e in seen if e["type"] == "text"] == ["你", "好"]
@@ -130,22 +130,23 @@ def test_gate_can_refuse(fake):
     assert [s["status"] for s in events.steps(res.turn)][1] == "denied"
 
 
-def test_steer_skips_remaining_tools(fake):
+def test_steer_waits_for_the_batch(fake):
     log: list = []
     control = engine.Control()
 
     async def first(args, ctx):
-        ctx.control.steer(user("wait, stop that"))  # 用户在第一个工具跑着的时候插话
+        if args["x"] == "1":
+            assert ctx.control.steer(user("wait, one more thing"))  # 用户在第一个工具跑着的时候插话
         log.append(args["x"])
         return "ok"
     t = engine.Tool(name="echo", description="", schema={"type": "object", "properties": {"x": {"type": "string"}}}, run=first)
-    f = fake([{"calls": [("c1", "echo", {"x": "1"}), ("c2", "echo", {"x": "2"})]}, {"text": "ok, stopped"}])
+    f = fake([{"calls": [("c1", "echo", {"x": "1"}), ("c2", "echo", {"x": "2"})]}, {"text": "ok, noted"}])
     res = run(engine.run_turn(engine.Spec(kind="owner", model="deepseek/x", tools=[t]), MemorySession(), user("go"), control=control))
-    assert log == ["1"]
-    tools = [m for m in res.messages if m["role"] == "tool"]
-    assert "Skipped" in text_of(tools[1])
-    assert text_of(f.requests[1][1].messages[-1]) == "wait, stop that"  # 插话的那句跟在工具结果后面进了下一次模型调用
-    assert res.text == "ok, stopped" and "steer" in [s["type"] for s in events.steps(res.turn)]
+    assert log == ["1", "2"]  # 这一批照样做完（pi 0.58.4 起的做法），不半路丢下
+    msgs = f.requests[1][1].messages
+    assert [m["role"] for m in msgs[-3:]] == ["tool", "tool", "user"] and text_of(msgs[-1]) == "wait, one more thing"
+    assert res.text == "ok, noted" and "steer" in [s["type"] for s in events.steps(res.turn)]
+    assert not control.steer(user("too late")) and res.pending == []  # 这一轮结束后再插话：没送到
 
 
 def test_follow_up_continues_after_reply(fake):
@@ -202,17 +203,24 @@ def test_outer_cancel_is_recorded_and_raised(fake):
 def test_max_steps_and_cut_off_tool_call(fake):
     fake([{"calls": [("c1", "echo", {"x": "a"})]}, {"calls": [("c2", "echo", {"x": "b"})]}])
     res = run(engine.run_turn(engine.Spec(kind="owner", model="deepseek/x", tools=[echo_tool([])], max_steps=2), MemorySession(), user("go")))
-    assert res.status == "max_steps"
+    assert res.status == "max_steps" and res.messages[-1]["role"] == "assistant" and "Stopped after 2 steps" in text_of(res.messages[-1])
     fake([{"calls": [("c1", "echo", {"x": "a"})], "stop": "length"}])
     res = run(engine.run_turn(engine.Spec(kind="owner", model="deepseek/x", tools=[echo_tool([])]), MemorySession(), user("go")))
     assert res.status == "length" and res.messages[-1]["role"] == "tool" and res.messages[-1]["error"]
 
 
-def test_provider_error_becomes_error_status(fake):
-    fake([EngineError("deepseek HTTP 500: boom", retryable=True)])
+def test_provider_error_becomes_error_status(fake, monkeypatch):
+    monkeypatch.setattr(loop, "MODEL_RETRIES", (0, 0))
+    f = fake([EngineError("deepseek HTTP 500: boom", retryable=True)] * 3)
     res = run(engine.run_turn(engine.Spec(kind="owner", model="deepseek/x", conversation="t-err"), MemorySession(), user("hi")))
-    assert res.status == "error" and "HTTP 500" in res.error
+    assert res.status == "error" and "HTTP 500" in res.error and res.retryable and len(f.requests) == 3  # 还没出字：再试两次
     assert events.turns("t-err")[0]["status"] == "error"
+    fake([EngineError("deepseek HTTP 401: bad key", kind="config")])
+    res = run(engine.run_turn(engine.Spec(kind="owner", model="deepseek/x"), MemorySession(), user("hi")))
+    assert res.status == "error" and res.error_kind == "config"  # 不能重试的不重试
+    fake([EngineError("deepseek HTTP 503", retryable=True), {"text": "back"}])
+    res = run(engine.run_turn(engine.Spec(kind="owner", model="deepseek/x"), MemorySession(), user("hi")))
+    assert res.status == "done" and res.text == "back"
 
 
 # —— 会话树 ——————————————————————————————————————————————————————————————
@@ -268,19 +276,19 @@ def test_ask_json_gives_up_and_maps_errors(fake):
 # —— 配置和接线 ——————————————————————————————————————————————————————————————
 
 def test_routes_and_providers(server_json, monkeypatch):
-    server_json({"engine": {"model": "deepseek/deepseek-chat", "use": {"card": True, "doorman": "moonshot/kimi-k3", "json": False},
+    server_json({"engine": {"model": "deepseek/deepseek-flash", "use": {"card": True, "doorman": "moonshot/kimi-k3", "json": False},
                             "providers": {"myollama": {"api": "openai", "url": "http://127.0.0.1:11434/v1/", "key_env": ""}}}})
-    assert models.route("card") == "deepseek/deepseek-chat"
+    assert models.route("card") == "deepseek/deepseek-flash"
     assert models.route("card", "anthropic/claude-opus-5-5") == "anthropic/claude-opus-5-5"
     assert models.route("doorman") == "moonshot/kimi-k3"
     assert models.route("json") is None and models.route("cyber") is None
-    assert models.route("card", "not a ref") == "deepseek/deepseek-chat"
+    assert models.route("card", "not a ref") == "deepseek/deepseek-flash"
     p = models.provider("myollama")
     assert p["url"] == "http://127.0.0.1:11434/v1" and p["key"] == "" and models.has_key("myollama/qwen3")
     monkeypatch.delenv("DEEPSEEK_API_KEY", raising=False)
-    assert not models.has_key("deepseek/deepseek-chat")
+    assert not models.has_key("deepseek/deepseek-flash")
     monkeypatch.setenv("DEEPSEEK_API_KEY", "test-key")
-    assert models.has_key("deepseek/deepseek-chat")
+    assert models.has_key("deepseek/deepseek-flash")
     with pytest.raises(EngineError):
         models.provider("nobody")
     with pytest.raises(EngineError):
@@ -294,10 +302,10 @@ def test_routes_and_providers(server_json, monkeypatch):
 
 def test_llmjson_uses_engine_then_falls_back(server_json, fake, monkeypatch):
     import llmjson
-    server_json({"engine": {"model": "deepseek/deepseek-chat", "use": {"json": True}}})
+    server_json({"engine": {"model": "deepseek/deepseek-flash", "use": {"json": True}}})
     fake([{"text": '{"todos": ["a"]}'}])
     v, via = run(llmjson.ask("rules", {"x": 1}, {"type": "object", "required": ["todos"]}))
-    assert v == {"todos": ["a"]} and via == "builtin:deepseek/deepseek-chat"
+    assert v == {"todos": ["a"]} and via == "builtin:deepseek/deepseek-flash"
 
     async def old_path(*a, **k):
         return {"todos": []}, "llm-task"
@@ -305,7 +313,7 @@ def test_llmjson_uses_engine_then_falls_back(server_json, fake, monkeypatch):
     fake([EngineError("deepseek HTTP 500"), ])
     v, via = run(llmjson.ask("rules", {"x": 1}, {"type": "object", "required": ["todos"]}))
     assert via == "llm-task"  # 内核出错：照旧走原来的路
-    server_json({"engine": {"model": "deepseek/deepseek-chat", "use": {"json": True}, "fallback": False}})
+    server_json({"engine": {"model": "deepseek/deepseek-flash", "use": {"json": True}, "fallback": False}})
     fake([EngineError("deepseek HTTP 500")])
     with pytest.raises(llmjson.LLMError):
         run(llmjson.ask("rules", {"x": 1}))
@@ -316,29 +324,29 @@ def test_card_agent_and_doorman_backends(server_json):
     import sentinel
     server_json({})
     assert cardagent.backend() == "llm-task" and sentinel.backend() == "llm-task"
-    server_json({"engine": {"model": "deepseek/deepseek-chat", "use": {"card": True}}})
+    server_json({"engine": {"model": "deepseek/deepseek-flash", "use": {"card": True}}})
     assert cardagent.backend() == "builtin" and cardagent.available()
     assert sentinel.backend() == "llm-task"  # Doorman 没配内核：照旧
-    server_json({"engine": {"model": "deepseek/deepseek-chat", "use": {"card": True, "doorman": True}}, "card": {"sentinel": False}})
+    server_json({"engine": {"model": "deepseek/deepseek-flash", "use": {"card": True, "doorman": True}}, "card": {"sentinel": False}})
     assert sentinel.backend() == "off"  # 关掉的 Doorman 不会因为配了内核又开起来
-    server_json({"engine": {"model": "deepseek/deepseek-chat", "use": {"doorman": True}}})
+    server_json({"engine": {"model": "deepseek/deepseek-flash", "use": {"doorman": True}}})
     assert sentinel.backend() == "builtin" and cardagent.backend() == "llm-task"
 
 
 def test_card_agent_think_via_engine(server_json, fake):
     import cardagent
-    server_json({"engine": {"model": "deepseek/deepseek-chat", "use": {"card": True}}, "card": {"sentinel": False}})
+    server_json({"engine": {"model": "deepseek/deepseek-flash", "use": {"card": True}}, "card": {"sentinel": False}})
     fake([{"text": '{"reply": "Leo is free on Friday evening.", "used": ["cal"], "ask_owner": null, "declined": []}'}])
     out, via = run(cardagent.think({"name": "Ann", "tier": "friend"}, [{"id": "cal", "label": "calendar", "text": "Fri evening free"}], [],
                                    "Is Leo free Friday?", "en"))
-    assert via == "builtin:deepseek/deepseek-chat" and out["reply"].startswith("Leo is free")
+    assert via == "builtin:deepseek/deepseek-flash" and out["reply"].startswith("Leo is free")
 
 
 def test_claw_builtin_skeleton(server_json, fake, monkeypatch):
     import claw
-    server_json({"claw": {"kind": "builtin"}, "engine": {"model": "deepseek/deepseek-chat", "models": ["deepseek/deepseek-chat", "moonshot/kimi-k3"]}})
+    server_json({"claw": {"kind": "builtin"}, "engine": {"model": "deepseek/deepseek-flash", "models": ["deepseek/deepseek-flash", "moonshot/kimi-k3"]}})
     assert claw.is_builtin() and not claw.is_openclaw()
-    assert claw.model() == "deepseek/deepseek-chat" and claw.models() == ["deepseek/deepseek-chat", "moonshot/kimi-k3"]
+    assert claw.model() == "deepseek/deepseek-flash" and claw.models() == ["deepseek/deepseek-flash", "moonshot/kimi-k3"]
     assert claw.session_mode()[0] == "history" and claw.caps()["modelSwitch"] and not claw.caps()["steer"]
     f = fake([{"chunks": ["Hel", "lo"]}])
     parts: list = []
@@ -357,7 +365,7 @@ def test_claw_builtin_skeleton(server_json, fake, monkeypatch):
 
 def test_cyber_turn_uses_its_own_session(server_json, fake):
     from engine import cyber
-    server_json({"engine": {"model": "deepseek/deepseek-chat"}})
+    server_json({"engine": {"model": "deepseek/deepseek-flash"}})
     f = fake([{"text": "Hi, I'm Iris."}, {"text": "Still Iris."}, {"text": "Now terse."}])
     iris = {"id": "iris", "name": "Iris", "identity": "A calm podcast host.", "model": "moonshot/kimi-k3"}
     res = run(cyber.chat(iris, "who are you?"))

@@ -68,7 +68,7 @@ def test_openai_tool_loop_and_reasoning(oa):
     ]
     log: list = []
     session = MemorySession()
-    spec = engine.Spec(kind="owner", model="deepseek/deepseek-chat", system="be brief", tools=[echo_tool(log)])
+    spec = engine.Spec(kind="owner", model="deepseek/deepseek-flash", system="be brief", tools=[echo_tool(log)])
     seen_events: list = []
     res = run(engine.run_turn(spec, session, user("hi"), on_event=seen_events.append))
     assert res.status == "done" and res.text == "done" and log == [{"x": "a"}]
@@ -85,23 +85,23 @@ def test_openai_tool_loop_and_reasoning(oa):
     run(engine.run_turn(spec, session, user("next")))
     third = oa["seen"][2]
     old = next(m for m in third["messages"] if m.get("tool_calls"))
-    assert "reasoning_content" not in old  # 之前那一轮的思考不再带（DeepSeek 带了会报错）
+    assert old["reasoning_content"] == "Think"  # DeepSeek V4：之前几轮的思考也带回去（pi、OpenClaw、Hermes 都这么做，10/16 真调两种都收）
 
 
 def test_openai_drops_unsupported_field_and_json_mode(oa):
     oa["responses"] = [(400, b'{"error": {"message": "response_format is not supported"}}'),
                        (200, sse([oa_chunk({"content": '{"ok": true}'}, finish="stop")]))]
-    v, _ = run(engine.ask_json("x", {}, model="deepseek/deepseek-chat"))
+    v, _ = run(engine.ask_json("x", {}, model="deepseek/deepseek-flash"))
     assert v == {"ok": True}
     assert oa["seen"][0]["response_format"] == {"type": "json_object"} and "response_format" not in oa["seen"][1]
 
 
 def test_openai_errors(oa, monkeypatch):
     oa["responses"] = [(401, b'{"error": {"message": "bad key"}}')]
-    res = run(engine.run_turn(engine.Spec(kind="owner", model="deepseek/deepseek-chat"), MemorySession(), user("hi")))
+    res = run(engine.run_turn(engine.Spec(kind="owner", model="deepseek/deepseek-flash"), MemorySession(), user("hi")))
     assert res.status == "error" and "HTTP 401" in res.error
     monkeypatch.delenv("DEEPSEEK_API_KEY")
-    res = run(engine.run_turn(engine.Spec(kind="owner", model="deepseek/deepseek-chat"), MemorySession(), user("hi")))
+    res = run(engine.run_turn(engine.Spec(kind="owner", model="deepseek/deepseek-flash"), MemorySession(), user("hi")))
     assert res.status == "error" and "no API key" in res.error
 
 
@@ -111,7 +111,7 @@ def test_openai_bad_tool_json_is_not_run(oa):
         (200, sse([oa_chunk({"content": "sorry"}, finish="stop")])),
     ]
     log: list = []
-    res = run(engine.run_turn(engine.Spec(kind="owner", model="deepseek/deepseek-chat", tools=[echo_tool(log)]), MemorySession(), user("go")))
+    res = run(engine.run_turn(engine.Spec(kind="owner", model="deepseek/deepseek-flash", tools=[echo_tool(log)]), MemorySession(), user("go")))
     assert log == [] and "not valid JSON" in text_of(res.messages[2]) and res.text == "sorry"
 
 
@@ -120,10 +120,15 @@ def test_to_openai_converts_other_providers():
                          "content": [{"type": "thinking", "text": "secret", "sig": "s"}, {"type": "text", "text": "hey"},
                                      {"type": "tool_call", "id": "toolu_1", "name": "echo", "args": {"x": "a"}}], "raw": [{"type": "text"}]},
             tool_result("toolu_1", "echo", "ok"), system_note("note")]
-    out = provider_openai.to_openai("", msgs, "deepseek", "deepseek-chat")
+    kimi = {"name": "moonshot", "mid_system": True}
+    out = provider_openai.to_openai("", msgs, kimi, "kimi-k3")
     assert out[1] == {"role": "assistant", "content": "hey", "tool_calls": [{"id": "toolu_1", "type": "function",
                                                                           "function": {"name": "echo", "arguments": '{"x": "a"}'}}]}
-    assert out[2]["role"] == "tool" and out[3] == {"role": "system", "content": "note"}
+    assert out[2]["role"] == "tool" and out[3] == {"role": "system", "content": "note"}  # Kimi 收对话中间的 system
+    plain = provider_openai.to_openai("", [*msgs, user("next")], {"name": "deepseek"}, "deepseek-flash")
+    assert [m["role"] for m in plain] == ["user", "assistant", "tool", "assistant", "user"]  # 工具结果后面补占位的 assistant
+    assert plain[3]["content"] == provider_openai.INTERRUPTED
+    assert plain[4]["content"].startswith("<system-reminder>\nnote") and plain[4]["content"].endswith("next")  # system 折进下一条 user
 
 
 # —— Claude（官方 SDK，假的 HTTP 服务） ————————————————————————————————————————
@@ -189,7 +194,9 @@ def test_claude_tool_loop_replays_signed_thinking(claude):
     res = run(engine.run_turn(spec, MemorySession(), [user("hi"), system_note("the user is on a phone")], on_event=seen.append))
     assert res.status == "done" and res.text == "Done." and log == [{"x": "a"}]
     first, second = claude["seen"]
-    assert first["model"] == "claude-opus-5-5" and first["thinking"] == {"type": "adaptive", "display": "summarized"}
+    assert first["model"] == "claude-opus-5-5" and first["thinking"] == {"type": "adaptive", "display": "summarized",
+                                                                         "block_binding": {"prefix_mismatch_behavior": "drop_block"}}
+    assert "thinking-binding-controls-2026-08-01" in claude["headers"][0].get("anthropic-beta", "")
     assert first["output_config"] == {"effort": "low"} and first["cache_control"] == {"type": "ephemeral"}
     assert first["system"] == [{"type": "text", "text": "be brief", "cache_control": {"type": "ephemeral"}}]
     assert first["tools"][0]["eager_input_streaming"] is True and first["tools"][0]["input_schema"]["required"] == ["x"]

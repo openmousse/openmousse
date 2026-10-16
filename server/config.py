@@ -11,7 +11,7 @@
   claw              你的 claw：不写 = OpenClaw（下面 openclaw_home / gateway / openclaw_bin 那几项）；别的 claw 或 agent 写
                     {"kind": "openai", "name", "url": ".../v1", "token" 或 "token_env", "model", "models", "session", "headers"}，见 claw.py（每次读文件）
                     {"kind": "builtin"}：OpenMousse 自己的内核（模型在下面的 engine 段）
-  engine            自己的内核（engine/）：{"model": "deepseek/deepseek-chat", "use": {"card": true, "doorman": "moonshot/kimi-k3", "json": true},
+  engine            自己的内核（engine/）：{"model": "deepseek/deepseek-flash", "use": {"card": true, "doorman": "moonshot/kimi-k3", "json": true},
                     "providers": {…}}。use 里开了的事改走内核（名片 Agent、Doorman、一次性 JSON），出错退回原来的路；不写 = 一切照旧。
                     说明见 engine/models.py（每次读文件，不用重启）
   openclaw_home     OpenClaw 的家（默认 ~/.openclaw）

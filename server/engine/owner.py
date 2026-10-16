@@ -61,7 +61,7 @@ async def stream(messages: list[dict], key: str, model: str | None, on_delta: Ca
         raise EngineError("nothing to answer", kind="rule")
     m = KEY.match(key or "")
     spec = Spec(kind="owner", model=ref, system=system_prompt(), conversation=m.group(1) if m else (key or "main"), origin="user",
-                display="summarized", timeout=timeout)
+                display="summarized", timeout=timeout, cache_ttl="1h")
     res = await run_turn(spec, MemorySession(msgs[:-1]), msgs[-1],
                          on_event=lambda ev: on_delta(ev["text"]) if ev.get("type") == "text" else None)
     if res.status == "error":

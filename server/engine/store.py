@@ -3,7 +3,8 @@
   engine_sessions  会话：一条会话树。key = mousse:<对话>:<逻辑日> 这类（沿用 claw.py 的写法，每天 04:00 换新的）；
                    system = 开头定死的规矩（之后的变化往后补成 role=system 的条目，不回头改开头：省缓存，也是 Claude 的硬规矩）；
                    leaf = 现在的叶子（撤回 = 换叶子，旧的枝还在）
-  engine_entries   会话里的一条：中立格式的消息（user / assistant / tool / system），parent 指上一条
+  engine_entries   会话里的一条：parent 指上一条；kind = message（中立格式的消息：user / assistant / tool / system）
+                   或者以后的 compaction（压缩成的摘要）、model_change、label 这些不是消息的条目（借 pi 的会话格式，第 4 项用）
   engine_turns     一轮：从一句话进来到模型说完（中间可能调好多次模型和工具）
   engine_steps     每一步：一次模型调用、一次工具调用、一次插话
 对话 → 一轮 → 每一步三层就是 harness 方案里的「一条事件流」：以后 app 的进度、任务卡、后台回报都从这里出（第 3 步）。
@@ -27,8 +28,9 @@ CREATE TABLE IF NOT EXISTS engine_sessions (
   system TEXT NOT NULL DEFAULT '', leaf TEXT, created_at TEXT NOT NULL, updated_at TEXT NOT NULL);
 CREATE INDEX IF NOT EXISTS engine_sessions_key ON engine_sessions(key, created_at);
 CREATE TABLE IF NOT EXISTS engine_entries (
-  id TEXT PRIMARY KEY, session TEXT NOT NULL, parent TEXT, role TEXT NOT NULL, data TEXT NOT NULL, turn TEXT, ts TEXT NOT NULL);
-CREATE INDEX IF NOT EXISTS engine_entries_session ON engine_entries(session);
+  id TEXT PRIMARY KEY, session TEXT NOT NULL, parent TEXT, kind TEXT NOT NULL DEFAULT 'message', role TEXT NOT NULL, data TEXT NOT NULL,
+  turn TEXT, ts TEXT NOT NULL);
+CREATE INDEX IF NOT EXISTS engine_entries_session ON engine_entries(session, parent);
 CREATE TABLE IF NOT EXISTS engine_turns (
   id TEXT PRIMARY KEY, conversation TEXT NOT NULL, session TEXT, kind TEXT NOT NULL, agent TEXT, model TEXT NOT NULL,
   origin TEXT, status TEXT NOT NULL, error TEXT, steps INTEGER NOT NULL DEFAULT 0, usage TEXT,
@@ -48,6 +50,9 @@ def connect() -> sqlite3.Connection:
     conn.row_factory = sqlite3.Row
     if str(path) not in _ready:
         conn.executescript(SCHEMA)
+        if "kind" not in {r[1] for r in conn.execute("PRAGMA table_info(engine_entries)")}:  # 10/16 早期测试库：补上这一栏
+            conn.execute("ALTER TABLE engine_entries ADD COLUMN kind TEXT NOT NULL DEFAULT 'message'")
+            conn.commit()
         _ready.add(str(path))
     return conn
 
