@@ -45,3 +45,16 @@ create or replace view public.owner_overview with (security_invoker = true) as
   from auth.users u left join public.claws c on c.user_id = u.id
   group by u.id, u.email, u.created_at, u.last_sign_in_at;
 revoke all on public.owner_overview from anon, authenticated;
+
+-- Keep-alive (2026-10-16): Supabase pauses a Free project after a week without user database activity, and people only
+-- sign in on an app's first open, so most days nothing reaches the project. The operator's server reads this one row
+-- a few times a day with the publishable key (GET /rest/v1/keepalive?select=id). It holds no user data; read only.
+create table if not exists public.keepalive (
+  id smallint primary key default 1 check (id = 1)
+);
+alter table public.keepalive enable row level security;
+drop policy if exists "keepalive: read" on public.keepalive;
+create policy "keepalive: read" on public.keepalive for select to anon, authenticated using (true);
+revoke all on public.keepalive from anon, authenticated;
+grant select on public.keepalive to anon, authenticated;
+insert into public.keepalive (id) values (1) on conflict (id) do nothing;
