@@ -334,7 +334,10 @@ async def _run_tools(spec: Spec, tid: str, calls: list[dict], by_name: dict[str,
         sid = events.step_open(tid, type_="tool", name=name, detail=detail, conversation=conv)
         emit({"type": "tool_run", "id": cid, "name": name, "detail": detail})
         if spec.gate is not None:
-            verdict = await spec.gate(tool, args, ctx)
+            try:
+                verdict = await spec.gate(tool, args, ctx)
+            except Exception as e:  # noqa: BLE001 — 关卡自己出错：不做（宁可少做，不可错做）
+                verdict = f"Not run: the safety check failed ({type(e).__name__})."
             if verdict:
                 out.append(tool_result(cid, name, verdict, True))
                 events.step_close(sid, status="denied", conversation=conv, turn=tid)

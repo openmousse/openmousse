@@ -12,6 +12,8 @@
 """
 from __future__ import annotations
 
+import asyncio
+import importlib
 import json
 import re
 from collections.abc import AsyncIterator
@@ -28,14 +30,23 @@ BETA_FALLBACK = "server-side-fallback-2026-07-01"
 TOOL_ID = re.compile(r"[^a-zA-Z0-9_-]")
 
 _clients: dict[tuple, object] = {}
+_sdk = None
+
+
+async def sdk():
+    """anthropic 包：第一次用到时在后台线程里导入（导入要一两秒、六七十 MB，不能卡住服务的事件循环；不用 Claude 就永远不导入）。"""
+    global _sdk
+    if _sdk is None:
+        try:
+            _sdk = await asyncio.to_thread(importlib.import_module, "anthropic")
+        except ImportError as e:
+            raise EngineError("the anthropic package isn't installed (pip install -r server/requirements.txt)", kind="config") from e
+    return _sdk
 
 
 def make_client(p: dict):
-    """AsyncAnthropic（按密钥 + 地址缓存）。测试时换掉这个函数，塞一个假的 http_client。"""
-    try:
-        import anthropic
-    except ImportError as e:
-        raise EngineError("the anthropic package isn't installed (pip install -r server/requirements.txt)", kind="config") from e
+    """AsyncAnthropic（按密钥 + 地址缓存；调之前 sdk() 已经导入好了）。测试时换掉这个函数，塞一个假的 http_client。"""
+    import anthropic
     if not p.get("key"):
         raise EngineError("no Anthropic API key: put ANTHROPIC_API_KEY in the .env (or set engine.providers.anthropic.key_env)", kind="config")
     k = (p["key"], p.get("url") or "", json.dumps(p.get("headers") or {}, sort_keys=True))
@@ -188,7 +199,7 @@ def from_anthropic(final, model_id: str, provider_name: str) -> dict:
 
 async def stream(p: dict, model_id: str, req) -> AsyncIterator[dict]:
     """流式：{"type": "text" | "thinking", "text"}、{"type": "tool_start", "id", "name"}，最后 {"type": "done", "message"}。出错抛 EngineError。"""
-    import anthropic
+    anthropic = await sdk()
     client = make_client(p)
     params, betas = build(model_id, req, p)
     try:

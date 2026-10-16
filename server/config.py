@@ -10,6 +10,10 @@
   bind              {"host", "port"}：服务监听地址。loopback 给反向代理 / Tailscale Serve；Tailscale 私网地址只给自己的设备
   claw              你的 claw：不写 = OpenClaw（下面 openclaw_home / gateway / openclaw_bin 那几项）；别的 claw 或 agent 写
                     {"kind": "openai", "name", "url": ".../v1", "token" 或 "token_env", "model", "models", "session", "headers"}，见 claw.py（每次读文件）
+                    {"kind": "builtin"}：OpenMousse 自己的内核（模型在下面的 engine 段）
+  engine            自己的内核（engine/）：{"model": "deepseek/deepseek-chat", "use": {"card": true, "doorman": "moonshot/kimi-k3", "json": true},
+                    "providers": {…}}。use 里开了的事改走内核（名片 Agent、Doorman、一次性 JSON），出错退回原来的路；不写 = 一切照旧。
+                    说明见 engine/models.py（每次读文件，不用重启）
   openclaw_home     OpenClaw 的家（默认 ~/.openclaw）
   workspace         主 agent 的 workspace（默认 <openclaw_home>/workspace）
   agent_workspaces  {agent_id: workspace 路径}：有独立 workspace 的 Agent（对话按 id 路由到它，记忆页读它的 MEMORY.md）
