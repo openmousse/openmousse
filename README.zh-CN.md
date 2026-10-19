@@ -1,90 +1,89 @@
-# OpenMousse
-
-**中文** · [English](README.md) · [openmousse.ai](https://openmousse.ai)
-
-**给自己跑 claw 的人的私人 agent app：[OpenClaw](https://github.com/openclaw/openclaw)，或者任何有 OpenAI 兼容接口的 agent。** 在手机上直接跟你的 agent 对话，生活的每一块交给一个 Agent，再用一份记忆把 Claude、ChatGPT、Gemini 和你的 agent 串起来。自托管：你的机器、你的模型账号、你的数据。
-
 <p align="center">
-  <picture><source media="(prefers-color-scheme: dark)" srcset="docs/screenshots/zh-today-dark.png"><img src="docs/screenshots/zh-today.png" width="30%" alt="今天：两个 Agent 给的建议卡"></picture>
-  <picture><source media="(prefers-color-scheme: dark)" srcset="docs/screenshots/zh-chat-dark.png"><img src="docs/screenshots/zh-chat.png" width="30%" alt="和 agent 对话"></picture>
-  <picture><source media="(prefers-color-scheme: dark)" srcset="docs/screenshots/zh-fitness-dark.png"><img src="docs/screenshots/zh-fitness.png" width="30%" alt="健身 Agent 的看板"></picture>
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="docs/brand/banner-dark.png">
+    <img src="docs/brand/banner-light.png" alt="OpenMousse：流动的智能，因你而塑。" width="100%">
+  </picture>
 </p>
 
-- **口袋里的 agent。** 给你已经在跑的 OpenClaw 配一个 iOS 和网页 app：流式对话、语音输入、照片和文件、推送通知。
-- **生活的每一块，一个 Agent。** 健身、饮食、睡眠、求职……每个都是真正的 OpenClaw agent，有自己的记忆、skills 和看板。在对话里说一句就建好。
-- **它会主动找你。** 起床报告；新数据一到就更新的建议卡；每天的日结，让每个 Agent 记得昨天。
-- **所有 AI 共用一份记忆。** [世界树](tree/)是一个 MCP 服务，Claude.ai、ChatGPT、Gemini、Notion 都能接。没有 OpenClaw 也能单独用。
+<p align="center">
+  <strong>中文</strong> · <a href="README.md">English</a> · <a href="https://openmousse.ai">openmousse.ai</a> · <a href="https://openmousse.ai/docs/welcome.html">文档</a>
+</p>
 
-**OpenClaw 是什么？** 跑在你自己机器上的开源个人 AI agent（[openclaw.ai](https://openclaw.ai)）：skills、定时任务、Telegram 之类的聊天渠道、任意模型。OpenMousse 不替代它，而是在它上面加一个 app、一组 Agents 和一份共享记忆。
+## 流动的智能，因你而塑。
 
-**用别的 claw？** OpenMousse 在 OpenClaw 上最完整：每个 Agent 都是一个真的 OpenClaw agent，后台任务、执行审批、定时任务都能在 app 里看。别的 claw 或 agent 只要有 OpenAI 兼容的对话接口也能用（Hermes Agent、nanobot、Letta Code 有现成配置），安装时答它的名字或填地址就行。对话、Agents（每个是一段单独的对话，知道自己管什么、记得昨天的日结）、看板、目标、日程、Zen、世界树、推送都能用；只有 OpenClaw 才有的（回复中插话、后台任务、执行审批、定时任务、模型计费）app 里会藏起来。细节见 [server/README.zh-CN.md](server/README.zh-CN.md#别的-claw)。
+横亘于你与万千 AI 之间的新介质——下一代个人操作系统：让人类的直觉与自治 Agent 生态，坍缩为一个与你共生的数字连续体。
 
-**不是 OpenMuse。** [CopilotKit 的 OpenMuse](https://github.com/CopilotKit/openmuse) 是一台"agent 电脑"（浏览器、终端、邮件、填表），自带 agent。OpenMousse 不自带 agent：它建在你的 OpenClaw 上，专注你的生活数据、会主动找你的 Agents，和一份所有 AI 共用的记忆。
+---
 
-**状态：刚起步。** 作者每天在用；在别人机器上的安装还在试，非常欢迎安装反馈。iPhone app 的 TestFlight 公开链接等 Apple 的测试审核过了就放出来。
+**模型趋于同质，唯独你看待世界的方式不会。** 基础模型趋于同质化，真正构成差异的是日积月累的个人上下文：工作与生活的上下文留在你的服务器上，从中提炼的事实、偏好、决定与成熟观点，生长为一棵属于你的世界树。
 
-### 哪些数据会离开你的机器
+## 这是什么
 
-对话、记忆和健康数据都留在你的服务器上。按设计会出去的只有：
+OpenMousse 是运行在你自己服务器上的开源个人 AI Agent 系统，当前运行在 claw（Agent 运行时：默认为 OpenClaw，内置 Hermes、nanobot 与 Letta 预设，也支持任何提供 OpenAI 兼容接口的 Agent）之上，直接选模型即可使用的内置引擎（即将推出）；提供 iPhone（TestFlight 邀请）、Android（APK）、网页端（在 `app/` 下执行 `npm run web:build`，需 Node.js）以及桌面工作台（即将推出）。
 
-- 发给你在 OpenClaw 里配置的模型服务商的消息；
-- 经 Expo 和 Apple 的推送通知（标题和一段简短预览）；
-- 语音发给 `server.json` 里配置的转写服务（默认 OpenAI；把 `transcribe_url` 指向你自己的 Whisper 服务就不出门）；
-- 只有你给自带内核打开了按意思搜（`engine.recall.embeddings`，默认关）：记忆文件、日结、对话和世界树叶子的文字发给你选的向量服务（Gemini、OpenAI，或者本机的 Ollama，那样就不出门）；
-- 如果你把 Claude.ai / ChatGPT / Gemini / Notion 接到世界树，它们会通过你暴露的地址读写它。
+- **世界树。** 服务器上的统一长期记忆（SQLite，或 Obsidian 笔记库中的 Markdown 笔记），事实、偏好、决定与推敲成熟的观点都成为带有出处的叶子，拿不准的可以先进「待确认」。Claude、ChatGPT、Gemini、Notion 与 Claude Code 通过 MCP 的五个工具（`profile`、`recall`、`remember`、`recent`、`forget`）授权读写，触及不到原始数据；也可作为 `mousse-tree`（`tree/`）独立运行。
+- **三类 Agent。** 主对话是入口，负责把工作交给功能 Agent，也能召集简短会议并生成待你确认的纪要。每个功能 Agent 照看一个领域，拥有独立的对话、记忆、工具与看板（表格、看板、日历、时间线与图表视图）；安装后默认为空，在对话中提出需求（如「帮我建一个管睡眠的 Agent」）即可创建。拥有独立人格的思考伙伴「赛博」（即将推出）。
+- **先问你。** 连接器的写入操作（例如写入 Notion）需等待你的批准；名片 Agent 对好友说的每一句话，发出前都经由 Doorman 审核。密码以占位符形式留在 Doorman 处的代办沙箱目前为预览功能，可通过 `python3 server/errand.py setup` 开启（需 Docker）。由系统强制执行的三档工具权限将随内置引擎（即将推出）提供。
+- **好友与名片 Agent。** 好友通过双向邀请连接，消息带有签名，当前版本间端到端加密；无公网地址时经由不存储任何内容的 OpenMousse 中继转发。名片 Agent 在你设定的关系层级内回应好友；其继任者「管家」（即将推出）。
+- **Zen 与播客。** 在 Zen 中记录的想法，点击「讨论」或「写成笔记」前不会发给任何 AI；思考完成后可点击「保存到库」存为笔记，成熟的观点汇入世界树。播客支持与好友围坐一部手机录音，生成区分说话人的逐字稿与纪要。
+- **今天。** 包含「待处理」「日程」「报告」（睡眠、起床报告）三个板块。凌晨 03:45 日结、04:00 对话翻篇，重要内容留入记忆。
 
-详见[隐私政策](https://openmousse.ai/privacy.html)和 [SECURITY.md](SECURITY.md)。
+<p align="center">
+  <img src="docs/screenshots/zh-today.png" width="30%" alt="今天：待处理、日程与报告">
+  <img src="docs/screenshots/zh-chat.png" width="30%" alt="主对话：三个 Agent 的会议与纪要">
+  <img src="docs/screenshots/zh-zen.png" width="30%" alt="Zen：安静记录想法，无 AI 回复打扰">
+</p>
 
-## 组成
+## 快速开始
 
-| 目录 | 是什么 | 状态 |
-|---|---|---|
-| [`tree/`](tree/) | 世界树：一份记忆，Claude / ChatGPT / Gemini / Notion 和你的 claw 都接到同一棵树上（MCP）。app 里的「记忆」页就是它 | 可用（先于 app 成型） |
-| [`app/`](app/) | iOS / Web 客户端（Expo）：对话、Agents、今天、目标、记忆。连你自己的服务器，名字和图标你定 | 可用（看板部分仍绑作者的数据源，见 packs） |
-| [`server/`](server/) | 薄 API 层（FastAPI）：令牌认证、对话转发、Agent 创建与删除、看板数据、推送、托管网页版 | 可用 |
-| [`packs/core/`](packs/core/) | 装好就有的一层：Agent 之间的协作（handoff）、对话里建 Agent、日志、世界树 skill、日结定时器，以及安装器本体 | 可用 |
-| `packs/` 其余 | 可选的功能包：健身、饮食、睡眠、求职……每个包 = 一个 Agent 的职责说明、数据表、看板卡片、触发器 | 从 Grava 移植中 |
+**准备条件。** 一台保持开机的 Linux、macOS 或 Windows（WSL 2）设备，已运行 claw（若用 OpenClaw，需配置好模型并启动 Gateway），并装有 Python 3.11+、`git` 与 `curl`。
 
-设计原则：
-
-- **白板**。装好后没有任何预设的生活领域，你对它说"我想跟踪睡眠和每周跑步"，它替你生成一个 Agent。作者自己的几个 Agent 以功能包形式提供，当模板用。
-- **不锁死数据源**。功能包只声明它需要什么数据（训练、餐食、睡眠、身体指标），不规定数据从哪来。来源可以是 Apple 健康、任何提供 MCP 的健康 / 健身 / 饮食软件、一个适配器脚本，或者直接在对话里记。你已经在用的软件有 MCP 就能接，没有的写一个小适配器。
-- **记忆是主体**。世界树不是附属功能，是 app 的记忆层；各平台和各 Agent 都是接到树上的枝。
-
-## 装
-
-前提：一台 Linux、macOS 或 Windows（通过 WSL 2）的机器，装好了 OpenClaw、配好了模型（`openclaw onboard` 跑过，Gateway 在跑）。然后一条命令：
+**安装。** 执行以下命令：
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/openmousse/openmousse/main/install.sh | bash
+curl -fsSL https://openmousse.ai/install | bash
 ```
 
-问四个问题（语言、OpenClaw 在哪、时区、助手叫什么），其余全做：clone 仓库、装 Python 依赖到 `~/.openmousse/venv`、写 `~/.openmousse/server.json`、生成手机令牌、把 [`packs/core`](packs/core/) 的 skills 和日结定时器接进你的 OpenClaw（改 `openclaw.json` 前备份、改完校验）、设好开机自启（Linux 和 WSL 用 systemd，macOS 用 launchd），最后打印手机怎么连。另外两个问题可以跳过：服务器上已经在同步的 Obsidian 库文件夹（世界树和思考空间就放进去），以及开不开公网（用 Tailscale Funnel：Claude.ai、ChatGPT、Gemini、Notion 等支持 MCP 的 AI 平台能连世界树，分享能发链接，能加朋友）。再跑一遍是安全的，只补缺的。
+**安装问答。** 安装脚本会询问使用哪个 claw（直接回车使用 OpenClaw，或输入 `hermes`、`nanobot`、`letta`，或其他 Agent 的 OpenAI 兼容地址），内置引擎（即将推出），随后询问语言、时区和助手名字，以及两个可选项：已同步到该服务器的 Obsidian 笔记库目录，和是否通过 Tailscale Funnel 开启公网 HTTPS（开启后 Claude.ai、ChatGPT 等 MCP 客户端可连接世界树、分享可生成链接、好友可直连；仅开放上述路径，绝不暴露应用 API）。重复运行该命令是安全的。
 
-机器在 Tailscale 里最省事：服务自动绑到 Tailscale 地址，手机装 Tailscale 就能连。不在的话服务只听本机，用 `tailscale serve` 或反向代理暴露成 HTTPS。
+**连接手机。** 所有文件安装在 `~/.openmousse` 下，服务启动后终端会打印有效期 10 分钟的一次性配对链接，以及服务器地址与配对码。
 
-装完是一块白板：没有任何 Agent，看板显示「还没接数据」。在对话里说"帮我做一个管睡眠的 Agent"，它替你建；在对话里记录，或者接一个数据源（见 packs）。
+**或让 Agent 代为安装。** 发给你的 Agent：
 
-## 两种用法
+```text
+按 https://raw.githubusercontent.com/openmousse/openmousse/main/docs/connect.zh-CN.md 把我接上 OpenMousse
+```
 
-**1. 装作者发的 TestFlight**（最快）：装上后在连接页填你自己服务器的地址和令牌。app 内的助手名字来自你的服务器（`server.json` 的 `app_name`），Agent 你自己建，数据接你自己的。桌面图标和名字是打包时定的，想换要走第 2 种。
+**自检。** 随时检查运行状态：
 
-**2. 自己构建**：clone 仓库，`app/` 里复制 `app.local.example.json` 为 `app.local.json` 填自己的名字、包名、Expo 项目，把图标放进 `app/assets/local/`，然后 `eas build -p ios --profile production`。详见 [`app/README.zh-CN.md`](app/README.zh-CN.md)。
+```bash
+bash ~/openmousse/check.sh
+```
 
-服务端两种用法都一样：[`server/README.zh-CN.md`](server/README.zh-CN.md)。
+## 文档与数据
 
-## 出处
+对话、记忆与健康数据留在你的服务器上，模型调用使用你自己的账号。设计上会离开服务器的数据均列于《数据与安全》及《隐私政策》。
 
-OpenMousse 从作者的个人系统 Grava 抽出来。Grava 是作者自己的实例，OpenMousse 是任何人都能装的壳。
+- [文档](https://openmousse.ai/docs/welcome.html)
+- [供 Agent 阅读的 llms.txt](https://openmousse.ai/llms.txt)（每个文档页面均提供 `/docs/<page>.md` 的 Markdown 版本）
+- [数据与安全](https://openmousse.ai/docs/security.html)
+- [隐私政策](https://openmousse.ai/privacy.html)
 
-## 参与
+## 代码仓库
 
-见 [CONTRIBUTING.zh-CN.md](CONTRIBUTING.zh-CN.md)。现在最有用的是安装报告和数据源适配器。
+| 目录 | 说明 |
+| :--- | :--- |
+| `tree/` | 世界树（`mousse-tree`），MCP 服务器 |
+| `app/` | iPhone、Android 与网页客户端（Expo） |
+| `server/` | 服务端（FastAPI） |
+| `packs/` | 核心技能与安装配置，以及可选功能包 |
+| `relay/` | 好友消息中继（Cloudflare） |
+| `docs/` | Agent 安装指南、好友与 Agent 协议 |
 
-## 许可
+## 参与贡献
 
-[AGPL-3.0](LICENSE)，© 2026 Leo Zhou。你可以免费运行、研究、修改和分发 OpenMousse；如果把改过的版本通过网络提供给别人用，就要按同样的许可证公开你的改动。原样装来自己用、或者只为自己改，都没有任何要求。
+详见 [CONTRIBUTING.md](CONTRIBUTING.md)；安装反馈与数据源适配器对项目帮助最大。
 
-想把它放进自己的产品又不公开改动，或者拿来做收费服务？开一个 [GitHub issue](https://github.com/openmousse/openmousse/issues) 谈商业授权。
+## 许可证
 
-2026 年 9 月 28 日之前发布的版本（到 `b8902a8` 为止）是 MIT 许可，仍然可以按 MIT 使用；之后的都是 AGPL-3.0。`app/` 里来自 Expo 模板的代码保留它的 MIT 声明（[app/LICENSE-EXPO](app/LICENSE-EXPO)）。
+AGPL-3.0，© 2026 Leo Zhou。可自由运行、研究、修改与分发；若通过网络向他人提供修改后的版本，须以相同许可证公开你的修改。商业授权请提交 GitHub issue。2026 年 9 月 28 日之前的版本（至提交 `b8902a8`）仍为 MIT；`app/` 中的 Expo 模板代码保留其 MIT 声明（`app/LICENSE-EXPO`）。
