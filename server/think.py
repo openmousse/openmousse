@@ -1101,10 +1101,12 @@ def parse_draft(text: str, frags: list[dict], title: str) -> dict:
             "tree": str(j.get("tree") or "").strip()[:300], "branch": str(j.get("branch") or "").strip()[:30]}
 
 
-async def complete(prompt: str, key: str, model: str, timeout: float = 300) -> str:
-    """一问一答（不进任何 app 线程）：流式攒完整段回复。别的 claw 走 claw.py 的 OpenAI 兼容接口。"""
+async def complete(prompt: str, key: str, model: str, timeout: float = 300, *, origin: str | None = None) -> str:
+    """一问一答（不进任何 app 线程）：流式攒完整段回复。别的 claw 走 claw.py 的 OpenAI 兼容接口。
+    origin：主人自己引出来的（「想完了」是 user）：自己的内核据此让他自己的 Claude Code 跑（走他的套餐，engine/owner.stream）；
+    None = 当外人。OpenClaw 那条路不看它。"""
     if not claw.is_openclaw():
-        return await claw.complete(prompt, key, model if model in claw.models() else None, timeout)
+        return await claw.complete(prompt, key, model if model in claw.models() else None, timeout, origin=origin)
     token = chat.gateway_token()
     out = ""
     async with httpx.AsyncClient(timeout=httpx.Timeout(timeout, connect=10)) as client:
@@ -1144,7 +1146,7 @@ async def make_draft(tid: str) -> None:
     with _lock, db() as conn:
         model = chat.thread_model(conn, tid)
     try:
-        text = await complete(draft_prompt(r, frags), key, model)
+        text = await complete(draft_prompt(r, frags), key, model, origin="user")  # 你点的「想完了」：模型是你的 Claude Code 就走套餐
         draft = parse_draft(text, frags, r["title"])
         with _lock, tdb() as conn:
             conn.execute("UPDATE think_topics SET draft=?, draft_status='ready', draft_at=?, draft_error=NULL WHERE id=?",

@@ -767,7 +767,8 @@ async def make_suggestions(exclude: list[str]) -> list[dict]:
     got, _ = await llmjson.ask(prompt, {"candidates": items, "recent": recent, "exclude": exclude[:20]}, SUGGEST_SCHEMA, timeout=60,
                                thinking=str(cfg().get("thinking") or "low"), model=cfg().get("model"),
                                # 退回带工具的对话回合时不带朋友画像来的候选（ref 照旧是原来的序号）
-                               fallback_input={"candidates": [x for x in items if x["kind"] != "person"], "recent": recent, "exclude": exclude[:20]})
+                               fallback_input={"candidates": [x for x in items if x["kind"] != "person"], "recent": recent, "exclude": exclude[:20]},
+                               kind="owner", origin="user")
     if isinstance(got, list):  # 不带 schema 那次常直接回一个列表
         got = {"items": got}
     out, used = [], set()
@@ -984,7 +985,7 @@ async def prep_reply(r: sqlite3.Row, turns: list[sqlite3.Row], ask_outline: bool
     talk = [{"who": "you" if t["role"] == "host" else "them", "text": t["text"]} for t in turns]
     inp, fallback = podmaterials.inputs(r["id"], {"talk": talk, "outline": outline, "wantOutline": ask_outline, **({"people": ppl} if ppl else {})}, 8000)
     got, _ = await llmjson.ask(prompt, inp, PREP_SCHEMA, timeout=60, thinking=str(cfg().get("thinking") or "low"), model=cfg().get("model"),
-                               fallback_input=fallback)
+                               fallback_input=fallback, kind="owner", origin="user")
     if not isinstance(got, dict):
         raise llmjson.LLMError("unexpected JSON")
     return got
@@ -1141,7 +1142,7 @@ async def ask(eid: str, body: AskIn):
     inp, fallback = podmaterials.inputs(eid, inp, 6000, fallback=fb)
     try:
         got, _ = await llmjson.ask(prompt, inp, ASK_SCHEMA, timeout=45, thinking=str(cfg().get("thinking") or "low"), model=cfg().get("model"),
-                                   fallback_input=fallback)
+                                   fallback_input=fallback, kind="owner", origin="user")
     except llmjson.LLMError as e:
         raise HTTPException(502, L(f"它没问出来：{e}", f"No question: {e}")) from e
     q = str((got or {}).get("question") or "").strip()[:300] if isinstance(got, dict) else ""
@@ -1248,7 +1249,8 @@ async def process(eid: str) -> None:
                 + shape('{"fixes": [{"id": "0.3", "from": "…", "to": "…"}]}'),
                 {"vocabulary": vocab_terms(), "sentences": [{"id": x["id"], "text": x["text"]} for x in sents]},
                 FIX_SCHEMA, timeout=120, thinking=think_level, model=model,
-                fallback_input={"vocabulary": vocab_terms(), "sentences": [{"id": x["id"], "text": x["text"]} for x in only_mine(sents)]})
+                fallback_input={"vocabulary": vocab_terms(), "sentences": [{"id": x["id"], "text": x["text"]} for x in only_mine(sents)]},
+                kind="owner", origin="user")
             apply_fixes(eid, (got or {}).get("fixes") or [] if isinstance(got, dict) else [])
             segs = segments_of(eid)
             sents = flat_sentences(segs, who)
@@ -1293,7 +1295,7 @@ async def process(eid: str) -> None:
                 "hostQuestions": [f"[{clock(t['at'])}] {t['text']} ({t['status']})" for t in turns], **({"me": speaker_name("@me", who)} if friends else {})}
         inp, fallback = podmaterials.inputs(eid, base, 24000, fallback={**base, "transcript": transcript_lines(mine, 60000)})
         got, _ = await llmjson.ask(prompt, inp, SUM_SCHEMA, timeout=180, thinking="medium" if think_level == "low" else think_level, model=model,
-                                   fallback_input=fallback)
+                                   fallback_input=fallback, kind="owner", origin="user")
         res = clean_result(got if isinstance(got, dict) else {}, mine, r["title"])  # 约朋友录的：「我的原话」只从我说的句子里摘
         if br and res["branch"] not in br:  # 编出来的枝不要：世界树写的时候自己挂
             res["branch"] = ""
@@ -1310,7 +1312,7 @@ async def process(eid: str) -> None:
                     "their view changed. Only real overlaps; otherwise an empty list.")
                     + shape('{"relates": [{"path": "…", "then": "…", "now": "…", "nowId": "0.4", "changed": true}]}'),
                     {"episode": {"title": res["title"], "oneLine": res["oneLine"], "quotes": res["quotes"]}, "transcript": transcript_lines(mine, 15000),
-                     "notes": notes}, REL_SCHEMA, timeout=90, thinking=think_level, model=model)
+                     "notes": notes}, REL_SCHEMA, timeout=90, thinking=think_level, model=model, kind="owner", origin="user")
                 paths = {n["path"]: n["title"] for n in notes}
                 at = {x["id"]: x["at"] for x in sents}
                 res["relates"] = [{"path": x["path"], "title": paths[x["path"]], "then": str(x.get("then") or "")[:300], "now": str(x.get("now") or "")[:300],
@@ -1448,7 +1450,7 @@ async def feynman(r: sqlite3.Row, sents: list[dict], turns: list, think_level: s
                     '"missed": [{"text": "…", "source": "…"}], "explain": "…"}')
     got, _ = await llmjson.ask(prompt, {"transcript": transcript_lines(sents, 40000), "laypersonQuestions": [f"[{clock(t['at'])}] {t['text']}" for t in turns],
                                         **({"materials": material} if material else {})},
-                               FY_SCHEMA, timeout=240, thinking="medium" if think_level == "low" else think_level, model=model)
+                               FY_SCHEMA, timeout=240, thinking="medium" if think_level == "low" else think_level, model=model, kind="owner", origin="user")
     j = got if isinstance(got, dict) else {}
     at = {x["id"]: x["at"] for x in sents}
     wrong = [{"id": str(w.get("id") or ""), "at": at.get(str(w.get("id") or "")), "said": str(w.get("said") or "")[:300],

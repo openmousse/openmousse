@@ -405,7 +405,7 @@ def test_tools_go_through_the_kernel_gate_and_the_token_is_scoped(cc, monkeypatc
                    {"tool": "diet", "input": {"args": ["day"]}},
                    {"tool": "journal", "input": {"args": ["delete", "j-cc-1"], "why": "Logged twice."}},
                    {"tool": "board", "input": {"args": ["show", "--agent", "main"]}},
-                   {"tool": "handoff", "input": {"args": ["--list"]}},
+                   {"tool": "agents", "input": {"args": ["list"]}},
                    {"say": "Deleting needs your OK."}]])
 
     async def go():
@@ -416,13 +416,13 @@ def test_tools_go_through_the_kernel_gate_and_the_token_is_scoped(cc, monkeypatc
             return r, evs
     r, evs = run(go())
     listed = cc.records("list")[0]["names"]
-    assert "diet" in listed and "memory_search" in listed and "skill" in listed and "handoff" not in listed  # 这个 Agent 这一轮的整张表
+    assert "diet" in listed and "memory_search" in listed and "skill" in listed and "agents" not in listed  # 这个 Agent 这一轮的整张表
     res = {x["name"]: x["response"]["result"] for x in cc.records("mcp")}
     assert res["diet"]["isError"] is False and cc.calls == [("diet", ["day"], "g-cc")]  # 只读：直接做，按这个 Agent 跑
     pend = json.loads(res["journal"]["content"][0]["text"])
     assert res["journal"]["isError"] is False and pend["status"] == "approval-pending"  # 撤不回：出卡，回 approval-pending，没跑
     assert res["board"]["isError"] and "--agent" in res["board"]["content"][0]["text"]  # 指别的 Agent：关卡挡下
-    assert res["handoff"]["isError"] and "no handoff tool" in res["handoff"]["content"][0]["text"]  # 别人的工具：没有
+    assert res["agents"]["isError"] and "no agents tool" in res["agents"]["content"][0]["text"]  # 主对话专用的工具：没有
     with chat._lock, inbox.idb() as conn:
         card = conn.execute("SELECT * FROM inbox WHERE id=?", (pend["inbox"],)).fetchone()
     assert card["kind"] == "tool" and card["status"] == "pending" and card["thread"] == "g-cc" and card["why"] == "Logged twice."

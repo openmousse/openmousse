@@ -8,14 +8,19 @@ Agent 用自己的 skills 和记忆回答，回复入库、不推送，这里拿
   ask_agent.py <agent id> "问题"  [--timeout 180]
   ask_agent.py --list                 # 现在有哪些 Agent（id、名字、职责）
   ask_agent.py --meet "议题" <agent id> <agent id> … [--title 会议名] [--keep]
-                                      # 发起会议（2026-10-13）：几个 Agent 一起商量，每轮每位发言一次，Grava 写纪要；
+                                      # 发起会议（2026-10-13）：几个 Agent 一起商量，每轮每位发言一次，主对话的助手写纪要；
                                       # 立刻返回，不等开完。纪要写好后出现在主对话里，等用户确认（见 server/meetings.py）
 退出码：0 有答案（会议：已发起）；2 超时或排队（Agent 还在答 / 在忙、问题排进了它的队列，稍后在它的线程里能看到）；1 其它错误。
 输出给主对话的 agent 读，语言跟 server.json 的 language。
+自己的内核（claw = builtin）里经 handoff 工具跑的（环境变量 MOUSSE_FROM = 转出去的那个对话，server/bridges.py 设）：Agent 也能转，
+转给 main（主对话）或别的 Agent；从哪转来、谁转的带进 relay（source、by），服务器据此记转交卡、数跳数、给对方标成别的会话转来
+（server/engine/sessions.py）。没有 MOUSSE_FROM（OpenClaw、/mcp）照旧。
 """
 from __future__ import annotations
 
 import argparse
+import json
+import os
 import sys
 import urllib.error
 from pathlib import Path
@@ -25,12 +30,25 @@ from mousse_common import L, api  # noqa: E402
 
 
 def agents() -> dict[str, str] | None:
-    """现在有哪些 Agent；服务连不上返回 None。"""
+    """现在有哪些 Agent；服务连不上返回 None。自己的内核里转的（MOUSSE_FROM）：主对话也算一个（Agent 能转给 main）。"""
     try:
         sep = L("：", ": ")
-        return {g["id"]: f"{g['name']}{sep}{g.get('purpose') or ''}" for g in api("/api/groups", timeout=10)["groups"]}
+        found = {g["id"]: f"{g['name']}{sep}{g.get('purpose') or ''}" for g in api("/api/groups", timeout=10)["groups"]}
     except Exception:  # noqa: BLE001
         return None
+    if os.environ.get("MOUSSE_FROM"):
+        found = {"main": L(f"主对话{sep}什么都管、分派给各个 Agent", f"The main chat{sep}handles anything and hands work to the Agents"), **found}
+    return found
+
+
+def reason(exc: urllib.error.HTTPError) -> str:
+    """服务器说的为什么：FastAPI 的 {"detail": "…"} 取出那句话，别的原样（最多 300 字）。"""
+    raw = exc.read().decode("utf8", "replace")
+    try:
+        detail = json.loads(raw).get("detail")
+    except (ValueError, AttributeError):
+        detail = None
+    return (detail if isinstance(detail, str) and detail else raw)[:300]
 
 
 def meet(topic: str, members: list[str], title: str | None, keep: bool) -> None:
@@ -48,9 +66,9 @@ def meet(topic: str, members: list[str], title: str | None, keep: bool) -> None:
         sys.exit(1)
     m = r["meeting"]
     names = L("、", ", ").join(x["name"] for x in m["members"])
-    print(L(f"已发起会议「{m['title']}」（{m['id']}）：{names}。每轮每个 Agent 发言一次，Grava 写纪要；纪要出来后会出现在主对话，等用户确认。"
+    print(L(f"已发起会议「{m['title']}」（{m['id']}）：{names}。每轮每个 Agent 发言一次，主对话的助手写纪要；纪要出来后会出现在主对话，等用户确认。"
             "不用等它开完，也不用转述每个 Agent 的话。",
-            f"Started the meeting \"{m['title']}\" ({m['id']}): {names}. Each Agent speaks once per round and Grava writes the minutes; "
+            f"Started the meeting \"{m['title']}\" ({m['id']}): {names}. Each Agent speaks once per round and the main chat's assistant writes the minutes; "
             "they will appear in the main chat for the user to confirm. Don't wait for it, and don't relay what each Agent says."))
 
 
@@ -85,10 +103,13 @@ def main() -> None:
         print(L(f"没有叫 {a.agent} 的 Agent。现在有：{', '.join(known) or '（无）'}",
                 f"There is no Agent called {a.agent}. Current Agents: {', '.join(known) or '(none)'}"))
         sys.exit(1)
+    body = {"thread": a.agent, "text": a.question, "timeout": a.timeout}
+    if os.environ.get("MOUSSE_FROM"):  # 自己的内核里转的：从哪个对话、谁转的
+        body.update(source=os.environ["MOUSSE_FROM"], by=os.environ.get("MOUSSE_AGENT") or "main")
     try:
-        r = api("/api/chat/relay", {"thread": a.agent, "text": a.question, "timeout": a.timeout}, timeout=a.timeout + 15)
+        r = api("/api/chat/relay", body, timeout=a.timeout + 15)
     except urllib.error.HTTPError as exc:
-        detail = exc.read().decode("utf8", "replace")[:200]
+        detail = reason(exc) if os.environ.get("MOUSSE_FROM") else exc.read().decode("utf8", "replace")[:200]  # 内核这边说清楚为什么没转（跳数、圈）
         busy = exc.code == 409
         print(L(f"转不过去（HTTP {exc.code}）：{'这个 Agent 上一条还没回完，等一会再问' if busy else detail}",
                 f"Couldn't hand it over (HTTP {exc.code}): {'this Agent is still answering its previous message, ask again in a moment' if busy else detail}"))

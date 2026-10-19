@@ -1,8 +1,11 @@
 """定时任务（内核第 6 项，claw 选 builtin 时）：Agent 定的提醒和定期要做的事，到点自己跑一轮主人回合。
+10/19 起多一种只跑命令的（command）：到点跑一个命令行工具，不调模型（见下面「只跑命令的」）。
 
 表（mousse.db）：
   engine_jobs      一条一个：id job-xxxxxxxx · agent（谁的：main 或 Agent id）· name · schedule（engine/when.py 存的样子，JSON）
-                   · prompt（要做什么，到点原样交给模型）· session（isolated 单独跑 / chat 在 deliver 那个对话当天的会话里跑）
+                   · prompt（要做什么，到点原样交给模型；只跑命令的是那条命令的样子，给列表和卡看）
+                   · command（只跑命令的：{"tool" | "script", "args", "input"?, "timeout"}，JSON；调模型的是空的）
+                   · session（isolated 单独跑 / chat 在 deliver 那个对话当天的会话里跑）
                    · deliver（结果投到哪个对话：这个 Agent 自己的对话；主对话的也可以是它的项目）· level（推送档位 ring / quiet / none）
                    · times（跑几次就停，空 = 一直）· continuity（每次带上上一次发的话）· model（空 = deliver 那个对话的模型；只有用户能定）
                    · state：draft 等用户点「开」/ on 开着 / paused 停着 / done 跑完了 / missed 错过了（一次的，服务器停太久）
@@ -12,7 +15,8 @@
                    · created_by（agent:<id> / user）· next_run · last_run / last_status / last_error · runs · fails（连着出错几次）
                    · running（这一次什么时候开跑的，跑完清掉）
   engine_job_runs  每跑一次一行：本该什么时候、实际开跑、按时 on_time / 晚了 late / 补跑 catch_up / 手动 manual、状态（ok / silent / error /
-                   timeout / busy / interrupted / missed / skipped / limit）、一轮 id、发进对话的那条回复、出错、回复开头（continuity 用）
+                   timeout / busy / interrupted / missed / skipped / limit）、一轮 id、发进对话的那条回复、出错、回复开头（continuity 用）、
+                   output（只跑命令的：命令的输出，最多 OUTPUT_MAX 字）
   engine_job_meta  ticker 最后一次看是什么时候（服务重启后知道停了多久：停着的时候到点的一次性任务多给 2 小时）
 
 谁能开（OpenHuman 的 tinyflows：带自动触发的一律存成停用，没有任何工具能启用；见 workspace 的 memory/context/openhuman-borrow.md）：
@@ -30,9 +34,21 @@
     对话今天的会话补一条 system：接着聊接得上）。chat：照 chat.trigger 那条路在 deliver 里跑（unattended.in_chat）。
   这一轮里不给 cron 工具（chat 模式给了也不许建、改、删、手动跑：Hermes 的规矩，免得任务里一句「每天」就再建一个）。
   看门狗：600 秒（engine.jobs.idle_timeout）没有一点动静就停。连着出错：第一次在对话里说一声，连着 5 次就停用并说一声。
-  一天最多跑 engine.jobs.daily_limit 次（默认 1000，所有任务合计），到了就跳过、记一条活动。
+  一天最多跑 engine.jobs.daily_limit 次（默认 1000，调模型的任务合计；只跑命令的不调模型，不算），到了就跳过、记一条活动。
   服务重启：next_run 都在库里，接着排；上次停机时正在跑的记成 interrupted，不重跑。
 只在 claw.kind = builtin 时跑（每次 tick 现看）；OpenClaw 那边的 cron 一点不动。
+
+只跑命令的（command，10/19；照 OpenClaw cron 的 command 任务：argv、不经 shell、有时限、输出记进运行记录、退出码不是 0 不马上重试）：
+  跑什么：只有两种。BRIDGES 里登记过的命令行工具（board、schedule……：和这个 Agent 平时调的一样，它得有这个工具、没被
+    engine.tools.levels 关掉，参数照工具的规矩查：tools.problem → bridges.guard，不许冒充别人、不许读服务器上的文件）；或者
+    server.json 的 engine.jobs.scripts 里列的脚本（绝对路径的白名单，参数照 bridges.guard 查）。建、改的时候查一遍，到点再查一遍
+    （白名单改了、工具关了就不跑，记一次出错）。OpenClaw 只许管理员建这种任务；这里 Agent 也能提，但和别的定时任务一样先停着、
+    交卡等用户点「开」（卡上写明到点会跑的整条命令、多久停）；用户在 app 里建的直接开。
+  怎么跑：一个子进程（bridges.execute：参数一项一个词、不经 shell，在这个 Agent 的工作区里，MOUSSE_AGENT = 它，MOUSSE_VIA = auto：
+    脚本再请求服务器开的回合算后台），时限 timeout 秒（工具默认它自己的，脚本默认 SCRIPT_TIMEOUT，最多 COMMAND_TIMEOUT_MAX），
+    到点连它起的子进程一起停掉、记成 timeout。退出码 0 算跑成，输出（标准输出，有错误输出的也带上）记进运行记录，不发进对话：
+    要说话由脚本自己决定（比如经 /api/chat/trigger 往对话里发一句，README 有例子）。没跑成照上面的规矩：不马上重试、第一次在对话里
+    说一声、连着 5 次停用。不调模型：session、continuity、model 对它没用，也不算进 daily_limit。
 
 接口（app 以后用）：GET /api/engine/jobs、POST（用户建的，直接开）、GET / PATCH / DELETE /api/engine/jobs/{id}、
   POST /api/engine/jobs/{id}/pause | resume | run、GET /api/engine/jobs/proposal/{收件箱 id}（卡片预览）。
@@ -43,6 +59,9 @@ import asyncio
 import hashlib
 import json
 import math
+import os
+import shlex
+import sys
 import uuid
 from datetime import datetime
 from typing import Any
@@ -72,6 +91,8 @@ LATE_OK = 300                          # 晚了这么久以内都算按时（Her
 FAILS_TO_PAUSE = 5
 NAME_MAX, TASK_MAX, PREVIEW_MAX = 40, 2000, 2000
 DAILY_LIMIT = 1000
+SCRIPT_TIMEOUT, COMMAND_TIMEOUT_MAX = 120, 600  # 只跑命令的：白名单脚本默认多久停、最多能写多久（秒）
+OUTPUT_MAX = 4000                      # 运行记录里留命令的多少字输出（多了留头尾）
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS engine_jobs (
@@ -79,13 +100,14 @@ CREATE TABLE IF NOT EXISTS engine_jobs (
   session TEXT NOT NULL DEFAULT 'isolated', deliver TEXT NOT NULL, level TEXT NOT NULL DEFAULT 'quiet', times INTEGER,
   continuity INTEGER NOT NULL DEFAULT 0, model TEXT, state TEXT NOT NULL, approved INTEGER NOT NULL DEFAULT 0, pending TEXT,
   inbox TEXT, card TEXT, digest TEXT, created_by TEXT NOT NULL, next_run TEXT, last_run TEXT, last_status TEXT, last_error TEXT,
-  runs INTEGER NOT NULL DEFAULT 0, fails INTEGER NOT NULL DEFAULT 0, running TEXT, created_at TEXT NOT NULL, updated_at TEXT NOT NULL);
+  runs INTEGER NOT NULL DEFAULT 0, fails INTEGER NOT NULL DEFAULT 0, running TEXT, created_at TEXT NOT NULL, updated_at TEXT NOT NULL,
+  command TEXT);
 CREATE INDEX IF NOT EXISTS engine_jobs_due ON engine_jobs(state, next_run);
 CREATE INDEX IF NOT EXISTS engine_jobs_agent ON engine_jobs(agent, state);
 CREATE INDEX IF NOT EXISTS engine_jobs_inbox ON engine_jobs(inbox);
 CREATE TABLE IF NOT EXISTS engine_job_runs (
   id TEXT PRIMARY KEY, job TEXT NOT NULL, agent TEXT NOT NULL, due TEXT, started_at TEXT NOT NULL, ended_at TEXT, kind TEXT NOT NULL,
-  status TEXT NOT NULL, turn TEXT, message INTEGER, error TEXT, preview TEXT, usage TEXT);
+  status TEXT NOT NULL, turn TEXT, message INTEGER, error TEXT, preview TEXT, usage TEXT, output TEXT);
 DROP INDEX IF EXISTS engine_job_runs_job;
 CREATE INDEX IF NOT EXISTS engine_job_runs_job_at ON engine_job_runs(job, julianday(started_at));
 CREATE TABLE IF NOT EXISTS engine_job_meta (key TEXT PRIMARY KEY, value TEXT);
@@ -98,6 +120,8 @@ _wake: tuple[Any, asyncio.Event] | None = None
 _bg: set[asyncio.Task] = set()
 _down: dict[str, datetime | None] = {"since": None, "started": None}   # 上一个进程最后一次看的时刻、这一个进程开始看的时刻
 _limit_noted: set[str] = set()
+# 跑完一次以后接着做的：created_by → fn(任务, 结果)。treeprune.py 登记它那条每周修剪（13c：模型没交计划，也把「这个月没用上的」出成一张卡）
+AFTER: dict[str, Any] = {}
 
 
 class JobError(ValueError):
@@ -134,6 +158,9 @@ def ready() -> None:
         return
     with store.tx() as conn:
         conn.executescript(SCHEMA)
+        for table, col in (("engine_jobs", "command"), ("engine_job_runs", "output")):  # 10/19 以前建的表：补上只跑命令的那两栏
+            if col not in {r[1] for r in conn.execute(f"PRAGMA table_info({table})")}:
+                conn.execute(f"ALTER TABLE {table} ADD COLUMN {col} TEXT")
     _ready.add(path)
 
 
@@ -170,6 +197,7 @@ def _job(r) -> dict:
     d = dict(r)
     d["schedule"] = json.loads(d["schedule"])
     d["pending"] = json.loads(d["pending"]) if d.get("pending") else None
+    d["command"] = json.loads(d["command"]) if d.get("command") else None
     return d
 
 
@@ -205,7 +233,7 @@ def runs_of(jid: str, limit: int = 20) -> list[dict]:
 
 
 def spec_of(j: dict) -> dict:
-    return {k: j[k] for k in ("name", "schedule", "prompt", "session", "deliver", "level", "times", "continuity", "model")}
+    return {k: j.get(k) for k in ("name", "schedule", "prompt", "session", "deliver", "level", "times", "continuity", "model", "command")}
 
 
 STATE_TEXT = {"draft": ("等你点「开」", "waiting for your OK"), "on": ("开着", "on"), "paused": ("停着", "paused"), "done": ("跑完了", "finished"),
@@ -218,7 +246,8 @@ def view(j: dict) -> dict:
     """给 app 的样子。"""
     return {"id": j["id"], "agent": j["agent"], "name": j["name"], "when": when.describe(j["schedule"]), "schedule": j["schedule"],
             "task": j["prompt"], "session": j["session"], "deliver": j["deliver"], "deliverName": unattended.thread_name(j["deliver"]),
-            "level": j["level"], "times": j["times"], "continuity": bool(j["continuity"]), "model": j["model"], "state": j["state"],
+            "level": j["level"], "times": j["times"], "continuity": bool(j["continuity"]), "model": j["model"], "command": j.get("command"),
+            "state": j["state"],
             "stateText": L(*STATE_TEXT.get(j["state"], (j["state"], j["state"]))), "approved": bool(j["approved"]), "pending": j["pending"],
             "inbox": j["inbox"], "createdBy": j["created_by"], "nextRun": j["next_run"], "lastRun": j["last_run"], "lastStatus": j["last_status"],
             "lastError": j["last_error"], "runs": j["runs"], "fails": j["fails"], "running": bool(j["running"]), "createdAt": j["created_at"]}
@@ -230,7 +259,9 @@ def line(j: dict) -> str:
     bits = [j["id"], j["name"], when.describe(j["schedule"]), st]
     if j["state"] == "on":
         bits.append(L(f"下一次 {when.clock_text(parse_iso(j['next_run']))}", f"next {when.clock_text(parse_iso(j['next_run']))}"))
-    if j["session"] == "chat":
+    if j.get("command"):
+        bits.append(L("只跑命令，不调模型", "runs a command, no model"))
+    elif j["session"] == "chat":
         bits.append(L("在对话里跑", "runs in the chat"))
     if j["deliver"] != own_thread(j["agent"]):
         bits.append(L(f"发到「{unattended.thread_name(j['deliver'])}」", f"posts to {unattended.thread_name(j['deliver'])}"))
@@ -243,7 +274,7 @@ def line(j: dict) -> str:
     if j["pending"]:
         bits.append(L("有一处改动等你点头", "a change is waiting for the user's OK") if not j["pending"].get("delete")
                     else L("删除等你点头", "deletion is waiting for the user's OK"))
-    return " · ".join(bits) + f"\n  task: {j['prompt'][:200]}"
+    return " · ".join(bits) + (f"\n  command: {j['prompt'][:200]}" if j.get("command") else f"\n  task: {j['prompt'][:200]}")
 
 
 # —— 写法 → 一版 ———————————————————————————————————————————————————————————
@@ -253,17 +284,115 @@ def _deliver_ok(agent: str, thread: str) -> bool:
     return unattended.thread_exists(thread) and agent_of(thread) == agent
 
 
+def scripts() -> list[str]:
+    """server.json 的 engine.jobs.scripts：只跑命令的任务另外能跑的脚本（绝对路径，~ 展开；相对路径不认）。"""
+    v = cfg().get("scripts")
+    out: list[str] = []
+    for x in v if isinstance(v, list) else []:
+        p = os.path.expanduser(str(x).strip())
+        if os.path.isabs(p):
+            out.append(os.path.normpath(p))
+    return out
+
+
+def command_text(c: dict) -> str:
+    """一条命令给人看的样子（列表、卡上）：「board rows query habits」「/srv/scripts/check.py --window 60」。"""
+    return shlex.join([str(c.get("tool") or c.get("script") or ""), *[str(a) for a in c.get("args") or []]]) + (" < input" if c.get("input") else "")
+
+
+def command_argv(agent: str, c: dict) -> tuple[str, list[str]]:
+    """一条命令 → (参数照哪个工具的规矩查（脚本是 ""）, 要起的命令（不含 args）)。跑不了、不许抛 JobError。建、改的时候查一遍，
+    到点再查一遍（白名单改了、工具关了、脚本没了就不跑）。工具：这个 Agent 有它（tools.offered：服务器上有、没被 engine.tools.levels
+    整个关掉、主对话专用的只给 main），参数照它平时被调时的规矩查（tools.problem：不许冒充别人、bridges.guard），这一条没被关掉；
+    脚本：在 engine.jobs.scripts 里、还在；能执行的直接起，.py 用服务器自己的 Python。"""
+    import bridges
+
+    from . import tools as tools_mod
+    args = [str(a) for a in c.get("args") or []]
+    if tool := c.get("tool"):
+        if tool not in tools_mod.offered(agent):
+            raise JobError(L(f"你没有 {tool} 这个工具（或者它在这台服务器上关掉了）", f"You don't have the {tool} tool (or it's turned off on this server)"))
+        if why := tools_mod.problem(tool, args, agent):
+            raise JobError(why)
+        if tools_mod.classify(tool, args)[0] == tools_mod.OFF:
+            raise JobError(L(f"{tool} 的这个子命令在设置里关掉了", f"This {tool} subcommand is turned off in the settings"))
+        cmd = bridges.command(tool)
+        if not cmd:
+            raise JobError(L(f"这台服务器上没有 {tool} 这个功能", f"{tool} isn't available on this server"))
+        return tool, cmd
+    path = str(c.get("script") or "")
+    if path not in scripts():
+        raise JobError(L(f"只能跑 BRIDGES 里的工具，或者 server.json 的 engine.jobs.scripts 里列的脚本（写绝对路径）：{path} 不在里面",
+                         f"Only the command-line tools, or scripts listed in server.json's engine.jobs.scripts (absolute paths), can run: "
+                         f"{path} isn't listed"))
+    if not os.path.isfile(path):
+        raise JobError(L(f"找不到这个脚本：{path}", f"Script not found: {path}"))
+    try:
+        bridges.guard("", args)
+    except bridges.BridgeError as e:
+        raise JobError(str(e)) from None
+    if os.access(path, os.X_OK):
+        return "", [path]
+    if path.endswith(".py"):
+        return "", [sys.executable, path]
+    raise JobError(L(f"{path} 不能执行：给它执行权限（chmod +x），或者写成 .py", f"{path} can't be run: make it executable (chmod +x) or use a .py script"))
+
+
+def clean_command(agent: str, v: Any) -> dict:
+    """写法 → 一条命令 {"tool" | "script", "args", "input"?, "timeout"}（见文件开头「只跑命令的」）。写错、不许抛 JobError。"""
+    import bridges
+    if not isinstance(v, dict):
+        raise JobError(L('command 写成 {"tool": "board", "args": [...]} 或 {"script": "/绝对路径", "args": [...]}',
+                         'command is {"tool": "board", "args": [...]} or {"script": "/absolute/path", "args": [...]}'))
+    tool, script = str(v.get("tool") or "").strip(), os.path.expanduser(str(v.get("script") or "").strip())
+    if bool(tool) == bool(script):
+        raise JobError(L("command 里 tool 和 script 写一个", "command takes either tool or script, not both"))
+    if tool and tool not in bridges.BRIDGES:
+        raise JobError(L(f"没有 {tool} 这个命令行工具（能用的：{'、'.join(bridges.BRIDGES)}）",
+                         f"There's no command-line tool called {tool} (the tools: {', '.join(bridges.BRIDGES)})"))
+    args = v.get("args") or []
+    if isinstance(args, str):
+        args = shlex.split(args)
+    if not isinstance(args, list) or any(isinstance(a, (dict, list)) or a is None for a in args):
+        raise JobError(L("args 写成一串词（一项一个，不经 shell）", "args is a list of words (one item each, no shell)"))
+    c: dict = {"tool": tool} if tool else {"script": os.path.normpath(script) if os.path.isabs(script) else script}
+    c["args"] = [str(a) for a in args]
+    if v.get("input") not in (None, ""):
+        c["input"] = str(v["input"])
+    t = v.get("timeout")
+    try:
+        c["timeout"] = (bridges.BRIDGES[tool][3] if tool else SCRIPT_TIMEOUT) if t in (None, "") else int(t)
+    except (TypeError, ValueError):
+        raise JobError(L("timeout 写秒数", "timeout is a number of seconds")) from None
+    if not 1 <= c["timeout"] <= COMMAND_TIMEOUT_MAX:
+        raise JobError(L(f"timeout 在 1 到 {COMMAND_TIMEOUT_MAX} 秒之间", f"timeout is between 1 and {COMMAND_TIMEOUT_MAX} seconds"))
+    if sum(len(a) for a in c["args"]) + len(c.get("input") or "") > bridges.MAX_ARGS or any("\x00" in a for a in c["args"]):
+        raise JobError(L("参数太长或者有非法字符", "Arguments too long or contain invalid characters"))
+    command_argv(agent, c)
+    return c
+
+
 def clean(agent: str, given: dict, *, base: dict | None = None, conversation: str | None = None, at: datetime | None = None,
           by_user: bool = False) -> dict:
-    """新建（base None）或在 base 上改 → 完整的一版 {name, schedule, prompt, session, deliver, level, times, continuity, model}。写错抛 JobError。"""
+    """新建（base None）或在 base 上改 → 完整的一版 {name, schedule, prompt, session, deliver, level, times, continuity, model, command}。
+    写错抛 JobError。给了 command 的是只跑命令的（见文件开头）：不要 task，prompt 记那条命令的样子；调模型的和只跑命令的不能互相改。"""
     at = at or when.now()
-    out: dict = dict(base) if base else {"session": "isolated", "level": "quiet", "times": None, "continuity": False, "model": None}
+    out: dict = dict(base) if base else {"session": "isolated", "level": "quiet", "times": None, "continuity": False, "model": None,
+                                         "command": None}
     if base is None or given.get("when") not in (None, ""):
         try:
             out["schedule"] = when.parse(str(given.get("when") or ""), at)
         except when.WhenError as e:
             raise JobError(str(e)) from None
-    if base is None or given.get("task") not in (None, ""):
+    if given.get("command") not in (None, "", {}):
+        if base is not None and not base.get("command"):
+            raise JobError(L("这个任务是调模型的：要只跑命令就新建一个", "This job runs the model; create a new job to run a command instead"))
+        out["command"] = clean_command(agent, given["command"])
+        out["prompt"] = command_text(out["command"])
+    elif out.get("command"):
+        if given.get("task") not in (None, ""):
+            raise JobError(L("只跑命令的任务没有 task：要改就改 command", "A command job has no task: change its command instead"))
+    elif base is None or given.get("task") not in (None, ""):
         task = str(given.get("task") or "").strip()
         if not task:
             raise JobError(L("要写 task：到点要做什么（一句完整的话）", "task is required: what to do when it runs (a full sentence)"))
@@ -310,6 +439,8 @@ def clean(agent: str, given: dict, *, base: dict | None = None, conversation: st
         out["deliver"] = deliver
     elif base is None:
         out["deliver"] = conversation if conversation and _deliver_ok(agent, conversation) else own_thread(agent)
+    if out.get("command"):  # 不调模型：在哪跑、接着说、用哪个模型都用不上
+        out.update(session="isolated", continuity=False, model=None)
     if out["schedule"]["kind"] == "once":
         out["times"] = None
         if when.next_after(out["schedule"], at) is None:
@@ -320,8 +451,8 @@ def clean(agent: str, given: dict, *, base: dict | None = None, conversation: st
 def digest(spec: dict) -> str:
     """一版的指纹（只看会改变它做什么的：什么时候、做什么、在哪、投到哪、档位、几次、谁）。"""
     sched = {k: v for k, v in spec["schedule"].items() if k != "text"}
-    body = json.dumps([sched, spec["prompt"], spec["session"], spec["deliver"], spec["level"], spec["times"], spec.get("model")],
-                      ensure_ascii=False, sort_keys=True)
+    body = json.dumps([sched, spec["prompt"], spec["session"], spec["deliver"], spec["level"], spec["times"], spec.get("model"),
+                       *([spec["command"]] if spec.get("command") else [])], ensure_ascii=False, sort_keys=True)
     return hashlib.sha256(body.encode()).hexdigest()[:24]
 
 
@@ -330,7 +461,11 @@ def major(old: dict, new: dict) -> list[str]:
     keys = []
     if {k: v for k, v in old["schedule"].items() if k != "text"} != {k: v for k, v in new["schedule"].items() if k != "text"}:
         keys.append("when")
+    if (old.get("command") or None) != (new.get("command") or None):
+        keys.append("command")
     for k, name in (("prompt", "task"), ("session", "session"), ("deliver", "deliver"), ("model", "model")):
+        if k == "prompt" and (old.get("command") or new.get("command")):
+            continue
         if (old.get(k) or None) != (new.get(k) or None):
             keys.append(name)
     if LOUD[new["level"]] > LOUD[old["level"]]:
@@ -358,8 +493,15 @@ def _often(spec: dict, at: datetime) -> str:
         nxt = when.clock_text(when.next_after(spec["schedule"], at), at)
         head = L(f"什么时候：{when.describe(spec['schedule'])}（下一次 {nxt}", f"When: {when.describe(spec['schedule'])} (next {nxt}")
     if n and n >= 2 and not (spec.get("times") and spec["times"] <= n):  # 跑几次就停的、一天之内就跑完的：写「共几次」那一行就够了
-        head += L(f"；一天约 {round(n)} 次，每次调一次模型", f"; about {round(n)} runs a day, one model call each")
+        head += (L(f"；一天约 {round(n)} 次，每次跑一次命令，不调模型", f"; about {round(n)} runs a day, one command each, no model call")
+                 if spec.get("command") else L(f"；一天约 {round(n)} 次，每次调一次模型", f"; about {round(n)} runs a day, one model call each"))
     return head + L("）", ")")
+
+
+def _asks(c: dict) -> bool:
+    """这条命令平时被 Agent 调时要不要用户点头（撤不回、对外的：tools.classify 分成 ask）。卡上要说清：开了以后每次都直接跑。"""
+    from . import tools as tools_mod
+    return bool(c.get("tool")) and tools_mod.classify(str(c["tool"]), [str(a) for a in c.get("args") or []])[0] == tools_mod.ASK
 
 
 def card_of(agent: str, spec: dict, kind: str, *, old: dict | None, why: str, jid: str, at: datetime) -> dict:
@@ -380,6 +522,18 @@ def card_of(agent: str, spec: dict, kind: str, *, old: dict | None, why: str, ji
             a, b = _field_text(k, old), _field_text(k, spec)
             lines.append(L(f"{_FIELD_NAMES[k][0]}：{a} → {b}", f"{_FIELD_NAMES[k][1]}: {a} → {b}"))
         lines.append(L("点「换上」之前，原来那一版照常跑", "Until you apply it, the current version keeps running"))
+    elif c := spec.get("command"):
+        lines += [_often(spec, at), L(f"跑什么：{spec['prompt'][:300]}（只跑这条命令，不调模型）", f"Runs: {spec['prompt'][:300]} (just this command, no model)"),
+                  L(f"在哪跑：{who}的工作区，最多 {c['timeout']} 秒，到点停掉", f"Where: {who}'s workspace, stopped after {c['timeout']}s"),
+                  L("输出记在运行记录里，不发进对话；要不要说话由它自己定（比如经 /api/chat/trigger 发一句）；没跑成在对话里说一声",
+                    "Its output goes to the run log, not the chat; it decides itself whether to say something (e.g. through /api/chat/trigger); "
+                    "failures are noted in the chat")]
+        if _asks(c):
+            lines.append(L("这条命令平时要你点头（撤不回或对外）：开了以后每次到点都直接跑，不再一次次问你",
+                           "This command normally needs your OK (can't be undone or reaches others): once on, it runs every time without asking"))
+        if spec["times"]:
+            lines.append(L(f"跑 {spec['times']} 次就停", f"Stops after {spec['times']} runs"))
+        lines.append(L("开了以后：跟它说一声就能暂停、改、删", "Once on: just tell it to pause, change or delete it"))
     else:
         lines += [_often(spec, at), L(f"做什么：{spec['prompt'][:300]}", f"What: {spec['prompt'][:300]}"), L(f"在哪跑：{_where(spec)}", f"Where: {_where(spec)}"),
                   L(f"推送：{L(*LEVEL_TEXT[spec['level']])}", f"Push: {L(*LEVEL_TEXT[spec['level']])}")]
@@ -395,8 +549,14 @@ def card_of(agent: str, spec: dict, kind: str, *, old: dict | None, why: str, ji
         if t:
             nxt.append(when.clock_text(t, at))
     fence = "```"
-    detail = (L("到点会交给它的话：", "What it will be told each time:") + f"\n\n{fence}\n{spec['prompt']}\n{fence}\n\n"
-              + (L("接下来几次：", "Next runs: ") + L("、", ", ").join(nxt) if nxt else "") + "\n\n" + L(f"任务 {jid}", f"Job {jid}"))
+    if c := spec.get("command"):  # 整条命令照原样写在卡上（一项一个词）：点了「开」跑的就是它
+        argv = json.dumps([c.get("tool") or c.get("script"), *(c.get("args") or [])], ensure_ascii=False)
+        what = L("到点会跑的命令（一项一个词，不经 shell）：", "The command it runs each time (one word per item, no shell):") + f"\n\n{fence}\n{argv}\n{fence}\n\n"
+        if c.get("input"):
+            what += L("交给它的标准输入：", "Its standard input:") + f"\n\n{fence}\n{c['input'][:2000]}\n{fence}\n\n"
+    else:
+        what = L("到点会交给它的话：", "What it will be told each time:") + f"\n\n{fence}\n{spec['prompt']}\n{fence}\n\n"
+    detail = what + (L("接下来几次：", "Next runs: ") + L("、", ", ").join(nxt) if nxt else "") + "\n\n" + L(f"任务 {jid}", f"Job {jid}")
     if kind == "change":
         return {"title": L(f"改定时任务「{name}」", f'Change the scheduled job "{name}"'),
                 "why": why or L(f"{who}想改这个定时任务。改大的要你点头才换上。", f"{who} wants to change this scheduled job. Big changes wait for your OK."),
@@ -407,7 +567,8 @@ def card_of(agent: str, spec: dict, kind: str, *, old: dict | None, why: str, ji
 
 
 _FIELD_NAMES = {"when": ("什么时候", "When"), "task": ("做什么", "What"), "session": ("在哪跑", "Where"), "deliver": ("投到", "Posts to"),
-                "level": ("推送", "Push"), "times": ("跑几次", "Runs"), "model": ("模型", "Model"), "name": ("名字", "Name")}
+                "level": ("推送", "Push"), "times": ("跑几次", "Runs"), "model": ("模型", "Model"), "name": ("名字", "Name"),
+                "command": ("命令", "Command")}
 
 
 def _field_text(k: str, spec: dict) -> str:
@@ -425,6 +586,8 @@ def _field_text(k: str, spec: dict) -> str:
         return str(spec["times"]) if spec["times"] else L("一直", "no limit")
     if k == "model":
         return spec.get("model") or L("跟着对话", "the chat's model")
+    if k == "command":
+        return f"{command_text(spec['command'])} ({spec['command']['timeout']}s)" if spec.get("command") else "—"
     return str(spec.get(k) or "")
 
 
@@ -481,10 +644,10 @@ def _insert(agent: str, spec: dict, *, state: str, approved: bool, by: str, next
         if live >= MAX_JOBS:
             raise JobError(L(f"一个 Agent 最多 {MAX_JOBS} 个定时任务，先删掉用不着的", f"At most {MAX_JOBS} scheduled jobs per Agent; delete some first"))
         conn.execute("""INSERT INTO engine_jobs(id, agent, name, schedule, prompt, session, deliver, level, times, continuity, model, state,
-            approved, digest, created_by, next_run, created_at, updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+            approved, digest, created_by, next_run, created_at, updated_at, command) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
                      (jid, agent, spec["name"], json.dumps(spec["schedule"], ensure_ascii=False), spec["prompt"], spec["session"], spec["deliver"],
                       spec["level"], spec["times"], int(bool(spec["continuity"])), spec.get("model"), state, int(approved), digest(spec), by,
-                      iso(next_run), now, now))
+                      iso(next_run), now, now, _command_json(spec)))
     j = get(jid)
     assert j is not None
     return j
@@ -496,11 +659,15 @@ def _write(jid: str, spec: dict | None = None, **cols: Any) -> None:
     if spec is not None:
         sets.update(name=spec["name"], schedule=json.dumps(spec["schedule"], ensure_ascii=False), prompt=spec["prompt"], session=spec["session"],
                     deliver=spec["deliver"], level=spec["level"], times=spec["times"], continuity=int(bool(spec["continuity"])), model=spec.get("model"),
-                    digest=digest(spec))
+                    digest=digest(spec), command=_command_json(spec))
     sets.update(cols)
     sets["updated_at"] = store.now_iso()
     with store.tx() as conn:
         conn.execute("UPDATE engine_jobs SET " + ", ".join(f"{k}=?" for k in sets) + " WHERE id=?", (*sets.values(), jid))
+
+
+def _command_json(spec: dict) -> str | None:
+    return json.dumps(spec["command"], ensure_ascii=False) if spec.get("command") else None
 
 
 def first_next(spec: dict, at: datetime | None = None) -> datetime | None:
@@ -726,7 +893,7 @@ def extra(iid: str) -> dict | None:
             nxt.append(iso(t))
     return {"job": j["id"], "action": "delete" if j["pending"] and j["pending"].get("delete") else "change" if j["pending"] else "new",
             "when": when.describe(spec["schedule"]), "task": spec["prompt"], "session": spec["session"], "deliver": spec["deliver"],
-            "level": spec["level"], "next": nxt, "perDay": when.runs_per_day(spec["schedule"])}
+            "level": spec["level"], "next": nxt, "perDay": when.runs_per_day(spec["schedule"]), "command": spec.get("command")}
 
 
 def revise_text(it: dict, note: str) -> str | None:
@@ -822,10 +989,12 @@ def _outage(due: datetime) -> bool:
 
 
 def _today_runs(at: datetime) -> int:
+    """今天已经跑了几次调模型的（daily_limit 数的就是它；心跳另算，只跑命令的不调模型，不算）。"""
     start = at.replace(hour=0, minute=0, second=0, microsecond=0)
     with store.read() as conn:
-        return conn.execute("SELECT COUNT(*) FROM engine_job_runs WHERE julianday(started_at)>=julianday(?) AND kind!='heartbeat' "
-                            "AND status NOT IN ('skipped','missed','limit')", (iso(start),)).fetchone()[0]
+        return conn.execute("SELECT COUNT(*) FROM engine_job_runs r LEFT JOIN engine_jobs j ON j.id=r.job WHERE julianday(r.started_at)>=julianday(?) "
+                            "AND r.kind!='heartbeat' AND r.status NOT IN ('skipped','missed','limit') AND j.command IS NULL",
+                            (iso(start),)).fetchone()[0]
 
 
 def _add_run(j: dict, due: datetime | None, kind: str, status: str, at: datetime, error: str | None = None) -> str:
@@ -886,7 +1055,7 @@ async def tick(at: datetime | None = None) -> list[str]:
                     continue
             else:
                 kind = "late" if late > LATE_OK else "on_time"
-        if _today_runs(at) >= daily_limit():
+        if not j.get("command") and _today_runs(at) >= daily_limit():
             if _skip(j, j["next_run"], nxt):
                 if sched["kind"] == "once":
                     _write(j["id"], state="missed", last_status="limit")
@@ -999,6 +1168,8 @@ async def execute(j: dict, due: datetime | None, kind: str, late: float, at: dat
     agent, thread = j["agent"], j["deliver"]
     if not bridges.known_agent(agent) or not unattended.thread_exists(thread):
         return Outcome(status="error", error=L("这个 Agent 或要投进去的对话已经不在了", "The Agent or the chat it posts to no longer exists"))
+    if j.get("command"):
+        return await run_command(j)
     text = instructions(j, due, kind, late, at, _last_said(j["id"]) if j["continuity"] else None)
     label = L(f"定时「{j['name']}」", f"Scheduled: {j['name']}")
     if j["session"] == "chat":
@@ -1025,6 +1196,42 @@ async def execute(j: dict, due: datetime | None, kind: str, late: float, at: dat
     return out
 
 
+def output_text(out: str, err: str) -> str:
+    """命令的输出（运行记录里留的）：标准输出；有错误输出也带上（两样都有就分开写）。太长的留头尾（OUTPUT_MAX）。"""
+    text = f"stdout:\n{out}\n\nstderr:\n{err}" if out and err else out or err
+    if len(text) <= OUTPUT_MAX:
+        return text
+    head, tail = text[:OUTPUT_MAX * 2 // 3], text[-OUTPUT_MAX // 4:]
+    return f"{head}\n…（{L('中间省略', 'omitted')} {len(text) - len(head) - len(tail)} {L('字', 'chars')}）…\n{tail}"
+
+
+async def run_command(j: dict) -> Outcome:
+    """只跑命令的任务跑一次（见文件开头）：跑之前再查一遍能不能跑（command_argv），起一个子进程，到点停掉。不调模型、不往对话里发。"""
+    import bridges
+    c, agent = j["command"], j["agent"]
+    try:
+        name, cmd = command_argv(agent, c)
+    except JobError as e:
+        return Outcome(status="error", error=str(e))
+    via = bridges.VIA.set("auto")  # 脚本再请求服务器（/api/chat/trigger……）开的回合算后台：ChatGPT 套餐据此认（engine/models.may_spend）
+    try:
+        rc, out, err = await bridges.execute(name, cmd, c.get("args") or [], c.get("input"), agent, timeout=float(c["timeout"]), kill_on_cancel=True,
+                                             shared=False)  # 不占 Agent 调工具的那 4 个：定时任务自己有 max_parallel
+    except bridges.BridgeTimeout as e:
+        return Outcome(status="timeout", error=str(e))
+    except bridges.BridgeError as e:
+        return Outcome(status="error", error=str(e))
+    finally:
+        bridges.VIA.reset(via)
+    output = output_text(out, err)
+    if rc != 0:
+        last = (err or out).strip().splitlines()[-1][:200] if (err or out).strip() else ""
+        return Outcome(status="error", error=L(f"退出码 {rc}", f"exit code {rc}") + (f": {last}" if last else ""), output=output)
+    if name and (after := bridges.AFTER.get(name)) is not None:  # 和 Agent 平时调这个工具一样：服务端接着做的（世界树交了修剪计划就出卡）
+        output = await after([str(a) for a in c.get("args") or []], output, agent)
+    return Outcome(status="done", output=output)
+
+
 def _say(thread: str, text: str) -> None:
     """往对话里写一行灰字（不推送，不给模型跑）：出错、停用的说明。"""
     import chat
@@ -1044,6 +1251,11 @@ async def _run(j: dict, rid: str, due: datetime | None, kind: str, late: float, 
     except Exception as e:  # noqa: BLE001 — 一条出错不拖累别的
         out = Outcome(status="error", error=f"{type(e).__name__}: {str(e)[:200]}")
     _finish(j, rid, out, kind)
+    if (after := AFTER.get(str(j.get("created_by") or ""))) is not None:
+        try:
+            await after(j, out)
+        except Exception as e:  # noqa: BLE001 — 接着做的出错不影响这条任务
+            print(f"[engine] 定时「{j.get('name')}」跑完以后接着做的没做成：{type(e).__name__}: {str(e)[:160]}")
 
 
 def _finish(j: dict, rid: str, out: Outcome, kind: str) -> None:
@@ -1064,9 +1276,10 @@ def _finish(j: dict, rid: str, out: Outcome, kind: str) -> None:
         conn.execute("UPDATE engine_jobs SET running=NULL, last_run=?, last_status=?, last_error=?, fails=?, state=?, "
                      "next_run=CASE WHEN ?='done' THEN NULL ELSE next_run END, updated_at=? WHERE id=?",
                      (iso(when.now()), status, out.error, fails, state, state, store.now_iso(), j["id"]))
-        conn.execute("UPDATE engine_job_runs SET ended_at=?, status=?, turn=?, message=?, error=?, preview=?, usage=? WHERE id=?",
-                     (iso(when.now()), status, out.turn, out.message, out.error, (out.text or "")[:PREVIEW_MAX] if out.status == "done" else None,
-                      json.dumps(out.usage or {}), rid))
+        conn.execute("UPDATE engine_job_runs SET ended_at=?, status=?, turn=?, message=?, error=?, preview=?, usage=?, output=? WHERE id=?",
+                     (iso(when.now()), status, out.turn, out.message, out.error,
+                      (out.text or "")[:PREVIEW_MAX] if out.status == "done" and not j.get("command") else None, json.dumps(out.usage or {}),
+                      out.output, rid))
     if not ok and out.status != "interrupted" and j["session"] != "chat" and fails == 1:  # chat 模式出错时对话里已经有一条「没拿到回复」
         _say(j["deliver"], L(f"定时「{j['name']}」这次没跑成：{(out.error or out.status)[:160]}", f"Scheduled \"{j['name']}\" didn't run this time: "
                              f"{(out.error or out.status)[:160]}"))
@@ -1166,6 +1379,15 @@ def schema() -> dict:
             "Push: quiet (default, no sound); ring (only when it really must interrupt); none (only posted in the chat)")},
         "times": {"type": "integer", "description": L("跑几次就停（不写 = 一直跑；一次的不用写）", "Stop after this many runs (leave out = no limit)")},
         "continuity": {"type": "boolean", "description": L("每次带上上一次发的话（不重复、接着往下说）", "Each run sees what the last run posted (no repeats)")},
+        "command": {"type": "object", "description": L(
+            "只跑命令、不调模型（不写 task）：{\"tool\": 你的命令行工具（board、schedule……，参数和平时调它一样）, \"args\": [一项一个词], "
+            "\"input\": 标准输入（可以不写）, \"timeout\": 秒（可以不写）}；或者 {\"script\": 用户在 server.json engine.jobs.scripts 里列的脚本"
+            "（绝对路径）, \"args\": […]}。输出记在运行记录里，不发进对话",
+            "Run a command instead of the model (no task): {\"tool\": one of your command-line tools (board, schedule…, same args as when you "
+            "call it), \"args\": [one word each], \"input\": stdin (optional), \"timeout\": seconds (optional)}; or {\"script\": a script the "
+            "user listed in server.json's engine.jobs.scripts (absolute path), \"args\": […]}. Its output goes to the run log, not the chat"),
+            "properties": {"tool": {"type": "string"}, "script": {"type": "string"}, "args": {"type": "array", "items": {"type": "string"}},
+                           "input": {"type": "string"}, "timeout": {"type": "integer"}}},
         "why": {"type": "string", "description": L("一句话写给用户看：为什么要这个（写在卡上）", "One sentence for the user on why (shown on the card)")}}}
 
 
@@ -1186,7 +1408,12 @@ def description(me: str) -> str:
         "they approved asks them first (a card).\n"
         "Nobody is watching when it runs, so write task as an instruction you can carry out on the spot. By default it runs on its own "
         "(isolated) and its reply is posted into deliver and pushed; when there's genuinely nothing to say that time, it replies [SILENT] "
-        "and nothing is sent.") + L(f"\n按你（{me}）的：只看得到、改得了你自己的定时任务。", f"\nRuns as you ({me}): you only see and change your own jobs.")
+        "and nothing is sent.") + L(
+        "\n只要到点跑一个命令、用不着想（同步、检查、整理数据）：写 command 不写 task，不调模型，便宜；只能是你自己的命令行工具或者用户列进白名单的"
+        "脚本，一样先停着等用户点头。",
+        "\nWhen it only needs to run a command at set times, with no thinking (syncing, checking, tidying data): give command instead of "
+        "task. It runs no model, so it's cheap. Only your own command-line tools or scripts the user allowlisted can run, and it also waits "
+        "for the user's OK.") + L(f"\n按你（{me}）的：只看得到、改得了你自己的定时任务。", f"\nRuns as you ({me}): you only see and change your own jobs.")
 
 
 def tool(me: str) -> Tool:
@@ -1219,6 +1446,9 @@ def tool(me: str) -> Tool:
                 return await delete(jid, agent=who, why=why)
             await run_now(jid, agent=who)
             j = get(jid)
+            if j and j.get("command"):  # 只跑命令的不往对话里发
+                return LS("开始跑了（只跑命令）：输出记在运行记录里，list 看得到上一次怎样。",
+                          "Started (it only runs a command): its output goes to the run log; list shows how the last run went.")
             return LS(f"开始跑了，结果会发进「{unattended.thread_name(j['deliver'] if j else own_thread(who))}」。",
                       f"Started; the result goes to {unattended.thread_name(j['deliver'] if j else own_thread(who))}.")
         except JobError as e:
@@ -1242,6 +1472,7 @@ class JobIn(BaseModel):
     name: str | None = None
     when: str | None = None
     task: str | None = None
+    command: dict | None = None  # 只跑命令的（见文件开头）：{"tool" | "script", "args", "input"?, "timeout"?}
     session: str | None = None
     deliver: str | None = None
     level: str | None = None

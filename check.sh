@@ -5,7 +5,8 @@
 #   bash ~/openmousse/check.sh
 #   curl -fsSL https://raw.githubusercontent.com/openmousse/openmousse/main/check.sh | bash
 #
-# 默认会经 Gateway 发一句测试消息看模型能不能回话（单独一个会话，不进主对话；用一点点额度），--no-chat 跳过。
+# 默认会发一句测试消息看模型能不能回话（OpenClaw：经 Gateway，单独一个会话，不进主对话；自带的内核：对主对话的型号发一句最小的请求；
+# 都用一点点额度），--no-chat 跳过。
 # 只用系统自带的 python3：服务、venv 坏了也能跑。
 set -u
 command -v python3 >/dev/null 2>&1 || { echo "✗ 缺 python3 / python3 is missing (Linux: sudo apt install python3; macOS: brew install python)"; exit 1; }
@@ -99,7 +100,7 @@ def run(cmd: list[str], timeout: float = 20) -> tuple[int, str, str]:
         return 124, "", "timeout"
 
 
-HAS_SYSTEMD = shutil.which("systemctl") is not None
+HAS_SYSTEMD = shutil.which("systemctl") is not None and Path("/run/systemd/system").is_dir()  # systemd 真在跑（没开 systemd 的 WSL、容器里也有 systemctl 命令）
 IS_MAC = sys.platform == "darwin"
 HAS_LAUNCHD = IS_MAC and shutil.which("launchctl") is not None
 HAS_SERVICES = HAS_SYSTEMD or HAS_LAUNCHD
@@ -153,14 +154,23 @@ def http(url: str, token: str = "", method: str = "GET", body: dict | None = Non
         return 0, str(getattr(e, "reason", "") or type(e).__name__)
 
 
+# 没有 systemd / launchd：服务是自己起的，和安装器最后打印的那几行一样（packs/core/setup.py 的 start_cmd / stop_cmd）
+MANUAL = {"openmousse-server": 'pkill -u "$(id -u)" -f "^$HOME/.openmousse/venv/bin/python[0-9.]* run.py"; '
+                               'cd ~/.openmousse/repo/server && nohup ~/.openmousse/venv/bin/python run.py >> ~/.openmousse/logs/server.log 2>&1 &',
+          "mousse-tree": 'pkill -u "$(id -u)" -f "^$HOME/.openmousse/venv/bin/python[0-9.]* [^ ]*mousse-tree serve"; '
+                         'nohup ~/.openmousse/venv/bin/mousse-tree serve >> ~/.mousse-tree/tree.log 2>&1 &'}
+
+
 def restart_cmd(u: str) -> str:
     if IS_MAC:
         return "openclaw gateway restart" if u == "openclaw-gateway" else f"launchctl kickstart -k gui/$(id -u)/{LABELS.get(u, u)}"
+    if not HAS_SERVICES and u in MANUAL:
+        return MANUAL[u]
     return f"systemctl --user restart {u}"
 
 
 def restart_hint(u: str) -> str:
-    if IS_MAC:
+    if IS_MAC or (not HAS_SERVICES and u in MANUAL):
         log = LOGS.get(u)
         return restart_cmd(u) + (L(f"；看日志 tail -n 50 {log}", f"; logs: tail -n 50 {log}") if log else "")
     return restart_cmd(u) + L(f"；看日志 journalctl --user -u {u} -n 50", f"; logs: journalctl --user -u {u} -n 50")
@@ -214,7 +224,8 @@ elif HAS_LAUNCHD:
     else:
         warn(L("还没装成开机自启", "Not set to start at login yet"), str(plist).replace(str(HOME), "~", 1), L("再跑一遍安装命令", "run the installer again"))
 else:
-    warn(L("这台机器没有 systemctl 也没有 launchd", "No systemctl or launchd on this machine"), L("服务要自己手动跑", "run the services yourself"))
+    warn(L("这台机器没有 systemd 也没有 launchd", "No systemd or launchd on this machine"), L("服务要自己起，机器重启以后也是", "start the services yourself, again after a reboot"),
+         L("安装器最后打印的「服务要自己起」那几行", "the \"Start the services yourself\" lines the installer printed at the end"))
 
 # —— OpenMousse 服务 ——
 section(L("OpenMousse 服务", "OpenMousse server"))
@@ -458,6 +469,47 @@ if is_openclaw:
         warn(L("OpenClaw 的起名仪式（BOOTSTRAP.md）还在", "OpenClaw's naming ritual (BOOTSTRAP.md) is still there"),
              L("第一次对话会先让你给助手起名，app 的带路要问第二遍才出来", "the first conversation asks you to name the assistant before the app's walk-through"),
              L("再跑一遍安装命令（新版会把它挪进备份）", "run the installer again (newer versions move it to a backup)"))
+elif str(claw_cfg.get("kind") or "").lower() == "builtin":
+    # 自带的内核：模型、搜索、记忆和 setup_ctl.py status 读同一处（/api/setup）；模型能不能回话 = 对主对话的型号「测一下」（发一句最小的请求）
+    section(L("自带的内核", "Built-in engine"))
+    setup = "~/.openmousse/venv/bin/python ~/.openmousse/repo/server/setup_ctl.py"
+    sc, sb = http(f"http://{host}:{port}/api/setup", tok) if code == 200 else (0, "")
+    try:
+        layers = (json.loads(sb).get("layers") or {}) if sc == 200 else {}
+    except (ValueError, AttributeError):
+        layers = {}
+    if code != 200:
+        warn(L("服务没在回话，看不到模型和搜索配好没有", "The server isn't answering, so models and search can't be checked"), fix=f"{setup} status")
+    elif not isinstance(layers, dict) or not layers:
+        warn(L("读不到内核的设置", "Couldn't read the engine's setup"), f"HTTP {sc} · {clean(sb, 80)}", f"{setup} status")
+    else:
+        for key, name in (("models", L("模型", "Models")), ("search", L("搜网页", "Web search")), ("memory", L("记忆", "Memory")),
+                          ("embeddings", L("按意思搜", "Search by meaning"))):
+            layer = layers.get(key) if isinstance(layers.get(key), dict) else {}
+            status, text = str(layer.get("status") or ""), clean(layer.get("line") or "", 120)
+            if not layer:
+                continue
+            if status in ("ok", "external"):
+                ok(name, text)
+            elif status in ("missing", "warn"):
+                (bad if status == "missing" else warn)(name, text, setup)
+            else:  # off / optional：没开不算毛病（这一行自己就说了是哪一层）
+                print(f"    · {text}")
+        models = layers.get("models") if isinstance(layers.get("models"), dict) else {}
+        pid, _, model = str(models.get("chat") or "").partition("/")
+        if CHAT and models.get("status") == "ok" and model and pid not in ("claude-code", "chatgpt"):  # 套餐登录的上面那行已经说了登没登录
+            t0 = time.time()
+            c2, b2 = http(f"http://{host}:{port}/api/setup/models/{pid}/test", tok, "POST", {"model": model}, timeout=90)
+            try:
+                res = json.loads(b2) if c2 == 200 else {}
+            except ValueError:
+                res = {}
+            if res.get("ok"):
+                ok(L("模型能回话", "The model answers"), L(f"{pid}/{model} · {time.time() - t0:.0f} 秒", f"{pid}/{model} · {time.time() - t0:.0f}s"))
+            else:
+                err = res.get("error") if isinstance(res.get("error"), dict) else {}
+                bad(L("模型没回话", "The model didn't answer"), f"{pid}/{model} · {clean(err.get('message') or b2, 160)}",
+                    L(f"看密钥、地址和型号：{setup} test {pid} {model}", f"check the key, address and model: {setup} test {pid} {model}"))
 elif claw_cfg:
     section(L("你的 claw", "Your claw"))
     url = str(claw_cfg.get("url") or "").rstrip("/")
@@ -579,6 +631,17 @@ elif HAS_LAUNCHD:
         good = last in ("", "0") or last.startswith("(never")  # 还没跑过时 launchctl 写 (never exited)
         (ok if good else warn)(L("每晚日结", "Nightly digest"), L("每天 03:45（这台 Mac 的时钟）", "daily at 03:45 (this Mac's clock)") + ("" if good else L(f"，上次退出码 {last}", f", last exit code {last}")),
                                "" if good else L("看日志：tail -n 50 ~/.openmousse/logs/daily-close.log", "logs: tail -n 50 ~/.openmousse/logs/daily-close.log"))
+else:  # 没有 systemd / launchd：日结靠 cron（安装器最后打印的那一行）
+    c, o, _ = run(["crontab", "-l"])
+    line_ = "45 3 * * * ~/.openmousse/venv/bin/python ~/.openmousse/repo/packs/core/scripts/daily_close.py"
+    if c == 0 and "daily_close.py" in o:
+        ok(L("每晚日结", "Nightly digest"), L("cron 里排着（这台机器的时钟）", "scheduled in cron (this machine's clock)"))
+    elif c == 127:
+        warn(L("每晚日结没排上", "The nightly digest isn't scheduled"), L("没有 systemd，也没有 cron", "no systemd and no cron"),
+             L("装上 cron（Debian / Ubuntu：sudo apt install cron），再 crontab -e 加一行：", "install cron (Debian / Ubuntu: sudo apt install cron), then add this line with crontab -e: ") + line_)
+    else:
+        warn(L("每晚日结没排上", "The nightly digest isn't scheduled"), L("没有 systemd，要用 cron", "no systemd, so it needs cron"),
+             L("crontab -e 加一行：", "add this line with crontab -e: ") + line_)
 db = Path(str(cfg.get("db") or "")).expanduser() if cfg.get("db") else Path(str(cfg.get("data_dir") or MOUSSE / "data")).expanduser() / "mousse.db"
 if db.exists():
     try:

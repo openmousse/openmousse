@@ -146,7 +146,7 @@ def test_tools_per_agent_and_turn_kinds(server_json, fake):
     assert {"board", "inbox", "schedule", "journal", "handoff", "agents", "skill", "tasks"} <= main
     tasks_tool = next(t for t in tools.for_agent("main") if t.name == "tasks")  # 内核自己的派活工具（第 5 项），不是 tasks_ctl.py 的桥
     assert "action" in tasks_tool.schema["properties"] and "args" not in tasks_tool.schema["properties"]
-    assert "handoff" not in diet and "agents" not in diet and {"board", "schedule", "skill"} <= diet
+    assert "handoff" in diet and "agents" not in diet and {"board", "schedule", "skill"} <= diet  # 第 1 批 b：Agent 也能转（engine/sessions.py）
     assert all(t.kinds == ("owner",) for t in tools.for_agent("main"))
     journal = next(t for t in tools.for_agent("main") if t.name == "journal")
     assert "delete" in journal.description and "Runs as you (main)" in journal.description
@@ -257,7 +257,7 @@ def test_skill_tool_lists_and_reads(monkeypatch, tmp_path):
     with pytest.raises(engine.ToolFailure):
         run(skill.run({"name": "nope"}, ctx))
     diet_skills = tools.list_skills("diet", {t.name for t in tools.for_agent("diet")})
-    assert "handoff" not in diet_skills and "agent-builder" not in diet_skills and "board" in diet_skills
+    assert "handoff" in diet_skills and "agent-builder" not in diet_skills and "board" in diet_skills  # 第 1 批 b：有 handoff 工具了，skill 跟着列
 
 
 # —— 关卡 → 收件箱 → 同意 → 结果回到对话 ——————————————————————————————————————————
@@ -428,7 +428,7 @@ def test_agent_thread_gets_its_role_and_tools(server_json, fake, runner):
     req = f.requests[0][1]
     assert 'You are the Agent "Diet"' in req.system and "Meals and macros." in req.system and "Your Agent id is g-diet" in req.system
     assert calls == [("diet", ["day"], None, "g-diet")]
-    assert "handoff" not in {t["name"] for t in req.tools}
+    assert "agents" not in {t["name"] for t in req.tools} and "handoff" in {t["name"] for t in req.tools}  # 第 1 批 b：Agent 也能转
 
 
 def test_connector_tools_are_offered_and_wrapped(server_json, monkeypatch):

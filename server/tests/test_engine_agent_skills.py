@@ -26,6 +26,11 @@ def listed(server_json, monkeypatch):
     server_json(CFG)
 
 
+def has(block: str, name: str) -> bool:
+    """目录里有没有这个技能：「- 名字」（13c 起会话开头默认只留名字，engine/manuals.py）或「- 名字: 说明」（以前那样、skill 工具列的）。"""
+    return any(ln == f"- {name}" or ln.startswith(f"- {name}:") for ln in block.splitlines())
+
+
 def skill_of(agent: str):
     return next(t for t in tools_mod.for_agent(agent) if t.name == "skill")
 
@@ -45,13 +50,13 @@ def test_skills_for_reads_the_list_and_agents_without_one_see_everything(listed)
 
 def test_the_opening_lists_only_the_agents_skills(listed, monkeypatch):
     skills = context.collect("main", "t-skills", "2026-10-19", {t.name for t in tools_mod.for_agent("main")}).text("skills")
-    assert "- inbox:" in skills and "- journal:" in skills and "- board:" not in skills and "- project:" not in skills
+    assert has(skills, "inbox") and has(skills, "journal") and not has(skills, "board") and not has(skills, "project")
     f = FakeModel([{"text": "ok"}])
     monkeypatch.setattr(providers, "stream", f.stream)
     run(owner.respond("t-skills", "2026-10-19", "hi", None, lambda t: None))
     system = f.requests[0][1].system
     listed_block = system[system.index("<available_skills>"):system.index("</available_skills>")]
-    assert "- inbox:" in listed_block and "- board:" not in listed_block
+    assert has(listed_block, "inbox") and not has(listed_block, "board")
     row = {"id": "tk_sk", "agent": "main", "thread": "t-skills", "depth": 1, "timeout_s": 600, "level": "read"}
     sub = tasks.child_system(row, tasks.child_tools(row))  # 后台任务子会话开头的目录也照名单
     assert "- journal:" in sub and "- board:" not in sub
@@ -67,7 +72,7 @@ def test_the_skill_tool_says_the_agent_does_not_have_it(listed):
     assert "This Agent doesn't have the board skill" in str(e.value) and "inbox" in str(e.value)
     with pytest.raises(ToolFailure) as e:
         run(tool.run({"name": "no-such-skill"}, ctx()))
-    assert "No skill called no-such-skill" in str(e.value)  # 根本没有的照旧那样说
+    assert "called no-such-skill" in str(e.value) and "doesn't have" not in str(e.value)  # 根本没有的照旧说「没有」（13c 起连手册也找过）
     assert "board" in run(skill_of("g-other").run({}, ctx("g-other")))  # 没写名单的 Agent 照旧
 
 

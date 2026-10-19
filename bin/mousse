@@ -1,0 +1,8 @@
+#!/bin/sh
+# mousse：OpenMousse 的命令行（server/mousse.py；现在有 mousse agent，见 server/README.md）。
+# 软链进 PATH 就能直接敲 mousse：ln -s ~/.openmousse/repo/bin/mousse ~/.local/bin/mousse
+# 用安装器建的 venv 里的 Python（没有就用 python3）；仓库照 ~/.openmousse/repo（安装器建的软链，skills 里的命令也走它），MOUSSE_REPO 能换。
+repo="${MOUSSE_REPO:-$HOME/.openmousse/repo}"
+py="$HOME/.openmousse/venv/bin/python"
+[ -x "$py" ] || py=python3
+exec "$py" "$repo/server/mousse.py" "$@"

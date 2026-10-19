@@ -97,7 +97,7 @@ https://alex.example.ts.net/f/i/<令牌>/<x>
 
 **两边都要有公网根地址**（`share.public_url`，外面能打进来）：只有一边有，消息只能单向，所以没有的一方 app 先让开（安装脚本那一问）。
 
-## 4. 表（grava.db，`social.py` 建）
+## 4. 表（mousse.db，`social.py` 建）
 
 ```sql
 friends          (id TEXT PRIMARY KEY,            -- fr-<8 位 hex>，本机的

@@ -20,6 +20,8 @@
   （和卡上别的几步一起算：一片叶子只能在一步里），换掉那一条、重新核对原话，回到没定。作者那份（Grava 的 memory_tree.py）交的卡
   也是 tree-prune 的条目：校验交给脚本的 prune_revise（有它才行）。
 - 每周修剪的定时任务、出卡只给开源版世界树：作者那份（workspace 的 memory_tree.py，Grava）自己修剪、自己经 inbox_ctl 交卡。
+- 13c（2026-10-19）：卡上多一节「这个月没用上的」（unused.py：手册、技能，一份一条，id u1、u2……，默认不动；同意 = 交 ⑬ 改说明，
+  修改写「停用」= 停用）。这周没有可剪的（交的计划是空的、定时任务跑完没交计划）也出一张只有这一节的卡（after_job）。
 接口（app 的界面等设计出了图再做）：GET /api/tree/prune（最近一份计划和卡的状态）、GET /api/tree/prune/context（这周可剪的）。
 """
 from __future__ import annotations
@@ -38,6 +40,7 @@ import bridges
 import chat
 import inbox
 import sources
+import unused
 from chat import _lock, db, log_activity, now_iso
 from memtree import APP_PLATFORMS, ZEN
 from config import TZ, raw, settings
@@ -200,8 +203,12 @@ async def submitted(week: str, digest: str, agent: str | None) -> str:
         for iid in old:
             with contextlib.suppress(HTTPException):
                 await inbox.withdraw(iid)
+        if n := await unused_card(week, agent):  # 13c：这个月没用上的单出一张
+            return LS(f"这份计划没有要改的；收件箱卡只列了这个月没用上的 {n} 份手册和技能。只回 [SILENT]。",
+                      f"The plan has no changes; the inbox card only lists {n} manual(s) and skill(s) not used this month. Reply only [SILENT].")
         return LS("这份计划没有要改的，没出卡。", "The plan has no changes, so no card was made.")
     card = card_of(plan, await asyncio.to_thread(_checks, plan))
+    card = unused.section(card, await asyncio.to_thread(unused.items), inbox.ITEMS_MAX - len(card["items"]))  # 13c：这个月没用上的
     expires = (datetime.now(TZ) + timedelta(days=EXPIRE_DAYS)).isoformat(timespec="seconds")
     res = await inbox.add(inbox.ItemIn(kind=KIND, source=agent or "main", thread="main", level="quiet", dedupe=f"tree:prune:{week}",
                                        expiresAt=expires, **card))
@@ -213,12 +220,14 @@ async def submitted(week: str, digest: str, agent: str | None) -> str:
     with _lock, tdb() as conn:
         conn.execute("""INSERT OR REPLACE INTO tree_prune(inbox_id, week, digest, card, steps, source, status, result, created_at)
             VALUES(?,?,?,?,?,?,'pending','',?)""", (iid, week, digest, ITEMS_KIND, len(plan["steps"]), agent or "main", now_iso()))
-    held = sum(1 for x in card["items"] if x["default"] == "reject")
+    held = sum(1 for x in card["items"] if x["default"] == "reject" and not unused.is_item(x))
     return LS(f"计划交上去了：收件箱卡 {iid}（{len(plan['steps'])} 处，一步一条）。用户逐条定了、提交了才动，不点就不动"
-              + (f"；其中 {held} 步回原话核对对不上，默认不做" if held else "") + "。别再交；"
+              + (f"；其中 {held} 步回原话核对对不上，默认不做" if held else "") + unused.card_text(len(card["items"]) - len(plan["steps"]))
+              + "。别再交；"
               "这是每周修剪的定时任务就只回 [SILENT]，是用户让你修的就跟用户说一声卡在收件箱里。",
               f"Plan submitted: inbox card {iid} ({len(plan['steps'])} changes, one item each). Nothing changes until the user decides and submits"
-              + (f"; {held} step(s) didn't match what the user said and are off by default" if held else "") + ". "
+              + (f"; {held} step(s) didn't match what the user said and are off by default" if held else "")
+              + unused.card_text(len(card["items"]) - len(plan["steps"])) + ". "
               "Don't submit again; if this is the weekly pruning job, reply only [SILENT]; if the user asked for it, tell them the card is in the inbox.")
 
 
@@ -226,6 +235,33 @@ def _checks(plan: dict) -> dict[int, dict | None]:
     mt = tree()
     with contextlib.closing(mt.connect(sync=False)) as conn:
         return checks_of(conn, plan)
+
+
+async def unused_card(week: str, agent: str | None) -> int:
+    """13c：这周没有可剪的，「这个月没用上的」有条目就出一张只有这一节的卡（同一周的 dedupe，和修剪卡同一套点法）→ 列了几条（没出 → 0）。"""
+    card = unused.section(None, await asyncio.to_thread(unused.items), inbox.ITEMS_MAX)
+    if card is None:
+        return 0
+    expires = (datetime.now(TZ) + timedelta(days=EXPIRE_DAYS)).isoformat(timespec="seconds")
+    res = await inbox.add(inbox.ItemIn(kind=KIND, source=agent or "main", thread="main", level="quiet", dedupe=f"tree:prune:{week}",
+                                       expiresAt=expires, **card))
+    if isinstance(res, JSONResponse):  # 30 天内拒过这一周的卡
+        return 0
+    with _lock, tdb() as conn:
+        conn.execute("""INSERT OR REPLACE INTO tree_prune(inbox_id, week, digest, card, steps, source, status, result, created_at)
+            VALUES(?,?,'',?,0,?,'pending','',?)""", (res["id"], week, ITEMS_KIND, agent or "main", now_iso()))
+    return len(card["items"])
+
+
+async def after_job(j: dict, out) -> None:
+    """engine/jobs.AFTER[SYSTEM]：每周修剪的定时任务跑完了。这周还没有卡（没可剪的、回了 [SILENT]）→ 「这个月没用上的」单出一张。"""
+    if out.status not in ("done", "silent") or (mt := tree()) is None or conf() is None:
+        return
+    week = mt.prune().week_of()
+    with _lock, tdb() as conn:
+        if conn.execute("SELECT 1 FROM tree_prune WHERE week=?", (week,)).fetchone():
+            return
+    await unused_card(week, "main")
 
 
 async def after_tree(args: list[str], out: str, agent: str | None) -> str:
@@ -285,6 +321,8 @@ async def on_decided(it: dict, action: str) -> dict | None:
     if action in ("reject", "withdraw"):
         if row is not None:
             _mark(it["id"], "rejected" if action == "reject" else "withdrawn")
+            if action == "reject":  # 13c：整张卡拒了 = 「这个月没用上的」每条都不动（一阵子不再列）
+                await asyncio.to_thread(unused.decline, it.get("items") or [])
             if (mt := tree()) is not None:
                 await asyncio.to_thread(mt.prune().discard, row["week"], "rejected" if action == "reject" else "withdrawn")
         return None
@@ -300,6 +338,16 @@ async def on_decided(it: dict, action: str) -> dict | None:
         _mark(it["id"], "failed", "card changed")
         return {"failed": L("这张卡交上来以后被改过，和计划对不上，没有动", "This card was edited after it was sent, so it no longer matches the plan; "
                             "nothing changed")}
+    items, mine = unused.split(items)  # 13c：「这个月没用上的」那几条另外做（不进修剪计划）
+    more = await unused.apply(mine)
+    if items is not None and not any(x.get("decision") == "approve" for x in items):  # 修剪计划一步都没同意（只有这一节、或者只点了这一节）
+        if items:
+            await asyncio.to_thread(mt.prune().discard, row["week"], "rejected")
+        parts = ([L("修剪计划一步都没同意，没动", "No pruning step was approved; nothing pruned")] if items else []) + ([more] if more else [])
+        text = L("；", "; ").join(parts)
+        _mark(it["id"], "applied", text)
+        log_activity(text, "edit")
+        return {"result": text, "silent": True}
     try:
         res = await asyncio.to_thread(_apply, row["week"], row["digest"], items, row["source"] or "main")
     except mt.prune().PlanError as e:
@@ -316,6 +364,8 @@ async def on_decided(it: dict, action: str) -> dict | None:
         text += L(f"；{len(res['skipped'])} 步跳过了（叶子已经改过或不在了）", f"; {len(res['skipped'])} skipped (those leaves had changed or were gone)")
     if res["failed"]:
         text += L(f"；{len(res['failed'])} 步没做成：{res['failed'][0][1]}", f"; {len(res['failed'])} failed: {res['failed'][0][1]}")
+    if more:
+        text += L("；", "; ") + more
     if not res["done"] and res["failed"]:
         _mark(it["id"], "failed", text)
         return {"failed": text}
@@ -385,6 +435,8 @@ async def revise_step(card: dict, x: dict, note: str) -> dict:
     if isinstance(x.get("data"), dict) and x["data"].get("held"):  # 接在后面的待定（memhold.py）：改那一句
         import memhold
         return await memhold.revise(card, x, note)
+    if unused.is_item(x):  # 13c：「这个月没用上的」那几条：停用 / 改说明 / 不动（不调模型，unused.py）
+        return await unused.revise(card, x, note)
     mt = sources.memory_tree
     n = int(x["id"]) if str(x["id"]).isdigit() else 0
     if mt is None or not n or not isinstance(x.get("data"), dict):
@@ -466,6 +518,7 @@ def ensure_job() -> str | None:
         return None
     from engine import jobs
     jobs.ready()
+    jobs.AFTER[SYSTEM] = after_job  # 13c：跑完没交计划（这周没可剪的），「这个月没用上的」也出一张卡
     mine = [j for j in jobs.listing("main", everything=True) if j["created_by"] == SYSTEM and j["state"] not in jobs.GONE]
     c = conf() if tree() is not None else None
     for j in mine[1:] if c is not None else mine:  # 关了：删掉；多出来的（不该有）也删掉

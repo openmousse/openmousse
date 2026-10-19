@@ -14,7 +14,7 @@
   （不带工具的模型），没补充就请纪要里 next 写的，都没有就全体。
 - 发言里可以 @ 另一位成员一次（只认第一个），只转一层：被 @ 的这一轮还没说就提到下一个、发言标「回复 X」，它的回复里再 @ 不算；
   这一轮已经说过的不再多给一次（问题留给纪要和下一轮）。所以一轮最多 = 成员数次回复 + 1 次纪要。
-- 一轮说完 Grava 写纪要（llmjson：不带工具的模型）：决定 + 待办（每条有负责的 Agent 和时间）+ 下一轮该请谁。会议变成待确认：
+- 一轮说完主对话的助手写纪要（llmjson：不带工具的模型）：决定 + 待办（每条有负责的 Agent 和时间）+ 下一轮该请谁。会议变成待确认：
   确认 = 待办写进日程（schedule_items，source = 负责的 Agent，key 防重复）和那个 Agent 看板上的「会议待办」清单，会议结束
   （开了「会后保留为群聊」的变成群聊）；继续讨论或补充一句 = 开下一轮，新纪要取代上一轮的。
 - 群聊（group）：你说一句，@ 谁谁答，否则 Grava 请人；不写纪要。
@@ -455,7 +455,7 @@ async def suggest(body: SuggestIn):
     inp = {"topic": topic, "agents": [{"id": a, "name": g["name"], "purpose": g["purpose"]} for a, g in ag.items()]}
     try:
         out, via = await llmjson.ask(LS(*SUGGEST_RULES).format(app=settings.app_name), inp,
-                                     {"type": "object", "required": ["agents"]}, timeout=45)
+                                     {"type": "object", "required": ["agents"]}, timeout=45, kind="owner", origin="user")
     except llmjson.LLMError as e:
         return {"ok": True, "agents": [], "title": default_title(topic), "via": None, "error": str(e)[:120]}
     picked = pick_ids((out or {}).get("agents") if isinstance(out, dict) else None, list(ag), ag)[:5]
@@ -604,10 +604,11 @@ def mentions(text: str, members: list[str], ag: dict[str, dict], exclude: str | 
 
 
 async def stream_member(agent: str, mid: str, model: str, content: str, on_delta) -> None:
-    """把这一轮发给那位成员、流式收回复。OpenClaw：Gateway 的 OpenAI 兼容接口，指明它自己的 agent 和会话；别的 claw：claw.stream。"""
+    """把这一轮发给那位成员、流式收回复。OpenClaw：Gateway 的 OpenAI 兼容接口，指明它自己的 agent 和会话；别的 claw：claw.stream
+    （自己的内核：会议是你开的，成员的模型是你自己的 Claude Code 就走你的套餐，engine/owner.stream）。"""
     if not claw.is_openclaw():
         await claw.stream([{"role": "user", "content": content}], claw.day_key(member_key(agent, mid), day_of(now_iso())), model, on_delta,
-                          timeout=SPEECH_TIMEOUT)
+                          timeout=SPEECH_TIMEOUT, origin="user")
         return
     oc_agent = agent if agent in settings.group_agents else "main"
     token = chat.gateway_token()
@@ -889,7 +890,7 @@ async def write_minutes(lv: Live) -> None:
     rules = LS(*MINUTES_RULES).format(app=settings.app_name, round=lv.round, today=now.date().isoformat(),
                                       weekday=LS(WEEKDAYS[now.weekday()], WEEKDAYS_EN[now.weekday()]), tz=settings.timezone)
     try:
-        out, _via = await llmjson.ask(rules, inp, {"type": "object", "required": ["todos"]}, timeout=120)
+        out, _via = await llmjson.ask(rules, inp, {"type": "object", "required": ["todos"]}, timeout=120, kind="owner", origin="user")
     except llmjson.LLMError as e:
         with _lock, mdb() as conn:
             sid = system_line(conn, mid, "nominutes", error=str(e)[:120])
@@ -950,7 +951,7 @@ async def pick_speakers(m, note: str | None, ag: dict[str, dict]) -> list[str]:
                "open": mn.get("open") or []}
         try:
             out, _ = await llmjson.ask(LS(*PICK_RULES).format(app=settings.app_name, user=user_word()), inp,
-                                       {"type": "object", "required": ["agents"]}, timeout=40)
+                                       {"type": "object", "required": ["agents"]}, timeout=40, kind="owner", origin="user")
             picked = pick_ids(out.get("agents") if isinstance(out, dict) else None, members, ag)[:3]
             if picked:
                 return picked

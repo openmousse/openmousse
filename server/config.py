@@ -18,6 +18,8 @@
                     engine/fallback.py）；use.<这件事>、models 里的一项、赛博的 model 写成列表 = 第一个是主模型、后面是它自己的链；
                     providers.<家>.key_env 写成列表 = 一家几把密钥，先换密钥再换模型；
                     "skills": {"nudge": true, "nudge_tools": 8, "review": false} 写 skill（engine/skill_write.py）：提醒存、后台回看（默认关）
+                    "manuals": {"max": 2, "min_score": 0.45, "catalog": "names", "rewrite": false} 13c 手册和技能按这句话搜，只带命中的
+                    正文（engine/manuals.py；false = 关掉，技能目录换回以前带说明的）
                     第 11b 项：模型写 chatgpt/<型号> = 用户自己的 ChatGPT 套餐（engine/chatgpt_plan.py；在设置里 Continue with ChatGPT 连一次，
                     令牌只存在这台服务器的 <data_dir>/chatgpt/ 里）；"chatgpt": {"models": [...], "headers": {...}} 或 false（关掉）。
                     普通 OpenAI 密钥想走 Responses API：providers.openai.api 写 "openai-responses"

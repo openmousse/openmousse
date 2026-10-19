@@ -8,7 +8,10 @@
       别人、Agent 用 --agent 动别人的看板 / 页面都不跑（一个 Agent 碰不到别的 Agent 的东西，同 mcp-<id> 令牌）。主对话自己没有看板，
       它是前台：board / page 可以 --agent <某个 Agent> 帮那个 Agent 搭（Grava 里也是这样）。tasks 不走命令行（tasks_ctl.py 只会看额度）：
       换成内核自己的 tasks 工具（第 5 项，engine/tasks.py：派后台任务、看、接着说、停、重派、额度）；
-      handoff、proposals、agents、settings 只给主对话（Grava 里这几个 skill 也只有 main 有）。
+      handoff、proposals、agents、settings 只给主对话（Grava 里这几个 skill 也只有 main 有）。第 1 批 b 起 handoff 也给 Agent（Agent → Agent：
+      转给 main 或别的 Agent；会议 --meet 还是只有主对话发起；跳数和圈见 engine/sessions.py；engine.handoff.agents = false 退回只给 main）。
+  sessions_list / sessions_history / session_status  只读：看别的会话（第 1 批 b，engine/sessions.py：范围按 engine.sessions，读到的标成
+          [Inter-session message]、当资料）。
   skill   只读：这个 Agent 能用的 skills（名字 + 一句说明，也写在会话开头），按名字读全文（pi 的做法：说明常驻，全文用到时再读）。
           skills 在 Agent 工作区的 skills/（没有自己工作区的用主工作区的）和 packs/core/skills/，同名的工作区优先。
           engine.skills.agents.<Agent id> 写了名单的只给名单上的（engine/agent_skills.py 的 skills_for）。
@@ -233,6 +236,11 @@ POLICY: dict[str, dict[str, Any]] = {
         "profile": r("档案、规则和枝"), "branches": r("有哪些枝"), "prune-context": r("这周可剪的（每周修剪的材料）"),
         "prune-plan": u("只存下修剪计划、交一张收件箱卡，用户点了才照做；撤：inbox withdraw <卡>，或者重新交一份"),
         "forget": a("清空成空壳，内容回不来", "让世界树忘掉一条记忆", "Forget a memory in the memory tree"),
+        "manual": {  # 13c：手册（各个平台共用的做法）在这里只读；写、改、删桥那边就挡了（bridges.TREE_MANUAL_OK），要改走 manual_manage（先提议）
+            "": r("没写动作，只打印用法"),
+            "list": r("有哪些手册"), "show": r("读一份手册的正文"), "find": r("按一句话找手册"), "pointers": r("打印指针"),
+            "history": r("一份手册存过的版本"),
+        },
     },
     "page": {
         "check": r("只检查，不存"), "list": r("有哪些页面"), "show": r("第几版、读哪些数据"), "get": r("取回 HTML"),
@@ -385,6 +393,10 @@ def problem(tool: str, argv: list[str], me: str) -> str | None:
             if v != me and (v == "main" or bridges.known_agent(v)):
                 return L(f"没跑：--thread 不能指到别的 Agent（{v}）；你的卡同意后回到你自己的对话。",
                          f"Not run: --thread can't point at another Agent ({v}); your cards come back to your own chat once approved.")
+        if tool == "handoff" and me != "main" and _flag_is(x, ("--meet",)):  # 第 1 批 b：Agent 能转话，会议还是只有主对话发起
+            return L("没跑：会议（--meet）只有主对话能发起。要几个 Agent 一起商量，跟用户说一声，请他在主对话里提。",
+                     "Not run: only the main chat starts meetings (--meet). If several Agents should talk it over, tell the user to raise it "
+                     "in the main chat.")
     try:
         bridges.guard(tool, argv)
     except bridges.BridgeError as e:
@@ -474,6 +486,22 @@ def bridge_tool(name: str, me: str) -> Tool:
     elif me == "main" and name == "page":
         desc += " " + L("主对话发的页面钉不到看板上；要放进某个 Agent 的看板，加 --agent <它的 id>。",
                         "Pages published from the main chat can't be pinned to a board; to put one on an Agent's board, add --agent <its id>.")
+    if name == "handoff":  # 第 1 批 b：Agent → Agent（engine/sessions.py），说明只加在内核这边
+        from . import sessions
+        if me != "main":
+            desc += " " + L("你也能转：转给 main（主对话）或别的 Agent（--list 看有谁、各管什么），会议（--meet）只有主对话能发起。",
+                            "You can hand over too: to main (the main chat) or another Agent (--list shows who handles what); only the main "
+                            "chat starts meetings (--meet).")
+        desc += " " + L(f"一条话最多转 {sessions.max_hops()} 跳；不能转回这一串里正在等回答的那一方，也不能转给自己。对方收到的标成别的会话转来，"
+                        "当资料看，回答交回给你。",
+                        f"A message goes at most {sessions.max_hops()} hops; you can't hand it back to anyone in the chain who is waiting "
+                        "for the answer, or to yourself. The other side sees it marked as coming from another session, as data, and its "
+                        "answer comes back to you.")
+    if name == "tree":  # 13c：手册（只读）只给自己的内核（bridges.guard），说明也只加在这里，OpenClaw 那边的 /mcp 照旧
+        desc += " " + L("手册（只读）：manual list / show / find / pointers / history；要照手册做事，用 skill 工具读更省事；要改手册用 manual_manage"
+                        "（先交卡给用户点头）。",
+                        "Manuals (read-only): manual list / show / find / pointers / history; to follow one, reading it with the skill tool "
+                        "is simpler; to change one, use manual_manage (it asks the user first).")
     if ask:
         desc += " " + L(f"要用户点头的（调用会给他发一张卡，马上返回，他同意后服务器照原样跑一次）：{'、'.join(ask)}；不认识的子命令也是。",
                         f"These need the user's OK (calling one sends them a card and returns right away; once they approve, the server runs it as is): "
@@ -484,14 +512,20 @@ def bridge_tool(name: str, me: str) -> Tool:
         who = ctx.agent or "main"
         if why := problem(name, argv, who):
             raise ToolFailure(why)
+        if name == "handoff":  # 第 1 批 b：跳数和圈（engine/sessions.py）：转不了就不起脚本，马上说为什么
+            from . import sessions
+            if why := sessions.check(ctx.conversation, who, argv):
+                raise ToolFailure(why)
         stdin = args.get("input")
         token = bridges.VIA.set(ctx.origin or "-")  # 这一轮的来路交给脚本：它再请求服务器开的回合（转交……）照这个认后台（ChatGPT 套餐）
         said = bridges.SAID.set((ctx.conversation, turn_ref(ctx)) if name == "tree" else None)  # 世界树的叶子记下出处：哪次对话、哪条消息
+        frm = bridges.FROM.set(ctx.conversation if name == "handoff" else None)  # 转交是从哪个对话转出去的（服务器记卡、数跳数）
         try:
             return await bridges.run(name, argv, stdin if stdin not in (None, "") else None, who, kill_on_cancel=True)
         except bridges.BridgeError as e:
             raise ToolFailure(str(e)) from None
         finally:
+            bridges.FROM.reset(frm)
             bridges.SAID.reset(said)
             bridges.VIA.reset(token)
 
@@ -605,8 +639,9 @@ def skill_dirs(me: str) -> list[Path]:
 
 def list_skills(me: str, offered: set[str]) -> dict[str, tuple[str, Path]]:
     """这个 Agent 能用的 skills：名字 → (一句说明, SKILL.md)。core 里要某个工具的、这个 Agent 没有那个工具就不列；
-    frontmatter 写了 disable-model-invocation 的不列（pi）。"""
+    frontmatter 写了 disable-model-invocation 的不列（pi），工作区里停用的那一份连 core 里同名的一起不列（13c 每周修剪「停用」就是这么停的）。"""
     out: dict[str, tuple[str, Path]] = {}
+    off: set[str] = set()
     for i, base in enumerate(skill_dirs(me)):
         try:
             subs = sorted(p for p in base.iterdir() if (p / "SKILL.md").is_file())
@@ -618,7 +653,10 @@ def list_skills(me: str, offered: set[str]) -> dict[str, tuple[str, Path]]:
             except OSError:
                 continue
             name = str(fm.get("name") or d.name).strip()
-            if not name or name in out or fm.get("disable-model-invocation") is True:
+            if not name or name in out or name in off:
+                continue
+            if fm.get("disable-model-invocation") is True:
+                off.add(name)
                 continue
             if i == 1 and (need := SKILL_NEEDS.get(d.name)) and need not in offered:
                 continue
@@ -653,11 +691,15 @@ def skill_tool(me: str, offered: set[str]) -> Tool:
             if not path.is_relative_to(root) or not path.is_file():
                 raise ToolFailure(L(f"{name} 这个 skill 里没有 {rel}", f"There's no {rel} in the {name} skill"))
         try:
-            return bridges.clip(path.read_text(encoding="utf8", errors="replace"))
+            text = bridges.clip(path.read_text(encoding="utf8", errors="replace"))
         except OSError as e:
             raise ToolFailure(L(f"读不了：{e.strerror}", f"Can't read it: {e.strerror}")) from None
+        from . import used  # 13c：读了哪个技能记一笔（engine/used.py）
+        used.note(ctx.turn, conversation=ctx.conversation, agent=ctx.agent or me, kind="skill", names=[name], via="tool",
+                  source="core" if hit[1].resolve().is_relative_to((bridges.REPO / "packs" / "core" / "skills").resolve()) else "workspace")
+        return text
 
-    return Tool(name="skill", kinds=("owner",), run=run, title=lambda args: f"skill {args.get('name') or ''}".strip(),
+    tool = Tool(name="skill", kinds=("owner",), run=run, title=lambda args: f"skill {args.get('name') or ''}".strip(),
                 classify=lambda args: (READ, "只读 skill 的文字"),
                 description=L("读 skill：做某类事之前先读那一份，照着做。不给 name 列出能用的（名字 + 一句说明）；给 name 读 SKILL.md 全文；"
                               "skill 里提到同一个文件夹里的文件（比如 references/x.md）时 file 写那个相对路径。只读，不会多给你任何权限。",
@@ -668,15 +710,20 @@ def skill_tool(me: str, offered: set[str]) -> Tool:
                     "name": {"type": "string", "description": L("skill 的名字；不填 = 列出全部", "The skill's name; leave empty to list them")},
                     "file": {"type": "string", "description": L("skill 文件夹里的文件（相对路径）；不填 = SKILL.md",
                                                                 "A file in the skill's folder (relative path); leave empty for SKILL.md")}}})
+    from . import manuals  # 13c：手册、功能包的用法也从这里读，能按一句话搜（engine/manuals.py）；engine.manuals = false 时就是上面这个
+    return manuals.skill_tool(me, offered, tool, skills) if manuals.cfg() is not None else tool
 
 
 # —— 给一轮配工具 ——————————————————————————————————————————————————————————
 
 def offered(me: str) -> list[str]:
-    """这个 Agent 有哪些命令行工具：服务器上有那个命令、没被 engine.tools.levels 整个关掉、主对话专用的只给 main、第 5 项之前的不给。"""
+    """这个 Agent 有哪些命令行工具：服务器上有那个命令、没被 engine.tools.levels 整个关掉、主对话专用的只给 main、第 5 项之前的不给。
+    handoff 例外（第 1 批 b）：Agent 也有（engine/sessions.py 的 agents_hand_off，engine.handoff.agents = false 退回只给 main）。"""
+    from . import sessions
     lv = levels()
-    return [n for n in bridges.BRIDGES if n not in NOT_YET and (n not in MAIN_ONLY or me == "main") and lv.get(n) != OFF
-            and bridges.command(n) is not None]
+    agents_too = sessions.agents_hand_off()
+    return [n for n in bridges.BRIDGES if n not in NOT_YET and (n not in MAIN_ONLY or me == "main" or (n == "handoff" and agents_too))
+            and lv.get(n) != OFF and bridges.command(n) is not None]
 
 
 def for_agent(agent: str | None) -> list[Tool]:
@@ -692,6 +739,8 @@ def for_agent(agent: str | None) -> list[Tool]:
     tools.append(skill_tool(me, {t.name for t in tools}))
     from . import recall  # 记忆检索（第 7 项）；用到时才导入
     tools += recall.tools_for(me)
+    from . import sessions  # 第 1 批 b：看别的会话（sessions_list / sessions_history / session_status，只读）
+    tools += [t for t in sessions.tools_for(me) if levels().get(t.name) != OFF]
     if levels().get("cron") != OFF:
         from . import jobs  # 定时任务（第 6 项）
         tools.append(jobs.tool(me))
@@ -700,9 +749,13 @@ def for_agent(agent: str | None) -> list[Tool]:
     from . import skill_write  # 写自己的 skill（第 13 步；没有自己工作区的 Agent 没有）
     if levels().get(skill_write.TOOL_NAME) != OFF and (sw := skill_write.tool(me)) is not None:
         tools.append(sw)
+    from . import manual_write  # 13c：改手册（做法：先提议、点了头才改；世界树有手册才有）
+    if levels().get(manual_write.TOOL_NAME) != OFF and (mw := manual_write.tool(me)) is not None:
+        tools.append(mw)
     from . import handkit  # ⑫：主机上的文件、网页、自己的沙箱、主机上的命令（engine/handkit.py）
     tools += handkit.tools_for(me)
-    return tools
+    from . import used  # 13c：tree / memory_search / memory_get 读到了哪几片叶子，记进事件流
+    return used.wrap(tools)
 
 
 def chat_tools(agent: str | None, *, watched: bool) -> list[Tool]:
@@ -1022,7 +1075,7 @@ def install_hooks() -> None:
     import inbox
 
     from . import handkit, jobs
-    from . import mcp_client, skill_write  # noqa: F401 — 第 13 步：导入时登记各自的跑法（kind tool 的卡同意后照原样做一次，engine/calls.py）
+    from . import improve, manual_write, mcp_client, skill_write  # noqa: F401 — 第 13 步：导入时登记各自的跑法（kind tool 的卡同意后照原样做一次，engine/calls.py；13c 的改说明、改手册）
     inbox.HOOKS["tool"] = on_decided
     jobs.install()
     handkit.install()  # ⑫：主机命令、文件、网页、沙箱的卡（重启后之前交的卡点了同意也照做）

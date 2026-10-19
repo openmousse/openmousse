@@ -1,5 +1,5 @@
-// 「对话」tab（2026-10-13 重做，设计稿第 1、3、4 排）：顶上切换 Grava | 好友。
-// Grava 一边 = 你的 AI：一排 Agent（外圈状态、未读）+ 列表（主对话固定第一行、会议 / Agent 群、项目、底下「已结束的会议」「已归档的项目」）；
+// 「对话」tab（2026-10-13 重做，设计稿第 1、3、4 排）：顶上切换助手 | 好友。
+// 助手一边 = 你的 AI：一排 Agent（外圈状态、未读）+ 列表（主对话固定第一行、会议 / Agent 群、项目、底下「已结束的会议」「已归档的项目」）；
 // 好友一边 = 人：好友和好友群一个列表（FriendsHome）。点开都是同一种聊天页（ChatHeader）：主对话和项目在这里（路由 Chat），
 // Agent 在 GroupScreen，好友在 FriendChatScreen；ⓘ 进资料页（InfoScreen）。
 // 数据来自 /api/chats（../../server/chats.py）；老服务器没有就用 groups / sideChats / unread 拼（不能置顶 / 免打扰）。

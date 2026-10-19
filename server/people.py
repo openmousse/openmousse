@@ -308,7 +308,7 @@ async def extract(eid: str, title: str, pid: str, name: str, lines: list[str], t
         '{"notes": [{"kind": "doing", "text": "…", "id": "0.12", "quote": "…", "replaces": ""}], "answered": []}'
     got, _ = await llmjson.ask(prompt, {"person": name, "me": u, "transcript": lines,
                                         "existing": [{"id": e["id"], "kind": e["kind"], "text": e["text"], "when": day(e["created_at"])} for e in existing]},
-                               EXTRACT_SCHEMA, timeout=120, thinking="low", tool_free_only=True)  # 整段是朋友说的：只走零工具的 llm-task
+                               EXTRACT_SCHEMA, timeout=120, thinking="low", tool_free_only=True, kind="owner", origin="user")  # 整段是朋友说的：只走零工具的 llm-task 或内核
     j = got if isinstance(got, dict) else {"notes": got} if isinstance(got, list) else {}
     ex = {e["id"]: e for e in existing}
     seen = {norm(e["text"]) for e in existing}

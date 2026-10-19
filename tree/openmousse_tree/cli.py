@@ -17,6 +17,11 @@
   mousse-tree migrate markdown --notes DIR [--profile-note 档案.md]      换成 Markdown 存储：记忆导成一条一篇笔记（可以放进 Obsidian 库）
   mousse-tree migrate sqlite                                            换回 SQLite 存储（笔记写回 tree.db）
   mousse-tree check | rebuild                                           Markdown 存储：格式有问题的笔记 / 从笔记重建索引
+  mousse-tree manual add <名字> --when "什么时候用（几句，、隔开）" --about "一句说明" (--body 正文 | --file 文件 | --file - | --stdin) [--agent Agent id]…
+  mousse-tree manual edit <名字> [--when …] [--about …] [--body … | --file … | --stdin] [--rename 新名字] [--agent …]… [--no-agents] [--disable | --enable]
+  mousse-tree manual list [--all] [--json] | show <名字> [--json] | find "一句话" [--limit 5] [--json] | rm <名字>
+  mousse-tree manual pointers [名字…]                                   给一组手册（不写 = 全部）打印四行指针，贴进 CLAUDE.md、AGENTS.md
+  mousse-tree manual history <名字> | restore <名字> <版本>              改、删之前存的版本 / 换回某一版
 """
 from __future__ import annotations
 
@@ -53,6 +58,11 @@ USAGE_EN = """mousse-tree command line.
   mousse-tree migrate markdown --notes DIR [--profile-note Profile.md]  switch to Markdown storage: one note per memory (can live in an Obsidian vault)
   mousse-tree migrate sqlite                                            switch back to SQLite storage (notes are written back to tree.db)
   mousse-tree check | rebuild                                           Markdown storage: notes with format problems / rebuild the index from the notes
+  mousse-tree manual add <name> --when "when to use (a few phrases, ; separated)" --about "one line" (--body TEXT | --file PATH | --file - | --stdin) [--agent ID]…
+  mousse-tree manual edit <name> [--when …] [--about …] [--body … | --file … | --stdin] [--rename NEW] [--agent …]… [--no-agents] [--disable | --enable]
+  mousse-tree manual list [--all] [--json] | show <name> [--json] | find "a sentence" [--limit 5] [--json] | rm <name>
+  mousse-tree manual pointers [name…]                                  print the four-line pointers for some manuals (none = all) to paste into CLAUDE.md, AGENTS.md
+  mousse-tree manual history <name> | restore <name> <version>          versions kept before edits and removals / bring one back
 """
 
 SERVICE = """[Unit]
@@ -472,6 +482,107 @@ def cmd_stats(_: argparse.Namespace) -> None:
         print(C.L(f"\n笔记 {C.notes_dir()} · 格式问题 {k} 处", f"\nnotes {C.notes_dir()} · {k} format problem(s)"))
 
 
+# —— 手册（0.6，manuals.py）——————————————————————————————————————————————————————
+
+def _body_of(a: argparse.Namespace) -> str | None:
+    """正文从哪来：--body 字、--file 文件（- = 标准输入）、--stdin；都没给 → None。"""
+    if getattr(a, "stdin", False) or a.file == "-":
+        return sys.stdin.read()
+    if a.file:
+        try:
+            return Path(a.file).expanduser().read_text(encoding="utf8")
+        except (OSError, UnicodeDecodeError) as e:
+            sys.exit(C.L(f"--file 读不了：{e}", f"Can't read --file: {e}"))
+    return a.body
+
+
+def _manual_line(m: dict) -> str:
+    zh = C.lang() == "zh"
+    when = ("、" if zh else "; ").join(m["when"])
+    off = C.L("（停用）", " (disabled)") if m["status"] != "active" else ""
+    parts = [f"- {m['name']}{off}"]
+    if when:
+        parts.append(C.L(f"什么时候用：{when}", f"when to use: {when}"))
+    if m["about"]:
+        parts.append(m["about"])
+    return (" — " if not zh else "　").join(parts)
+
+
+def _public(m: dict, body: bool = False) -> dict:
+    out = {k: m[k] for k in ("name", "when", "about", "status", "agents", "created_at", "updated_at")}
+    if body:
+        out["body"] = m["body"]
+    return out
+
+
+def cmd_manual(a: argparse.Namespace) -> None:
+    from . import manuals as MA
+    conn = S.connect()
+    actor = agent_env() or "owner"
+    act = a.action
+    try:
+        if act == "add":
+            body = _body_of(a)
+            m = MA.add(conn, name=a.name, when=a.when or [], about=a.about or "", body=body or "", agents=a.agent or (), actor=actor)
+            print(json.dumps({"ok": True, "manual": _public(m)}, ensure_ascii=False))
+        elif act == "edit":
+            status = "disabled" if a.disable else "active" if a.enable else None
+            agents = [] if a.no_agents else (a.agent or None)
+            r = MA.edit(conn, a.name, when=a.when, about=a.about, body=_body_of(a), rename=a.rename, agents=agents, status=status, actor=actor,
+                        note="disable" if a.disable else "enable" if a.enable else "edit")
+            print(json.dumps({"ok": True, "manual": _public(r["manual"]), "version": r["version"]}, ensure_ascii=False))
+        elif act == "list":
+            ms = MA.all_manuals(conn, disabled=a.all)
+            if a.json:
+                print(json.dumps([_public(m) for m in ms], ensure_ascii=False, indent=1))
+            else:
+                print("\n".join(_manual_line(m) for m in ms) if ms else C.L("（还没有手册）", "(no manuals yet)"))
+        elif act == "show":
+            m = MA.read(conn, a.name, platform="openmousse" if agent_env() else "cli")
+            if m is None:
+                sys.exit(MA.not_found(a.name))
+            if a.json:
+                print(json.dumps(_public(m, body=True), ensure_ascii=False, indent=1))
+            else:
+                when = ("、" if C.lang() == "zh" else "; ").join(m["when"])
+                print(f"# {m['name']}\n" + (C.L(f"什么时候用：{when}\n", f"When to use: {when}\n") if when else "")
+                      + (f"{m['about']}\n" if m["about"] else "") + f"\n{m['body']}")
+        elif act == "find":
+            got = MA.find(conn, a.query, limit=a.limit, agent=agent_env() or None)
+            if a.json:
+                print(json.dumps(got, ensure_ascii=False, indent=1))
+            elif not got:
+                print(C.L("没找到相关的手册", "No matching manual"))
+            else:
+                for x in got:
+                    when = ("、" if C.lang() == "zh" else "; ").join(x["when"])
+                    print(f"- {x['name']} ({x['score']:.2f})" + (C.L(f"　什么时候用：{when}", f" — when to use: {when}") if when else "")
+                          + (f"　{x['about']}" if C.lang() == "zh" and x["about"] else f" — {x['about']}" if x["about"] else ""))
+        elif act == "rm":
+            vid = MA.remove(conn, a.name, actor)
+            print(json.dumps({"ok": True, "version": vid}, ensure_ascii=False))
+        elif act == "pointers":
+            ms = MA.all_manuals(conn)
+            if a.names:
+                want = [MA.get(conn, n, disabled=False) for n in a.names]
+                missing = [n for n, m in zip(a.names, want) if m is None]
+                if missing:
+                    sys.exit(MA.not_found(missing[0]))
+                ms = [m for m in want if m is not None]
+            if not ms:
+                sys.exit(C.L("还没有手册", "There are no manuals yet"))
+            print(MA.pointers(ms), end="")
+        elif act == "history":
+            vs = MA.history(a.name)
+            print("\n".join(f"- {v['id']}: {v['note']} {v['at']} ({v['by']})" for v in vs) if vs else
+                  C.L(f"「{a.name}」还没有存过的版本", f'"{a.name}" has no saved versions yet'))
+        elif act == "restore":
+            r = MA.restore(conn, a.name, a.version, actor)
+            print(json.dumps({"ok": True, "manual": _public(r["manual"]), "version": r["version"]}, ensure_ascii=False))
+    except MA.ManualError as e:
+        sys.exit(str(e))
+
+
 def cmd_token(action: str):
     """rotate：给某个平台换一个新令牌（旧的立即作废）；revoke：删掉它的令牌。改完要重启服务才生效。"""
     def run(a: argparse.Namespace) -> None:
@@ -527,6 +638,23 @@ def main() -> None:
     q.set_defaults(fn=cmd_prune_apply)
     sp.add_parser("export").set_defaults(fn=cmd_export)
     sp.add_parser("stats").set_defaults(fn=cmd_stats)
+    q = sp.add_parser("manual")
+    msp = q.add_subparsers(dest="action", required=True)
+    for act in ("add", "edit"):
+        m = msp.add_parser(act); m.add_argument("name"); m.add_argument("--when", action="append"); m.add_argument("--about")
+        m.add_argument("--body"); m.add_argument("--file"); m.add_argument("--stdin", action="store_true"); m.add_argument("--agent", action="append")
+        if act == "edit":
+            m.add_argument("--rename"); m.add_argument("--no-agents", action="store_true")
+            g = m.add_mutually_exclusive_group(); g.add_argument("--disable", action="store_true"); g.add_argument("--enable", action="store_true")
+        m.set_defaults(fn=cmd_manual)
+    m = msp.add_parser("list"); m.add_argument("--all", action="store_true"); m.add_argument("--json", action="store_true"); m.set_defaults(fn=cmd_manual)
+    m = msp.add_parser("show"); m.add_argument("name"); m.add_argument("--json", action="store_true"); m.set_defaults(fn=cmd_manual)
+    m = msp.add_parser("find"); m.add_argument("query"); m.add_argument("--limit", type=int, default=5); m.add_argument("--json", action="store_true")
+    m.set_defaults(fn=cmd_manual)
+    m = msp.add_parser("rm"); m.add_argument("name"); m.set_defaults(fn=cmd_manual)
+    m = msp.add_parser("pointers"); m.add_argument("names", nargs="*"); m.set_defaults(fn=cmd_manual)
+    m = msp.add_parser("history"); m.add_argument("name"); m.set_defaults(fn=cmd_manual)
+    m = msp.add_parser("restore"); m.add_argument("name"); m.add_argument("version"); m.set_defaults(fn=cmd_manual)
     for action in ("rotate", "revoke"):
         q = sp.add_parser(action); q.add_argument("platform"); q.set_defaults(fn=cmd_token(action))
     a = p.parse_args()

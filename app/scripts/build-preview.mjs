@@ -18,6 +18,6 @@ const bundle = readFileSync(join(jsDir, bundleName), 'utf8')
 
 const shell = readFileSync(join(root, 'scripts/preview-shell.html'), 'utf8');
 mkdirSync(join(root, 'preview'), { recursive: true });
-const out = join(root, 'preview/grava-app-preview.html');
+const out = join(root, 'preview/openmousse-app-preview.html');
 writeFileSync(out, shell.replace('/*__BUNDLE__*/', () => bundle));
 console.log(`wrote ${out} (${(bundle.length / 1e6).toFixed(1)} MB bundle)`);

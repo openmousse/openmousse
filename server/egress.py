@@ -377,8 +377,8 @@ def card_of(req: CheckIn, reason: str, private: list[str], task: str, name: str 
         lines = [f"| {f.name} | {f.value[:200].replace('|', '/')} |" for f in req.fields]
         body = "\n".join("> " + ln for ln in (req.text or L("（没有正文）", "(no body)")).splitlines()[:60])
         detail = "\n".join([L("| 信头 | 内容 |", "| Header | Value |"), "|---|---|", *lines, "", body, "",
-                             L("放行 = 这封信原样发出去（从 Grava 的邮箱）。改一下：写上怎么改，代办改好会再交一封给你看。",
-                               "Let it through = this exact email goes out (from the Grava mailbox). Revise: say what to change and the errand brings a new one.")])
+                             L("放行 = 这封信原样发出去（从代办登录着的那个邮箱）。改一下：写上怎么改，代办改好会再交一封给你看。",
+                               "Let it through = this exact email goes out (from the mailbox the errand is signed in to). Revise: say what to change and the errand brings a new one.")])
         return {"title": title, "why": why, "changes": changes[:4], "detail": detail}
     changes = [f"{req.method} {host}{req.path.split('?', 1)[0][:60]}"]
     names = [f.name for f in req.fields if f.name][:8]

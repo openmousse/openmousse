@@ -4,8 +4,9 @@
 把一台已经跑着 claw 的机器配成能跑 OpenMousse。默认是 OpenClaw（下面 1–6）；--claw-url 给了别的 claw / agent 的 OpenAI 兼容接口，
 就不碰 openclaw.json（没有 4），server.json 写 claw 段（见 server/claw.py），skills 和规矩装到 --claw-skills / --claw-rules 给的位置（没给就跳过）。
 --builtin（内核第 9 步）：不要 OpenClaw，用 OpenMousse 自带的内核（server.json 的 claw = {"kind": "builtin"}）：不碰 openclaw.json、
-不链 skill（内核自己读 packs/core/skills）、不追加规矩（内核自己备开头），档案放 ~/.openmousse/workspace；模型、搜索、记忆装完以后选：
-打开 app 按引导选，或者在终端里走同样的三步（server/setup_ctl.py，有终端时最后问一句要不要现在就走）：
+不链 skill（内核自己读 packs/core/skills）、不追加规矩（内核自己备开头），档案放 ~/.openmousse/workspace；模型、搜索、记忆装完以后
+在终端里选（server/setup_ctl.py 的三步，有终端时最后问一句要不要现在就走）。从 builtin 或别的 claw 换回 OpenClaw：server.json 的
+workspace 还是安装器当初写的 ~/.openmousse/workspace 的话，换成 OpenClaw 主 agent 的工作区（那边原来的文件不搬，最后说一句在哪）：
   1. ~/.openmousse/repo → 仓库（skills 里的命令都走这个固定路径）
   2. ~/.openmousse/server.json：名字、时区、语言、监听地址、OpenClaw 的位置、令牌（phone 给手机，local 给本机脚本）；
      --vault（服务器上已经在同步的 Obsidian 库）：think.vault = 库的文件夹、think.obsidian_vault = 库名（文件夹名），没设过才写
@@ -169,8 +170,12 @@ def openclaw_env(home: Path) -> dict[str, str]:
     return {**os.environ, "OPENCLAW_STATE_DIR": str(home), "OPENCLAW_CONFIG_PATH": str(home / "openclaw.json")}
 
 
+SYSTEMD_RUN = Path("/run/systemd/system")  # 有它 = systemd 在跑（sd_booted() 也看它）
+
+
 def has_systemd() -> bool:
-    return shutil.which("systemctl") is not None
+    """systemd 真在跑：没开 systemd 的 WSL、容器里常有 systemctl 这个命令，可它连不上 systemd（Failed to connect to bus）。"""
+    return shutil.which("systemctl") is not None and SYSTEMD_RUN.is_dir()
 
 
 def has_launchd() -> bool:
@@ -182,8 +187,37 @@ def has_services() -> bool:
     return has_systemd() or has_launchd()
 
 
+MANAGED = True  # 这次安装的服务交给 systemd / launchd 管了吗（main() 里定：--no-systemd、两样都没有、服务没起来 → False，提示里给自己起的命令）
+
+
+def tilde(p: Path) -> str:
+    return str(p).replace(str(Path.home()), "~", 1)
+
+
+def log_file(name: str) -> Path:
+    """服务的输出写到哪个文件：macOS 的 launchd、自己起的（没有 systemd）都写文件；Linux 的 systemd 走 journald。"""
+    return TREE_HOME / "tree.log" if name == "mousse-tree" else LOG_DIR / f"{name.removeprefix('openmousse-')}.log"
+
+
+def start_cmd(name: str) -> str:
+    """没有 systemd / launchd 时自己起服务（放后台，输出进 log_file）。"""
+    if name == "mousse-tree":
+        return f"nohup ~/.openmousse/venv/bin/mousse-tree serve >> {tilde(log_file(name))} 2>&1 &"
+    return f"cd ~/.openmousse/repo/server && nohup ~/.openmousse/venv/bin/python run.py >> {tilde(log_file(name))} 2>&1 &"
+
+
+def stop_cmd(name: str) -> str:
+    """停掉自己起的那个（start_cmd 起的命令行）：只认自己的进程，而且命令行要以 venv 的 python 开头。跑这一行的 shell（脚本里、
+    bash -c 里）命令行里也带着这串字，但它以 bash / sh 开头，不会把自己停掉。"""
+    py = "^$HOME/.openmousse/venv/bin/python[0-9.]*"
+    pat = f"{py} [^ ]*mousse-tree serve" if name == "mousse-tree" else f"{py} run.py"
+    return f'pkill -u "$(id -u)" -f "{pat}"'
+
+
 def restart_cmd(name: str) -> str:
     """给人看的：在这台机器上怎么重启我们的某个服务。"""
+    if not MANAGED:
+        return f"{stop_cmd(name)}; {start_cmd(name)}"
     if IS_MAC:
         return f"launchctl kickstart -k gui/$(id -u)/{LABELS.get(name, name)}"
     return f"systemctl --user restart {name}"
@@ -191,9 +225,8 @@ def restart_cmd(name: str) -> str:
 
 def logs_cmd(name: str, n: int = 50) -> str:
     """给人看的：怎么看我们某个服务的日志。"""
-    if IS_MAC:
-        log = TREE_HOME / "tree.log" if name == "mousse-tree" else LOG_DIR / f"{name.removeprefix('openmousse-')}.log"
-        return f"tail -n {n} {str(log).replace(str(Path.home()), '~', 1)}"
+    if IS_MAC or not MANAGED:
+        return f"tail -n {n} {tilde(log_file(name))}"
     return f"journalctl --user -u {name} -n {n}"
 
 
@@ -436,6 +469,16 @@ def write_server_json(a: argparse.Namespace, oc: dict, home: Path, workspace: Pa
     elif old_claw.get("kind") not in (None, "openclaw"):
         cfg.pop("claw", None)  # 换回了 OpenClaw
         say(L("server.json 的 claw 段去掉了：换回 OpenClaw", "Removed the claw section from server.json: back to OpenClaw"))
+        # 自带的内核 / 别的 claw 那时安装器写的是 OpenMousse 自己的工作区：换成 OpenClaw 主 agent 的（skills、规则、它记的都在那边），
+        # 档案跟着换（下面按那边的 USER.md 重新定）。原来的文件不搬：OpenClaw 那边可能已经有自己的 USER.md / MEMORY.md
+        own = MOUSSE_HOME / "workspace"
+        if same_dir(Path(str(cfg.get("workspace") or own)).expanduser(), own) and not same_dir(workspace, own):
+            cfg["workspace"], cfg["openclaw_home"] = str(workspace), str(home)
+            if cfg.get("profile") and same_dir(Path(str(cfg["profile"])).expanduser(), own / "USER.md"):
+                cfg.pop("profile")
+            say(L(f"主 agent 的工作区换成 OpenClaw 的 {workspace}。之前的档案和记忆（USER.md、MEMORY.md、memory/）还在 {own}，想接着用就挑着拷过去",
+                  f"The main agent's workspace is now OpenClaw's {workspace}. The earlier profile and memory (USER.md, MEMORY.md, memory/) "
+                  f"are still in {own}; copy over what you want to keep"))
     dm = default_model(oc) if not claw else claw.get("model")
     if dm:
         setdefault("default_model", dm)
@@ -1082,9 +1125,11 @@ def setup_tree(venv: Path, cfg: dict, home: Path, no_systemd: bool, vault: Path 
         else:
             say(L("世界树 install-openclaw 失败：", "Memory tree: install-openclaw failed: ") + (r.stderr or r.stdout).strip()[-300:])
     elif builtin:  # 自带的内核：tree 工具、记忆检索直接用这棵树（engine/recall_tree.py），不用另外接
-        say(tag + L("自带的内核直接用这棵树（tree 工具、记忆检索），不用另外接；想放进 Markdown 文件夹（Obsidian 库），趁还没有记忆时在 app 的引导里换",
+        say(tag + L("自带的内核直接用这棵树（tree 工具、记忆检索），不用另外接；想放进 Markdown 文件夹（Obsidian 库），趁还没有记忆时换："
+                    "`~/.openmousse/venv/bin/python ~/.openmousse/repo/server/setup_ctl.py memory markdown <文件夹>`",
                     "the built-in engine uses this tree directly (the tree tool, memory search), nothing else to connect; to keep it in a Markdown "
-                    "folder (an Obsidian vault) instead, switch in the app's guide while it's still empty"))
+                    "folder (an Obsidian vault) instead, switch while it's still empty: "
+                    "`~/.openmousse/venv/bin/python ~/.openmousse/repo/server/setup_ctl.py memory markdown <folder>`"))
     else:  # 别的 claw：它能连远程 MCP 的话，自己接上世界树（和 Claude.ai、ChatGPT 一样一个平台一个令牌）
         say(tag + L("你的 claw 能连 MCP 服务的话，让它也接上世界树：`~/.openmousse/venv/bin/mousse-tree rotate myclaw` 给它一个令牌，"
                     "地址见 `mousse-tree urls` 里 myclaw 那一行（本机用 http://127.0.0.1 开头的就行）",
@@ -1104,8 +1149,8 @@ def setup_tree(venv: Path, cfg: dict, home: Path, no_systemd: bool, vault: Path 
         r = run([str(exe), "install-service"])
         say(tag + ((r.stdout or r.stderr).strip().splitlines() or [L("install-service 没输出", "install-service printed nothing")])[-1])
     elif not no_systemd:
-        say(tag + L("这台机器没有 systemctl 也没有 launchd：自己跑 `~/.openmousse/venv/bin/mousse-tree serve`（已经在跑就重启它）",
-                    "no systemctl or launchd on this machine: run `~/.openmousse/venv/bin/mousse-tree serve` yourself (restart it if it's already running)"))
+        say(tag + L("这台机器没有 systemd 也没有 launchd：世界树的服务要自己起（命令在最后）",
+                    "no systemd or launchd on this machine: start the memory tree service yourself (the command is at the end)"))
     elif changed:
         say(tag + L(f"配置改了，重启世界树服务生效（{restart_cmd('mousse-tree')}）",
                     f"its config changed; restart the memory tree service to apply it ({restart_cmd('mousse-tree')})"))
@@ -1114,15 +1159,27 @@ def setup_tree(venv: Path, cfg: dict, home: Path, no_systemd: bool, vault: Path 
 
 # —— 6：开机自启（systemd / launchd） ——
 
-def install_services(repo: Path, venv: Path, tz: str) -> None:
+def install_services(repo: Path, venv: Path, tz: str) -> bool:
+    """→ 服务起来了没有（没有 = 最后给自己起的命令）。"""
     if has_systemd():
-        install_systemd(repo, venv, tz)
-    elif has_launchd():
-        install_launchd(repo, venv, tz)
-    else:
-        say(L("没有 systemctl 也没有 launchd：手动跑 `~/.openmousse/venv/bin/python ~/.openmousse/repo/server/run.py`，日结用 cron 每天 03:45 跑 packs/core/scripts/daily_close.py",
-              "No systemctl or launchd: run `~/.openmousse/venv/bin/python ~/.openmousse/repo/server/run.py` yourself, and run "
-              "packs/core/scripts/daily_close.py from cron every day at 03:45 for the daily digest"))
+        return install_systemd(repo, venv, tz)
+    if has_launchd():
+        return install_launchd(repo, venv, tz)
+    return False
+
+
+def print_manual_start(tree: bool) -> None:
+    """服务没交给 systemd / launchd（--no-systemd、两样都没有、没起来）：自己起的命令，一个服务一行（先停掉在跑的，换上新代码和配置）。"""
+    LOG_DIR.mkdir(parents=True, exist_ok=True)
+    print()
+    print(L("服务要自己起（没交给 systemd / launchd）：每行先停掉在跑的那个，再放到后台起一个新的；机器重启以后、再跑安装器以后都再跑一遍：",
+            "Start the services yourself (they aren't under systemd / launchd): each line stops the running one, then starts a new one in the "
+            "background; run them again after a reboot and after rerunning the installer:"))
+    for name in ("openmousse-server", *(("mousse-tree",) if tree else ())):
+        print(f"  {stop_cmd(name)}; {start_cmd(name)}")
+    print(L("  每晚的日结：crontab -e 加一行（按这台机器的时钟；没有 crontab 命令的先装 cron）：",
+            "  The nightly digest: add this line with crontab -e (it runs on this machine's clock; install cron first if there's no crontab command):"))
+    print("  45 3 * * * ~/.openmousse/venv/bin/python ~/.openmousse/repo/packs/core/scripts/daily_close.py")
 
 
 def local_tz() -> str:
@@ -1134,22 +1191,25 @@ def local_tz() -> str:
     return ""
 
 
-def install_launchd(repo: Path, venv: Path, tz: str) -> None:
-    """macOS：服务常驻（登录后起、挂了拉起来），日结按本机时钟每天 03:45 跑一次。日志在 ~/.openmousse/logs。"""
+def install_launchd(repo: Path, venv: Path, tz: str) -> bool:
+    """macOS：服务常驻（登录后起、挂了拉起来），日结按本机时钟每天 03:45 跑一次。日志在 ~/.openmousse/logs。→ 服务起来了没有。"""
     py = venv / "bin/python"
     jobs = ((LABELS["openmousse-server"], [py, "run.py"], dict(workdir=repo / "server", log=LOG_DIR / "server.log")),
             (LABELS["openmousse-daily-close"], [py, repo / "packs/core/scripts/daily_close.py"],
              dict(workdir=repo, log=LOG_DIR / "daily-close.log", calendar={"Hour": 3, "Minute": 45}, restart=False)))
+    started = False
     for label, args, kw in jobs:
         ok, err = launch_agent(label, args, **kw)
         say(L(f"{label}：{'已启动' if ok else '启动失败 ' + err}", f"{label}: {'started' if ok else 'failed to start ' + err}"))
+        started = started or (ok and label == LABELS["openmousse-server"])
     here = local_tz()
     if tz and here and here != tz:  # launchd 只认本机时钟：时区不一样时，日结的钟点跟着这台 Mac 走
         say(L(f"日结按这台 Mac 的时钟（{here}）每天 03:45 跑；你设的时区是 {tz}",
               f"The daily digest runs at 03:45 on this Mac's clock ({here}); your time zone is set to {tz}"))
+    return started
 
 
-def install_systemd(repo: Path, venv: Path, tz: str) -> None:
+def install_systemd(repo: Path, venv: Path, tz: str) -> bool:
     unit_dir = Path("~/.config/systemd/user").expanduser()
     unit_dir.mkdir(parents=True, exist_ok=True)
     for fn in ("openmousse-server.service", "openmousse-daily-close.service", "openmousse-daily-close.timer"):
@@ -1157,20 +1217,23 @@ def install_systemd(repo: Path, venv: Path, tz: str) -> None:
         (unit_dir / fn).write_text(text, encoding="utf8")
     run(["systemctl", "--user", "daemon-reload"])
     # 服务用 restart：再跑一遍安装器（更新代码、换监听地址）要重启才生效；定时器 enable --now 就够
+    started = False
     for unit, cmd in (("openmousse-server.service", "restart"), ("openmousse-daily-close.timer", "start")):
         run(["systemctl", "--user", "enable", unit])
         r = run(["systemctl", "--user", cmd, unit])
         ok = r.returncode == 0
         say(L(f"{unit}：{'已启动' if ok else '启动失败 ' + (r.stderr or r.stdout).strip()[-200:]}",
               f"{unit}: {'started' if ok else 'failed to start ' + (r.stderr or r.stdout).strip()[-200:]}"))
+        started = started or (ok and unit == "openmousse-server.service")
     r = run(["loginctl", "enable-linger", os.environ.get("USER") or ""]) if shutil.which("loginctl") else None
     if r is None or r.returncode != 0:
         say(L("loginctl enable-linger 没成功（登出后服务会停）：用 sudo 跑一次 `loginctl enable-linger $USER`",
               "loginctl enable-linger failed (the services stop when you log out): run `sudo loginctl enable-linger $USER` once"))
+    return started
 
 
 def main() -> None:
-    global UI_LANG
+    global UI_LANG, MANAGED
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--repo", required=True)
     ap.add_argument("--venv", required=True)
@@ -1196,6 +1259,7 @@ def main() -> None:
     except (OSError, ValueError, AttributeError):
         saved_lang = None
     UI_LANG = a.lang or (norm_lang(saved_lang) if saved_lang else env_lang())
+    MANAGED = not a.no_systemd and has_services()
     repo, venv = Path(a.repo).expanduser().resolve(), Path(a.venv).expanduser().resolve()
     home = Path(a.openclaw_home).expanduser()
     oc_path = home / "openclaw.json"
@@ -1275,10 +1339,10 @@ def main() -> None:
               "Friends reach this server through the OpenMousse relay (relay.openmousse.ai), no public address needed; messages are end-to-end encrypted. Set \"relay\": false in server.json to turn it off"))
     restarted = False
     self_apply = restart and gateway_applies_config(oc_path)
-    if not a.no_systemd:
+    if MANAGED:
         print("launchd" if has_launchd() and not has_systemd() else "systemd")
-        install_services(repo, venv, cfg["timezone"])  # 两样都没有它自己说怎么手动跑
-        if has_services():
+        MANAGED = install_services(repo, venv, cfg["timezone"])  # 服务没起来：最后给自己起的命令
+        if MANAGED:
             wait_server(cfg)
     if self_apply:
         say(L("openclaw.json 改了，Gateway 自己会套用：能热加载的马上生效，要重启的它等手头的对话做完自己重启",
@@ -1340,6 +1404,8 @@ def main() -> None:
     else:
         print(L("手机令牌之前已生成；要新的：`~/.openmousse/venv/bin/python ~/.openmousse/repo/server/tokens.py add phone2`",
                 "The phone token was generated earlier; for a new one: `~/.openmousse/venv/bin/python ~/.openmousse/repo/server/tokens.py add phone2`"))
+    if not MANAGED:
+        print_manual_start(not a.no_tree and (venv / "bin/mousse-tree").exists())
     print()
     print(L("手机怎么连：", "Connecting the phone:"))
     tok_zh, tok_en = ("上面的令牌", "the token above") if "phone" in new_tokens and not os.environ.get("MOUSSE_NONINTERACTIVE") else ("手机令牌", "your phone token")
@@ -1355,6 +1421,9 @@ def main() -> None:
                 "  Listening on this machine only. Install Tailscale (`curl -fsSL https://tailscale.com/install.sh | sh && sudo tailscale up`) and run the installer again,"))
         print(L(f"  或者用 `tailscale serve` / Caddy / nginx 把 127.0.0.1:{b['port']} 反代成 HTTPS，app 里填那个地址。",
                 f"  or reverse-proxy 127.0.0.1:{b['port']} as HTTPS with `tailscale serve` / Caddy / nginx and enter that address in the app."))
+        print(L("  配对码（app 连接页用它换自己的令牌，不用抄手机令牌）：`~/.openmousse/venv/bin/python ~/.openmousse/repo/server/tokens.py pair --server <那个地址>`",
+                "  A pairing code (the app trades it for a token of its own, no token to copy): "
+                "`~/.openmousse/venv/bin/python ~/.openmousse/repo/server/tokens.py pair --server <that address>`"))
     else:
         print(L(f"  app 连接页填 {url} 和令牌", f"  Enter {url} and the token in the app"))
     print(L("  app：怎么装见仓库 README 的「两种用法」（作者的 TestFlight，或自己构建 app/）",
@@ -1385,7 +1454,10 @@ def main() -> None:
     print(L("检查：", "Check:"))
     print(f"  curl -H 'Authorization: Bearer <token>' {url}/api/health")
     follow = logs_cmd("openmousse-server").replace("tail -n 50", "tail -f").replace(" -n 50", " -f")
-    print(L(f"  {status_cmd('openmousse-server')}   # 日志：{follow}", f"  {status_cmd('openmousse-server')}   # logs: {follow}"))
+    if MANAGED:
+        print(L(f"  {status_cmd('openmousse-server')}   # 日志：{follow}", f"  {status_cmd('openmousse-server')}   # logs: {follow}"))
+    else:
+        print(L(f"  {follow}   # 服务的日志", f"  {follow}   # the server's log"))
     if public is None:
         exposed = bool(tree_config().get("public_hosts"))
         print(L("  ~/.openmousse/venv/bin/mousse-tree urls      # 世界树接各平台的地址" + ("" if exposed else "（先开公网：再跑一遍安装器，「开公网」答 y）"),
@@ -1396,7 +1468,7 @@ def main() -> None:
                 f"  bash {repo}/check.sh   # self-check: what works, what doesn't and how to fix it; no tokens in the output, so you can send all of it to whoever helps"))
     print(L("再跑一遍安装器是安全的，只补缺的。", "Rerunning the installer is safe; it only fills in what is missing."))
     if builtin:
-        offer_wizard(venv, repo, no_model)
+        offer_wizard(venv, repo, no_model, running=MANAGED)
 
 
 # —— 自带的内核（第 9 步）：模型、搜索、记忆装完以后选 ——
@@ -1434,19 +1506,22 @@ def tty_yes(prompt: str) -> bool:
     return ans in ("", "y", "yes", "是", "1")
 
 
-def offer_wizard(venv: Path, repo: Path, no_model: bool) -> None:
-    """装完了：模型还没选的，问一句要不要现在就在终端里走三步；不走就说在 app 里怎么选。选过的只说以后在哪改。"""
+def offer_wizard(venv: Path, repo: Path, no_model: bool, running: bool = True) -> None:
+    """装完了：模型还没选的，问一句要不要现在就在终端里走三步；不走就给那条命令。选过的只说以后怎么改。
+    running = 服务交给 systemd / launchd 起来了；没有的话，走完三步再提醒一句把服务起起来（那几行早滚上去了）。"""
     cmd = "~/.openmousse/venv/bin/python ~/.openmousse/repo/server/setup_ctl.py"
     print()
     if not no_model:
-        print(L(f"模型、搜索、记忆随时能换：app 的设置里，或者 {cmd}", f"Models, web search and memory can be changed any time: in the app's settings, or {cmd}"))
+        print(L(f"模型、搜索、记忆随时能换（加 status 看现在的样子）：{cmd}", f"Models, web search and memory can be changed any time (add status to see where things stand): {cmd}"))
         return
-    hint = L("打开 app 按引导选模型（选模型 → 搜网页 → 记忆）；没有 app 的话在服务器上跑：",
-             "Open the app and follow the guide to choose a model (model → web search → memory); without the app, run this on the server:")
     if tty_yes(L("现在就在终端里选模型、搜索和记忆吗？", "Choose the model, web search and memory in this terminal now?")):
         setup_ctl(venv, repo, capture=False)
+        if not running:
+            print()
+            print(L("下一步：用上面「服务要自己起」那几行把服务起起来，再连手机。", "Next: start the services with the lines under \"Start the services yourself\" above, then connect the phone."))
         return
-    print(hint)
+    print(L("还没选模型：在服务器上跑这一条，三步走完（模型 → 搜网页 → 记忆），选好了不用重启服务：",
+            "No model chosen yet: run this on the server for the three steps (model → web search → memory); no restart needed afterwards:"))
     print(f"  {cmd}")
 
 

@@ -216,7 +216,7 @@ async def ask_model(prompt: str, input_: dict, schema: dict, *, outside: bool, t
     """一问一答拿 JSON。outside = 资料里有朋友说的话：只许走不带工具的路（OpenClaw 的 llm-task，或 server.json 的 card.llm
     纯模型接口，和名片 Agent 同一条）；都没有就抛 LLMError，调用方用不靠模型的办法。"""
     try:
-        out, _via = await llmjson.ask(prompt, input_, schema, timeout=timeout, tool_free_only=outside)
+        out, _via = await llmjson.ask(prompt, input_, schema, timeout=timeout, tool_free_only=outside, kind="owner", origin="user")
         return out
     except llmjson.LLMError:
         if not outside:

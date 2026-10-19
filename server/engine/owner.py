@@ -8,7 +8,8 @@ respond()（turn() 是只要字的包装）：app 的一个对话每个逻辑日
     上次聊到哪、项目卡、最近的日记），再记一条 context 条目存各样背景的指纹；当天这句话之前 app 里已经有的记录（比如刚从别的 claw
     切过来）抄进会话。
   每一轮（Spec.prepare，拿到会话锁以后、这句话进会话之前）：太长了先压缩（engine/compact.py，开头按现在的背景重写）；背景变了在这句话
-    后面补一条 system，开头一个字不改。模型说上下文太长：压一次再问（Spec.recover）。
+    后面补一条 system，开头一个字不改；13c 起再按这句话（加上上一句）搜手册和技能，命中的正文接在后面（engine/manuals.py）。
+    模型说上下文太长：压一次再问（Spec.recover）。
   用户的每句话带 ref = app 里那条消息的 id（撤回时找它）。工具和关卡在 engine/tools.py：撤得回直接做，撤不回进收件箱（同意了服务器
   照原样跑一次，结果发回这个对话）。
 rewind()：app 里撤回 / 重新编辑（/api/chat/rewind）= 会话换叶子：回到那句话之前，库里那一枝还留着。
@@ -26,7 +27,8 @@ rewind()：app 里撤回 / 重新编辑（/api/chat/rewind）= 会话换叶子�
   这时用户插的下一句就是 ask_user 的回答。工具自己说给用户看的一段（{"type": "say"}：ask_user 的问题、propose_plan 的计划）单独成段交给 on_delta。
   对外接口（agent / history / gate 给了的）不给这几样。
 
-stream()：一问一答（claw.complete：Zen 的「想完了」之类）：不进任何对话、零工具，和第 0 步一样。
+stream()：一问一答（claw.complete：Zen 的「想完了」之类）：不进任何对话、零工具，和第 0 步一样。调用方报上 origin（主人自己的）、
+  模型又是他自己的 Claude Code 时交给它一次性地跑（engine/claude_brain.ask，10/19）；不报的照旧不花套餐。
 对外接口（engine/openai_api.py）也用 respond：对话是 api:<Agent>:<…>（app 里没有它），Agent 直接给，调用方带来的前情建会话时放进去，
   关卡包一层（撤不回的照样出卡，调用方那边的用户能当场点头）。
 """
@@ -41,7 +43,7 @@ from datetime import datetime
 from config import raw, settings
 from i18n import L
 
-from . import compact, context, mcp_client, memgate, models, recall, skill_write, store
+from . import compact, context, manuals, mcp_client, memgate, models, recall, skill_write, store
 from . import tools as tools_mod
 from .errors import EngineError
 from .loop import Control, Result, Spec, run_turn, wait_idle
@@ -106,8 +108,8 @@ def rules(agent: str, tools: list) -> str:
     if hands.confined(agent):  # 第 8 项：在沙箱里干活的 Agent（代办）：工具全在沙箱里，点头由 Doorman 在出门时问
         return "\n\n".join(x for x in [f"Today is {today}, time zone {settings.timezone}. {TIME_NOTE} Reply in the language the user writes in.",
                                        hands.rules(agent, tools), chat_rules] if x)
-    from . import handkit  # ⑫：文件、网页、沙箱、主机命令不是命令行脚本，另起一节
-    hand_names = handkit.names() | CHAT_TOOLS
+    from . import handkit, sessions  # ⑫：文件、网页、沙箱、主机命令不是命令行脚本，另起一节；第 1 批 b 看别的会话的三个也是
+    hand_names = handkit.names() | CHAT_TOOLS | set(sessions.TOOLS)
     names = [t.name for t in tools if t.name != "skill" and t.name not in recall.TOOLS and t.name not in ("cron", "tasks") and t.name not in hand_names]
     outside = sorted({t.server for t in tools if getattr(t, "server", "")})  # 你配的 MCP 服务（第 13 步，engine/mcp_client.py）
     names = [n for n in names if n != skill_write.TOOL_NAME and n not in {t.name for t in tools if getattr(t, "server", "")}]  # 这两样下面另有一段
@@ -130,6 +132,7 @@ def rules(agent: str, tools: list) -> str:
         f"events, decisions, dates, people, preferences or to-dos that aren't here, search with memory_search first ({recall.query_hint()}, Chinese "
         "or English) and read what you need with memory_get; don't search for what's already in front of you, and if nothing turns up, say "
         "you checked. These two take their own parameters, not args." if memory else "",
+        sessions.rules(tools, agent),  # 第 1 批 b：看别的会话（engine/sessions.py）
         "## Scheduled jobs\n"
         "For reminders and things to do on your own at set times (\"remind me at 9\", \"every morning…\", \"in half an hour\"), use the cron "
         "tool; it takes its own parameters, not args. What you create stays off until the user approves its card." if cron else "",
@@ -297,7 +300,7 @@ async def respond(thread: str, day: str, content: str | list, model: str | None,
                 res.models = [chosen, *res.models]  # Result.models 按先后：chat.engine_stream 据此认出换过（done 的 modelId / fallbackFrom）
                 return res
             return await claude_brain.respond(thread, day, content, chosen, on_delta, ref=ref, origin=origin, timeout=timeout, control=control,
-                                              on_event=on_event, watched=watched, switch=switch)
+                                              on_event=on_event, watched=watched, switch=switch, via=via)
         model = models.outside(chosen)  # 外面的程序（对外接口……）不算用户本人：换成默认的非套餐模型
         if not model:
             raise EngineError(f"{chosen} is the user's own Claude Code, which only their own turns can use; set a non-subscription "
@@ -359,6 +362,8 @@ async def respond(thread: str, day: str, content: str | list, model: str | None,
         return bool(rewritten)
 
     spec.prepare, spec.recover = prepare, recover
+    spec.prepare = manuals.with_prep(spec.prepare, session, agent=agent, offered=offered, conversation=thread,  # 13c：按这句话搜手册和技能
+                                     origin=origin, via=via)
     spec.prepare = skill_write.with_nudge(spec.prepare, session, offered)  # 第 13 步：上一轮值得存成 skill 的，这句话后面提醒一句
     spoke = {"any": False, "gap": False}
 
@@ -426,19 +431,32 @@ def rewind(thread: str, day: str, rid: int) -> bool:
     return False
 
 
-async def stream(messages: list[dict], key: str, model: str | None, on_delta: Callable[[str], None], timeout: float = 600) -> str:
-    """一问一答：messages 最后一条是这次说的话，前面是带过来的记录。零工具、不存会话。→ 整段回复。出错抛 EngineError。"""
-    ref = model if model and models.valid_ref(model) else models.default_model()
-    if models.subscription(ref):  # 一问一答不花用户的套餐（llmjson 的退路也走这里，资料里可能有别人的话）
-        ref = models.outside(ref) or ""
+async def stream(messages: list[dict], key: str, model: str | None, on_delta: Callable[[str], None], timeout: float = 600, *,
+                 origin: str | None = None) -> str:
+    """一问一答：messages 最后一条是这次说的话，前面是带过来的记录。零工具、不存会话。→ 整段回复。出错抛 EngineError。
+    origin：这一问是谁引出来的。主人自己的（user / auto / relay：Zen「想完了」、会议的发言、llmjson 退回这里的）model 是他自己的套餐时
+    照 may_spend 花：claude-code/… 交给他自己登录的 Claude Code 一次性地跑（claude_brain.ask），整段答完一次交给 on_delta；它没做成、
+    备用链里有按量的就换，没有照旧报错。不给 = 当外人：套餐换成 outside() 挑的（llmjson 的退路也走这里，资料里可能有别人的话）。"""
+    chosen = model if model and (models.valid_ref(model) or models.subscription(model)) else models.default_model()
+    sub = models.subscription(chosen)
+    plan = bool(sub) and models.may_spend(chosen, kind="owner", origin=origin)
+    ref = chosen if plan or not sub else models.outside(chosen) or ""
     if not ref:
         raise EngineError("no model: set engine.model in server.json", kind="config")
     msgs = neutral(messages)
     if not msgs or msgs[-1]["role"] != "user":
         raise EngineError("nothing to answer", kind="rule")
     m = KEY.match(key or "")
-    spec = Spec(kind="owner", model=ref, system=system_prompt(), conversation=m.group(1) if m else (key or "main"), origin="user",
-                display="summarized", timeout=timeout, cache_ttl="1h")
+    conv = m.group(1) if m else (key or "main")
+    fallbacks: list[str] | None = None
+    if plan and sub == "claude-code":
+        got, fallbacks = await _ask_claude_code(msgs, ref, origin, conv, timeout)
+        if fallbacks is None:
+            on_delta(got)
+            return got
+        ref, fallbacks = fallbacks[0], fallbacks[1:]
+    spec = Spec(kind="owner", model=ref, system=system_prompt(), conversation=conv, origin=origin or "user",
+                display="summarized", timeout=timeout, cache_ttl="1h", fallbacks=fallbacks)
     res = await run_turn(spec, MemorySession(msgs[:-1]), msgs[-1],
                          on_event=lambda ev: on_delta(ev["text"]) if ev.get("type") == "text" else None)
     if res.status == "error":
@@ -446,3 +464,21 @@ async def stream(messages: list[dict], key: str, model: str | None, on_delta: Ca
     if res.status == "refused" and not res.text:
         raise EngineError("the model declined to answer", kind="refusal")
     return res.text
+
+
+async def _ask_claude_code(msgs: list[dict], model: str, origin: str | None, conv: str, timeout: float) -> tuple[str, list[str] | None]:
+    """一问一答交给用户自己登录的 Claude Code（claude_brain.ask）：带过来的记录接在这句话前面。→ (回答, None)；没做成而备用链里有按量的
+    → ("", [换上的, 它后面的…])；没有就抛 EngineError（说清是哪一类，claude_brain.advice）。"""
+    from . import claude_brain, fallback
+    *before, last = msgs
+    if before:
+        rec = claude_brain.record(before)
+        last = {**last, "content": [{"type": "text", "text": f"[Earlier in this conversation:]\n<conversation_record>\n{rec}\n"
+                                                             "</conversation_record>\n\n[The message:]\n"}, *(last.get("content") or [])]}
+    res = await claude_brain.ask(system_prompt(), last, model=model, origin=origin, conversation=conv, timeout=timeout)
+    if res.status == "done":
+        return res.text, None
+    chain = fallback.backup(model, kind="owner", origin=origin) if res.error_kind not in ("rule", "refusal") else []
+    if not chain:
+        raise EngineError(res.error or f"{model} didn't answer", kind=res.error_kind or "http")
+    return "", chain

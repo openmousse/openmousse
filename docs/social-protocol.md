@@ -97,7 +97,7 @@ Errors are deliberately vague: `404 {"error": "invite_invalid"}` (never says use
 
 **Both sides need a public origin** (`share.public_url`, reachable from outside): with only one, messages flow one way, so the app asks the side without one to set it up first (the installer's question).
 
-## 4. Tables (grava.db, created by `social.py`)
+## 4. Tables (mousse.db, created by `social.py`)
 
 ```sql
 friends          (id TEXT PRIMARY KEY,            -- fr-<8 hex>, local

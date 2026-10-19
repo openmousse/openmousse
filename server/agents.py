@@ -12,6 +12,9 @@
   - 模型 → openclaw.json 的 agents.entries.<id>.model（set_model），和第 2 步同一套备份 + 校验 + 失败恢复。
 删除（remove）反过来：条目去掉、agent_workspaces 去掉、workspace 整个移到 <openclaw_home>/archive/（记忆永远不删）。
 claw 选 builtin 时删 Agent 走 archive：不碰 openclaw.json，路由去掉、有自己工作区的照样归档（app 的删除说明照 caps.agentWorkspaces 说）。
+claw 选 builtin 时新建（provision_builtin，10/19 第 1 批）：工作区照上面那样建（主工作区旁边的 workspace-<id>/：AGENTS.md 按内核写的规矩、
+IDENTITY.md、MEMORY.md、memory/、SOUL.md 从主工作区复制、skills/ 链到主工作区的 skills/：日结提案装的 skill 都在那一份里，谁能用看名单），
+openclaw.json 一个字不碰；server.json 一次写好路由和技能名单 engine.skills.agents.<id>（先备份，engine/agent_skills.register）。
 """
 from __future__ import annotations
 
@@ -487,6 +490,127 @@ def provision(agent_id: str, name: str, purpose: str, icon: str = "moon", skills
         shutil.rmtree(ws, ignore_errors=True)
         raise
     time.sleep(2)  # 给 Gateway 热加载一点时间
+    return ws
+
+
+def agents_md_builtin(name: str, purpose: str) -> str:
+    """claw 选 builtin 时新 Agent 的 AGENTS.md：和 agents_md 同一个样子，只是照内核的实际说（engine/context.py 放进会话开头的那几份、
+    文件工具只在自己的工作区里、日结就是那一轮的回复、ask_user 只在有人在看的那几轮）。按请求的语言写。"""
+    app = settings.app_name
+    return L(f"""# AGENTS.md — {app} · {name}（Agent）
+
+> {datetime.now(settings.tz).strftime('%Y-%m-%d')} 在 app 里建。你是 {app} 在「{name}」这一块的分身：独立工作区、独立记忆。主对话（main）是接待台，会把属于这一块的问题转给你。
+
+## 职责
+
+{purpose or '（还没写。第一次对话时问清楚这一块要管什么，然后把结论写进 MEMORY.md。）'}
+
+用户在 app 里改过名字或职责的话，新的写在 IDENTITY.md 的「职责」一节；和这里不一致时，以那里为准。
+
+不归你管的事：一句话告诉用户去主对话或对应的 Agent 说。
+
+## 每次会话
+
+- 这个工作区的 `AGENTS.md`、`SOUL.md`、`IDENTITY.md`、`TOOLS.md`、`MEMORY.md` 和用户的档案已经放在会话开头。档案全文在 `{settings.profile}`，`memory_search` 能搜（也搜得到你的 `memory/` 和以前的对话）。
+- 今天的流水记在 `memory/YYYY-MM-DD.md`（文件工具只在你自己的工作区里）。
+- 要问用户的写在回复里；没人在看的那几轮（定时任务、心跳）没人能回答。
+- 你能用的技能列在会话开头，`skill` 工具按名字读全文；哪个 Agent 能用哪些，用户在 app 里定。
+- app 里这些分身叫 Agent。跟用户说话用「Agent」。
+
+## 自动触发
+
+消息以「【自动触发】」开头的，不是用户在说话，是系统按时间点发的。不要提问，直接做该做的事，回复两行以内。
+
+## 日结（收到「【自动触发】日结」时）
+
+1. 这一轮的回复就是今天的日结（服务器存下来，下一次会话开头带上）：要点、用户说过的事、明天要盯的，5–10 行。
+2. 值得长期记住的写进 `MEMORY.md`，就地改，不追加矛盾条目。
+
+## 记忆 / 安全 / 时间
+
+- 流水进 `memory/YYYY-MM-DD.md`，结论进 `MEMORY.md`；结构化数据走工具。
+- 不外泄私人数据；用户的数据只出现在给用户的回复里。
+- 用户的每一句话前面带着发出时的当地时间：报时按它，不按服务器的时钟。
+""", f"""# AGENTS.md — {app} · {name} (Agent)
+
+> Created in the app on {datetime.now(settings.tz).strftime('%Y-%m-%d')}. You are {app}'s dedicated agent for "{name}", with your own workspace and your own memory. The main chat (main) is the front desk: it passes questions that belong to this area on to you.
+
+## Your job
+
+{purpose or '(Not written yet. In your first conversation, find out what this area should cover, then write the answer into MEMORY.md.)'}
+
+If the user changes your name or role in the app, the new version goes into the Role section of IDENTITY.md; where the two differ, that section wins.
+
+For anything outside your area, tell the user in one sentence to take it to the main chat or the right Agent.
+
+## Every session
+
+- This workspace's `AGENTS.md`, `SOUL.md`, `IDENTITY.md`, `TOOLS.md` and `MEMORY.md`, and the user's profile, are already at the start of the session. The full profile is at `{settings.profile}`; `memory_search` can search it (and your `memory/` and earlier conversations).
+- Today's running log is `memory/YYYY-MM-DD.md` (your file tools only reach your own workspace).
+- Ask the user questions in your reply; nobody can answer during unattended runs (scheduled jobs, heartbeats).
+- The skills you can use are listed at the start of the session; the `skill` tool reads one in full by name. The user decides in the app which Agent gets which skills.
+- In the app these dedicated agents are called Agents. Say "Agent" when talking to the user.
+
+## Automatic triggers
+
+A message that starts with "【自动触发】" (automatic trigger) isn't the user talking: the system sent it at a scheduled time. Don't ask questions. Just do what needs doing and reply in two lines or fewer.
+
+## Daily digest (when a "【自动触发】" message asks for the daily digest, 日结)
+
+1. Your reply in that turn is today's daily digest (the server keeps it and brings it back at the start of the next session): key points, what the user told you, what to keep an eye on tomorrow. 5–10 lines.
+2. Put anything worth remembering long term into `MEMORY.md`. Edit it in place; don't append entries that contradict it.
+
+## Memory / security / time
+
+- Running notes go in `memory/YYYY-MM-DD.md`, conclusions in `MEMORY.md`; structured data goes through the tools.
+- Never leak private data. The user's data only appears in your replies to the user.
+- Each of the user's messages carries the local time they sent it: tell the time by that, not by the server's clock.
+""")
+
+
+def builtin_workspace_path(agent_id: str) -> Path:
+    """claw 选 builtin 时新 Agent 的工作区：主工作区旁边的 workspace-<id>/（从 OpenClaw 换过来的，主工作区在 <openclaw_home>/workspace，
+    就和 workspace_path 是同一个地方；新装的在 ~/.openmousse/ 下，不去建 ~/.openclaw）。"""
+    return settings.workspace.parent / f"workspace-{agent_id}"
+
+
+def build_builtin_workspace(agent_id: str, name: str, purpose: str, icon: str) -> Path:
+    """build_workspace 的内核版：AGENTS.md 照内核写；USER.md 不复制（内核把档案本身放进会话开头）；skills/ 一定链到主工作区的 skills/
+    （没有就建一个空的）：日结提案装的 skill 都进那一份，谁能用看 engine.skills.agents。不建 OpenClaw 的 shared/digest（日结服务器自己存）。"""
+    ws = builtin_workspace_path(agent_id)
+    if ws.exists() and any(ws.iterdir()):
+        raise ProvisionError(L(f"{ws} 已经存在且不为空", f"{ws} already exists and isn't empty"))
+    skills = settings.workspace / "skills"
+    try:
+        skills.mkdir(parents=True, exist_ok=True)
+        ws.mkdir(parents=True, exist_ok=True)
+        (ws / "AGENTS.md").write_text(agents_md_builtin(name, purpose), encoding="utf8")
+        (ws / "IDENTITY.md").write_text(identity_md(name, icon, purpose), encoding="utf8")
+        (ws / "MEMORY.md").write_text(memory_md(name), encoding="utf8")
+        (ws / "memory").mkdir(exist_ok=True)
+        if (settings.workspace / "SOUL.md").is_file():
+            shutil.copy2(settings.workspace / "SOUL.md", ws / "SOUL.md")
+        os.symlink(skills, ws / "skills")
+    except OSError as e:
+        shutil.rmtree(ws, ignore_errors=True)
+        raise ProvisionError(L(f"工作区没建成（{ws}）：{e}", f"Couldn't set up the workspace ({ws}): {e}")) from e
+    return ws
+
+
+def provision_builtin(agent_id: str, name: str, purpose: str, icon: str = "moon", skills: list[str] | None = None) -> Path:
+    """claw 选 builtin 时新建 Agent（见文件开头）：建工作区，server.json 一次写好路由和技能名单（skills 不给就是 agent_default_skills，
+    都空 = 不写名单、看全部，同 provision）。哪一步没成就把工作区收回、什么都不留，抛 ProvisionError。"""
+    if not agent_id.replace("-", "").isalnum() or not agent_id.islower():
+        raise ProvisionError(L("agent id 只能是小写字母、数字和连字符", "agent id may only contain lowercase letters, digits and hyphens"))
+    allow = skills if skills is not None else settings.agent_default_skills
+    ws = build_builtin_workspace(agent_id, name, purpose, icon)
+    from engine import agent_skills
+    from engine.setup_api import SetupError
+    try:
+        agent_skills.register(agent_id, ws, list(dict.fromkeys(allow)) if allow else None)
+    except (SetupError, OSError) as e:
+        shutil.rmtree(ws, ignore_errors=True)
+        raise ProvisionError(L(f"server.json 没写成：{e}", f"Couldn't write server.json: {e}")) from e
     return ws
 
 

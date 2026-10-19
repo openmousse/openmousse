@@ -1,7 +1,9 @@
 """命令行工具的桥（2026-10-16 从 mcp_bridge.py 拆出来）：skills 里那些 *_ctl.py 脚本怎么起一个子进程跑一次。
 
 两处用它：/mcp（mcp_bridge.py，给外面的 claw）和自己的内核（engine/tools.py，builtin 的主人回合）。只用标准库，
-不依赖 mcp 包：没装 mcp 的老安装照样能让内核用这些工具。
+不依赖 mcp 包：没装 mcp 的老安装照样能让内核用这些工具。10/19 起还有只跑命令的定时任务（engine/jobs.py）：BRIDGES 里的工具和
+server.json 的 engine.jobs.scripts 白名单里的脚本都经 execute 起（参数照 guard 查，时限是任务自己写的，不占上面那 4 个：定时任务
+自己有同时跑几条的上限，几分钟长的命令不该挤着 Agent 调工具）。
 
 一次调用 = 起一个子进程：参数一项一个词、不经 shell；本来要从标准输入给的放 stdin；在调用的 Agent 的工作区里跑，
 是谁另外经环境变量 MOUSSE_AGENT 告诉脚本；单次最长 120 秒（handoff 300 秒）、输出最多 30000 字、同时最多 4 个（两处共用这 4 个）。
@@ -15,6 +17,7 @@ tree 工具跟着 sources.py 选中的那一份世界树走（tree_command）：
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import os
 import shutil
 import signal
@@ -85,12 +88,18 @@ BRIDGES: dict[str, tuple[str, str, str, int]] = {
 FILE_FLAGS = ("--file", "--detail-file", "--board-file", "--brief-file", "--fields-file", "--plan", "--data-file", "--items-file")
 NOT_FILE = {"--brief", "--detail", "--field"}
 NOT_FILE_IN = {"diet": {"--item"}, "page": {"--data"}}
-# 世界树只给记忆本身的操作和每周修剪的看材料、交计划；init、migrate、urls（会打印令牌）不给，prune-apply（照计划改树）只在主人点了卡以后由服务端跑
-TREE_OK = {"add", "recall", "recent", "forget", "stats", "profile", "branches", "prune-context", "prune-plan"}
+# 世界树只给记忆本身的操作、每周修剪的看材料、交计划，和读手册（13c，只给自己的内核：claw 是 builtin；工具说明里那一句在 engine/tools.py）；
+# init、migrate、urls（会打印令牌）不给，prune-apply（照计划改树）只在主人点了卡以后由服务端跑。手册是做法（engine/memgate.py：先提议）：
+# 经桥一律只读；内核里改手册走 manual_manage（engine/manual_write.py，交卡、点了头服务端照卡改），用户自己在命令行、Obsidian 里改的照旧
+TREE_OK = {"add", "recall", "recent", "forget", "stats", "profile", "branches", "prune-context", "prune-plan", "manual"}
+TREE_MANUAL_OK = {"list", "show", "find", "pointers", "history"}
 # 跑完以后服务端接着做的：工具名 → fn(args, 输出, Agent) → 给模型看的输出。treeprune.py 注册 tree（交了修剪计划就出卡）
 AFTER: dict[str, Callable[[list[str], str, str | None], Awaitable[str]]] = {}
 # 这一次调用是在哪个对话里、答的哪条用户消息：(对话, 消息 id)。内核的 tree 工具调之前设上（engine/tools.py），世界树的叶子据此记下出处
 SAID: ContextVar[tuple[str, str] | None] = ContextVar("mousse_bridge_said", default=None)
+# 内核的 handoff 是从哪个对话转出去的（第 1 批 b，engine/sessions.py）：经 MOUSSE_FROM 交给 ask_agent.py，它带进 /api/chat/relay，
+# 服务器据此记转交卡、数跳数、给对方标「别的会话转来」。/mcp 不设（OpenClaw 那条路照旧）
+FROM: ContextVar[str | None] = ContextVar("mousse_bridge_from", default=None)
 
 
 class BridgeError(Exception):
@@ -98,8 +107,17 @@ class BridgeError(Exception):
 
 
 def guard(name: str, args: list[str]) -> None:
-    if name == "tree" and (not args or args[0] not in TREE_OK):
-        raise BridgeError(L(f"tree 只能用 {'、'.join(sorted(TREE_OK))}", f"tree only allows {', '.join(sorted(TREE_OK))}"))
+    import claw
+    ok = TREE_OK if claw.is_builtin() else TREE_OK - {"manual"}  # 13c：手册只给自己的内核；OpenClaw 那条路（/mcp）照旧
+    if name == "tree" and (not args or args[0] not in ok):
+        raise BridgeError(L(f"tree 只能用 {'、'.join(sorted(ok))}", f"tree only allows {', '.join(sorted(ok))}"))
+    if name == "tree" and args[0] == "manual" and (len(args) < 2 or args[1] not in TREE_MANUAL_OK):
+        ok = sorted(TREE_MANUAL_OK)
+        raise BridgeError(L(f"tree manual 在这里只能读：{'、'.join(ok)}。手册是做法、各个平台共用，改之前要用户点头：内核里用 manual_manage 交卡，"
+                            "别处交一张收件箱卡提议，或者请用户自己改（mousse-tree manual edit）",
+                            f"tree manual is read-only here: {', '.join(ok)}. Manuals are how things get done and every platform shares them, so "
+                            "changes need the user's OK: in the engine use manual_manage (it makes an approval card); elsewhere propose it with an "
+                            "inbox card, or ask the user to change it (mousse-tree manual edit)"))
     for i, a in enumerate(args):
         flag, eq, val = a.partition("=")
         if not flag.startswith("--") or flag in NOT_FILE or flag in NOT_FILE_IN.get(name, ()) or not any(f.startswith(flag) for f in FILE_FLAGS) or len(flag) < 4:
@@ -184,20 +202,22 @@ def _kill(proc: asyncio.subprocess.Process) -> None:
         pass
 
 
-async def run(name: str, args: list[str], stdin: str | None, agent: str | None, *, kill_on_cancel: bool = False) -> str:
-    """跑一次 → 脚本的输出（掐过长的）。退出码不是 0、超时、参数不许都抛 BridgeError。
-    kill_on_cancel：调用方被取消时（内核里用户点了停）连子进程一起杀掉；/mcp 照旧不杀（让脚本跑完）。
-    SAID 里有 (对话, 消息 id) 时（内核的 tree 工具设的）：经 MOUSSE_THREAD / MOUSSE_MESSAGE 告诉世界树这是哪次对话、哪条消息（叶子记下出处）。"""
-    cmd = command(name)
-    if not cmd:
-        raise BridgeError(L(f"这台服务器上没有 {name} 这个功能", f"{name} isn't available on this server"))
+class BridgeTimeout(BridgeError):
+    """到了时限还没跑完（已经连它起的子进程一起停掉了）。"""
+
+
+async def execute(name: str, cmd: list[str], args: list[str], stdin: str | None, agent: str | None, *, timeout: float,
+                  kill_on_cancel: bool = False, shared: bool = True) -> tuple[int, str, str]:
+    """起一个子进程跑一次（不经 shell，参数一项一个词）→ (退出码, 标准输出, 标准错误)，退出码由调用方看。参数不许抛 BridgeError，
+    超时抛 BridgeTimeout。name：参数照哪个工具的规矩查（guard；只跑命令的定时任务跑白名单里的脚本时给 ""）。run 和定时任务共用。
+    shared：占不占 /mcp 和内核共用的那 4 个（PARALLEL）；定时任务不占（见文件开头）。"""
     args = [str(a) for a in args or []]
     if sum(len(a) for a in args) + len(stdin or "") > MAX_ARGS or any("\x00" in a for a in args):
         raise BridgeError(L("参数太长或者有非法字符", "Arguments too long or contain invalid characters"))
     guard(name, args)
     cwd = workdir(agent)
     env = dict(os.environ, PYTHONIOENCODING="utf-8", MOUSSE_MCP="1")
-    for k in ("MOUSSE_AGENT", "MOUSSE_VIA", "MOUSSE_THREAD", "MOUSSE_MESSAGE"):
+    for k in ("MOUSSE_AGENT", "MOUSSE_VIA", "MOUSSE_THREAD", "MOUSSE_MESSAGE", "MOUSSE_FROM"):
         env.pop(k, None)
     if agent:
         env["MOUSSE_AGENT"] = agent
@@ -205,8 +225,10 @@ async def run(name: str, args: list[str], stdin: str | None, agent: str | None, 
         env["MOUSSE_VIA"] = via
     if name == "tree" and (said := SAID.get()) and said[0]:
         env["MOUSSE_THREAD"], env["MOUSSE_MESSAGE"] = str(said[0]), str(said[1] or "")
-    timeout = BRIDGES[name][3]
-    async with PARALLEL:
+    if name == "handoff" and (src := FROM.get()):
+        env["MOUSSE_FROM"] = src
+    label = name or os.path.basename(cmd[-1])
+    async with PARALLEL if shared else contextlib.nullcontext():
         proc = await asyncio.create_subprocess_exec(
             *cmd, *args, cwd=str(cwd), env=env, start_new_session=True,
             stdin=asyncio.subprocess.PIPE if stdin is not None else asyncio.subprocess.DEVNULL,
@@ -216,16 +238,25 @@ async def run(name: str, args: list[str], stdin: str | None, agent: str | None, 
         except asyncio.TimeoutError:
             _kill(proc)
             await proc.wait()
-            raise BridgeError(L(f"{name} 超过 {timeout} 秒没跑完，停掉了", f"{name} didn't finish within {timeout} seconds and was stopped")) from None
+            raise BridgeTimeout(L(f"{label} 超过 {timeout:g} 秒没跑完，停掉了", f"{label} didn't finish within {timeout:g} seconds and was stopped")) from None
         except asyncio.CancelledError:
             if kill_on_cancel:
                 _kill(proc)
             raise
-    text_out = out.decode("utf8", "replace").strip()
-    text_err = err.decode("utf8", "replace").strip()
-    if proc.returncode != 0:
+    return int(proc.returncode or 0), out.decode("utf8", "replace").strip(), err.decode("utf8", "replace").strip()
+
+
+async def run(name: str, args: list[str], stdin: str | None, agent: str | None, *, kill_on_cancel: bool = False) -> str:
+    """跑一次 → 脚本的输出（掐过长的）。退出码不是 0、超时、参数不许都抛 BridgeError。
+    kill_on_cancel：调用方被取消时（内核里用户点了停）连子进程一起杀掉；/mcp 照旧不杀（让脚本跑完）。
+    SAID 里有 (对话, 消息 id) 时（内核的 tree 工具设的）：经 MOUSSE_THREAD / MOUSSE_MESSAGE 告诉世界树这是哪次对话、哪条消息（叶子记下出处）。"""
+    cmd = command(name)
+    if not cmd:
+        raise BridgeError(L(f"这台服务器上没有 {name} 这个功能", f"{name} isn't available on this server"))
+    rc, text_out, text_err = await execute(name, cmd, args, stdin, agent, timeout=BRIDGES[name][3], kill_on_cancel=kill_on_cancel)
+    if rc != 0:
         why = text_err or text_out or L("（没有输出）", "(no output)")
-        raise BridgeError(clip(L(f"退出码 {proc.returncode}：", f"Exit code {proc.returncode}: ") + why))
+        raise BridgeError(clip(L(f"退出码 {rc}：", f"Exit code {rc}: ") + why))
     said = clip(text_err) if text_err and not text_out else clip(text_out or L("（完成，没有输出）", "(done, no output)"))
     if (after := AFTER.get(name)) is not None:
         said = await after(args, said, agent)

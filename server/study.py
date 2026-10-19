@@ -1131,7 +1131,7 @@ async def gen_json(unit: dict, kind: str, shown: str, ask_text: str, context: st
     import llmjson
     try:
         data, route = await llmjson.ask(ask_text, {"materials": context}, None, timeout=600, thinking="medium" if kind == "path" else "low",
-                                        tool_free_only=True, max_tokens=16_000)
+                                        tool_free_only=True, max_tokens=16_000, kind="owner", origin=chat.REQUEST_VIA.get() or "user")
         if isinstance(data, dict):
             return data, route
         raise ValueError(L("生成的内容格式不对", "The generated content has the wrong format"))

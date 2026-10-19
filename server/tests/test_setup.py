@@ -1124,6 +1124,21 @@ def test_cli_three_steps_walk_through_with_scripted_answers(env, monkeypatch, mo
     assert "1/3" in out and "2/3" in out and "3/3" in out and KEY not in out
 
 
+def test_cli_enter_twice_gets_out_without_a_model(env, monkeypatch, mousse_tree, capsys):
+    """什么都没连、手里也没有密钥：头一下回车 = 云端，在那里跳过以后再回车 = 不再加了（10/19 以前回车一直是云端，只能 Ctrl-C）。"""
+    import setup_ctl
+    import sources
+    monkeypatch.setattr(sources, "memory_tree", None)
+    monkeypatch.setitem(sources.AVAILABLE, "tree", False)
+    answers = iter([""] * 8)  # 用完了会抛 StopIteration：要是又绕回云端，测试就失败，不会卡住
+    monkeypatch.setattr(setup_ctl, "interactive", lambda: True)
+    monkeypatch.setattr(setup_ctl, "ask", lambda prompt, default="": next(answers) or default)
+    monkeypatch.setattr(setup_ctl, "secret", lambda prompt: "")
+    assert setup_ctl.wizard() == 0
+    assert not (env.conf().get("engine") or {}).get("providers")
+    assert "2/3" in capsys.readouterr().out
+
+
 def test_cli_does_not_ask_when_a_claw_installs_for_you(env, monkeypatch, capsys):
     import setup_ctl
     monkeypatch.setenv("MOUSSE_NONINTERACTIVE", "1")
@@ -1148,11 +1163,100 @@ def test_installer_builtin_path_needs_no_openclaw(tmp_path):
     assert cfg["claw"] == {"kind": "builtin"} and cfg["workspace"] == str(home / ".openmousse/workspace")
     assert (home / ".openmousse/workspace/USER.md").is_file() and not (home / ".openclaw").exists()
     assert stat.S_IMODE((home / ".openmousse/server.json").stat().st_mode) == 0o600
-    assert "setup_ctl.py" in r.stdout and "Open the app and follow the guide" in r.stdout and "No usable model yet" in r.stdout
+    assert "setup_ctl.py" in r.stdout and "No model chosen yet" in r.stdout and "No usable model yet" in r.stdout
+    assert "follow the guide" not in r.stdout and "app's settings" not in r.stdout  # app 里还没有这三步的界面：只说终端里怎么选
+    assert "Start the services yourself" in r.stdout and "systemctl" not in r.stdout  # --no-systemd：给自己起服务的命令
     assert "openclaw.json" not in r.stdout
     # 再跑一遍：一样的，不重复写、不问
     r2 = subprocess.run(r.args, capture_output=True, text=True, env=env_, timeout=120)
     assert r2.returncode == 0 and json.loads((home / ".openmousse/server.json").read_text(encoding="utf8"))["claw"] == {"kind": "builtin"}
+
+
+def load_installer():
+    """packs/core/setup.py 当模块读进来（CI 里也这么调 adopt_fresh_workspace）。"""
+    import importlib.util
+    spec = importlib.util.spec_from_file_location("om_installer", REPO / "packs/core/setup.py")
+    m = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(m)
+    return m
+
+
+def test_installer_uses_systemd_only_when_it_runs(monkeypatch, tmp_path):
+    """容器、没开 systemd 的 WSL 有 systemctl 这个命令却连不上 systemd（10/19 干净机器上装：两个服务「启动失败」，也没说怎么自己起）：
+    当没有 systemd；服务没交给它管的时候，重启和日志的提示都是自己起的那一套。"""
+    m = load_installer()
+    monkeypatch.setattr(m.shutil, "which", lambda name: f"/usr/bin/{name}")
+    monkeypatch.setattr(m, "SYSTEMD_RUN", tmp_path / "missing")
+    assert not m.has_systemd()
+    monkeypatch.setattr(m, "SYSTEMD_RUN", tmp_path)
+    assert m.has_systemd()
+    monkeypatch.setattr(m, "MANAGED", False)
+    assert m.restart_cmd("openmousse-server") == ('pkill -u "$(id -u)" -f "^$HOME/.openmousse/venv/bin/python[0-9.]* run.py"; '
+                                                 "cd ~/.openmousse/repo/server && nohup ~/.openmousse/venv/bin/python run.py >> ~/.openmousse/logs/server.log 2>&1 &")
+    # 停的那一半认得出服务，却认不出跑这一行的 shell 自己（脚本里、bash -c 里它的命令行也带着这串字）。只比对，不真的 pkill：
+    # 跑测试的机器上可能正开着自己的 OpenMousse
+    import re
+    for name, proc in (("openmousse-server", "/home/x/.openmousse/venv/bin/python run.py"),
+                       ("mousse-tree", "/home/x/.openmousse/venv/bin/python /home/x/.openmousse/venv/bin/mousse-tree serve")):
+        pat = re.search(r'-f "([^"]+)"', m.stop_cmd(name)).group(1).replace("$HOME", "/home/x")
+        assert re.search(pat, proc)
+        assert not re.search(pat, f"bash -c {m.restart_cmd(name)}".replace("$HOME", "/home/x").replace("~", "/home/x"))
+    assert m.logs_cmd("openmousse-server") == "tail -n 50 ~/.openmousse/logs/server.log"
+
+
+def fake_venv(tmp_path: Path) -> Path:
+    """装了 server 依赖的 python（跑测试的这个）套一层 venv 的样子，见上面 builtin 那个测试。"""
+    venv = tmp_path / "venv"
+    (venv / "bin").mkdir(parents=True)
+    (venv / "bin" / "python").write_text(f'#!/bin/sh\nexec "{sys.executable}" "$@"\n', encoding="utf8")
+    (venv / "bin" / "python").chmod(0o755)
+    return venv
+
+
+def test_installer_switching_back_to_openclaw_follows_its_workspace(tmp_path):
+    """先装成 builtin，后来装了 OpenClaw、重跑安装器选 openclaw：server.json 的工作区、档案、OpenClaw 的位置跟着换到 OpenClaw 那边
+    （skills 和规则都装在那边，10/19 以前还留在 ~/.openmousse/workspace）；那里原来的文件不搬，说一句在哪。openclaw 命令是个替身。"""
+    home, bin_ = tmp_path / "home", tmp_path / "bin"
+    venv = fake_venv(tmp_path)
+    bin_.mkdir()
+    (bin_ / "openclaw").write_text("#!/bin/sh\nexit 0\n", encoding="utf8")  # config validate 一律过
+    (bin_ / "openclaw").chmod(0o755)
+    env_ = {k: v for k, v in os.environ.items() if not k.startswith("MOUSSE_")}
+    env_.update(HOME=str(home), MOUSSE_NONINTERACTIVE="1", MOUSSE_TREE_HOME=str(home / ".mousse-tree"), PATH=f"{bin_}:{os.environ.get('PATH', '')}")
+    base = [sys.executable, str(REPO / "packs/core/setup.py"), "--repo", str(REPO), "--venv", str(venv), "--no-systemd", "--no-tree",
+            "--lang", "en", "--tz", "UTC", "--name", "Mousse"]
+    r = subprocess.run([*base, "--builtin"], capture_output=True, text=True, env=env_, timeout=120)
+    assert r.returncode == 0, r.stdout + r.stderr
+    own = home / ".openmousse/workspace"
+    (own / "MEMORY.md").write_text("- kept by the built-in engine\n", encoding="utf8")
+    oc = home / "oc"  # 不在默认的 ~/.openclaw：位置也要跟着换
+    (oc / "workspace").mkdir(parents=True)
+    (oc / "workspace/USER.md").write_text("# USER.md\n\n## Basics\n", encoding="utf8")
+    (oc / "openclaw.json").write_text(json.dumps({"agents": {"defaults": {"workspace": str(oc / "workspace")}},
+                                                  "gateway": {"port": closed_port(), "reload": {"mode": "off"}}}), encoding="utf8")
+    r = subprocess.run([*base, "--openclaw-home", str(oc)], capture_output=True, text=True, env=env_, timeout=120)
+    assert r.returncode == 0, r.stdout + r.stderr
+    cfg = json.loads((home / ".openmousse/server.json").read_text(encoding="utf8"))
+    assert "claw" not in cfg and cfg["workspace"] == str(oc / "workspace") and cfg["profile"] == str(oc / "workspace/USER.md")
+    assert cfg["openclaw_home"] == str(oc)
+    assert (oc / "workspace/skills/journal").is_symlink() and "## OpenMousse" in (oc / "workspace/AGENTS.md").read_text(encoding="utf8")
+    assert (own / "MEMORY.md").exists() and not (oc / "workspace/MEMORY.md").exists()  # 不搬
+    assert f"still in {own}" in r.stdout
+
+
+def test_check_sh_runs_through_with_the_builtin_engine(tmp_path):
+    """check.sh 碰到 claw = builtin：10/19 以前当成别的 claw，拿空地址去请求，ValueError 一抛后面全没了。现在是「自带的内核」一段，
+    服务没起来也照样跑完（服务连不上 = ✗，退出码 1）。"""
+    home = tmp_path / "home"
+    (home / ".openmousse").mkdir(parents=True)
+    (home / ".openmousse/server.json").write_text(json.dumps({"claw": {"kind": "builtin"}, "language": "en", "timezone": "UTC",
+                                                              "bind": {"host": "127.0.0.1", "port": closed_port()},
+                                                              "auth": {"tokens": {"local": "tok-local"}}}), encoding="utf8")
+    env_ = {**{k: v for k, v in os.environ.items() if not k.startswith("MOUSSE_")}, "HOME": str(home)}
+    r = subprocess.run(["bash", str(REPO / "check.sh"), "--no-chat"], capture_output=True, text=True, env=env_, timeout=180)
+    assert "Traceback" not in r.stderr, r.stderr
+    assert "Built-in engine" in r.stdout and "Your claw" not in r.stdout and "setup_ctl.py status" in r.stdout
+    assert r.returncode == 1 and "Server not reachable" in r.stdout
 
 
 def test_install_sh_offers_builtin():

@@ -92,6 +92,8 @@ Then add one line to each platform's custom instructions, and switch off the pla
 | `remember(text, kind, tags, observed_at, supersedes, branch, quote, conversation, cues)` | Write one entry; kind = fact / preference / decision / event; branch is optional (see below); quote, conversation and cues are optional (see below) |
 | `recent(days)` | What each platform wrote in the last few days |
 | `forget(memory_id, also_profile)` | Forget: clears the text, keeps id and date; lists profile lines that came from it (see below) |
+| `find_manual(query, limit)` | Find a manual (0.6, see below) for what the user said: name, when to use it, a one-line description, a score |
+| `read_manual(name)` | A manual's body; a clear "no such manual" when there is none, so the caller stops and says so |
 
 ## Branches, rules and weekly pruning
 
@@ -103,6 +105,32 @@ Then add one line to each platform's custom instructions, and switch off the pla
 - **Weekly pruning**: `mousse-tree prune-context` lists what could be pruned: leaves that held for two weeks (they can move into the matching profile section), recent-life leaves older than 30 days, near-duplicates, misplaced leaves and branches with more than 30 leaves. A model writes a plan (`merge`, `rewrite`, `archive`, `promote` into the profile, `branch` to move, `sprout` a new branch) and `mousse-tree prune-plan --file plan.json` checks and stores it; `mousse-tree prune-apply` carries it out, skipping steps already done. OpenMousse runs this every Sunday evening: its main chat writes the plan, the plan arrives as an inbox card, and nothing changes until you tap *Prune as planned*.
 - **Sources and "useful when"** (0.4): a leaf can carry the user's own words (`quote`) and the conversation it came from (`conversation` over MCP; `--thread` / `--message` / `--platform` on the CLI, which OpenMousse fills in from `MOUSSE_THREAD` / `MOUSSE_MESSAGE`). `recall` shows the quote. `cues` are two to five ways the user might ask about it later; they are searched together with the text and tags and go into the export, so a differently worded question still finds the leaf. Weekly pruning checks merges, rewrites and profile lines against what the user actually said (when the conversation is on the same server, i.e. OpenMousse) and leaves the ones that don't match out by default. Old databases gain the new columns the first time they are opened; no leaf changes.
 - **Where things came from**: merged and rewritten leaves keep the ids of the leaves they came from, and every line pruning adds to the profile remembers its leaf (`~/.mousse-tree/origins.json`). Forgetting a leaf lists the profile lines that came from it, so you can remove them too (`forget --with-profile`, `also_profile`, or the admin page asks).
+
+## Manuals (0.6)
+
+The same procedure (how you write documents, log a workout, prepare a meeting) used to be copied into CLAUDE.md, AGENTS.md and a dozen agent rule files, and the copies drifted apart. A **manual** keeps the body once, next to the tree; everywhere else keeps a four-line pointer:
+
+```
+## Writing documents
+When to use: enriching document material; revising an SOP; preparing a reference letter
+Body: Memory tree › Manuals › Writing documents
+Fetch the body before you start; if you can't, stop and say so.
+```
+
+- **Where they live**: Markdown storage keeps one note per manual in `manuals/` (properties `name`, `when`, `about`, `status`, `agents`, `created_at`, `updated_at`; the body is the procedure; edit them in Obsidian like any note). SQLite storage keeps them in the `manual` table of `tree.db`. Both read and write the same way. Manuals are not memories: they are never leaves, never merged by pruning, never moved into the profile, never exported.
+- **Names** are everyday words ("log a client visit", not "add a row to the visits table"): they are what search matches first, then `when` (a few phrases you'd actually say), then the one-line `about`, and only lightly the body.
+- **Versions**: every edit, rename, disable and removal keeps the whole previous manual under `~/.mousse-tree/versions/manuals/<name>/` (the last 20); `history` lists them and `restore` brings one back.
+- **Every platform reads the same copy**: `find_manual` and `read_manual` over MCP (Claude.ai, ChatGPT, Gemini, Claude Code in the cloud), `mousse-tree manual show` for your own agents, and OpenMousse's built-in engine searches them before each turn. The rule is the same everywhere: fetch the body before you act; if you can't, stop and say so; never improvise from the one-line description.
+- **Who changes them**: you, directly, from the command line or in Obsidian. Platforms over MCP can only read them. OpenMousse's agents only propose a change (`manual_manage` makes an approval card; manuals are "how things are done" in its memory gate), and the old version is kept when you approve it. Changes are listed in [CHANGELOG.md](CHANGELOG.md).
+- **Reads are counted** (which platform read which manual on which day), so weekly pruning can list the manuals nobody used this month. A manual that never gets used usually has a name nobody would say: fix the description before deleting anything.
+
+```bash
+mousse-tree manual add "Writing documents" --when "revise my SOP; prepare a reference letter" --about "Draft and revise documents in my voice" --file writing.md
+mousse-tree manual edit "Writing documents" --when "revise my SOP; polish my CV" [--rename …] [--disable | --enable]
+mousse-tree manual list | show "Writing documents" | find "help me revise my SOP" | rm "Writing documents"
+mousse-tree manual pointers [names…]        # the pointers to paste into CLAUDE.md / AGENTS.md
+mousse-tree manual history "Writing documents" | restore "Writing documents" v3
+```
 
 ## Admin page
 

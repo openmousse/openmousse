@@ -128,7 +128,7 @@ async def read_syllabus(course: str, text: str, label: str, actor: str) -> None:
     SYL[course] = {"status": "running", "started": cf.now_iso(), "label": label}
     try:
         data, route = await llmjson.ask(syllabus_prompt(datetime.now(settings.tz).strftime("%Y-%m-%d")), {"syllabus": text[:SYLLABUS_CHARS]},
-                                        SYL_SCHEMA, timeout=300, thinking="low", max_tokens=16_000)
+                                        SYL_SCHEMA, timeout=300, thinking="low", max_tokens=16_000, kind="owner", origin=chat.REQUEST_VIA.get() or "user")
         if not isinstance(data, dict):
             raise llmjson.LLMError("not an object")
         summary = await asyncio.to_thread(courses.apply_syllabus, course, data, label, actor)
@@ -300,7 +300,8 @@ async def write_page(course: str, sid: str) -> dict:
     inp = {"course": profile_brief(c), "session": {"n": s["n"], "topic": s["topic"], "date": s["date"],
                                                    "readings": [{"title": r["title"], "required": r["required"], "state": r["state"]} for r in check["readings"]]},
            "materials": materials}
-    data, route = await llmjson.ask(prompt, inp, {"type": "object", "required": ["markdown"]}, timeout=PAGE_TIMEOUT, thinking="low", max_tokens=PAGE_TOKENS)
+    data, route = await llmjson.ask(prompt, inp, {"type": "object", "required": ["markdown"]}, timeout=PAGE_TIMEOUT, thinking="low", max_tokens=PAGE_TOKENS,
+                                    kind="owner", origin=chat.REQUEST_VIA.get() or "user")
     md = str((data or {}).get("markdown") or "").strip() if isinstance(data, dict) else ""
     if len(md) < 800:
         raise ValueError(L("写出来的学习页太短，没存", "The page came back too short; not saved"))
@@ -311,7 +312,8 @@ async def write_page(course: str, sid: str) -> dict:
                 "question, a blank line, <details><summary>Answer</summary>, a blank line, the answer, a blank line, </details>; 6–10 questions. "
                 "Output JSON only: {\"markdown\": \"…\"}")
         try:
-            fixed, _ = await llmjson.ask(fix, {"page": md}, {"type": "object", "required": ["markdown"]}, timeout=PAGE_TIMEOUT, max_tokens=PAGE_TOKENS)
+            fixed, _ = await llmjson.ask(fix, {"page": md}, {"type": "object", "required": ["markdown"]}, timeout=PAGE_TIMEOUT, max_tokens=PAGE_TOKENS,
+                                         kind="owner", origin=chat.REQUEST_VIA.get() or "user")
             f2 = str((fixed or {}).get("markdown") or "").strip() if isinstance(fixed, dict) else ""
             if len(f2) > len(md) * 0.6 and self_test_ok(f2):
                 md = f2

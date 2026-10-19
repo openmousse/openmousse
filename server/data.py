@@ -12,9 +12,9 @@
 | 推送 | Expo Push，三档 ring / quiet / none + server.json 的 `push.quiet_hours`（见 push.py） |
 | 日程、要记得的 | 课表（calendar 数据源）+ grava.db `schedule_items` / `schedule_marks` / `schedule_log` + 课程 ddl（study.deadlines_cmd）+ 邮件条目（server.json 的 remember.mail）+ `applications`（见 schedule.py） |
 | 「今天」页（待处理 / 日程 / 报告，周 / 月） | 上面「日程、要记得的」的同一批来源 + 收件箱 + `feed_items`（归到日程的计划和复盘、报告卡）+ Apple 健康的恢复分；推迟记在 grava.db `today_snooze`（见 today.py） |
-| 接下来会自动做的事 | OpenClaw cron（`cron.list / cron.update`）+ systemd user timer（只读） |
+| 接下来会自动做的事 | OpenClaw cron（`cron.list / cron.update`）+ systemd user timer（只读）；claw 选 builtin：内核的定时任务和心跳（engine/jobs.py、heartbeat.py；开关 = 暂停 / 恢复，见 engine/appdata.py） |
 | 任务 | OpenClaw 子会话：列表读 OpenClaw 的任务台账（`state/openclaw.sqlite`，读不到再走 `tasks.list`）；详情读子会话的 `chat.history`；额度和对话里的任务卡、转交卡见 cards.py |
-| 活动记录 | app 的 activity_log + Gateway 审计（`audit.activity.list`，只有元数据）+ 定时任务的运行记录 |
+| 活动记录 | app 的 activity_log + Gateway 审计（`audit.activity.list`，只有元数据）+ 定时任务的运行记录；claw 选 builtin：内核的 engine_turns（谁、在哪、哪个模型、成没成、花了多少、用了哪些工具）+ engine_job_runs，不调 Gateway（engine/appdata.py） |
 | 基础档案 | L0 `~/.openclaw/shared/profile/USER.md`：改一条就写回，旧版本存 `grava/profile-history.md`（不在检索路径里） |
 | 记忆 | L1 各 agent 工作区的 `MEMORY.md`：忘记 = 删掉这一条，活动记录只留一行、不含内容 |
 | 世界树（我 → 世界树） | workspace 的 `scripts/memory_tree.py`（可选数据源 tree）：真身是 Obsidian 库 `世界树/` 里一条一篇的笔记，索引 `grava/tree_index.db`；没有它就用开源版世界树（`~/.mousse-tree`，treelib.py：tree.db 或笔记文件夹，有枝、规则和每周修剪，修剪的卡在 treeprune.py / grava.db `tree_prune`）；确认 / 忘记 / 挪枝都经它做，活动记录由它写、不含内容（见 memtree.py） |
@@ -28,8 +28,9 @@
 | 日结提案（主对话每晚回看这一周，提「加一个 skill」「建一个 Agent」） | grava.db `proposals`（main 经 `server/proposals_ctl.py` 交；同意后服务端写 skills/、改 openclaw.json 的允许列表或建好 Agent；见 proposals.py） |
 | 饮食记录（饮食看板的今日进度、今日饮食、本周，「今天」页的摄入，一键「记录这一餐」） | grava.db `diet_entries` / `diet_foods` / `diet_targets`（2026-10-13 起；Agent 经 `server/diet_ctl.py` 写；server.json 的 `diet.source` = xunji 时还从训记读；查营养的外部来源和缓存在 `<data_dir>/nutrition.db`；见 diet.py、nutrition.py） |
 | 求职 / 申请学校看板 | grava.db `applications`（Grava 经 `scripts/grava_apps.py` 写；kind=masters 进「申请学校」，其余进「求职」） |
-| 模型与计费 | openclaw.json 的默认链、子会话默认、允许列表 + `models.authStatus` |
-| 安全 | 配置和运行状态的实测结果，外加蓝图里还没做的计划项（标明"计划"） |
+| 模型与计费 | openclaw.json 的默认链、子会话默认、允许列表 + `models.authStatus`；claw 选 builtin：engine.models、备用链、按用途选的、Claude Code / ChatGPT 套餐的登录、这 30 天的用量（engine/appdata.py） |
+| 安全 | 配置和运行状态的实测结果，外加蓝图里还没做的计划项（标明"计划"）；claw 选 builtin：主机命令的放行名单、工具档位、沙箱给了谁、等你点头的内核的卡（engine/appdata.py） |
+| 新建 Agent 的工作区（claw 选 builtin） | 主工作区旁边的 workspace-<id>/（AGENTS.md、IDENTITY.md、MEMORY.md、memory/、skills/）+ server.json 的 agent_workspaces 和技能名单 engine.skills.agents.<id>（agents.provision_builtin；名单在 app 里改：/api/setup/skills/{id}，engine/agent_skills.py） |
 
 Gateway 走 `openclaw gateway call`，每次起一个 node 进程（约 2 秒），所以读接口都带短缓存。
 """
@@ -47,7 +48,7 @@ from datetime import date, datetime, timedelta
 from pathlib import Path
 from typing import Any, Awaitable, Callable
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel
 
 import claw
@@ -301,6 +302,8 @@ def groups():
 @router.post("/api/groups")
 def create_group(body: GroupIn):
     """新建 Agent = 建一个独立的 OpenClaw agent（workspace、记忆、skills）+ groups 表一行。失败就什么都不留。
+    builtin（自己的内核）：同样建工作区（AGENTS.md、MEMORY.md、memory/、skills/），技能名单写进 server.json 的 engine.skills.agents.<id>
+    （agents.provision_builtin），openclaw.json 一个字不碰。
     别的 claw 没有 OpenClaw 那样的独立 agent：只记 groups 表一行，这个 Agent 就是同一个 claw 的一个单独会话（见 chat.agent_role）。"""
     name, icon, color = agent_name(body.name), icon_key(body.icon), color_key(body.color)
     gid = f"g-{uuid.uuid4().hex[:8]}"
@@ -314,6 +317,8 @@ def create_group(body: GroupIn):
     try:
         if claw.is_openclaw():
             agents.provision(gid, name, body.purpose.strip(), icon, skills=skills)
+        elif claw.is_builtin():  # 自己的内核：工作区 + 路由 + 技能名单（engine.skills.agents.<id>）
+            agents.provision_builtin(gid, name, body.purpose.strip(), icon, skills=skills)
     except agents.ProvisionError as e:
         raise HTTPException(502, str(e)) from e
     with _lock, ddb() as conn:
@@ -412,6 +417,9 @@ def delete_group(gid: str):
         archived = agents.remove(gid) if claw.is_openclaw() else agents.archive(gid) if claw.is_builtin() else None
     except agents.ProvisionError as e:
         raise HTTPException(502, str(e)) from e
+    if claw.is_builtin():  # 它的技能名单（engine.skills.agents.<id>）跟着去掉
+        from engine import agent_skills
+        agent_skills.forget(gid)
     with _lock, ddb() as conn:
         conn.execute("DELETE FROM groups WHERE id=?", (gid,))
         conn.execute("DELETE FROM threads WHERE id=?", (gid,))
@@ -718,6 +726,15 @@ async def reminder_row(t: dict) -> dict:
 
 @router.get("/api/upcoming")
 async def upcoming():
+    if claw.is_builtin():  # 自己的内核：定时任务和心跳读内核（engine/appdata.py）；系统定时器照常列，读不了（没有 systemd 的机器）就不列
+        from engine import appdata
+        try:
+            sys_timers = await timers()
+        except (OSError, ValueError, asyncio.TimeoutError):
+            sys_timers = []
+        items = await asyncio.to_thread(appdata.upcoming) + sys_timers
+        items.sort(key=lambda x: (not x["enabled"], x["nextAt"] or 1e18))
+        return {"ok": True, "upcoming": items}
     jobs, sys_timers = await asyncio.gather(cron_jobs(), timers())
     items = jobs + sys_timers
     items.sort(key=lambda x: (not x["enabled"], x["nextAt"] or 1e18))
@@ -730,6 +747,9 @@ class Toggle(BaseModel):
 
 @router.post("/api/upcoming/{job_id}")
 async def toggle_job(job_id: str, body: Toggle):
+    if claw.is_builtin():  # 自己的内核：开 = 恢复、关 = 暂停（engine/appdata.toggle）
+        from engine import appdata
+        return await appdata.toggle(job_id, body.enabled)
     jobs = await cron_jobs()
     job = next((j for j in jobs if j["id"] == job_id), None)
     if not job:
@@ -758,6 +778,9 @@ def exec_approval(a: dict) -> dict:
 
 @router.get("/api/approvals")
 async def approvals():
+    if claw.is_builtin():  # 自己的内核：等你点头的内核的卡（收件箱 kind tool，engine/appdata.py）
+        from engine import appdata
+        return {"ok": True, "approvals": await asyncio.to_thread(appdata.approvals)}
     if not claw.is_openclaw():  # 执行审批是 OpenClaw 的
         return {"ok": True, "approvals": []}
     data = await cached("approvals", 5, lambda: openclaw_cli("approvals", "pending", timeout=20))
@@ -785,6 +808,10 @@ async def resolve_exec(aid: str, allow: bool) -> None:
 
 @router.post("/api/approvals/{aid}")
 async def decide(aid: str, body: Decision):
+    if claw.is_builtin():  # 自己的内核：同意 / 拒绝走收件箱（engine/appdata.decide）
+        from engine import appdata
+        await appdata.decide(aid, body.allow)
+        return {"ok": True}
     await resolve_exec(aid, body.allow)
     return {"ok": True}
 
@@ -1017,6 +1044,9 @@ def agent_label(agent_id: str | None) -> str:
 
 @router.get("/api/activity")
 async def activity(limit: int = 80):
+    if claw.is_builtin():  # 自己的内核：回合记录读 engine_turns / engine_job_runs，不调 Gateway（engine/appdata.py）
+        from engine import appdata
+        return {"ok": True, "activity": await asyncio.to_thread(appdata.activity, limit)}
     audit, task_list = await asyncio.gather(
         cached("audit", 15, lambda: gateway_call("audit.activity.list", {"limit": 200}, timeout=30)),
         cached("tasks", 10, lambda: gateway_call("tasks.list", {}, timeout=30)), return_exceptions=True)
@@ -1195,7 +1225,10 @@ def forget(iid: str):
 # —— 模型与计费 ——————————————————————————————————————————————————
 
 @router.get("/api/models")
-async def models():
+async def models(request: Request):
+    if claw.is_builtin():  # 自己的内核：engine.models、备用链、按用途选的、套餐的登录、用量（engine/appdata.py）
+        from engine import appdata
+        return await appdata.models_view(request)
     if not claw.is_openclaw():  # 别的 claw：模型就是 server.json 里 claw 段写的那几个，没有回退链和登录状态
         return {"ok": True, "primary": claw.model(), "fallbacks": [], "subagent": None, "allowed": claw.models(), "providers": [], "claw": claw.info()}
     c = config()
@@ -1248,6 +1281,9 @@ def sentinel_fact() -> dict | None:
 
 @router.get("/api/security")
 async def security():
+    if claw.is_builtin():  # 自己的内核：主机命令的放行名单、工具档位、沙箱给了谁、等你点头的卡（engine/appdata.py）
+        from engine import appdata
+        return await asyncio.to_thread(appdata.security_view)
     c = config()
     gw = c.get("gateway") or {}
     ch = c.get("channels") or {}

@@ -2,6 +2,8 @@
 
   …/api/setup…                     第 9 步「通用的选择层」：选模型（云端 / 本机 / 命令行登录 / 自定义）、按用途选、搜索、记忆、用量
                                    （engine/setup_api.py；GET /api/engine/usage 是同一个用量接口）
+  GET / PUT /api/setup/skills/{agent}  10/19：一个 Agent 的技能名单（engine.skills.agents.<id>，engine/agent_skills.py）：看、换；只认主人的设备，
+                                   写 server.json 之前先备份
   GET  /api/engine/status          内核配了什么：默认模型、哪些事改走内核、各家接口（只说有没有密钥）、最近几轮；
                                    claudeCode = 本机用户自己登录的 Claude Code 能不能跑主人回合、登录的是套餐还是密钥（第 11 项）；
                                    chatgpt = 用户自己的 ChatGPT 套餐：连没连、哪个套餐、令牌快过期没有、最近一次的错、后台同意没有
@@ -25,6 +27,15 @@
   GET  /api/engine/memory/table    13b / 13d：四种记忆、闸、三种回合的读写表、三档信（给记忆页的「待确认」「待定」用）
   GET  /api/engine/writeback       13b：对话结束时的写回记录（?conversation=）：这一段长了哪几片叶子、没选的和为什么、改做法的卡
   POST /api/engine/plan_mode       ⑫b：{"conversation", "on"}：开 / 关计划模式（以后 app 的开关）
+  GET  /api/engine/used/{turn}     13c：这一轮用到的手册、技能、功能包的用法、叶子（engine/used.py；回复卡片底下那一行点开的详情）；
+                                   ?message=db123 按回复的 id 找那一轮
+  GET  /api/engine/skills          13c：?agent= 这个 Agent 的技能、手册、用法，带最后一次用的时间、多久没用、标旧（engine.manuals.stale_days）
+  POST /api/engine/agent           第 1 批 b：命令行 mousse agent（../mousse.py、engine/agent_cli.py）：{"agent", "message", "model"?, "timeout"?}
+                                   → 一个新会话里只读地跑一轮，回 {"ok", "answer", "model", "tools", "usage", …}；claw 要是 builtin
+  POST /api/engine/oneshot         一次性 JSON 给本机脚本（10/19，替 OpenClaw 的 llm-task：岗位打分、检查脚本这类）：
+                                   {"prompt", "input"?: {…}, "required"?: [键], "timeout"?, "model"?} → {"ok", "json", "via"}；走 llmjson.ask，
+                                   算主人自己的（/api 只有主人的设备和本机脚本进得来）：engine.use.json 是他自己的 Claude Code 就走他的套餐。
+                                   带 X-Mousse-Via 的（经 /mcp、内核的工具跑的脚本）来路照它：外面的 MCP 客户端（mcp）不花套餐
   POST /api/engine/cyber           跟一个赛博说一句（测试入口，界面在主线第三步）：
                                    {"cyber": {"id", "name", "identity", "model"?, "sources"?}, "text": "…", "stream": false}
                                    stream = true 回 SSE：event delta / thinking / tool，最后 event done
@@ -39,11 +50,12 @@ from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
 from . import cyber as cyber_mod
-from . import ask, chatgpt_plan, events, fallback, heartbeat, jobs, mcp_client, memgate, models, plan, sandbox, setup_api, writeback
+from . import agent_cli, agent_skills, ask, chatgpt_plan, events, fallback, heartbeat, jobs, mcp_client, memgate, models, plan, sandbox, setup_api, used, writeback
 from .errors import EngineError
 
 router = APIRouter()
 router.include_router(setup_api.router)  # 第 9 步：/api/setup/…（第一次打开的引导、设置中心：选模型、搜索、记忆，只认主人的设备）和 /api/engine/usage
+router.include_router(agent_skills.router)  # 10/19：GET / PUT /api/setup/skills/{agent}（一个 Agent 的技能名单，只认主人的设备）
 router.include_router(jobs.router)  # 定时任务（第 6 项）
 router.include_router(chatgpt_plan.router)  # 第 11b 项：/api/engine/chatgpt…（用户自己的 ChatGPT 套餐）
 router.include_router(mcp_client.router)  # 第 13 步：GET /api/engine/mcp（你配的 MCP 服务）
@@ -51,6 +63,8 @@ router.include_router(ask.router)  # ⑫b：POST /api/engine/answer
 router.include_router(plan.router)  # ⑫b：GET / POST /api/engine/plan_mode
 router.include_router(memgate.router)  # 13b / 13d：GET /api/engine/memory（记性的闸记下的每一次决定）、/api/engine/memory/table（闸和读写表）
 router.include_router(writeback.router)  # 13b：GET /api/engine/writeback（对话结束时的写回：长了哪几片、没选的和为什么）
+router.include_router(used.router)  # 13c：GET /api/engine/used/{turn}、/api/engine/used?message=、/api/engine/skills
+router.include_router(agent_cli.router)  # 第 1 批 b：POST /api/engine/agent（命令行 mousse agent：跟一个 Agent 说一句、拿回结果）
 
 
 @router.get("/api/engine/heartbeat")
@@ -137,6 +151,35 @@ def turns(conversation: str | None = None, limit: int = 30):
 @router.get("/api/engine/turns/{tid}")
 def turn_steps(tid: str):
     return {"steps": events.steps(tid)}
+
+
+class OneshotIn(BaseModel):
+    prompt: str
+    input: dict = {}
+    required: list[str] = []
+    timeout: float = 90
+    model: str | None = None
+
+
+@router.post("/api/engine/oneshot")
+async def oneshot(body: OneshotIn):
+    """一次性 JSON 给本机脚本（见文件开头）。模型出错、拿不到 JSON → 502（一句原因）。只在 builtin：别的 claw 上会退回带工具的回合。"""
+    import chat
+    import claw
+    import llmjson
+    if not claw.is_builtin():
+        raise HTTPException(404, "only with the built-in engine")
+    prompt = body.prompt.strip()
+    if not prompt:
+        raise HTTPException(400, "empty prompt")
+    origin = chat.REQUEST_VIA.get() or "user"  # 经谁来的（main.guard 按 X-Mousse-Via 设）：认不出的、外面的 MCP 客户端都不花套餐
+    schema = {"type": "object", "required": [str(k) for k in body.required]} if body.required else None
+    try:
+        out, via = await llmjson.ask(prompt, body.input, schema, timeout=max(5.0, min(float(body.timeout), 900.0)), model=body.model,
+                                     kind="owner", origin=origin)
+    except llmjson.LLMError as e:
+        raise HTTPException(502, str(e)[:300]) from e
+    return {"ok": True, "json": out, "via": via}
 
 
 class CyberBody(BaseModel):

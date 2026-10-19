@@ -9,7 +9,8 @@
             没有自己工作区的 Agent 不拿主对话的文件，只有 role
   profile   你是谁：app 里编辑的档案（settings.profile，世界树的主干），没有就用工作区的 USER.md；最多 6000 字
             （OpenClaw 给工作区的 USER.md 卡 4000，那份是精简版；这里放的是完整档案，宽一点）
-  skills    技能目录（第 2 项）：名字 + 一句说明，全文用 skill 工具读
+  skills    技能目录（第 2 项）：名字 + 一句说明，全文用 skill 工具读；13c 起（engine/manuals.py）默认只留名字（技能、手册、用法一起），
+            命中这句话的正文每轮接在用户的话后面，engine.manuals.catalog 能换回带说明的或者不带；名单外的技能不列（engine.skills.agents）
   tree      世界树里它该看的枝：枝的 agents 写了它的那几根（连小枝），主对话看全部；新的在前，最多 6000 字，带叶子 id 和信几分
             （13d：quoted 带用户原话或用户自己写的 / inferred 平台推断的，engine/memgate.py）
   digest    上一次的日结（往回最多找 7 天）：<data_dir>/digest/<对话>/<日>.md；对话就是 Agent 自己的，再看 OpenClaw 的
@@ -197,9 +198,8 @@ def profile_part(ws: Path | None, own_only: bool = False) -> Part:
 
 
 def skills_part(agent: str, offered: set[str]) -> Part:
-    from . import agent_skills
-    from . import tools as tools_mod
-    return Part("skills", "Skills", tools_mod.skills_index(agent_skills.skills_for(agent, offered)))  # 名单外的不列（engine.skills.agents）
+    from . import manuals  # 13c：目录的样子按 engine.manuals.catalog（名字 / 不带 / 带说明）；名单外的不列（engine.skills.agents，manuals 里筛）
+    return Part("skills", "Skills", manuals.catalog_text(agent, offered))
 
 
 def tree_part(agent: str) -> Part:
@@ -421,8 +421,9 @@ async def gather(agent: str, thread: str, day: str, offered: set[str]) -> Contex
 def skills_block(index: str, updated: bool = False) -> str:
     if not index:
         return ""
-    return ("## Skills" + (" (updated)" if updated else "") + "\nSkills are written instructions for particular jobs. Before doing one of "
-            "these jobs, read its skill with the skill tool (by name) and follow it.\n<available_skills>\n" + index + "\n</available_skills>")
+    from . import manuals
+    return ("## Skills" + (" (updated)" if updated else "") + "\n" + manuals.catalog_intro(index) + "\n<available_skills>\n" + index
+            + "\n</available_skills>")
 
 
 def project_context(ctx: Context) -> str:

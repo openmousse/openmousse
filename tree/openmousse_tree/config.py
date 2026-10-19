@@ -5,6 +5,7 @@
 存储二选一（storage）：sqlite = 记忆存在 tree.db；markdown = 一条一篇笔记放在 notes_dir（比如 Obsidian 库里的一个文件夹），
 index.db 只当检索索引和操作记录（见 notes.py）。换存储用 mousse-tree migrate。
 树目录（tree_dir）：规则 rules.md 放在这里；sqlite = ~/.mousse-tree，markdown = 笔记文件夹（枝的笔记在它的 branches/ 里，见 branches.py）。
+手册（0.6，见 manuals.py）：markdown = 笔记文件夹里的 manuals/（一份一篇）；sqlite = tree.db 的 manual 表。
 """
 from __future__ import annotations
 
@@ -41,6 +42,7 @@ DEFAULTS = {
 }
 RULES = "rules.md"                       # 规则：一篇 Markdown，放在树目录（tree_dir）
 BRANCHES = "branches"                    # markdown：枝的笔记放在笔记文件夹的这个子文件夹（一枝一篇）
+MANUALS = "manuals"                      # markdown：手册放在笔记文件夹的这个子文件夹（一份一篇，不算记忆，扫笔记时跳过）
 
 
 def load() -> dict:

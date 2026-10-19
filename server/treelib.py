@@ -11,6 +11,8 @@ public_hosts、port），所以「接到你的 AI」两边通用。
   补过的记下来，主人删了那根枝也不再长回来）。
 - think.py 不起子进程，直接调这里（branch_names、remember）；tree 工具跑同一个 venv 里的 mousse-tree（bridges.tree_command）。
 - 每周修剪的收件箱卡、点了以后照计划做在 treeprune.py。
+0.6 起（2026-10-19）有手册（manuals()，openmousse_tree.manuals）：内核每轮按这句话搜手册（engine/manuals.py），每周修剪的卡列出
+这个月没用上的（unused.py）。
 存储可能是 SQLite（tree.db）或 Markdown 笔记文件夹；只有 Markdown 存储才有 issue 表（格式有问题的笔记）。
 """
 from __future__ import annotations
@@ -195,3 +197,12 @@ def prune():
         return None
     from openmousse_tree import prune as P
     return P
+
+
+def manuals():
+    """手册（openmousse_tree.manuals，0.6 起；内核按句搜手册、每周修剪列「这个月没用上的」用）；包太旧没有就 None。"""
+    try:
+        from openmousse_tree import manuals as MA
+    except ImportError:
+        return None
+    return MA

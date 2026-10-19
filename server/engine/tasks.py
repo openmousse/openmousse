@@ -679,12 +679,12 @@ def gate_for(row: dict) -> Callable:
 
 def child_rules(row: dict, tools: list[Tool], *, external: bool = False) -> str:
     """后台任务的规矩（子会话开头的一节）。external：给外援的（Claude Code / Codex：我们的工具经 /mcp，名字是 mcp__openmousse__…）。"""
-    from . import recall
+    from . import recall, sessions
     app = settings.app_name
     today = datetime.now(settings.tz).strftime("%Y-%m-%d (%A)")
     m = int(row["timeout_s"]) // 60
     depth, top = int(row.get("depth") or 1), max_depth()
-    names = [t.name for t in tools if t.name not in ("skill", TOOL, "todo") and t.name not in recall.TOOLS]
+    names = [t.name for t in tools if t.name not in ("skill", TOOL, "todo") and t.name not in recall.TOOLS and t.name not in sessions.TOOLS]
     memory = [t.name for t in tools if t.name in recall.TOOLS]
     can_spawn = any(t.name == TOOL for t in tools)
     todos = any(t.name == "todo" for t in tools)
@@ -722,6 +722,7 @@ def child_rules(row: dict, tools: list[Tool], *, external: bool = False) -> str:
          "parameter. Never add --source or --by.") if names else "",
         "## Memory\nYour notes, diaries and earlier chats are searchable with memory_search; read what you need with memory_get. These two "
         "take their own parameters, not args." if memory else "",
+        sessions.rules(tools, row["agent"]),  # 第 1 批 b：看别的会话（engine/sessions.py）
         "## To-do list\nFor a task with several steps, keep a to-do list with the todo tool (its own parameters, not args): write the steps "
         "first, keep one in_progress, mark each completed when it's done. The list is this task's own and survives compaction." if todos else "",
         ("## Background tasks of your own\nYou may hand parts of the work to background tasks of your own with the tasks tool; their "

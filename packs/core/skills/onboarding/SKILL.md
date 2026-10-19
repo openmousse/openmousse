@@ -26,15 +26,15 @@ T=~/.openmousse/venv/bin/mousse-tree
 问他想让你怎么称呼他。他答了以后跑这一条：
 
 ```bash
-python3 ~/.openmousse/repo/server/settings_ctl.py user-name "小周"
+python3 ~/.openmousse/repo/server/settings_ctl.py user-name "小林"
 ```
 
 它一次做两件事，马上生效，不用重启：
 
 - 服务器给模型的说明里用这个称呼叫他（server.json 的 `user_name`）。
-- 档案 USER.md 里记一行「称呼：小周」（已经有就改那一行）。档案是世界树的主干，各个 Agent 和他接上的别的 AI 都读得到，所以称呼不用再往世界树单独记一片叶子。
+- 档案 USER.md 里记一行「称呼：小林」（已经有就改那一行）。档案是世界树的主干，各个 Agent 和他接上的别的 AI 都读得到，所以称呼不用再往世界树单独记一片叶子。
 
-回一句"记下了，以后叫你小周"，接着第 3 步。
+回一句"记下了，以后叫你小林"，接着第 3 步。
 
 ## 3. 让你认识他
 

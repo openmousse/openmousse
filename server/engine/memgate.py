@@ -1,7 +1,7 @@
 """记性的闸（13b）和读写表（13d），2026-10-19：内核里每一种「记」都先问这里（一个函数 decide + 一张表 GATE），
 工具和后台（写回、skill 回看、Zen、待定）都调它，每一次的结果记进事件流（engine_memory）。
 
-记忆分四种（CoALA，画布 Cvreke1rE1SPp4dV3cLJcx 第 5、10 张），另有一个不是记忆的「待定」：
+记忆分四种（照 CoALA 的分法），另有一个不是记忆的「待定」：
   experience  经历：对话记录、日记（工作区 memory/）、日结、事件流、HEARTBEAT.md
   leaf        叶子（知识）：世界树的一片叶子；工作区的 MEMORY.md 也算这一种（Agent 自己记的事实）
   profile     档案（主干）：app 里的档案（settings.profile）、工作区的 USER.md、世界树的档案
@@ -33,7 +33,8 @@
   - Tool.kinds（loop.py）先筛：读写记忆的工具都只标 owner。
   - screen(回合, 工具)（loop._run 挑工具时再筛一遍）：MEMORY_TOOLS 里的工具，读写表不许这一回合碰的拿掉；以后给赛博的、按它的范围读的
     工具自己标 memory_scope = "cyber" 才留下。别的工具不管（赛博回合以后的「找装载的功能 Agent」不是记忆工具，照 Tool.kinds）。
-  - 写的那一刻：tree 工具的 add / forget 照 tools.POLICY（和这里的 GATE 一致，测试对照着查），skill_manage 和主机文件工具的写照 level_of，
+    看别的会话的三个（sessions_list / sessions_history / session_status，第 1 批 b）读主人的对话，登记成读经历：赛博、外人回合都拿掉。
+  - 写的那一刻：tree 工具的 add / forget 照 tools.POLICY（和这里的 GATE 一致，测试对照着查），skill_manage、manual_manage（13c 改手册）和主机文件工具的写照 level_of，
     写回和待定直接调 decide。
 事件流：record() 每一次决定写一行 engine_memory（哪种记忆、什么动作、怎么办、动的是哪一个、谁写的、内容是谁的话、为什么、结果），
   不记记忆的内容；知道是哪个对话的就实时广播一条 {"type": "memory", …}。claw 不是 builtin、也没用过内核：什么都不记（OpenClaw 那条路不变）。
@@ -101,10 +102,13 @@ TABLE: dict[str, dict[str, tuple[tuple[str, str], tuple[str, str]]]] = {
 MEMORY_TOOLS: dict[str, tuple[str, ...]] = {
     "tree": ("leaf",), "memory_search": ("experience", "leaf", "profile"), "memory_get": ("experience", "leaf", "profile"),
     "journal": ("experience",), "skill": ("procedure",), "skill_manage": ("procedure",), "proposals": ("procedure",),
+    "manual": ("procedure",), "manual_manage": ("procedure",),  # 13c：赛博回合只读的 manual（标了 memory_scope = cyber）、改手册的 manual_manage
     "read_file": ("experience", "leaf", "profile", "procedure"), "list_dir": ("experience", "leaf", "profile", "procedure"),
     "find_files": ("experience", "leaf", "profile", "procedure"), "grep_files": ("experience", "leaf", "profile", "procedure"),
     "write_file": ("experience", "leaf", "profile", "procedure"), "edit_file": ("experience", "leaf", "profile", "procedure"),
     "restore_file": ("experience", "leaf", "profile", "procedure"),
+    # 第 1 批 b：看别的会话（engine/sessions.py）读的是主人的对话 = 经历；赛博只读它自己的那份，外人一样不给
+    "sessions_list": ("experience",), "sessions_history": ("experience",), "session_status": ("experience",),
 }
 # 工作区里的文件是哪种记忆（主机文件工具按它过闸；不在这里的是普通文件，不归这里管）
 FILES: tuple[tuple[str, str], ...] = (

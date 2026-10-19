@@ -110,7 +110,7 @@ from egress import router as egress_router  # noqa: E402 — Doorman 出口（�
 import diet  # noqa: E402
 from diet import router as diet_router  # noqa: E402 — 饮食记录、个人食物库、营养目标、查营养（diet.py + nutrition.py）
 from outputs import router as outputs_router  # noqa: E402 — Agent 的产出：浮动标签、小板子、对话里的产出卡片（2026-10-13）
-from meetings import router as meetings_router  # noqa: E402 — Agent 会议：/api/meetings…（几个 Agent 轮流发言、Grava 写纪要，见 meetings.py）
+from meetings import router as meetings_router  # noqa: E402 — Agent 会议：/api/meetings…（几个 Agent 轮流发言、主对话的助手写纪要，见 meetings.py）
 from engine.api import router as engine_router  # noqa: E402 — 自己的内核：/api/engine/…（状态、一轮轮的记录、赛博的测试入口）、/api/setup/…
 from engine import setup_api as engine_setup  # noqa: E402 — 第 9 步「通用的选择层」：出错的样子、/api/health 的 no_model
 from engine import tools as engine_tools  # noqa: E402 — 内核的工具和关卡：收件箱 kind tool / schedule 的钩子（重启后点同意也照样跑）

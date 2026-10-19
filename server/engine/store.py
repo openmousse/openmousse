@@ -17,7 +17,8 @@
   engine_memory    记性的闸（13b，engine/memgate.py）：每一次「记」的决定一行：哪种记忆、什么动作、怎么办（直接写 / 提议 / 待定 / 不做）、
                    动的是哪一个、谁写的、内容是不是别人的话、为什么、结果；不记记忆的内容
   engine_writeback 对话结束时的写回（13b，engine/writeback.py）：一条会话一行：写回到哪一条了、状态、列了哪些候选、选了哪几条长成叶子、
-                   没选的和为什么（留 WRITEBACK_KEEP_DAYS 天）
+                   没选的和为什么（留 WRITEBACK_KEEP_DAYS 天）；没写成的：连着失败了几次（tries）、失败的那一段到哪一条（tried）、
+                   退避到什么时候（retry_at）
 对话 → 一轮 → 每一步三层就是 harness 方案里的「一条事件流」：以后 app 的进度、任务卡、后台回报都从这里出（第 3 步）。
 时间（started_at、ended_at……）存的是带时区偏移的 ISO 字符串（now_iso）。server.json 的 timezone 改过，新旧两种偏移就混在一起：
 按时间比、按时间排一律用 julianday(列)（SQLite 自己解开偏移再比），不按字符串；engine_turns 的索引也建在 julianday(started_at) 上。
@@ -81,7 +82,8 @@ CREATE INDEX IF NOT EXISTS engine_memory_conv ON engine_memory(conversation, id)
 CREATE INDEX IF NOT EXISTS engine_memory_kind ON engine_memory(kind, id);
 CREATE TABLE IF NOT EXISTS engine_writeback (
   session TEXT PRIMARY KEY, conversation TEXT NOT NULL, agent TEXT NOT NULL, upto TEXT, status TEXT NOT NULL, reason TEXT,
-  candidates TEXT, picked TEXT, skipped TEXT, turn TEXT, error TEXT, created_at TEXT NOT NULL, updated_at TEXT NOT NULL);
+  candidates TEXT, picked TEXT, skipped TEXT, turn TEXT, error TEXT, created_at TEXT NOT NULL, updated_at TEXT NOT NULL,
+  tries INTEGER NOT NULL DEFAULT 0, tried TEXT, retry_at TEXT);
 CREATE INDEX IF NOT EXISTS engine_writeback_conv ON engine_writeback(conversation, updated_at);
 """
 
@@ -98,6 +100,10 @@ def connect() -> sqlite3.Connection:
             conn.commit()
         if "models" not in {r[1] for r in conn.execute("PRAGMA table_info(engine_turns)")}:  # 第 13 步以前建的库：补上这一栏
             conn.execute("ALTER TABLE engine_turns ADD COLUMN models TEXT")
+            conn.commit()
+        if "tries" not in {r[1] for r in conn.execute("PRAGMA table_info(engine_writeback)")}:  # 写回有退避以前（10/19）建的库：补上这几栏
+            for col in ("tries INTEGER NOT NULL DEFAULT 0", "tried TEXT", "retry_at TEXT"):
+                conn.execute(f"ALTER TABLE engine_writeback ADD COLUMN {col}")
             conn.commit()
         _ready.add(str(path))
     return conn

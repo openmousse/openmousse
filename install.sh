@@ -109,7 +109,7 @@ DEF_NAME="$(saved "c.get('app_name')")"
 say "几个问题 + 两个可以跳过的，直接回车用默认值 / a few questions + two optional ones, Enter keeps the default"
 ask MOUSSE_LANG "语言 / language (zh = 中文, en = English)" "$DEF_LANG"
 case "$(printf '%s' "$MOUSSE_LANG" | tr '[:upper:]' '[:lower:]')" in zh*|cn*|chinese*|中*) MOUSSE_LANG=zh ;; *) MOUSSE_LANG=en ;; esac
-# 你的 claw：回车 = 默认的那个；builtin = OpenMousse 自带的内核（不用装 OpenClaw，装完在 app 里按引导选模型）；别的 claw / agent 填它的
+# 你的 claw：回车 = 默认的那个；builtin = OpenMousse 自带的内核（不用装 OpenClaw，装完在终端里选模型：server/setup_ctl.py）；别的 claw / agent 填它的
 # OpenAI 兼容接口地址。默认：上次装的那个；没装过：这台机器上有 OpenClaw 就是它，没有就是 builtin
 DEF_CLAW="$(saved "(c.get('claw') or {}).get('url') if (c.get('claw') or {}).get('kind') == 'openai' else 'builtin' if (c.get('claw') or {}).get('kind') == 'builtin' else ''")"
 if [ -z "$DEF_CLAW" ]; then
@@ -126,7 +126,7 @@ esac
 preset() { python3 "$MOUSSE_DIR/server/claw_presets.py" "$PRESET" "$1" 2>/dev/null || true; }  # 预设的一个字段（server/claw_presets.py）
 CLAW_ARGS=()
 if [ "$CLAW_KIND" = builtin ]; then
-  CLAW_ARGS=(--builtin)  # 模型、搜索、记忆装完以后选：app 的引导，或者终端里的 server/setup_ctl.py
+  CLAW_ARGS=(--builtin)  # 模型、搜索、记忆装完以后在终端里选（server/setup_ctl.py，安装器最后会问）
 elif [ "$CLAW_KIND" = openclaw ]; then
   command -v openclaw >/dev/null || echo "提示 / note: openclaw is not on PATH. Install OpenClaw and run openclaw onboard first, then come back (or answer builtin to use OpenMousse's own engine)."
   ask MOUSSE_OPENCLAW_HOME "OpenClaw 装在哪 / OpenClaw home (directory with openclaw.json)" "$DEF_HOME"

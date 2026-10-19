@@ -27,8 +27,13 @@ OpenClaw 以外的 claw 能做的（caps()，/api/health 带给 app，做不到�
   Agent = 同一个 claw 的一个单独会话，每天第一句话前面带上它的名字和职责（见 role_context）。
   做不到：插话（steer）、Agent 各自独立的工作区和 skills、后台任务 / 执行审批 / 定时任务 / 模型计费这些读 OpenClaw 的页面。
   builtin（自己的内核）另外能插话（第 3 项，chat.steer_engine）、显示「在想 / 在做」（chat.note_engine）、有后台任务（第 5 项：任务页、
-  项目卡上「在跑的任务」读内核的台账 engine/ledger.py）、Agent 有自己的工作区（删 Agent 时工作区和记忆归档，agents.archive）：
-  caps 的 steer / tasks / agentWorkspaces 回 true（app 的任务页、删 Agent 的说明靠它）。
+  项目卡上「在跑的任务」读内核的台账 engine/ledger.py）、Agent 有自己的工作区（新建时建好、删 Agent 时工作区和记忆归档，agents.provision_builtin /
+  archive）：caps 的 steer / tasks / agentWorkspaces 回 true（app 的任务页、删 Agent 的说明靠它）。
+  10/19 第 1 批起 builtin 还回 cron / approvals / billing（app 用到的接口都读内核了，engine/appdata.py）：
+    cron       内核的定时任务（engine/jobs.py）：/api/upcoming 列出来、下一次什么时候跑，/api/upcoming/{id} 暂停 / 恢复
+    approvals  内核的关卡（撤不回的、对外的、主机上名单外的命令交 kind tool 的卡）：收件箱里点；老 app 的 /api/approvals 也列、也能点
+    billing    /api/models 的 providers 说每一家是套餐还是按量、连没连上，usage 是这 30 天花了多少（engine/usage.py）
+  channels 还是 false：内核没有 Telegram、Discord 这些渠道。
 """
 from __future__ import annotations
 
@@ -179,8 +184,8 @@ def caps() -> dict:
         return {"steer": True, "agentWorkspaces": True, "tasks": True, "approvals": True, "cron": True, "billing": True,
                 "channels": True, "rewind": True, "modelSwitch": True}
     mode, _, _ = session_mode()
-    own = is_builtin()  # 自己的内核：插话、后台任务（任务页读内核的台账）、Agent 的工作区（删的时候归档），见文件开头
-    return {"steer": own, "agentWorkspaces": own, "tasks": own, "approvals": False, "cron": False, "billing": False,
+    own = is_builtin()  # 自己的内核：插话、后台任务、Agent 的工作区，定时任务、关卡的卡、用量（都读内核），见文件开头
+    return {"steer": own, "agentWorkspaces": own, "tasks": own, "approvals": own, "cron": own, "billing": own,
             "channels": False, "rewind": mode == "history", "modelSwitch": len(models()) > 1}
 
 
@@ -226,13 +231,15 @@ def request_body(messages: list[dict], key: str, model_: str | None, stream: boo
     return body, h
 
 
-async def stream(messages: list[dict], key: str, model_: str | None, on_delta: Callable[[str], None], timeout: float = 600) -> None:
+async def stream(messages: list[dict], key: str, model_: str | None, on_delta: Callable[[str], None], timeout: float = 600, *,
+                 origin: str | None = None) -> None:
     """发给 claw、流式把回复一段段交给 on_delta。接口不支持流式、直接回整段 JSON 的也认。出错抛 ClawError / httpx.HTTPError。
-    builtin：一问一答交给自己的内核（engine/owner.stream，零工具、不存会话）；app 的对话不走这里，见 chat.claw_stream。"""
+    builtin：一问一答交给自己的内核（engine/owner.stream，零工具、不存会话）；app 的对话不走这里，见 chat.claw_stream。
+    origin：主人自己引出来的（user …）：builtin 据此让他自己的 Claude Code 跑（走他的套餐）；None = 当外人。别的 claw 不看它。"""
     if is_builtin():
         from engine import EngineError, owner
         try:
-            await owner.stream(messages, key, model_, on_delta, timeout)
+            await owner.stream(messages, key, model_, on_delta, timeout, origin=origin)
         except EngineError as e:
             raise ClawError(str(e)) from e
         return
@@ -272,10 +279,10 @@ async def stream(messages: list[dict], key: str, model_: str | None, on_delta: C
                         on_delta(delta)
 
 
-async def complete(prompt: str, key: str, model_: str | None = None, timeout: float = 300) -> str:
-    """一问一答（Zen 的「想完了」之类，不进任何对话）。"""
+async def complete(prompt: str, key: str, model_: str | None = None, timeout: float = 300, *, origin: str | None = None) -> str:
+    """一问一答（Zen 的「想完了」之类，不进任何对话）。origin 见 stream。"""
     parts: list[str] = []
-    await stream([{"role": "user", "content": prompt}], key, model_, parts.append, timeout)
+    await stream([{"role": "user", "content": prompt}], key, model_, parts.append, timeout, origin=origin)
     return "".join(parts)
 
 

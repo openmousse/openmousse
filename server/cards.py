@@ -3,6 +3,7 @@
 转交（skills/handoff → scripts/ask_agent.py → POST /api/chat/relay）
 - relay 开跑时在 grava.db 的 handoffs 表记一行：从哪个线程转给谁、问了什么。「从哪个线程」= 这时正在回复、又不是 relay 的那个线程
   （source_run：exec 起的脚本不知道自己在哪个会话里，只能这样认；同时有几个在回复时优先主 agent 的线程，再取最晚开始的）。
+  builtin 的内核工具转的（第 1 批 b，Agent 也能转）：脚本带来从哪个对话转的（relay 的 source），照它记，不猜。
   Telegram 那边转的在 app 里没有对应的回复，from_thread 为空，只在 Agent 那边显示「主对话转来」。
 - 给发起转交的那次回复发 SSE 事件 card（app 当场出「正在问 …」），被转的 Agent 答完 / 出错再发一次。发起转交的那次回复结束时
   （chat.run_gateway → on_run_end）把它挂到那条回复下面（message_id）。被转的 Agent 正忙时（2026-10-05 起）不再失败：记一行 status=queued，
@@ -431,14 +432,20 @@ def source_run(target: str) -> chat.Run | None:
     return max(main or live, key=lambda r: r.t0)
 
 
-def handoff_start(target: str, question: str, run: chat.Run | None, status: str = "running") -> str | None:
-    """relay 开跑（或 409 没转过去）时记一张转交卡，给发起转交的回复发 card。出错不影响转交本身。"""
+def handoff_start(target: str, question: str, run: chat.Run | None, status: str = "running", source: str | None = None) -> str | None:
+    """relay 开跑（或 409 没转过去）时记一张转交卡，给发起转交的回复发 card。出错不影响转交本身。
+    source：从哪个对话转的（builtin 的内核工具带来的，第 1 批 b：Agent 也能转）；不给照旧猜「这时谁在回复」（source_run）。"""
     try:
-        src = source_run(target)
+        if source:
+            live = chat.RUNS.get(source)
+            src, frm = (live if live is not None and not live.done else None), source
+        else:
+            src = source_run(target)
+            frm = src.thread if src else None
         hid = f"ho-{uuid.uuid4().hex[:8]}"
         with _lock, cdb() as conn:
             conn.execute("INSERT INTO handoffs(id, from_thread, to_thread, question, status, relay_id, created_at) VALUES(?,?,?,?,?,?,?)",
-                         (hid, src.thread if src else None, target, question.strip(), status, run.user_id if run else None, now_iso()))
+                         (hid, frm, target, question.strip(), status, run.user_id if run else None, now_iso()))
             row = conn.execute("SELECT * FROM handoffs WHERE id=?", (hid,)).fetchone()
         if status == "queued":
             _waiting.add(hid)

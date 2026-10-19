@@ -393,7 +393,7 @@ def test_llmjson_falls_back_only_after_the_chain(server_json, request, monkeypat
     server_json({"engine": {"use": {"json": ["fake/a", "fake/b"]}, "providers": {"fake": {"api": "openai", "url": fm.openai_url, "key_env": ""}}}})
     old: list = []
 
-    async def via_complete(prompt, input_, schema, timeout):  # 原来的路（think.complete）
+    async def via_complete(prompt, input_, schema, timeout, origin=None):  # 原来的路（think.complete）
         old.append([r["model"] for r in fm.requests])
         return {"from": "old path"}, "complete"
     monkeypatch.setattr(llmjson, "via_complete", via_complete)

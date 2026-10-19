@@ -10,6 +10,10 @@ schema 只卡最外层（是个对象、有哪几个键）：llm-task 严格校�
 llm-task 不许覆盖模型（Plugin LLM completion cannot override the target model）：model 只给别的路子用。
   0. server.json 的 engine.use.json 开了：先走自己的内核（engine/oneshot.py，外人回合：零工具、能换模型，model 也认）；
      出错时照旧往下走（engine.fallback 是 false 就不往下走，直接报错）。
+谁引出来的（kind / origin，10/19）：主人自己的（会议纪要、播客、学习页……报 kind="owner", origin="user"）engine.use.json 写的是用户自己的
+  Claude Code（claude-code/…）时交给它一次性地跑（零工具、不存会话，走他的套餐；跑不了有按量的备用就换）；builtin 没配
+  engine.use.json、退回 think.complete 的那条路也带上来路（engine/owner.stream：模型是他的 Claude Code 就走套餐）。不报的当外人：
+  一律不花用户的套餐（route() 换成按量的，owner.stream 也换）。
 失败抛 LLMError（带一句原因，不带令牌）。
 """
 from __future__ import annotations
@@ -89,13 +93,14 @@ async def via_llm_task(prompt: str, input_: dict, schema: dict | None, timeout: 
     return parse_json(text or ""), "llm-task"
 
 
-async def via_complete(prompt: str, input_: dict, schema: dict | None, timeout: float):
+async def via_complete(prompt: str, input_: dict, schema: dict | None, timeout: float, origin: str | None = None):
+    """origin：主人自己引出来的（见文件开头），一路带给 think.complete；None = 当外人。"""
     import think  # 放这里：think 也会用到这个模块，免得互相导入
     text = (prompt + "\n\nINPUT_JSON:\n" + json.dumps(input_, ensure_ascii=False, indent=1)
             + "\n\nReply with ONE JSON value only, no other text, no tools." + (f"\nJSON Schema:\n{json.dumps(schema, ensure_ascii=False)}" if schema else ""))
     key = f"agent:main:grava:json-{uuid.uuid4().hex[:10]}"
     try:
-        out = await think.complete(text, key, chat.DEFAULT_MODEL if claw.is_openclaw() else claw.model(), timeout)
+        out = await think.complete(text, key, chat.DEFAULT_MODEL if claw.is_openclaw() else claw.model(), timeout, origin=origin)
     except Exception as e:  # noqa: BLE001 — 连不上、Gateway 报错都算这一次没成
         raise LLMError(str(e)[:200]) from e
     finally:
@@ -109,17 +114,21 @@ async def via_complete(prompt: str, input_: dict, schema: dict | None, timeout: 
 
 async def ask(prompt: str, input_: dict, schema: dict | None = None, *, timeout: float = 90, thinking: str = "low",
               model: str | None = None, fallback_input: dict | None = None, tool_free_only: bool = False,
-              max_tokens: int | None = None) -> tuple[object, str]:
+              max_tokens: int | None = None, kind: str = "outsider", origin: str | None = None) -> tuple[object, str]:
     """→ (JSON, 走的哪条路)。thinking：llm-task 的思考档位（Opus 5.5 不能关，最低 low）。
     fallback_input：退回 think.complete（带工具的对话回合）时换用的资料：input 里有别人的话（朋友的聊天、约朋友录的逐字稿、朋友画像）
     就给一份不带它的，那种回合里模型能用工具，别人的一句话不能跟着进去。
-    tool_free_only：只许走 llm-task（整个 input 都是别人的话，比如给朋友记画像）；用不了就抛 LLMError，不退回。
-    max_tokens：这一次最多输出多少 token（llm-task 和内核；长的输出要给够）。"""
-    if ref := engine.route("json", model):
+    tool_free_only：只许走 llm-task（整个 input 都是别人的话，比如给朋友记画像）；用不了就抛 LLMError，不退回。内核那条路（engine.use.json，
+    含交给用户自己的 Claude Code 的）也零工具，算数。
+    max_tokens：这一次最多输出多少 token（llm-task 和内核；长的输出要给够）。
+    kind / origin：这一问是谁引出来的（见文件开头）；主人自己的报 kind="owner", origin="user"，不报 = 外人。"""
+    owner = origin if kind == "owner" else None
+    if ref := engine.route("json", model, kind=kind, origin=origin):
         required = tuple(schema.get("required") or ()) if isinstance(schema, dict) and schema.get("type") == "object" else ()
         try:
             return await engine.ask_json(prompt, input_, model=ref, purpose="json", required=required, timeout=timeout,
-                                         effort=thinking if thinking in ("low", "medium", "high") else None, max_tokens=max_tokens)
+                                         effort=thinking if thinking in ("low", "medium", "high") else None, max_tokens=max_tokens,
+                                         kind=kind, origin=origin)
         except engine.EngineError as e:
             if not engine.fallback_allowed():
                 raise LLMError(str(e)[:200]) from e
@@ -136,4 +145,4 @@ async def ask(prompt: str, input_: dict, schema: dict | None = None, *, timeout:
                         raise
     if tool_free_only:
         raise LLMError("needs llm-task (no tools); it isn't available")
-    return await via_complete(prompt, input_ if fallback_input is None else fallback_input, schema, timeout)
+    return await via_complete(prompt, input_ if fallback_input is None else fallback_input, schema, timeout, origin=owner)

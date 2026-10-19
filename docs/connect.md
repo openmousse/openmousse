@@ -71,8 +71,8 @@ The installer ends with a summary. For claws other than OpenClaw it also prints 
 
 ## 5. Give yourself OpenMousse's tools
 
-- **OpenClaw:** the installer already added `openmousse` under `mcp.servers`, and the Gateway hot-reloads it. To check: `openclaw mcp probe openmousse` should list 12 tools (11 if the memory tree was skipped).
-- **Hermes:** `hermes mcp add openmousse --url "<the MCP address>"` (it writes `~/.hermes/config.yaml`); `hermes mcp test openmousse` should list 12 tools. They load when the gateway restarts (the `/restart` from step 2); without a restart, ask the user to send `/reload-mcp` in the chat.
+- **OpenClaw:** the installer already added `openmousse` under `mcp.servers`, and the Gateway hot-reloads it. To check: `openclaw mcp probe openmousse` should list 15 tools (14 if the memory tree was skipped).
+- **Hermes:** `hermes mcp add openmousse --url "<the MCP address>"` (it writes `~/.hermes/config.yaml`); `hermes mcp test openmousse` should list 15 tools. They load when the gateway restarts (the `/restart` from step 2); without a restart, ask the user to send `/reload-mcp` in the chat.
 - **nanobot:** in `~/.nanobot/config.json`, under `tools.mcpServers`, add `"openmousse": {"url": "<the MCP address>"}`, then restart nanobot.
 - **Letta Code:** `/mcp add --transport http openmousse <the MCP address>`
 
@@ -100,7 +100,7 @@ The output is JSON with `link`, `code`, `server` and `expires`. Send the user th
 
 1. Install the Tailscale app on the phone, signed in to the same account as this machine (step 3).
 2. Install the OpenMousse app. The repository's README says how, under "Two ways to get the app".
-3. Tap the link. The app opens its Connect page with the server and code filled in; check the server and tap **Connect with the code**. The user can also paste the link or the 8-character code there.
+3. Tap the link. The app opens its Connect page with the server and code filled in; check the server and tap **Connect with code**. The user can also paste the link or the 8-character code there.
 
 The code works once and expires in 10 minutes. If it runs out, make a new one. Don't send anything else: the app gets its own token from the server when it connects.
 
@@ -110,7 +110,7 @@ The code works once and expires in 10 minutes. If it runs out, make a new one. D
 - **Kimi Claw and similar containers (not tested yet):** containers often have no `sudo`, no network device for Tailscale, and no systemd. If so:
   - Run Tailscale in userspace mode: `tailscaled --tun=userspace-networking --statedir="$HOME/.tailscale" &`, then `tailscale up` and send the user the login link. It needs no root.
   - Install with `MOUSSE_BIND=127.0.0.1` and without systemd: `curl … | MOUSSE_NONINTERACTIVE=1 MOUSSE_BIND=127.0.0.1 … bash -s -- --no-systemd`. In userspace mode, Tailscale passes the phone's connections on to this machine's 127.0.0.1.
-  - Start the server yourself: `cd ~/openmousse/server && nohup ~/.openmousse/venv/bin/python run.py >> ~/.openmousse/server.log 2>&1 &`. Start it again (and `tailscaled`) whenever the container restarts.
+  - Start the server and the memory tree yourself, as the installer prints at the end: `cd ~/.openmousse/repo/server && nohup ~/.openmousse/venv/bin/python run.py >> ~/.openmousse/logs/server.log 2>&1 &` and `nohup ~/.openmousse/venv/bin/mousse-tree serve >> ~/.mousse-tree/tree.log 2>&1 &`. Start them again (and `tailscaled`) whenever the container restarts.
   - The pairing link automatically uses this machine's Tailscale address.
   - Kimi Claw's terminal drops when its Gateway restarts, so run the installer when nothing else will restart the Gateway.
   - If Tailscale can't start at all, tell the user the phone can't reach this machine yet and stop. Don't open it to the internet without asking.

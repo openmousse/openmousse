@@ -15,6 +15,8 @@
   skill → 写进 <workspace>/skills/<名字>/SKILL.md，加进目标 Agent 的 skills 允许列表（openclaw.json，走 agents.edit_openclaw_json：
   先备份、改完 validate、不通过就恢复）。一个 Agent 的列表 = agents.entries.<id>.skills，没有就继承 agents.defaults.skills；
   都没设（= 不限制）就不用动。给 main 加是加进它继承的那一份；给别的 Agent 加、而它原来继承 defaults 的，给它写一份自己的。
+  claw 选 builtin（自己的内核）：openclaw.json 一个字不碰，名单是 server.json 的 engine.skills.agents.<id>（engine/agent_skills.add：
+  写了名单的加进去，没写名单的本来就看得到全部；先备份）；回看的材料、重名检查也算上内核直接读的 packs/core/skills。
   agent → 和「新建 Agent」同一条路建好（data.create_group），再建表、换上起步看板（和 agent_ctl.py create --board-file 一样）。
   没做成 → 卡片标「没做成」并写明原因（inbox.act 认 {"failed": …}），main 不用管。
 - 拒绝：inbox 的 note 记下理由，以后 context 里带着，模型不再提同类的；撤回：记成 withdrawn。
@@ -115,7 +117,26 @@ def installed_skills() -> list[dict]:
         except OSError:
             continue
         out.append({"name": str(fm.get("name") or d.name), "dir": d.name, "description": clip(str(fm.get("description") or ""), 160)})
+    if claw.is_builtin():  # 自己的内核直接读 packs/core/skills（安装器不往工作区里链）：同名的工作区那份优先
+        have = {s["dir"] for s in out} | {s["name"] for s in out}
+        core = core_skills()
+        for d in sorted(core.iterdir()) if core.is_dir() else []:
+            f = d / "SKILL.md"
+            if d.name in have or not f.is_file():
+                continue
+            try:
+                fm = frontmatter(f.read_text(encoding="utf8", errors="replace")[:6000])
+            except OSError:
+                continue
+            if str(fm.get("name") or d.name) not in have:
+                out.append({"name": str(fm.get("name") or d.name), "dir": d.name, "description": clip(str(fm.get("description") or ""), 160)})
     return out
+
+
+def core_skills() -> Path:
+    """仓库里的 core skill（自己的内核直接读这里，engine/tools.skill_dirs）。"""
+    import bridges
+    return bridges.REPO / "packs" / "core" / "skills"
 
 
 def read_config() -> dict:
@@ -137,7 +158,15 @@ def allowlist(cfg: dict, agent_id: str) -> list | None:
 
 def grant(agent_ids: list[str], name: str) -> list[str]:
     """把 skill 加进这些 Agent 的允许列表（openclaw.json）。返回真的改了的 Agent（没设列表 = 本来就能用，不算）。
+    builtin（自己的内核）：名单是 server.json 的 engine.skills.agents（见文件开头），server.json 写不成 → ProvisionError（装好的文件收回）。
     别的 claw 没有 OpenClaw 的允许列表：放进它的 skills 文件夹就算装好了。"""
+    if claw.is_builtin():
+        from engine import agent_skills
+        from engine.setup_api import SetupError
+        try:
+            return agent_skills.add(agent_ids, name)
+        except (SetupError, OSError) as e:
+            raise agents.ProvisionError(L(f"技能名单没写成（server.json）：{e}", f"Couldn't update the skill lists (server.json): {e}")) from e
     if not claw.is_openclaw():
         return []
     changed: list[str] = []
@@ -276,7 +305,7 @@ async def propose(body: ProposalIn):
         name = s.name.strip().lower()
         if not KEY.fullmatch(name):
             return bad("skill 名写成小写字母、数字和连字符", "Skill name: lowercase letters, digits and hyphens")
-        if (skills_root() / name).exists():  # 还没装，所以改稿时同名也在这里挡不到自己
+        if (skills_root() / name).exists() or (claw.is_builtin() and (core_skills() / name).exists()):  # 还没装，所以改稿时同名也在这里挡不到自己
             return bad(f"已经有叫 {name} 的 skill 了：换个名字，或者别提", f"A skill named {name} already exists", 409, error="skill_exists")
         md = s.markdown.replace("\r\n", "\n").strip() + "\n"
         if len(md) > MAX_SKILL_CHARS:
@@ -341,7 +370,7 @@ async def propose(body: ProposalIn):
 def install_skill(p: sqlite3.Row) -> str:
     name = p["name"]
     target = skills_root() / name
-    if target.exists():
+    if target.exists() or (claw.is_builtin() and (core_skills() / name).exists()):  # builtin：别把内核直接读的 core skill 盖掉
         raise ValueError(L(f"已经有叫 {name} 的 skill 了", f"A skill named {name} already exists"))
     target.mkdir(parents=True)
     tmp = target / ".SKILL.md.tmp"
@@ -475,6 +504,10 @@ def context(days: int = CONTEXT_DAYS):
     ids = list(agent_names())
     lists = {a: allowlist(cfg, a) for a in ids}
     skills = [{**s, "agents": [a for a in ids if lists[a] is None or s["dir"] in lists[a]]} for s in installed_skills()]
+    if claw.is_builtin():  # 自己的内核：谁能用照 engine.skills.agents（没写名单 = 全部；名单写的是技能名，文件夹名也认）
+        from engine import agent_skills
+        own = {a: agent_skills.listed(a) for a in ids}
+        skills = [{**s, "agents": [a for a in ids if own[a] is None or s["name"] in own[a] or s["dir"] in own[a]]} for s in installed_skills()]
     with _lock, data.ddb() as conn:
         groups = conn.execute("SELECT id, name, purpose FROM groups ORDER BY position, created_at").fetchall()
     with _lock, pdb() as conn:

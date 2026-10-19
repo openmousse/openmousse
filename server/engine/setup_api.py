@@ -759,7 +759,7 @@ def models_layer() -> dict:
         found = settings.openclaw_json.exists()
         return {"status": "external" if found else "missing", "missing": [] if found else ["claw"],
                 "line": L("主对话的模型由 OpenClaw 管（openclaw.json）", "OpenClaw picks the main chat's model (openclaw.json)") if found else
-                L("这台电脑上没有 OpenClaw：重跑安装器选自带的内核（builtin），再按引导选模型",
+                L("这台电脑上没有 OpenClaw：重跑安装器选自带的内核（builtin），再选模型",
                   "OpenClaw isn't on this computer: rerun the installer, pick the built-in engine, then choose a model"),
                 "outsider": {k: models.route(k) for k in ("card", "doorman")}}
     if kind == "openai":

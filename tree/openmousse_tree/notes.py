@@ -358,7 +358,7 @@ def _walk(base: Path) -> tuple[list[tuple[str, int, int, int]], list[tuple[str, 
         here = Path(dirpath)
         keep = []
         for d in sorted(dirnames):
-            if d.startswith("."):
+            if d.startswith(".") or (here == base and d == C.MANUALS):  # 手册（manuals.py）不算记忆：整个文件夹不看
                 continue
             if (here / d).is_symlink():
                 issues.append(((here / d).relative_to(base).as_posix(), link))

@@ -1,6 +1,8 @@
 """工程看板（2026-10-15，「今天」页报告里一张卡 + 点进去的看板页）：工程的事不进待处理，手机上只看做了哪些、没做哪些、进度到哪。
 
-数据从 Claude Code 的交接本 todos.md 单向同步过来（只读：拍板、动手、改状态都在电脑上的 Claude Code 里），
+两种来源，都只读（拍板、动手、改状态都在电脑上的 Claude Code 里）：交接本 todos.md，或 GitHub 的看板（2026-10-19，见后面）。
+
+交接本：数据从 Claude Code 的交接本 todos.md 单向同步过来，
 记进 grava.db 的 eng_lines / eng_items：整节挪进 archive 以后，记过的「做完了」照样看得到。
 - 一条线 = todos.md 的一节（## 标题）。名字取标题里括号和冒号前面那段；主线（标题以「主线」开头）按节里的粗体小标题分格。
 - 一条事 = 一个勾选框（- [ ] / - [x]）。状态：[x] = 做完；没打勾、写着要你的（你 = server.json 的 user_name：等你、<名字> 定 / 选 / 看、
@@ -11,11 +13,30 @@
   上次同步时还没打勾的，不早于上次同步那天。「这周做完」= 周一以来做完的。
 - 什么时候同步：读看板或「今天」页时看文件的修改时间，变了才重读（不加定时器）。
 
+GitHub 看板（GitHub Projects）：一条线 = 看板上「线」字段的一个选项（照选项的顺序），一条事 = 看板上的一件（标题、Status、
+下一步、证据、更新）。起子进程跑 `gh api graphql`（用这台机器上 gh 登录的账号，令牌不经过这里），读一次管 GH_TTL_S 秒；
+读不了就用上一次读到的（重启以后用库里存的 eng_gh），error 里写明给的是几点的。Status 六格对上 app 认的几种：
+- 等你 → 等你。做完 → 做完：做完的日子 = 「更新」那天（没填用 GitHub 记的改动时间），「这周做完」= 周一以来的。
+- 在做、等上线、排队 → 没做（三个数里的「没做」）。等上线算在做（线的状态、看板的「在做」列），标题前加「等上线 · 」。
+- 以后 → 不算进「没做」的数，看板上单独一列，放在排队后面；一条线只剩以后的（和早于 7 天做完的），收进「更早的线」
+  （app 本来就折起来的那一段），状态写排队。以后是先放着、不在手上的，算进「没做」数就虚高；app 的看板列是服务器给几列画几列，
+  多一列不用改 app。
+- 线的状态：有在做 / 等上线的 = 在做，否则有等你的 = 等你，有排队 / 以后的 = 排队，全做完 = 做完；做完 / 总数把以后的也算上。
+  点开一条线，没做的那一组照 在做 → 等上线 → 排队 → 以后 排，标题前写着是哪一格。
+- 认不出的 Status（自己加的选项）、没填的，算排队；GitHub 新建看板默认的 Todo / In Progress / Done 也认。
+- 主线：看板上没有，可以另给一个 JSON 文件（mainline）：[{"name", "state", "note", "line"（可选）}]。每一步对上一条线
+  （按 line；不写就按名字，一头是另一头的开头也算），格子 = 那条线的每一件，做完的在前；对不上的一步只有一格（state 是做完才算做完）。
+  mainNote = 第一个 state 写着在做的那一步的 note。
+
 server.json：
   "today": {"engineering": {"todos": "交接本的路径", "archive": "归档文件的 glob（可选，整节挪走的也算进做完）"}}
-不写 = 没有工程看板（OpenMousse 默认）。
+  "today": {"engineering": {"source": "github", "owner": "看板的主人（GitHub 用户或组织）", "number": 看板编号,
+            "mainline": "主线 JSON 的路径（可选）", "gh": "gh 命令的路径（可选，默认在 PATH 里找）",
+            "fields": {"line": "线", "who": "谁做", "next": "下一步", "evidence": "证据", "updated": "更新", "status": "Status"}（字段名不一样才写）,
+            "statuses": {"看板上的选项": "wait / doing / ship / queue / later / done"}（选项名不一样才写）}}
+不写 = 没有工程看板（OpenMousse 默认）。写了 source = github 就不读 todos（todos 留着也行：删掉 source 就回到交接本）。
 
-GET /api/today/eng             看板页：三个数、主线分格、各条线、三列（没做 / 等你 / 这周做完）
+GET /api/today/eng             看板页：三个数、主线分格、各条线、几列（交接本：没做 / 等你 / 这周做完；GitHub：等你 / 在做 / 排队 / 以后 / 这周做完）
 GET /api/today/eng/line/{id}   点开一条线：没做的、等你的、做完的
 """
 from __future__ import annotations
@@ -24,9 +45,14 @@ import difflib
 import functools
 import glob
 import hashlib
+import json
+import os
 import re
+import shutil
 import sqlite3
+import subprocess
 import threading
+import time
 from dataclasses import dataclass, field
 from datetime import date, datetime, timedelta
 from pathlib import Path
@@ -75,15 +101,26 @@ _sync_lock = threading.Lock()
 # —— 配置 ——————————————————————————————————————————————————————————————
 
 def cfg() -> dict:
+    """配好了的 today.engineering（没配、少了要写的 = {}）。"""
     t = raw().get("today")
     c = t.get("engineering") if isinstance(t, dict) else None
-    return c if isinstance(c, dict) and c.get("todos") else {}
+    if not isinstance(c, dict):
+        return {}
+    if is_github(c):
+        return c if c.get("owner") and c.get("number") else {}
+    return c if c.get("todos") else {}
+
+
+def is_github(c: dict | None = None) -> bool:
+    """来源是 GitHub 看板（source = github）。"""
+    c = cfg() if c is None else c
+    return str(c.get("source") or "").strip().lower() == "github"
 
 
 def source_files() -> list[tuple[str, Path]]:
-    """[(kind, 路径)]：交接本在前（todos），归档的在后（archive）。"""
+    """[(kind, 路径)]：交接本在前（todos），归档的在后（archive）。来源是 GitHub 看板时没有文件。"""
     c = cfg()
-    if not c:
+    if not c or is_github(c):
         return []
     out = [("todos", Path(str(c["todos"])).expanduser())]
     pat = c.get("archive")
@@ -273,6 +310,7 @@ CREATE TABLE IF NOT EXISTS eng_items (id TEXT PRIMARY KEY, line TEXT NOT NULL, g
     state TEXT NOT NULL, done_at TEXT, pos INTEGER NOT NULL, first_seen TEXT NOT NULL, updated_at TEXT NOT NULL, gone_at TEXT);
 CREATE INDEX IF NOT EXISTS eng_items_line ON eng_items(line);
 CREATE TABLE IF NOT EXISTS eng_sync (file TEXT PRIMARY KEY, sig TEXT NOT NULL, synced_at TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS eng_gh (key TEXT PRIMARY KEY, data TEXT NOT NULL, fetched_at TEXT NOT NULL);
 """
 
 
@@ -587,9 +625,13 @@ def synced_label(synced: str | None, today: date) -> str:
 
 
 def report_card() -> tuple[dict | None, str | None]:
-    """「今天」报告里的工程看板卡（没配 = (None, None)）。"""
-    if not cfg():
+    """「今天」报告里的工程看板卡（没配 = (None, None)）。GitHub 看板读不了时给上一次读到的卡，再说一声。"""
+    c = cfg()
+    if not c:
         return None, None
+    if is_github(c):
+        s, err = board_gh(c, full=False)
+        return (eng_card(s) if s else None), err
     try:
         err = sync()
         if err:
@@ -597,9 +639,13 @@ def report_card() -> tuple[dict | None, str | None]:
         s = board(full=False)
     except (OSError, sqlite3.Error, ValueError) as e:
         return None, L(f"工程看板读不出来：{e}", f"Couldn't read the engineering board: {e}")[:200]
+    return eng_card(s), None
+
+
+def eng_card(s: dict) -> dict:
     return {"type": "eng", "id": "eng-board", "kind": "eng_board", "title": L("工程看板", "Engineering"), "time": s["syncedLabel"],
             "weekDone": s["weekDone"], "todo": s["todo"], "wait": s["wait"], "main": s["main"],
-            "body": "", "agent": None, "unseen": False, "cta": "", "data": None, "createdAt": s.get("syncedAt") or ""}, None
+            "body": "", "agent": None, "unseen": False, "cta": "", "data": None, "createdAt": s.get("syncedAt") or ""}
 
 
 def line_items(lid: str) -> dict:
@@ -623,19 +669,337 @@ def line_items(lid: str) -> dict:
             "done": [one(r) for r in done]}
 
 
+# —— GitHub 看板（source = github）—————————————————————————————————————————————
+
+GH_TTL_S = 300        # 「今天」页的卡：读一次 GitHub 管 5 分钟（每次打开「今天」都要这张卡）
+GH_PAGE_TTL_S = 60    # 点进看板页、下拉刷新：读过 1 分钟就重读
+GH_RETRY_S = 60       # 读失败以后 1 分钟里不再试，先给上一次的
+GH_TIMEOUT_S = 20
+GH_PAGES = 20         # 一页 100 件，最多读 20 页
+GH_FIELDS = {"status": "Status", "line": "线", "who": "谁做", "next": "下一步", "evidence": "证据", "updated": "更新"}
+# Status 的选项 → wait 等你 / doing 在做 / ship 等上线 / queue 排队 / later 以后 / done 做完（不分大小写；后三个是 GitHub 新建看板默认的）
+GH_STATUS = {"等你": "wait", "在做": "doing", "等上线": "ship", "排队": "queue", "以后": "later", "做完": "done",
+             "todo": "queue", "in progress": "doing", "done": "done"}
+GH_KEYS = ("doing", "ship", "wait", "queue", "later", "done")  # 一条线里、一列里怎么排
+GH_LABEL = {"wait": ("等你", "Waiting on you"), "doing": ("在做", "Doing"), "ship": ("等上线", "Ready to ship"), "queue": ("排队", "Queued"),
+            "later": ("以后", "Later"), "done": ("做完", "Done")}
+GH_QUERY = """query($owner: String!, $number: Int!, $lineField: String!, $after: String) {
+  repositoryOwner(login: $owner) { ... on ProjectV2Owner { projectV2(number: $number) {
+    title url
+    line: field(name: $lineField) { ... on ProjectV2SingleSelectField { options { name } } }
+    items(first: 100, after: $after) {
+      pageInfo { hasNextPage endCursor }
+      nodes { id isArchived updatedAt
+        content { ... on DraftIssue { title } ... on Issue { title url } ... on PullRequest { title url } }
+        fieldValues(first: 30) { nodes {
+          ... on ProjectV2ItemFieldSingleSelectValue { name field { ... on ProjectV2FieldCommon { name } } }
+          ... on ProjectV2ItemFieldTextValue { text field { ... on ProjectV2FieldCommon { name } } }
+          ... on ProjectV2ItemFieldDateValue { date field { ... on ProjectV2FieldCommon { name } } } } } } } } } } }"""
+
+_gh_lock = threading.Lock()
+_gh: dict[str, dict] = {}  # 看板 → {"board": 上一次读到的, "at": 那次的时候（clock）, "tried": 上次试的时候, "error": 上次没读成的原因}
+clock = time.monotonic     # 测试里换成假的钟
+
+
+class GhError(Exception):
+    """GitHub 看板没读成（一句给人看的原因）。"""
+
+
+def gh_names(c: dict) -> dict[str, str]:
+    """看板上的字段名（server.json 的 fields 盖过默认的中文名）。"""
+    f = c.get("fields")
+    mine = {k: str(v).strip() for k, v in f.items() if k in GH_FIELDS and str(v).strip()} if isinstance(f, dict) else {}
+    return {**GH_FIELDS, **mine}
+
+
+def gh_statuses(c: dict) -> dict[str, str]:
+    s = c.get("statuses")
+    mine = {str(k).strip().lower(): v for k, v in s.items() if v in GH_LABEL} if isinstance(s, dict) else {}
+    return {**{k.lower(): v for k, v in GH_STATUS.items()}, **mine}
+
+
+def run_gh(args: list[str]) -> str:
+    """跑一次 gh，给标准输出。没装、超时、出错都抛 GhError（gh 报错的第一行）。"""
+    env = {**os.environ, "GH_PROMPT_DISABLED": "1", "GH_NO_UPDATE_NOTIFIER": "1", "NO_COLOR": "1"}
+    try:
+        r = subprocess.run(args, capture_output=True, encoding="utf-8", errors="replace", timeout=GH_TIMEOUT_S, env=env, check=False)
+    except FileNotFoundError:
+        raise GhError(L("这台机器上没有 gh 命令", "The gh command isn't installed on this machine")) from None
+    except subprocess.TimeoutExpired:
+        raise GhError(L(f"gh {GH_TIMEOUT_S} 秒没回话", f"gh didn't answer within {GH_TIMEOUT_S}s")) from None
+    if r.returncode != 0:
+        first = next((x.strip() for x in (r.stderr or r.stdout or "").splitlines() if x.strip()), "")
+        raise GhError((first or f"gh exit {r.returncode}")[:200])
+    return r.stdout
+
+
+def gh_day(v) -> str:
+    """GitHub 记的时间（UTC 的 ISO）→ 按 server.json 时区的那天。"""
+    try:
+        return datetime.fromisoformat(str(v).replace("Z", "+00:00")).astimezone(TZ).date().isoformat() if v else ""
+    except ValueError:
+        return ""
+
+
+def gh_item(n, names: dict[str, str], statuses: dict[str, str]) -> dict | None:
+    """看板上的一件 → {id, title, url, status（看板上的字）, key, line, who, next, evidence, updated}。存档了的、读不到标题的不要。"""
+    if not isinstance(n, dict) or n.get("isArchived"):
+        return None
+    content = n.get("content") or {}
+    title = " ".join(str(content.get("title") or "").split())
+    if not title:
+        return None
+    vals: dict[str, str] = {}
+    for v in (n.get("fieldValues") or {}).get("nodes") or []:
+        name = ((v or {}).get("field") or {}).get("name")
+        val = (v or {}).get("name") or (v or {}).get("text") or (v or {}).get("date")
+        if name and val:
+            vals[name] = " ".join(str(val).split())
+    status = vals.get(names["status"], "")
+    return {"id": str(n.get("id") or ""), "title": title, "url": content.get("url") or None, "status": status,
+            "key": statuses.get(status.lower(), "queue"), "line": vals.get(names["line"], ""), "who": vals.get(names["who"], ""),
+            "next": vals.get(names["next"], ""), "evidence": vals.get(names["evidence"], ""),
+            "updated": vals.get(names["updated"], "") or gh_day(n.get("updatedAt"))}
+
+
+def gh_fetch(c: dict) -> dict:
+    """读一遍看板 → {"title", "url", "lineOrder": [「线」的选项], "items": [gh_item…]}。"""
+    names, statuses = gh_names(c), gh_statuses(c)
+    try:
+        number = int(c["number"])
+    except (TypeError, ValueError):
+        raise GhError(L(f"看板编号不对：{c.get('number')}", f"Bad board number: {c.get('number')}")) from None
+    owner = str(c["owner"]).strip()
+    base = [str(c.get("gh") or "").strip() or shutil.which("gh") or "gh", "api", "graphql", "-f", f"query={GH_QUERY}", "-f", f"owner={owner}",
+            "-F", f"number={number}", "-f", f"lineField={names['line']}"]
+    out: dict = {"title": "", "url": "", "lineOrder": [], "items": []}
+    after = None
+    for _ in range(GH_PAGES):
+        text = run_gh(base + (["-f", f"after={after}"] if after else []))
+        try:
+            p = json.loads(text)["data"]["repositoryOwner"]["projectV2"]
+        except (ValueError, KeyError, TypeError):
+            p = None
+        if not isinstance(p, dict):
+            raise GhError(L(f"找不到看板 {owner}/{number}", f"No board {owner}/{number}"))
+        out.update(title=p.get("title") or "", url=p.get("url") or "",
+                   lineOrder=[o["name"] for o in ((p.get("line") or {}).get("options") or []) if isinstance(o, dict) and o.get("name")])
+        out["items"] += [x for x in (gh_item(n, names, statuses) for n in (p.get("items") or {}).get("nodes") or []) if x]
+        page = (p.get("items") or {}).get("pageInfo") or {}
+        if not page.get("hasNextPage") or not page.get("endCursor"):
+            break
+        after = page["endCursor"]
+    return out
+
+
+def gh_saved(key: str) -> dict | None:
+    """库里存的上一次（服务重启以后 GitHub 又读不了时用）。"""
+    try:
+        with _lock, edb() as conn:
+            r = conn.execute("SELECT data FROM eng_gh WHERE key=?", (key,)).fetchone()
+        return json.loads(r["data"]) if r else None
+    except (sqlite3.Error, ValueError):
+        return None
+
+
+def gh_save(key: str, b: dict) -> None:
+    try:
+        with _lock, edb() as conn:
+            conn.execute("INSERT INTO eng_gh(key, data, fetched_at) VALUES(?,?,?) ON CONFLICT(key) DO UPDATE SET data=excluded.data, "
+                         "fetched_at=excluded.fetched_at", (key, json.dumps(b, ensure_ascii=False), b["fetchedAt"]))
+    except sqlite3.Error as e:
+        print(f"[engboard] GitHub 看板存不进库：{e}")
+
+
+def gh_board(c: dict, max_age: float = GH_TTL_S) -> tuple[dict | None, str | None]:
+    """(读到的看板, 出错原因)：max_age 秒内读过就给那次的；过了重读（同一时间只读一份，别的请求等它读完）；
+    读不了给上一次的（内存里没有就用库里的），原因里写给的是几点读的。一次都没读到过 = (None, 原因)。"""
+    key = f"{str(c['owner']).strip()}/{c['number']}"
+    with _gh_lock:
+        now = clock()
+        e = _gh.get(key) or {}
+        if e.get("board") is not None and not e.get("error") and now - e["at"] < max_age:
+            return e["board"], None
+        if e.get("error") and now - e["tried"] < GH_RETRY_S:
+            return e.get("board"), e["error"]
+        try:
+            b = gh_fetch(c)
+        except GhError as err:
+            prev = e.get("board") or gh_saved(key)
+            when = synced_label(prev.get("fetchedAt"), datetime.now(TZ).date()) if prev else ""
+            msg = (L(f"没能读 GitHub 看板：{err}", f"Couldn't read the GitHub board: {err}")
+                   + (L(f"（给的是 {when} 读到的）", f" (showing what was read at {when})") if when else ""))[:300]
+            _gh[key] = {"board": prev, "at": e.get("at", 0.0), "tried": now, "error": msg}
+            return prev, msg
+        b["fetchedAt"] = now_iso()
+        _gh[key] = {"board": b, "at": now, "tried": now, "error": None}
+    gh_save(key, b)
+    return b, None
+
+
+def gh_short(title: str) -> str:
+    """卡片上的标题：长了（36 个字以上）取冒号、分号前面那段（够 6 个字的话），还长就截到 42 个字。"""
+    t = title
+    if len(t) > 36:
+        head = re.split(r"[：:；;]", t, maxsplit=1)[0].strip()
+        if len(head) >= 6:
+            t = head
+    return t if len(t) <= 44 else t[:42] + "…"
+
+
+def md_day(iso: str) -> str:
+    """2026-10-19 → 10/19。"""
+    try:
+        d = date.fromisoformat(iso)
+    except ValueError:
+        return iso
+    return f"{d.month}/{d.day}"
+
+
+def gh_text(x: dict) -> str:
+    """点开一件看到的：标题全文、下一步、证据、链接，最后一行谁做 · 哪一格 · 更新。"""
+    meta = " · ".join(v for v in (x["who"], x["status"], L(f"更新 {md_day(x['updated'])}", f"updated {md_day(x['updated'])}") if x["updated"] else "") if v)
+    rows = (x["title"], L(f"下一步：{x['next']}", f"Next: {x['next']}") if x["next"] else "",
+            L(f"证据：{x['evidence']}", f"Evidence: {x['evidence']}") if x["evidence"] else "", x.get("url") or "", meta)
+    return "\n".join(v for v in rows if v)
+
+
+def gh_heading(rs: list[dict]) -> str:
+    """点开一条线时顶上那行：各格几件（在做 3 · 排队 6 · 以后 4 · 做完 5）。"""
+    return " · ".join(f"{L(*GH_LABEL[k])} {n}" for k in GH_KEYS if (n := sum(1 for x in rs if x["key"] == k)))
+
+
+def gh_view(b: dict, today: date) -> list[dict]:
+    """读到的看板 → 各条线（照「线」选项的顺序，没写线的在最后）：{id, name, items（照 GH_KEYS 排）, status, day, recent}。"""
+    order = {n: i for i, n in enumerate(b.get("lineOrder") or [])}
+    none = L("没分线", "No line")
+    groups: dict[str, list[dict]] = {}
+    for i, it in enumerate(b.get("items") or []):
+        name = it.get("line") or none
+        groups.setdefault(name, []).append({**it, "pos": i, "lineName": name, "state": {"wait": "wait", "done": "done"}.get(it["key"], "todo")})
+    recent_from = (today - timedelta(days=RECENT_DAYS)).isoformat()
+    out = []
+    for name in sorted(groups, key=lambda n: (n == none, order.get(n, len(order)), n)):
+        rs = sorted(groups[name], key=lambda x: (GH_KEYS.index(x["key"]), x["pos"]))
+        keys = {x["key"] for x in rs}
+        status = "doing" if keys & {"doing", "ship"} else "wait" if "wait" in keys else "queue" if keys & {"queue", "later"} else "done"
+        recent = bool(keys & {"doing", "ship", "wait", "queue"}) or any(x["key"] == "done" and x["updated"] >= recent_from for x in rs)
+        out.append({"id": line_id(name, set()), "name": name, "items": rs, "status": status,
+                    "day": max((x["updated"] for x in rs if x["updated"]), default=None), "recent": recent})
+    return out
+
+
+def gh_main(c: dict, lines: list[dict]) -> tuple[list[dict], str]:
+    """主线（server.json 的 mainline 指的 JSON）→ 看板页的分格和一句话。没配、读不了 = ([], "")。"""
+    p = str(c.get("mainline") or "").strip()
+    if not p:
+        return [], ""
+    try:
+        steps = json.loads(Path(p).expanduser().read_text(encoding="utf8"))
+    except (OSError, ValueError):
+        return [], ""
+    by = {x["name"]: x for x in lines}
+    out, note = [], ""
+    for s in steps if isinstance(steps, list) else []:
+        name = str(s.get("name") or "").strip() if isinstance(s, dict) else ""
+        if not name:
+            continue
+        ln = by.get(str(s.get("line") or "").strip()) or by.get(name) or max(
+            (x for x in lines if len(x["name"]) >= 2 and (name.startswith(x["name"]) or x["name"].startswith(name))), key=lambda x: len(x["name"]),
+            default=None)
+        state = str(s.get("state") or "").strip()
+        cells = sorted((x["key"] == "done" for x in ln["items"]), reverse=True) if ln else [state in ("做完", "done")]
+        out.append({"name": name, "done": sum(cells), "total": len(cells), "cells": cells})
+        if not note and state in ("在做", "doing") and str(s.get("note") or "").strip():
+            note = L(f"{name}：{str(s['note']).strip()}", f"{name}: {str(s['note']).strip()}")
+    return out, note
+
+
+EMPTY_BOARD = {"weekDone": 0, "todo": 0, "wait": 0, "main": [], "syncedAt": None, "syncedLabel": "", "mainNote": "", "mainCells": [],
+               "lines": [], "older": [], "columns": []}
+
+
+def board_gh(c: dict, full: bool = True, max_age: float = GH_TTL_S) -> tuple[dict | None, str | None]:
+    """GitHub 看板的看板页（和 board() 一样的样子）。(看板, 出错原因)；一次都没读到过 = (None, 原因)。"""
+    b, err = gh_board(c, max_age)
+    if b is None:
+        return None, err
+    today = datetime.now(TZ).date()
+    monday = week_start(today).isoformat()
+    lines = gh_view(b, today)
+    every = [x for ln in lines for x in ln["items"]]
+    by = {k: sorted((x for x in every if x["key"] == k), key=lambda x: x["pos"]) for k in GH_KEYS}
+    week = sorted((x for x in by["done"] if x["updated"] >= monday), key=lambda x: x["updated"], reverse=True)
+    main, note = gh_main(c, lines)
+    summary = {"weekDone": len(week), "todo": len(by["doing"]) + len(by["ship"]) + len(by["queue"]), "wait": len(by["wait"]),
+               "main": [{k: m[k] for k in ("name", "done", "total")} for m in main], "syncedAt": b.get("fetchedAt"),
+               "syncedLabel": synced_label(b.get("fetchedAt"), today)}
+    if not full:
+        return summary, err
+
+    def card(x: dict) -> dict:
+        title = gh_short(x["title"])
+        if x["key"] == "ship":  # 等上线的放在「在做」那列，标题前写明
+            title = f"{L(*GH_LABEL['ship'])} · {title}"
+        return {"id": x["id"], "title": title, "tags": [{"text": t, "tone": "neutral"} for t in (x["lineName"], x["who"]) if t],
+                "data": {"text": gh_text(x), "line": x["lineName"], "doneAt": x["updated"] if x["key"] == "done" else None}, "display": {}}
+
+    def column(key: str, color: int | None, rows: list[dict], label: str | None = None) -> dict:
+        return {"key": key, "id": key, "label": label or L(*GH_LABEL[key]), "count": len(rows), "color": color, "drop": False,
+                "cards": [card(x) for x in rows[:CARD_LIMIT]], "more": max(0, len(rows) - CARD_LIMIT)}
+
+    out_lines, older = [], []
+    for ln in lines:
+        rs = ln["items"]
+        one = {"id": ln["id"], "name": ln["name"], "heading": gh_heading(rs), "done": sum(1 for x in rs if x["key"] == "done"), "total": len(rs),
+               "status": ln["status"], "statusLabel": L(*STATUS_LABEL[ln["status"]]), "day": ln["day"], "archived": False}
+        (out_lines if ln["recent"] else older).append(one)
+    older.sort(key=lambda x: x["day"] or "", reverse=True)
+    return {**summary, "mainNote": note, "mainCells": main, "lines": out_lines, "older": older,
+            "columns": [column("wait", 1, by["wait"]), column("doing", 0, by["doing"] + by["ship"]), column("queue", None, by["queue"]),
+                        column("later", None, by["later"]), column("done", 0, week, L("这周做完", "Done this week"))]}, err
+
+
+def line_items_gh(c: dict, lid: str) -> dict:
+    """GitHub 看板点开一条线：没做的（在做 → 等上线 → 排队 → 以后，标题前写着是哪一格）、等你的、做完的（新的在前）。"""
+    b, _ = gh_board(c, GH_PAGE_TTL_S)
+    ln = next((x for x in gh_view(b, datetime.now(TZ).date()) if x["id"] == lid), None) if b else None
+    if ln is None:
+        raise HTTPException(404, L("没有这条线", "No such line"))
+
+    def one(x: dict) -> dict:
+        title = gh_short(x["title"])
+        if x["key"] in ("doing", "ship", "later"):
+            title = f"{L(*GH_LABEL[x['key']])} · {title}"
+        return {"id": x["id"], "title": title, "text": gh_text(x), "state": x["state"], "doneAt": x["updated"] if x["key"] == "done" else None,
+                "group": x["status"] or None}
+
+    rs = ln["items"]
+    done = sorted((x for x in rs if x["key"] == "done"), key=lambda x: x["updated"], reverse=True)
+    return {"id": ln["id"], "name": ln["name"], "heading": gh_heading(rs), "status": ln["status"], "statusLabel": L(*STATUS_LABEL[ln["status"]]),
+            "todo": [one(x) for x in rs if x["state"] == "todo"], "wait": [one(x) for x in rs if x["state"] == "wait"], "done": [one(x) for x in done]}
+
+
 @router.get("/api/today/eng/line/{lid}")
 def get_eng_line(lid: str):
     """看板页点开一条线：这条线里没做的、等你的、做完的。"""
-    if not cfg():
+    c = cfg()
+    if not c:
         raise HTTPException(404, L("没有配工程看板（server.json 的 today.engineering）", "No engineering board (today.engineering in server.json)"))
+    if is_github(c):
+        return {"ok": True, **line_items_gh(c, lid)}
     sync()  # 读不了就用库里上次同步的
     return {"ok": True, **line_items(lid)}
 
 
 @router.get("/api/today/eng")
 def get_eng():
-    """工程看板页（只读）：交接本改过就先重读。"""
-    if not cfg():
+    """工程看板页（只读）：交接本改过就先重读；GitHub 看板读过 1 分钟就重读。"""
+    c = cfg()
+    if not c:
         raise HTTPException(404, L("没有配工程看板（server.json 的 today.engineering）", "No engineering board (today.engineering in server.json)"))
+    if is_github(c):
+        b, err = board_gh(c, max_age=GH_PAGE_TTL_S)  # 读不了就给上一次读到的，error 里说是几点的
+        return {"ok": True, **(b or EMPTY_BOARD), "error": err}
     err = sync()  # 读不了就给库里上次同步的，error 里说一声
     return {"ok": True, **board(), "error": err}

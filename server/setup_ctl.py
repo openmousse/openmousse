@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""第一次打开的三步，在终端里走（内核第 9 步「通用的选择层」，2026-10-17）：没有 app、或者在服务器上更顺手的人也能配。和 app 里的引导
+"""第一次打开的三步，在终端里走（内核第 9 步「通用的选择层」，2026-10-17）：没有 app、或者在服务器上更顺手的人也能配。和 /api/setup
 是同一套：直接调 engine/setup_api.py 的那几个接口函数，写 server.json 之前一样先备份，密钥一样存进 secrets.env（0600），一样不回显。
 服务器不用开着，改完也不用重启（用到的地方每次现读）。
 
@@ -27,10 +27,12 @@ from collections.abc import Callable
 
 from i18n import L
 
+CMD = "~/.openmousse/venv/bin/python ~/.openmousse/repo/server/setup_ctl.py"  # 给人看的：在哪个目录都能跑的写法（安装器装的位置）
+
 
 def usage() -> str:
     return L(__doc__, """The first-run steps, in a terminal (step 9 of the built-in engine, "a general chooser"): for people without the app, or who'd
-rather do it on the server. It's the same as the guide in the app: it calls the same functions as engine/setup_api.py, backs up server.json
+rather do it on the server. It's the same as /api/setup: it calls the same functions (engine/setup_api.py), backs up server.json
 before writing, keeps keys in secrets.env (0600) and never prints them. The server needn't be running, and nothing needs a restart.
 
   python3 setup_ctl.py                       three steps: model → web search → memory (Enter = the default in brackets; Ctrl-C stops any time,
@@ -137,7 +139,8 @@ def show_error(e: Exception) -> None:
 def show_test(r: dict) -> bool:
     if r.get("ok"):
         n = r.get("count") or 0
-        say(L(f"✓ 通了（{r.get('ms', 0)} 毫秒）" + (f"，{n} 个型号" if n else ""), f"✓ Works ({r.get('ms', 0)} ms)" + (f", {n} models" if n else "")))
+        say(L(f"✓ 通了（{r.get('ms', 0)} 毫秒）" + (f"，{n} 个型号" if n else ""),
+              f"✓ Works ({r.get('ms', 0)} ms)" + (f", {n} model{'' if n == 1 else 's'}" if n else "")))
         return True
     say("✗ " + str((r.get("error") or {}).get("message") or L("不通", "It didn't work")))
     return False
@@ -214,7 +217,10 @@ def show_logins(rows: list[dict]) -> None:
             continue
         state = L("能用 ✓", "ready ✓") if r["ready"] else L("没连上", "not connected")
         say(f"{name_of(r)}: {state}")
-        if not r["ready"]:
+        if not r["ready"] and r["id"] == "chatgpt":  # 目录里的说法是给 app 的按钮写的；终端里走接口
+            say("  " + L("ChatGPT 套餐不在这里连：照 server/README.zh-CN.md 的「用你自己的 ChatGPT 套餐」，POST /api/engine/chatgpt/login 拿授权链接",
+                         "The ChatGPT plan isn't connected here: follow \"Your ChatGPT plan\" in server/README.md (POST /api/engine/chatgpt/login gives the sign-in link)"))
+        elif not r["ready"]:
             say("  " + str(r.get("how") or ""))
 
 
@@ -271,16 +277,20 @@ def choose_chat() -> None:
 def step_models() -> None:
     from engine import setup_api as sa
     print(L("1/3 选模型", "1/3 Choose a model"))
+    first = True
     while True:
         rows = call(sa.providers, True)
         on = [name_of(r) for r in rows if r.get("connected") or (r["kind"] == "login" and r.get("ready") and r["role"] == "chat")]
         say(L("已经连上的：", "Connected: ") + (L("、", ", ").join(on) if on else L("还没有", "none yet")))
         found = [name_of(r) for r in rows if r["kind"] == "local" and r["detected"]]
-        how = pick(L("怎么跑模型（回车 = 不再加了）", "How to run models (Enter = done adding)"), [
+        # 头一回、什么都没连：回车 = 云端；之后回车 = 不再加了（手里没有密钥、跳过了的人也走得出去，不用 Ctrl-C）
+        start = first and not on
+        first = False
+        how = pick(L("怎么跑模型" if start else "怎么跑模型（回车 = 不再加了）", "How to run models" if start else "How to run models (Enter = done adding)"), [
             ("cloud", L("云端：填一家的 API 密钥", "Cloud: an API key from a provider")),
             ("local", L("这台电脑上跑的（Ollama、LM Studio……）", "On this computer (Ollama, LM Studio…)") + (L(f"：探到 {'、'.join(found)}", f": found {', '.join(found)}") if found else "")),
             ("login", L("复用已经登录的 Claude Code / ChatGPT", "Reuse Claude Code / ChatGPT you're signed in to")),
-            ("custom", L("自己填一个 OpenAI 兼容的地址", "Your own OpenAI-compatible address"))], "" if on else "cloud")
+            ("custom", L("自己填一个 OpenAI 兼容的地址", "Your own OpenAI-compatible address"))], "cloud" if start else "")
         if not how:
             break
         if how == "cloud":
@@ -401,16 +411,16 @@ def show_status() -> bool:
     for k, layer in o["layers"].items():
         print(f"  {mark.get(layer.get('status'), '?')} {names.get(k, k)}: {layer.get('line')}")
     if o["noModel"]:
-        print(L("  还没有能用的模型：python3 setup_ctl.py（三步引导），或者打开 app 按引导选",
-                "  No usable model yet: python3 setup_ctl.py (the three steps), or open the app and follow the guide"))
+        print(L(f"  还没有能用的模型：{CMD}（三步：模型 → 搜网页 → 记忆）",
+                f"  No usable model yet: {CMD} (three steps: model → web search → memory)"))
     return bool(o["noModel"])
 
 
 def wizard() -> int:
     if not interactive():
         show_status()
-        print(L("（没有终端，不问了：在 app 里按引导配，或者在服务器上跑 python3 setup_ctl.py）",
-                "(No terminal, so no questions: follow the guide in the app, or run python3 setup_ctl.py on the server)"))
+        print(L(f"（没有终端，不问了：在服务器的终端里跑 {CMD}，或者用 add / use 这些子命令，见 --help）",
+                f"(No terminal, so no questions: run {CMD} in a terminal on the server, or use subcommands such as add and use, see --help)"))
         return 0
     print(L("三步：选模型、搜网页、记忆。回车 = 方括号里的默认；Ctrl-C 随时停，做完的那几步已经存好了。",
             "Three steps: model, web search, memory. Enter = the default in brackets; Ctrl-C stops any time, finished steps are already saved."))

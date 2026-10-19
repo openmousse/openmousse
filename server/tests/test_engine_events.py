@@ -470,7 +470,7 @@ def test_normal_restart_cancelled_turn_gets_its_reply_once(server_json, fake, br
 
     async def go():
         r = chat.start_run("t-shutdown", "what's on", None)
-        await until(lambda: running_step(r))
+        await until(lambda: running_step(r) and bridge.calls)  # 同上：等命令真的开始跑
         r.stream_task.cancel()
         await asyncio.sleep(0.1)
         return r
@@ -677,7 +677,7 @@ def test_shutdown_stops_engine_turns_and_keeps_the_queue(server_json, fake, brid
 
     async def go():
         r = chat.start_run("t-down", "what's on", None)
-        await until(lambda: running_step(r))
+        await until(lambda: running_step(r) and bridge.calls)  # 同上：等命令真的开始跑
         q = chat.enqueue("t-down", "and then this", [], None)  # 排着的：关服务时不发
         t0 = time.monotonic()
         assert chat.stop_engine_runs() == 1

@@ -92,6 +92,9 @@ class Run:
     watchdog: bool = False  # builtin：是定时任务的看门狗停的（engine/unattended.in_chat 一直没动静），不是用户点的停：会话里不补「用户停了」
     turn: str | None = None  # builtin：内核记的这一轮（engine_turns.id）和它的用量：定时任务 chat 模式的运行记录带上（engine/jobs.py）
     usage: dict | None = None
+    used: dict | None = None  # builtin：这一轮用了哪几样手册、技能、叶子（13c，engine/used.py 的 summary）：回完存进回复那一行，done 带上
+    relay_hops: int = 0  # builtin 的转交（origin relay，第 1 批 b）：这一轮是第几跳、这一串里在等回答的 Agent（engine/sessions.py 的 Hop）
+    relay_chain: tuple = ()
 
     def publish(self, item: tuple[str, dict]) -> None:
         for q in list(self.queues):
@@ -235,6 +238,8 @@ def db() -> sqlite3.Connection:
         conn.execute("ALTER TABLE messages ADD COLUMN reply_to INTEGER")  # 长按「引用」着发的：引的是哪条消息（app 在气泡上面显示原话）
     if "forward" not in cols:
         conn.execute("ALTER TABLE messages ADD COLUMN forward TEXT")  # 合并转发给这个 Agent 的：转发卡（forward.py 的 forward_card，JSON）
+    if "used" not in cols:
+        conn.execute("ALTER TABLE messages ADD COLUMN used TEXT")  # 13c：这条回复那一轮用了哪几样手册、技能、叶子（engine/used.py 的 summary，JSON）
     conn.execute("""CREATE TABLE IF NOT EXISTS activity_log (
         id INTEGER PRIMARY KEY AUTOINCREMENT, ts TEXT NOT NULL, actor TEXT NOT NULL, text TEXT NOT NULL, kind TEXT NOT NULL)""")
     return conn
@@ -303,7 +308,21 @@ def row_to_msg(r: sqlite3.Row) -> dict:
             out["forward"] = json.loads(fwd)
         except ValueError:
             pass
+    if "used" in keys and r["used"]:
+        out["used"] = used_payload(r["used"])
     return out
+
+
+def used_payload(raw) -> dict | None:
+    """13c：回复那一轮用了哪几样（engine/used.py 的 summary）+ 卡片底下那一行（按这次请求的语言拼，engine/used.line）。"""
+    try:
+        u = json.loads(raw) if isinstance(raw, str) else raw
+        if not isinstance(u, dict):
+            return None
+        from engine import used as engine_used  # 延迟导入：只在有记号时
+        return engine_used.with_line(u)
+    except Exception:  # noqa: BLE001 — 记号坏了只是少画一行
+        return None
 
 
 def with_quote(m: dict, ref: sqlite3.Row | None) -> dict:
@@ -581,6 +600,11 @@ async def engine_stream(run: Run, content: str | list) -> None:
                 conn.execute(f"UPDATE messages SET status='queued' WHERE id IN ({','.join('?' * len(ids))})", ids)
         close_steps(run)
     run.turn, run.usage = res.turn, dict(res.usage or {})
+    try:  # 13c：这一轮用了哪几样（记号在事件流里，engine/used.py）：回完存进回复那一行，done 带上
+        from engine import used as engine_used
+        run.used = engine_used.summary(res.turn)
+    except Exception:  # noqa: BLE001 — 记号读不出来只是少画一行
+        run.used = None
     if res.models and res.model and res.model != res.models[0]:  # 备用链换过模型（Result.models 按先后）：res.model 是出了回复的那个
         run.served = res.model
     if res.status == "aborted":
@@ -900,8 +924,9 @@ async def run_gateway(run: Run, text: str | list | None, token: str) -> None:
         run.model = await actual_model(run.key or session_key(run.thread)) or run.served or run.model
     run.finished = now_iso()
     with _lock, db() as conn:
-        cur = conn.execute("INSERT INTO messages(thread, role, text, model, requested, ts, status, origin) VALUES(?,?,?,?,?,?,?,?)",
-                           (run.thread, "grava", run.text, run.model, run.requested, run.finished, run.status, run.origin))
+        cur = conn.execute("INSERT INTO messages(thread, role, text, model, requested, ts, status, origin, used) VALUES(?,?,?,?,?,?,?,?,?)",
+                           (run.thread, "grava", run.text, run.model, run.requested, run.finished, run.status, run.origin,
+                            json.dumps(run.used, ensure_ascii=False) if run.used else None))
         run.reply_id = cur.lastrowid
     if run.digest and run.status == "ok" and run.text.strip():
         save_digest(run.thread, day_of(run.started), run.text)
@@ -934,8 +959,11 @@ async def run_gateway(run: Run, text: str | list | None, token: str) -> None:
 
 def done_payload(run: Run) -> dict:
     fallback = run.requested if run.requested and run.requested != run.model else None
-    return {"id": f"db{run.reply_id}", "text": run.text, "modelId": run.model, "fallbackFrom": fallback, "time": hhmm(run.finished or now_iso()),
-            "status": run.status, "error": run.error, "seconds": round(time.time() - run.t0, 1)}
+    out = {"id": f"db{run.reply_id}", "text": run.text, "modelId": run.model, "fallbackFrom": fallback, "time": hhmm(run.finished or now_iso()),
+           "status": run.status, "error": run.error, "seconds": round(time.time() - run.t0, 1)}
+    if run.used:  # 13c：「按『写文书』手册 · 用了 2 片叶子 ›」那一行要的（老 app 不认这个键，跳过）
+        out["used"] = used_payload(run.used)
+    return out
 
 
 PROVIDER_ALIAS = {"openai-codex": "openai"}
@@ -1007,11 +1035,12 @@ def feed_mark() -> int:
 
 
 def start_run(thread: str, text: str, model: str | None, key: str | None = None, attachment_ids: list[str] | None = None, origin: str = "user",
-              context: str | None = None, level: str | None = None) -> Run:
+              context: str | None = None, level: str | None = None, say: str | None = None) -> Run:
     """记下用户这一条，在后台开跑。thread 决定记录存在哪；key 不给就按 thread 推 session key。
     有附件时：图片随消息给模型，文档 / 音频抽出的文字拼进消息，其它只给路径（见 files.py）。
     context：只给模型看的前情（学习台的课件全文之类），拼在消息前面；对话记录里只显示 text。
-    level：回完推送的档位（ring / quiet / none），不给按 origin 定：user 响铃、relay 不推、auto 静默（见 push.run_level）。"""
+    level：回完推送的档位（ring / quiet / none），不给按 origin 定：user 响铃、relay 不推、auto 静默（见 push.run_level）。
+    say：给模型的这一句换成它（对话记录里还是 text）：builtin 的转交标成别的会话转来（engine/sessions.relayed，第 1 批 b）。"""
     if (cur := RUNS.get(thread)) and not cur.done:
         raise HTTPException(409, L("上一条还没回完，等它结束或先接回去看。", "The last reply isn't finished yet. Wait for it, or reconnect to see it."))
     if thread.startswith("grp-"):  # 会议的线程：成员各有各的会话，走 /api/meetings（meetings.py），不在这里发给主对话的 agent
@@ -1020,7 +1049,7 @@ def start_run(thread: str, text: str, model: str | None, key: str | None = None,
     import files as files_mod  # 延迟导入：files.py 依赖本模块
     rows = files_mod.load_pending(thread, attachment_ids or [])
     role = "auto" if origin in ("auto", "relay") else "user"
-    content, gw_text = files_mod.build_content(text, rows)
+    content, gw_text = files_mod.build_content(text if say is None else say, rows)
     if daily := daily_context(thread):
         context = f"{daily}\n\n{context}" if context else daily
     if context:
@@ -1029,7 +1058,7 @@ def start_run(thread: str, text: str, model: str | None, key: str | None = None,
         model = model or thread_model(conn, thread)
         ts = now_iso()
         user_id = conn.execute("INSERT INTO messages(thread, role, text, model, ts, gw_text) VALUES(?,?,?,?,?,?)",
-                               (thread, role, text, None, ts, gw_text if rows or context else None)).lastrowid
+                               (thread, role, text, None, ts, gw_text if rows or context or say is not None else None)).lastrowid
         conn.execute("INSERT INTO threads(id, model, updated_at) VALUES(?,?,?) ON CONFLICT(id) DO UPDATE SET updated_at=excluded.updated_at",
                      (thread, model, ts))
     if rows:
@@ -1676,6 +1705,8 @@ class RelayBody(BaseModel):
     thread: str
     text: str
     timeout: int = 150
+    source: str | None = None  # 第 1 批 b：builtin 的内核工具转的，从哪个对话（ask_agent.py 照 MOUSSE_FROM 带来）、谁转的
+    by: str | None = None
 
 
 RELAY_WAIT_S = 15 * 60          # 转交排队最多等多久（和收件箱 start_when_free 一样）
@@ -1687,12 +1718,37 @@ def relay_slot_free(thread: str) -> bool:
     return not busy(thread) and not QUEUED.get(thread)
 
 
-async def relay_when_free(thread: str, text: str, deadline: float) -> Run | None:
+def relay_plan(body: RelayBody, text: str) -> dict | None:
+    """builtin 的内核工具转的（带 source，第 1 批 b，engine/sessions.py）：谁转的、第几跳、给对方模型的那句话（标成别的会话转来）、
+    转交卡记从哪转来。转不了（跳数用完、转回这一串里在等回答的、转给自己）→ 400，一句为什么。不带 source（OpenClaw 那条路）→ None，照旧。"""
+    if not body.source or not claw.is_builtin():
+        return None
+    import bridges
+    from engine import owner as engine_owner  # 延迟导入：内核只在 builtin 时用
+    from engine import sessions as engine_sessions
+    by = body.by if body.by and (body.by == "main" or bridges.known_agent(body.by)) else engine_owner.agent_of(body.source)
+    hop = engine_sessions.hop_of(body.source, by)
+    if why := engine_sessions.refused(hop, by, body.thread):
+        raise HTTPException(400, why)
+    src = RUNS.get(body.source)  # 转出去的那一轮是 app 里的对话就记它；对外接口、定时任务这些记那个 Agent 自己的对话
+    return {"say": engine_sessions.relayed(text, by=by, source=body.source, hop=hop), "hop": hop,
+            "from": body.source if src is not None and not src.done else by}
+
+
+def relay_start(thread: str, text: str, plan: dict | None = None) -> Run:
+    """转交开跑：对话记录里是【主对话转来】＋原话（app 认这个开头）。plan（relay_plan）：给模型的是标好的那句，这一轮记下第几跳、这一串里有谁。"""
+    run = start_run(thread, PREFIX_RELAY + text, None, origin="relay", level="none", say=(plan or {}).get("say"))
+    if plan:
+        run.relay_hops, run.relay_chain = plan["hop"].hops, plan["hop"].chain
+    return run
+
+
+async def relay_when_free(thread: str, text: str, deadline: float, plan: dict | None = None) -> Run | None:
     """排队：每秒看一次那个 Agent 空下来没有，空了就转进去。到 deadline 还没轮到回 None。"""
     while time.time() < deadline:
         if relay_slot_free(thread):
             try:
-                return start_run(thread, PREFIX_RELAY + text, None, origin="relay", level="none")
+                return relay_start(thread, text, plan)
             except HTTPException as e:
                 if e.status_code != 409:  # 409 = 被别的抢先了，接着等
                     raise
@@ -1703,11 +1759,11 @@ async def relay_when_free(thread: str, text: str, deadline: float) -> Run | None
 _relay_tasks: set[asyncio.Task] = set()
 
 
-async def relay_later(thread: str, text: str, hid: str | None, until: float) -> None:
+async def relay_later(thread: str, text: str, hid: str | None, until: float, plan: dict | None = None) -> None:
     """relay 等到 timeout 还没轮到：后台接着排，最多到 until；转进去以后回答照样进它的对话，卡跟着更新（on_run_end）。"""
     import cards as cards_mod
     try:
-        run = await relay_when_free(thread, text, until)
+        run = await relay_when_free(thread, text, until, plan)
         if run:
             cards_mod.handoff_begin(hid, run)
         else:
@@ -1725,38 +1781,41 @@ async def relay(body: RelayBody):
     不推送（用户在主对话里等着）。超时 → 200 但 status=timeout，回复仍会在后台完成并入库。
     那个 Agent 正在回复（2026-10-05 起不再 409）：排进它的队列，空下来就转进去，整个过程都算在 timeout 里；到时还没轮到 →
     200、status=queued，后台接着排（最多 15 分钟），回答进它的对话。
-    同时记一张转交卡（cards.py）：发起转交的那次回复当场出「正在问 …」（排队时是「排队中」），答完变成「转给了 …」，挂在那条回复下面。"""
+    同时记一张转交卡（cards.py）：发起转交的那次回复当场出「正在问 …」（排队时是「排队中」），答完变成「转给了 …」，挂在那条回复下面。
+    builtin 的内核工具转的（带 source / by，第 1 批 b）：Agent 也能转，从哪转来照它记，给对方模型的那句标成别的会话转来，跳数和圈见 relay_plan。"""
     text = body.text.strip()
     if not text:
         raise HTTPException(400, L("空消息", "Empty message"))
     import cards as cards_mod  # 延迟导入：cards.py 依赖本模块
+    plan = relay_plan(body, text)
+    src = plan["from"] if plan else None
     t0 = time.time()
     deadline = t0 + min(max(body.timeout, 10), 600)
     run: Run | None = None
     if relay_slot_free(body.thread):
         try:
-            run = start_run(body.thread, PREFIX_RELAY + text, None, origin="relay", level="none")
+            run = relay_start(body.thread, text, plan)
         except HTTPException as e:
             if e.status_code != 409:
                 raise
     if run is None:  # 那个 Agent 正忙：排队
-        hid = cards_mod.handoff_start(body.thread, text, None, status="queued")
+        hid = cards_mod.handoff_start(body.thread, text, None, status="queued", source=src)
         RELAY_WAITING[body.thread] = RELAY_WAITING.get(body.thread, 0) + 1
         try:
-            run = await relay_when_free(body.thread, text, deadline)
+            run = await relay_when_free(body.thread, text, deadline, plan)
         except BaseException:
             RELAY_WAITING[body.thread] = max(0, RELAY_WAITING.get(body.thread, 1) - 1)
             cards_mod.handoff_dropped(hid, L("未转交", "Not handed over"))
             raise
         if run is None:
-            task = asyncio.create_task(relay_later(body.thread, text, hid, t0 + RELAY_WAIT_S))
+            task = asyncio.create_task(relay_later(body.thread, text, hid, t0 + RELAY_WAIT_S, plan))
             _relay_tasks.add(task)
             task.add_done_callback(_relay_tasks.discard)
             return {"ok": False, "status": "queued", "thread": body.thread, "seconds": round(time.time() - t0, 1)}
         RELAY_WAITING[body.thread] = max(0, RELAY_WAITING.get(body.thread, 1) - 1)
         cards_mod.handoff_begin(hid, run)
     else:
-        cards_mod.handoff_start(body.thread, text, run)
+        cards_mod.handoff_start(body.thread, text, run, source=src)
     while not run.done and time.time() < deadline:
         await asyncio.sleep(0.5)
     if not run.done:

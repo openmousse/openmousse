@@ -30,15 +30,19 @@ server.json 的 engine 段（不写这一段 = 内核不接管任何事，全部
                                                某件事不想换到别家，就把它写成只有一个模型的列表。主人回合用 Claude Code（claude-code/…）
                                                时它跑不了（登录掉了、命令坏了、套餐额度用完）也换（engine/claude_brain.py），只换到不是
                                                套餐的；它自己的链写成 "model": ["claude-code/opus", "deepseek/deepseek-flash"]
-    "use": {"card": true, "doorman": "moonshot/kimi-k3", "json": false, "background": "deepseek/deepseek-flash", "writing": "google/gemini-4-argon"},
+    "use": {"card": true, "doorman": "moonshot/kimi-k3", "json": false, "background": "deepseek/deepseek-flash", "writing": "google/gemini-4-argon",
+            "compact": "claude-code/sonnet"},
                                                哪些事改走内核：true = 用默认模型，写模型 = 用它；不写 / false = 照旧（llm-task 等）
                                                card = 名片 Agent（含 A2A）；doorman = Doorman 复查（名片回复 + 代办出网）；json = llmjson.ask；
                                                background（第 9 步）= 定时任务、心跳、后台任务没自己写模型时用的（不写 = 跟对话的模型）；
-                                               writing（10/19）= 写作：长文、文书（写文书的技能以后接，现在只有路由和设置）；能配成用户自己的套餐，
-                                               照 may_spend：route("writing", kind=…, origin=…) 认这一轮能花才回套餐，不认的换成 outside() 挑的；
-                                               不写 = 跟这一轮自己的模型；
+                                               writing（10/19）= 写作：长文、文书（写文书的技能以后接，现在只有路由和设置）；不写 = 跟这一轮
+                                               自己的模型；compact（10/19）= 压缩的摘要（engine/compact.py；不写 = 这一轮自己的模型）。
+                                               writing、json、compact（PLAN_PURPOSES）能配成用户自己的套餐，照 may_spend：route(…, kind=…,
+                                               origin=…) 认这一轮能花才回套餐，不认的（不报 = 当外人）换成 outside() 挑的。claude-code/… 交给
+                                               他自己登录的 Claude Code 一次性地跑（engine/claude_brain.ask：零工具、不存会话）；
                                                写成列表 ["anthropic/claude-sonnet-5-5", "moonshot/kimi-k3"] = 第一个是主模型、后面是它自己的链
-                                               （盖过默认链；只写一个 = 这件事不换模型）。赛博自己的 model 也能写成列表（engine/cyber.py）
+                                               （盖过默认链；只写一个 = 这件事不换模型；["claude-code/sonnet", "deepseek/deepseek-flash"] = 套餐
+                                               跑不了、这一轮不能花套餐时用后面的）。赛博自己的 model 也能写成列表（engine/cyber.py）
     "fallback": true,                          内核这条路出错时退回原来的路（默认 true；false = 不退，直接报错）。外人回合的一次性 JSON
                                                先走完备用链，链走完了才退回原来的路（llmjson、名片 Agent、Doorman）
     "effort": "low",                           外人回合的思考档位（low / medium / high；只给支持的模型）
@@ -67,11 +71,17 @@ server.json 的 engine 段（不写这一段 = 内核不接管任何事，全部
                                                这一轮提醒一句可以存（不多调模型）；review = true（或者写一个模型）在后台多一次便宜的调用，
                                                读那一轮决定要不要存，默认关。agents = 每个 Agent 能用哪些技能（技能名的列表；没写的 Agent
                                                看全部，说明在 engine/agent_skills.py 开头）
+    "manuals": {"max": 2, "min_score": 0.45, "catalog": "names", "rewrite": false, "max_chars": 8000, "stale_days": 14, "unused_days": 30}
+                                               手册和技能按这句话搜（13c，说明在 engine/manuals.py 开头）：每轮开头只带命中的正文（最多 max 份、
+                                               分够 min_score）；catalog = 会话开头的技能目录 names（只留名字，默认）/ none / full（以前带说明的）；
+                                               rewrite = true（或者写一个模型）先让模型改写成几种说法再搜，默认关，从不花套餐；
+                                               stale_days 天没用的技能标旧，unused_days 天没用上的进每周修剪卡；false = 关掉，一切照以前
     "claude_code": {"models": ["claude-code/opus", "claude-code/sonnet", "claude-code/haiku"], "effort": "medium",
-                    "fallback_model": "sonnet", "idle": 600, "builtin_tools": [], "max_concurrent": 2}
+                    "fallback_model": "sonnet", "idle": 600, "builtin_tools": [], "max_concurrent": 2, "max_oneshot": 1}
                                                主人回合交给这台电脑上用户自己登录的官方 Claude Code 跑（第 11 项，说明在 engine/claude_brain.py
                                                开头）：models = app 里多出来的那几个（查到登录了才出现）；max_concurrent = 同时最多跑几个
-                                               （一个 claude 进程约 0.3 GB，多出来的排队，默认 2）；false = 关掉
+                                               （一个 claude 进程约 0.3 GB，多出来的排队，默认 2）；max_oneshot = 其中一次性调用最多占几个
+                                               （默认比 max_concurrent 少一个、至少 1：总留一个给整轮对话）；false = 关掉
     "chatgpt": {"models": ["chatgpt/gpt-6.1-sol"], "headers": {…}}
                                                用户自己的 ChatGPT 套餐（第 11b 项，说明在 engine/chatgpt_plan.py 开头）：models = app 里列哪几个
                                                （不写用这个账号的模型目录；连上了、开了用套餐才出现）；false = 关掉
@@ -81,6 +91,8 @@ server.json 的 engine 段（不写这一段 = 内核不接管任何事，全部
 用户自己的套餐（第 11 项）：claude-code/<型号>（opus / sonnet / haiku 或完整 id，交给 --model）不经我们的接口，一轮交给本机用户自己登录的
 Claude Code 跑（engine/claude_brain.py），花的是他自己的套餐。subscription(ref) 认它；只有主人回合能用（may_spend）：赛博、外人回合、
 对外接口（OpenAI 兼容接口、ACP：外面的程序不算用户本人）一律换成 outside() 挑的非套餐模型，挑不到就照调用方自己的退路。
+10/19 起主人自己的一次性调用也能用（claude_brain.ask）：一问一答（owner.stream：Zen「想完了」、会议）、llmjson.ask（会议纪要、播客、
+学习页……）、主人回合的压缩摘要。调用方报上来路（kind / origin），may_spend 认了才花；不报的当外人。
 valid_ref 对它回 False（我们的接口跑不了），所以没专门处理的地方默认就碰不到它；loop.run_turn 再挡一道。
 第 11b 项：chatgpt/<型号>（型号是这个账号模型目录里的 slug）= 用户自己的 ChatGPT 套餐（engine/chatgpt_plan.py 拿令牌，
 provider_responses.py 调公开的 Responses API）。也是套餐：subscription() 回 "chatgpt"，valid_ref 同样回 False（不进备用链、outside()、
@@ -225,30 +237,40 @@ def models() -> list[str]:
     return ms + [m for m in subscription_models() if m not in ms]
 
 
-PLAN_PURPOSES = frozenset({"writing"})  # 能配成用户自己套餐的那几件事（route 照 may_spend 放不放）
+# 能配成用户自己套餐的那几件事（route 照 may_spend 放不放）：writing 写作；json 一次性 JSON（llmjson.ask、/api/engine/oneshot）；
+# compact 压缩的摘要（engine/compact.py）。10/19 起后两样也能：主人自己的一问一答、主人回合的压缩交给他自己登录的 Claude Code
+PLAN_PURPOSES = frozenset({"writing", "json", "compact"})
 
 
 def route(purpose: str, override: str | None = None, *, kind: str = "outsider", origin: str | None = None,
           via: str | None = None) -> str | None:
-    """这件事（card / doorman / json / writing）走不走内核：走就回模型引用，不走回 None。override = 调用方自己指定的模型（合法才用）。
-    card / doorman / json 都是外人回合，不花用户的套餐：配成 claude-code/…（或者默认模型就是它）的换成 outside() 挑的，挑不到就不走内核。
-    writing（写作）能配成套餐：调用方报上这一轮的 kind / origin / via，may_spend 认的才回套餐，不认的（不报 = 当外人回合）一样换成
-    outside() 挑的。写成列表的：回第一个（主模型），后面的链由 purpose_chain 给。"""
+    """这件事（card / doorman / json / writing / compact）走不走内核：走就回模型引用，不走回 None。override = 调用方自己指定的模型
+    （合法才用；PLAN_PURPOSES 的这一轮能花时，套餐也认）。card / doorman 是外人回合，不花用户的套餐：配成 claude-code/…（或者默认模型
+    就是它）的换成 outside() 挑的，挑不到就不走内核。PLAN_PURPOSES 那几件能配成套餐：调用方报上这一轮的 kind / origin / via，may_spend
+    认的才回套餐，不认的（不报 = 当外人回合）一样换成 outside() 挑的。写成列表的：回第一个（主模型），后面的链由 purpose_chain 给；
+    套餐打头的列表这一轮不能花，就回它后面第一个按量的。"""
     use = cfg().get("use")
     v = use.get(purpose) if isinstance(use, dict) else None
     if v is None or v is False:
         return None
-    if override and valid_ref(override):
+    plan = purpose in PLAN_PURPOSES
+
+    def spend(ref: str) -> bool:
+        return plan and may_spend(ref, kind=kind, origin=origin, via=via)
+
+    if override and (valid_ref(override) or subscription(override) and spend(override)):
         return canonical(override)
     if isinstance(v, list):
-        c = chain_of(v)
-        return c[0] if c else None
+        head, c = _first(v), chain_of(v)
+        if subscription(head) and spend(head):
+            return head
+        return c[0] if c else outside() if plan and subscription(head) else None
     if isinstance(v, str) and valid_ref(v):
         return canonical(v)
     d = default_model()
     want = canonical(v) if isinstance(v, str) else d if v is True else ""
     if subscription(want):
-        return want if purpose in PLAN_PURPOSES and may_spend(want, kind=kind, origin=origin, via=via) else outside()
+        return want if spend(want) else outside()
     return d if v is True and valid_ref(d) else None
 
 
@@ -270,10 +292,16 @@ def fallbacks() -> list[str]:
 
 
 def purpose_chain(purpose: str, primary: str) -> list[str] | None:
-    """engine.use.<这件事> 写成列表、第一个就是 primary → 它后面那几个（它自己的链，可以是空的 = 不换）；否则 None（用默认的）。"""
+    """engine.use.<这件事> 写成列表、第一个就是 primary → 它后面那几个（它自己的链，可以是空的 = 不换）；否则 None（用默认的）。
+    套餐打头的（["claude-code/sonnet", "deepseek/deepseek-flash"]）：chain_of 去掉了套餐，剩下的按量的就是它的链。"""
     use = cfg().get("use")
-    c = chain_of(use.get(purpose) if isinstance(use, dict) else None)
-    return c[1:] if c and c[0] == primary else None
+    v = use.get(purpose) if isinstance(use, dict) else None
+    c = chain_of(v)
+    if c and c[0] == primary:
+        return c[1:]
+    if isinstance(v, list) and subscription(primary) and _first(v) == primary:
+        return c
+    return None
 
 
 def own_chain(ref: str) -> list[str] | None:
@@ -353,7 +381,7 @@ def may_spend(ref: str | None, *, kind: str, origin: str | None, via: str | None
 
 
 def outside(ref: str | None = None) -> str | None:
-    """不能花套餐的那些（赛博、外人回合、对外接口、一问一答）用哪个模型：ref 是我们的接口能跑的就用它；否则（是套餐的、没给的）
+    """不能花套餐的那些（赛博、外人回合、对外接口、不是主人自己引出来的一问一答）用哪个模型：ref 是我们的接口能跑的就用它；否则（是套餐的、没给的）
     用默认模型，默认的也是套餐就挑 engine.models 里第一个能跑的；都没有 → None（调用方照自己的退路：llm-task、不做……）。"""
     if ref and valid_ref(ref):
         return ref

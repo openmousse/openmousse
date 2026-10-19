@@ -92,6 +92,8 @@ mousse-tree urls     # 打印各平台的接入地址（含秘密令牌，只在
 | `remember(text, kind, tags, observed_at, supersedes, branch, quote, conversation, cues)` | 写一条；kind = fact / preference / decision / event；branch 可不填（见下面）；quote、conversation、cues 也可不填（见下面） |
 | `recent(days)` | 最近几天各平台写了什么 |
 | `forget(memory_id, also_profile)` | 遗忘：清正文，留 id 和日期；会列出档案里从它来的句子（见下面） |
+| `find_manual(query, limit)` | 按主人这句话找手册（0.6，见下）：名字、什么时候用、一句说明、分数 |
+| `read_manual(name)` | 手册的正文；没有这份会明说「没有这份手册」，调用方就停下说 |
 
 ## 枝、规则和每周修剪
 
@@ -103,6 +105,32 @@ mousse-tree urls     # 打印各平台的接入地址（含秘密令牌，只在
 - **规则**：树目录里的 `rules.md`（Markdown 存储是笔记文件夹，SQLite 存储是 `~/.mousse-tree`），第一次跑按你的语言写一份、带上你的称呼，之后不再覆盖。`profile` 把它和档案、枝一起给每个平台，改它就改了所有 AI 记东西的规矩。清空 = 不要规则；删掉 = 下次换回默认的。
 - **每周修剪**：`mousse-tree prune-context` 列出可剪的：稳定两周以上的叶子（可以并进档案对应的那一节）、满 30 天的近况、相近的几片、挂错枝的、超过 30 片的枝。模型写一份计划（`merge` 合并、`rewrite` 改写、`archive` 归档、`promote` 并进档案、`branch` 挪枝、`sprout` 长一根新枝），`mousse-tree prune-plan --file 计划.json` 校验后存下，`mousse-tree prune-apply` 照着做，做过的步骤跳过。OpenMousse 每周日晚上自动跑：主对话写计划，计划做成一张收件箱卡，你点「照这样修剪」才动。
 - **来源**：合并、改写出来的叶子记着从哪几片来，修剪并进档案的每一句记着从哪片叶子来（`~/.mousse-tree/origins.json`）。忘掉一片叶子时会列出档案里从它来的句子，让你决定要不要一起删（`forget --with-profile`、`also_profile`，管理页会问）。
+
+## 手册（0.6）
+
+同一套做法（怎么写文书、怎么记训练、怎么准备会议）以前抄在 CLAUDE.md、AGENTS.md 和十来个 Agent 的规矩文件里，改一处要改好几处，早就对不上了。**手册**把正文只存一份，放在世界树旁边；各处只留四行指针：
+
+```
+## 写文书
+什么时候用：丰富文书素材、改 SOP、准备推荐信材料
+正文：世界树 › 手册 › 写文书
+先取正文再动手；取不到就停下说。
+```
+
+- **放在哪**：Markdown 存储在笔记文件夹的 `manuals/` 里一份一篇（属性 `name`、`when`、`about`、`status`、`agents`、`created_at`、`updated_at`，正文就是做法，在 Obsidian 里像别的笔记一样改）；SQLite 存储在 `tree.db` 的 `manual` 表。两种存法读写一样。手册不算记忆：不是叶子，修剪不合并它、不并进档案、不进导出。
+- **名字**用平时说的话（「记录客户拜访」，不是「在拜访表建一行」）：搜的时候先看名字，再看 `when`（几句平时会说的话），再看一句说明 `about`，正文只算一点。
+- **版本**：改、改名、停用、删之前整份留一版，放在 `~/.mousse-tree/versions/manuals/<名字>/`（留最近 20 份）；`history` 列出来，`restore` 换回去。
+- **各处取的是同一份**：MCP 的 `find_manual`、`read_manual`（Claude.ai、ChatGPT、Gemini、云端的 Claude Code），你自己的 Agent 用 `mousse-tree manual show`，OpenMousse 的内核每轮开头先搜手册。规矩各处一样：先取正文再动手；取不到就停下说；不许凭那一行说明自己编。
+- **谁来改**：你自己在命令行、Obsidian 里改，直接写。各平台经 MCP 只能读。OpenMousse 的 Agent 只能提议（`manual_manage` 出一张卡给你点头：在它的「记性的闸」里手册是「做法」），你同意了才改，改之前留一版。各版本改了什么见 [CHANGELOG.md](CHANGELOG.md)。
+- **读了记一笔**（哪个平台哪天读了哪份），每周修剪能列出这个月没人用上的手册。一直没被用上的多半是名字没写成平时说的话：先改说明，别急着删。
+
+```bash
+mousse-tree manual add 写文书 --when "丰富文书素材、改 SOP、准备推荐信材料" --about "按我的经历和口吻写、改文书" --file 写文书.md
+mousse-tree manual edit 写文书 --when "改 SOP、润色简历" [--rename …] [--disable | --enable]
+mousse-tree manual list | show 写文书 | find "帮我把 SOP 再改一版" | rm 写文书
+mousse-tree manual pointers [名字…]        # 贴进 CLAUDE.md / AGENTS.md 的指针
+mousse-tree manual history 写文书 | restore 写文书 v3
+```
 
 ## 管理页
 

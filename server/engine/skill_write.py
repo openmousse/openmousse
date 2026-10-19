@@ -27,6 +27,7 @@ CHILD_NEVER），真调到了也不写（jobs.in_job_turn、对话是 task:…�
 什么时候写（Hermes 的 run_agent 那一套：复杂的活干完以后提醒存）：
   提醒   上一轮调了很多次工具（engine.skills.nudge_tools，默认 NUDGE_TOOLS 次）或者用户纠正过它（「不对」「应该…」「not what I asked」
          这类），这一轮用户那句话后面补一句短的 system（不多调模型）；同一个会话里隔 NUDGE_GAP 轮才再提一次，一天最多 NUDGE_MAX 次。
+         13c 起：上一轮真用过（读了正文）的技能、手册在提醒里点名，有毛病改那几样（engine/improve.py）；一样都没用过就只提「可以存一个」。
          engine.skills.nudge: false 关掉。（Hermes 现在不往对话里塞提醒，改成后台回看；这里两样都有，后台回看默认关。）
   回看   engine.skills.review: true（或者写一个模型 "provider/model"）才开，默认关：同样的条件下，那一轮说完以后在后台多一次便宜的
          一次性调用（外人回合，零工具，engine/oneshot.py），读这一轮决定要不要新建一个 skill；要建就交一张卡（13b 起做法先提议，
@@ -797,8 +798,9 @@ CORRECTION = re.compile(r"不对|不是这样|错了|搞错|弄错|你理解错|
                         r"\bthat'?s (?:not|wrong)\b|\bthat is not\b|\bnot what i (?:asked|meant|wanted)\b|\byou (?:misunderstood|got it wrong)\b|"
                         r"\bi (?:said|meant)\b|\bwrong\b|^\s*no[,.!]|\bactually,|\binstead\b", re.I | re.M)
 NUDGE = ("If the way you just handled the last request is worth reusing (it took many steps, or the user corrected how you did it), you "
-         "can save it as a skill with skill_manage, or fix the skill you used. Only save a procedure you would follow again, not one-off "
-         "facts; if you save one, tell the user in a line what you saved and how to undo it. If it isn't worth saving, ignore this.")
+         "can save it as a skill with skill_manage. Only save a procedure you would follow again, not one-off facts; if you save one, tell "
+         "the user in a line what you saved and how to undo it. If it isn't worth saving, ignore this.")
+# 13c：上一轮真用过的技能、手册（engine/used.py 的记号）才点名让它改那几样（engine/improve.nudge_text）；没用过的一个不提
 SAVED = ("In the background, after your last turn, these skills were saved from how you did that job: {names}. Tell the user in one line "
          "what was saved and that it can be undone (skill_manage delete keeps a copy).")
 PROPOSED = ("In the background, after your last turn, a new skill was proposed from how you did that job: {names}. It's waiting for the "
@@ -871,7 +873,8 @@ def nudge(session, offered: set[str]) -> list[dict]:
         since = len({t for t in turn_starts[given[-1]:] if t})
         if since <= NUDGE_GAP:
             return out
-    out.append({**system_note(NUDGE), "nudge": "skill"})
+    from . import improve
+    out.append({**system_note(NUDGE + improve.nudge_text(*improve.nudge_names(view.rows))), "nudge": "skill"})
     return out
 
 

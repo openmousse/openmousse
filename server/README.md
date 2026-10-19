@@ -16,7 +16,7 @@ python3 tokens.py add phone      # generate an access token for the app's connec
 python3 run.py                   # or install as a systemd service, see openmousse-server.service.example
 ```
 
-Every field of `server.json` is documented at the top of [`config.py`](config.py). Changing tokens or adding Agents needs no restart; changing the bind address does. With the built-in engine (no OpenClaw: `bash install.sh` and answer `builtin`), pick models, web search and memory in the app's guide or with `python3 setup_ctl.py` (see [Choosing models, search and memory](#choosing-models-search-and-memory-built-in-engine)). `python3 settings_ctl.py user-name <name>` sets what prompts to the model call you (`user_name`, no restart) and records it as one line in the profile USER.md; the main chat runs it while showing a new user around.
+Every field of `server.json` is documented at the top of [`config.py`](config.py). Changing tokens or adding Agents needs no restart; changing the bind address does. With the built-in engine (no OpenClaw: `bash install.sh` and answer `builtin`), pick models, web search and memory with `python3 setup_ctl.py` in a terminal on the server (see [Choosing models, search and memory](#choosing-models-search-and-memory-built-in-engine)). `python3 settings_ctl.py user-name <name>` sets what prompts to the model call you (`user_name`, no restart) and records it as one line in the profile USER.md; the main chat runs it while showing a new user around.
 
 ## Auth
 
@@ -25,7 +25,7 @@ Every field of `server.json` is documented at the top of [`config.py`](config.py
 ## Letting the phone connect
 
 - **Tailscale** (least effort): bind the service to the Tailscale address, install Tailscale on the phone, enter `http://100.x.x.x:8080` in the app.
-- **Pairing code** (no token to copy): `python3 tokens.py pair` makes a one-time code ([`pairing.py`](pairing.py): 10 minutes, one use, only its hash is stored, too many wrong tries lock it for 10 minutes), draws a QR code in the terminal and prints an `openmousse://pair?s=<address>&c=<code>` link. Scan it with the phone's camera or tap the link → the app's connect page has the address and code filled in → **Connect with the code** → `POST /api/pair` hands the app a new token of its own (`device-<device>-<time>`, removable with `tokens.py remove`). `--json` is for claws (see [`docs/connect.md`](../docs/connect.md)). `/api/pair` is under `/api`, so only on the Tailscale network. The installer makes one at the end (30 minutes).
+- **Pairing code** (no token to copy): `python3 tokens.py pair` makes a one-time code ([`pairing.py`](pairing.py): 10 minutes, one use, only its hash is stored, too many wrong tries lock it for 10 minutes), draws a QR code in the terminal and prints an `openmousse://pair?s=<address>&c=<code>` link. Scan it with the phone's camera or tap the link → the app's connect page has the address and code filled in → **Connect with code** → `POST /api/pair` hands the app a new token of its own (`device-<device>-<time>`, removable with `tokens.py remove`). `--json` is for claws (see [`docs/connect.md`](../docs/connect.md)). `/api/pair` is under `/api`, so only on the Tailscale network. The installer makes one at the end (30 minutes).
 - **Devices** (app: Settings → your claw): `GET /api/devices` lists the tokens people use (names only; program tokens like `mcp`, `mcp-<id>` and `sentinel` are left out), `DELETE /api/devices/{name}` revokes one (not the one making the request), and `POST /api/pair/new` `{server, name}` makes a pairing code for another device from an app that's already connected (link + QR as an SVG path, same rules as `tokens.py pair`).
 - **Public HTTPS**: `tailscale serve` / `tailscale funnel`, or Caddy / nginx reverse-proxying to 127.0.0.1:8080; enter `https://your.domain` in the app.
 
@@ -68,12 +68,120 @@ With the built-in engine, `chatgpt/<model>` runs on your own ChatGPT Plus / Pro 
 - Status: `GET /api/engine/chatgpt` (also `chatgpt` in `/api/engine/status`) says whether it's connected, which plan, your email, whether the token expires soon, the last error and the background setting. It never returns tokens. `POST /api/engine/chatgpt/disconnect` revokes the session and clears the tokens. Only one account is connected at a time: connecting another one revokes the old one.
 - Tokens live only in `<data_dir>/chatgpt/` on this server (folder 0700, files 0600, written atomically). They're refreshed before they expire, one refresh at a time. A rejected token is refreshed once; if it's still rejected, the status asks you to connect again.
 - Models: `chatgpt/<slug>` from your account's catalog appear in the app once you're connected and allowed plan use. `engine.chatgpt.models` in `server.json` picks them instead; `"chatgpt": false` turns it all off.
-- Who may use it: only your own turns. Cyber chats, friends and other agents (card agent, A2A, Doorman), the OpenAI-compatible `/v1` and ACP, anything started through `/mcp`, and one-shot questions use a model with an API key instead. Background tasks, scheduled jobs and heartbeats use the plan only after you allow it once: `PUT /api/engine/chatgpt/background {"allow": true}` (the time is recorded).
+- Who may use it: only your own turns, and one-shot calls you start yourself (see the Claude plan section below). Cyber chats, friends and other agents (card agent, A2A, Doorman), the OpenAI-compatible `/v1` and ACP, anything started through `/mcp`, and one-shot calls nobody reported as yours use a model with an API key instead. Background tasks, scheduled jobs and heartbeats use the plan only after you allow it once: `PUT /api/engine/chatgpt/background {"allow": true}` (the time is recorded).
 - A plain OpenAI API key can use the Responses API too: `"providers": {"openai": {"api": "openai-responses"}}` under `engine`. Providers without `api` keep using `/chat/completions`.
+
+## Other sessions, handing over between Agents, and `mousse agent` (built-in engine)
+
+- **Seeing other sessions** ([`engine/sessions.py`](engine/sessions.py)): three read-only tools in your own turns. `sessions_list` lists sessions: which Agent, conversation and day, the last line, how many turns, whether it's running (newest first; the last 7 days and 20 rows by default). `sessions_history` reads the last messages of one (10 by default, at most 40): only what you and the Agent said, each message cut at 2,000 characters; `include_tools` adds the tool calls. `session_status` says whether one is running, which step it's on and what it's waiting for (approval cards, an `ask_user` answer, queued messages, a handoff that hasn't come back, background tasks), plus the last turn's model and tokens. An Agent sees its own sessions (its chats, its study desk, API conversations, the background tasks it started); the main chat sees every Agent's. In `server.json`: `"engine": {"sessions": {"visibility": "agent" | "self" | "all", "agents": {"fitness": ["main", "diet"]}}}`, where `self` = only the conversation it's in and `agents` overrides the mode for one Agent (`"*"` = all). Cyber and outsider turns never get these tools. What they return starts with an `[Inter-session message] … isUser=false` line, as in OpenClaw, and the content sits in a `<prompt-data>` block the model treats as data, not instructions.
+- **Handing over between Agents**: `handoff` (`ask_agent.py`) now works from any Agent, not only the main chat: fitness can hand something to `main`, health to diet. Approval rules and handoff cards stay the same; meetings (`--meet`) are still started by the main chat. The engine tells the script which conversation it hands over from (`MOUSSE_FROM`), so the card records the real source, and the receiving model sees the message marked `[Inter-session message] sourceSession=… sourceAgent=… sourceTool=handoff hop=1/2 isUser=false`: data from another session that carries no approval from you. One message goes at most two hops (`engine.handoff.max_hops`, 1–4), and never back to an Agent in the chain that is waiting for its answer, or to itself. `"handoff": {"agents": false}` under `engine` makes it main-only again. The OpenClaw path is unchanged.
+- **`mousse agent`** ([`mousse.py`](mousse.py) → `POST /api/engine/agent`, [`engine/agent_cli.py`](engine/agent_cli.py)): say one thing to an Agent from a terminal or from another coding assistant's session, where you used `openclaw agent` before.
+
+  ```bash
+  echo "Is the deploy plan in my notes sound?" | mousse agent --agent main --message-file -
+  mousse agent --agent fitness --model chatgpt/gpt-6.1-sol --message-file question.md
+  ```
+
+  `bin/mousse` runs `server/mousse.py` (link it into your PATH: `ln -s ~/.openmousse/repo/bin/mousse ~/.local/bin/mousse`). Each call is a fresh session with that Agent's usual background and read-only tools (looking things up works, changes come back "not run", nothing becomes an approval card). It prints one JSON object: `ok`, `status`, `answer`, `model` (with `requested`, and `fallbackFrom` when a backup model answered), `tools` (name, title, status), `used` (manuals, skills, memory leaves), `usage` (input, output and cache tokens, `total`, `cost`, which is `null` on a plan), `conversation`, `turn`, `ms`; or `ok: false` with `code` and `error`. Exit codes: 0 answered, 1 not answered, 2 bad arguments. Without `--model` it uses the model picked for that Agent's chat. `chatgpt/<model>` runs on your own ChatGPT plan: the command line is you, so it counts as your own turn; if the plan isn't connected, plan use isn't allowed, or the request came through `/mcp`, it says so; the model must be in `engine.chatgpt.models` or, without that, your account's catalog. `claude-code/<model>` runs your own signed-in Claude Code. The token is the local scripts' one on the server itself, or an app token with `--token` / `MOUSSE_TOKEN`; `--server` / `MOUSSE_SERVER` points at another machine. The claw must be `builtin`.
+
+## Your Claude plan for one-shot calls (built-in engine)
+
+With the built-in engine, your own one-shot calls can run on the Claude Code you've signed in to on this computer, so they use your Claude Pro / Max plan like your `claude-code/…` chats do. OpenClaw used to keep the plan's token and ran these through its `llm-task`; the built-in engine never reads, stores or passes on a Claude token, so it starts the official `claude` in one-shot mode instead (`claude -p`, `ask` in [`engine/claude_brain.py`](engine/claude_brain.py)).
+
+- What counts: one-shot calls you start yourself: meeting minutes and picking who speaks, the podcast's prep, host questions and summary, study pages, flashcards and course outlines, people notes, forwarding, Zen's "done thinking" draft and meeting speeches, plus the summaries that compact your own long chats. Each caller says where the call came from (`kind` / `origin` in `llmjson.ask` and `owner.stream`); a call that doesn't say counts as someone else's.
+- What doesn't: the card agent (friends and A2A), Doorman, other people's turns, cyber chats, the OpenAI-compatible `/v1` and ACP, background tasks and anything started through `/mcp` keep using a model with an API key, the same rule as chats (`models.may_spend`).
+- How it runs: one `claude -p` per question, with no tools at all (no built-in tools, no MCP server) and no saved session. Your settings, hooks, plugins, CLAUDE.md and skills aren't loaded, and key-like environment variables are removed, so it can only use its own login. The caller's instructions replace Claude Code's system prompt.
+- Setting it up, in the `engine` section of `server.json`: `use.json` for one-shot JSON calls and `use.compact` for summaries. A list adds pay-per-use backups for when the plan call fails (signed out, plan limit reached, or no answer by the timeout, waiting in the queue included). An instance moved over from OpenClaw, with its chats, one-shot calls and summaries on the plan, and the card agent and Doorman on keys as before (they never use the plan):
+
+```json
+"engine": {
+  "model": "claude-code/opus",
+  "models": ["deepseek/deepseek-flash"],
+  "use": {
+    "json": ["claude-code/sonnet", "deepseek/deepseek-flash"],
+    "compact": ["claude-code/haiku", "deepseek/deepseek-flash"],
+    "card": "anthropic/claude-opus-5-5",
+    "doorman": "moonshot/kimi-k3"
+  }
+}
+```
+
+- Without a backup a failed plan call says why, as before (`llmjson` still falls back to its old path unless `engine.fallback` is `false`). Without `use.compact`, summaries use the chat's own model as before; when a plan summary fails it moves on to the rest of the list (or `engine.fallbacks` if it isn't a list), then the chat's own model. Zen's draft and meeting speeches follow the chat's model: `claude-code/…` runs them on the plan. A refusal is never sent to a backup.
+- Sharing the machine: one-shot calls count toward `engine.claude_code.max_concurrent` (default 2) like chats, always wait behind chats, and at most `engine.claude_code.max_oneshot` of them run at once (default one less than `max_concurrent`, at least 1), so a batch of background scoring never takes the last slot from your chat.
+- Scripts on this computer (a job scorer, a check script) can ask the same way: `POST /api/engine/oneshot {"prompt": "…", "input": {…}, "required": ["score"]}` with the `local` token returns `{"json": …, "via": …}`. Requests that came through `/mcp` (`X-Mousse-Via: mcp`) don't use the plan.
+
+## Scheduled jobs that only run a script (built-in engine)
+
+A scheduled job can run a command instead of the model: give `command` instead of `task` ([`engine/jobs.py`](engine/jobs.py)). No model is called, so a check every few minutes costs nothing.
+
+- What can run: a command-line tool from `BRIDGES` in [`bridges.py`](bridges.py) (`board`, `schedule`, …, with the same rules as when that Agent calls it), or a script listed by absolute path under `engine.jobs.scripts` in `server.json`. Arguments are one word each, never go through a shell, and are checked by `bridges.guard` (no reading server files through `--file` and the like). Both are checked again before every run.
+- Each run is a subprocess in the Agent's workspace (`MOUSSE_AGENT`; `MOUSSE_VIA=auto`, so whatever it starts counts as background), stopped together with its children after `timeout` seconds (the tool's own limit, or 120 for scripts; at most 600). Exit code 0 is a success. Its output (stdout, plus stderr when there is some) goes to the run log (`GET /api/engine/jobs/{id}` → `runs[].output`), not to a chat: the script decides for itself whether to say something.
+- Failures are logged, not retried: the next run comes at its usual time, the first failure gets one line in the chat, and five in a row pause the job. These runs don't count toward `engine.jobs.daily_limit`, which caps model runs.
+- Who sets them up: you in the app (`POST /api/engine/jobs {"agent", "when", "command"}`, on at once), or an Agent through its `cron` tool. Like every new job, an Agent's stays off until you approve its card, which shows the exact command and its time limit.
+- Schedules are the same as for other jobs: `every 5m`, `weekdays 07:30`, `mon,wed 18:00`, cron.
+
+Example: ask once, an hour before practice. Every 5 minutes the script reads the schedule; when something that looks like practice starts within the hour and it hasn't asked about it yet, it asks the main chat to check in through `/api/chat/trigger`. Otherwise it does nothing. List it, then add the job:
+
+```json
+"engine": {"jobs": {"scripts": ["/home/me/scripts/practice_check.py"]}}
+```
+
+```
+POST /api/engine/jobs
+{"agent": "main", "name": "Before practice", "when": "every 5m",
+ "command": {"script": "/home/me/scripts/practice_check.py", "timeout": 30}}
+```
+
+<!-- example: practice_check.py -->
+```python
+#!/usr/bin/env python3
+import json
+import os
+import re
+import urllib.request
+from datetime import datetime, timedelta
+from pathlib import Path
+from zoneinfo import ZoneInfo
+
+conf = json.loads(Path(os.environ.get("MOUSSE_SERVER_CONFIG") or "~/.openmousse/server.json").expanduser().read_text())
+bind = conf.get("bind") or {}
+host = bind.get("host") if bind.get("host") not in (None, "", "0.0.0.0", "::") else "127.0.0.1"
+base = f"http://{host}:{bind.get('port') or 8080}"
+token = ((conf.get("auth") or {}).get("tokens") or {}).get("local") or ""
+local = urllib.request.build_opener(urllib.request.ProxyHandler({}))
+state = Path(__file__).with_name("practice_check.state.json")
+practice = re.compile(r"practice|training|训练|练习", re.I)
+
+
+def api(path, body=None):
+    req = urllib.request.Request(base + path, data=None if body is None else json.dumps(body).encode(),
+                                 headers={"Authorization": f"Bearer {token}", "Content-Type": "application/json"})
+    with local.open(req, timeout=30) as r:
+        return json.loads(r.read())
+
+
+now = datetime.now(ZoneInfo(conf.get("timezone") or "UTC"))
+asked = json.loads(state.read_text()) if state.exists() else {}
+asked = {k: v for k, v in asked.items() if k.rsplit("@", 1)[-1] >= now.date().isoformat()}
+for e in api("/api/schedule?days=2")["events"]:
+    if e.get("kind") != "event" or not e.get("start") or e.get("done") or not practice.search(e.get("title") or ""):
+        continue
+    starts = datetime.fromisoformat(f"{e['date']}T{e['start']}").replace(tzinfo=now.tzinfo)
+    key = f"{e['id']}@{e['date']}"
+    if timedelta(0) < starts - now <= timedelta(hours=1) and key not in asked:
+        if str(conf.get("language") or "en").startswith("zh"):
+            text = f"【开练前一小时】{e['start']} 开始「{e['title']}」：问问用户今天状态怎么样，要不要调整强度。"
+        else:
+            text = f"[An hour before practice] \"{e['title']}\" starts at {e['start']}: ask the user how they feel today and whether to adjust it."
+        api("/api/chat/trigger", {"thread": "main", "text": text, "level": "quiet"})
+        asked[key] = now.isoformat(timespec="seconds")
+        print(f"asked about {e['title']} at {e['start']}")
+state.write_text(json.dumps(asked))
+```
 
 ## Choosing models, search and memory (built-in engine)
 
-The first-run guide and the settings center use `/api/setup/…` ([`engine/setup_api.py`](engine/setup_api.py)); [`setup_ctl.py`](setup_ctl.py) runs the same three steps in a terminal (`python3 setup_ctl.py`, or `status`, `models`, `add <id>`, `test <id>`, `use chat <provider/model>`, `search <id>`, `memory sqlite`). Nothing is tied to one vendor: each layer offers a cloud provider with your key, something running on this computer, a tool you're already signed in to, your own address, or nothing.
+`/api/setup/…` ([`engine/setup_api.py`](engine/setup_api.py)) is the API for choosing models, search and memory; [`setup_ctl.py`](setup_ctl.py) runs the same three steps in a terminal (`python3 setup_ctl.py`, or `status`, `models`, `add <id>`, `test <id>`, `use chat <provider/model>`, `search <id>`, `memory sqlite`). Nothing is tied to one vendor: each layer offers a cloud provider with your key, something running on this computer, a tool you're already signed in to, your own address, or nothing.
 
 - Models: the catalog ([`engine/catalog.py`](engine/catalog.py)) lists 24 cloud providers (each base URL checked against the provider's own docs, sources in the file), Ollama, LM Studio, vLLM, llama.cpp, MLX and oMLX on this computer (detected on their default ports), Claude Code / ChatGPT / Codex you've signed in to here, and any OpenAI-compatible address. Several can be connected at once; each purpose picks its own model: the main chat (`engine.model`), background and scheduled work (`engine.use.background`), writing (`engine.use.writing`: long pieces and documents; with a Gemini key the guide recommends `google/gemini-4-argon`; the skill that writes them comes later), other people's turns (card agent and Doorman, never your plan; the guide recommends them separately from the 2026-10-19 evals: pay-as-you-go `anthropic/claude-opus-5-5` for the card agent, or `moonshot/kimi-k3` without Anthropic connected, and `moonshot/kimi-k3` for Doorman) and embeddings (`engine.recall.embeddings`). With only one connected, it's used automatically.
 - Keys you type in the app go to `secrets.env` next to `server.json` (0600, written atomically) and are looked up after the process environment and before `env_file`. They're never sent back: the app only sees whether there is one, where it comes from, its last four characters and when it was saved.
@@ -82,7 +190,7 @@ The first-run guide and the settings center use `/api/setup/…` ([`engine/setup
 
 ## Agents
 
-"New Agent" in the app = a separate agent in your OpenClaw: its own workspace (AGENTS.md / IDENTITY.md / MEMORY.md), skill allowlist, routing. See [`agents.py`](agents.py). From the command line:
+"New Agent" in the app = a separate agent in your OpenClaw: its own workspace (AGENTS.md / IDENTITY.md / MEMORY.md), skill allowlist, routing. See [`agents.py`](agents.py). With the built-in engine (or another claw) nothing goes into `openclaw.json`: an Agent is a row in OpenMousse's database and a conversation of its own with the same engine, which knows the Agent's name and role. From the command line:
 
 ```bash
 python3 agent_ctl.py list
@@ -146,7 +254,7 @@ Item: `{id, kind, source, sourceName, thread, title, why, changes: [], detail, a
 - Long-press → Quote: `/api/chat/send` carries `replyTo` (`db<id>`). The model gets the quoted line as context, the message stores `reply_to`, and `/api/chat/history` returns `replyTo {id, role, text}` for the app to show above the bubble.
 - With the Gateway's WebSocket chat channel (server.json `chat.transport: "ws"`, see `gateway_ws.py`), what you send mid-reply is not queued but **cut in**: `chat.send` with `queueMode: steer` hands it to the model at the turn's next step, and it stays one reply (the message is stored as `steered`, shown as "Cut in"). If the Gateway couldn't steer it and ran it as its own turn, the server adopts that turn as this message's reply. Stop uses `chat.abort`. Turns run to completion inside the Gateway: a reply still running when the server restarts is adopted or recovered from `chat.history` on startup. Messages with images still go over HTTP (and queue). The first connection pairs automatically on loopback; the device identity lives in `<data_dir>/gateway-device.json`.
 - **Progress while it works** (WebSocket channel only, 2026-10-05): the Gateway's `agent` events on the same connection carry the turn's preparation phase (`run_status`), each tool step (`item`, its model-written title and status) and the model's thinking summaries (`thinking`). The server folds them into one snapshot and sends it on the reply's SSE stream as `event: progress` `{since, phase, steps: [{id, tool, detail, status: running | done | failed}], thought}` (the last 6 steps, the last 600 characters of thinking; a re-attaching client gets the current snapshot first). Command arguments and output are never forwarded. Over HTTP there is no progress; the app still animates while it waits.
-- **When a background task finishes** (see [`settle.py`](settle.py)): OpenClaw runs one more turn in the conversation that started the task so the model can report back (run id `announce:v1:<sub-session>:<run>`, or `announce:requester-settle:…` when the starting turn yielded or several tasks settle together). Its reply is delivered to the channel the task came from, which for the app used to mean only the Gateway's own web UI. Now, for tasks started from the app (`requesterOrigin.channel` = webchat) in a thread the app knows, the chat gets a grey line "Background task finished: <title>" (role `auto`) followed by that turn's reply. Over the WebSocket channel the server adopts the turn live (the reply streams like any other, cards from that turn hang under it); on both transports a catch-up pass every 30 s reads `chat.history` for tasks delivered in the last 30 minutes and fills in any it missed (HTTP transport, restarts, dropped connections). `settle_replies` in grava.db records which turns were handled, so nothing is written twice. A task that finishes while the turn that started it is still running is folded into that turn by OpenClaw, and there's nothing extra to add. Tasks started from Telegram are answered there. No extra push: the quiet "task done" push already covers it; the reply counts as unread.
+- **When a background task finishes** (see [`settle.py`](settle.py)): OpenClaw runs one more turn in the conversation that started the task so the model can report back (run id `announce:v1:<sub-session>:<run>`, or `announce:requester-settle:…` when the starting turn yielded or several tasks settle together). Its reply is delivered to the channel the task came from, which for the app used to mean only the Gateway's own web UI. Now, for tasks started from the app (`requesterOrigin.channel` = webchat) in a thread the app knows, the chat gets a grey line "Background task finished: <title>" (role `auto`) followed by that turn's reply. Over the WebSocket channel the server adopts the turn live (the reply streams like any other, cards from that turn hang under it); on both transports a catch-up pass every 30 s reads `chat.history` for tasks delivered in the last 30 minutes and fills in any it missed (HTTP transport, restarts, dropped connections). `settle_replies` in mousse.db records which turns were handled, so nothing is written twice. A task that finishes while the turn that started it is still running is folded into that turn by OpenClaw, and there's nothing extra to add. Tasks started from Telegram are answered there. No extra push: the quiet "task done" push already covers it; the reply counts as unread.
 - `GET /api/chat/busy` → `{running, queued, idle}`. To restart the server use `python3 safe_restart.py --unit <service>`: it waits until no reply is running and nothing is queued (up to 10 minutes), since a restart cuts off replies in progress.
 
 ## Attachments
@@ -165,7 +273,7 @@ Rendering pages needs PyMuPDF (in `requirements.txt`); without it a PDF shows th
 
 When the main chat hands a question to an Agent (`scripts/ask_agent.py` → `/api/chat/relay`) or starts a background task (OpenClaw `sessions_spawn`), the chat shows a card. See [`cards.py`](cards.py).
 
-- **Handoff card**: appears as soon as the question goes out ("asking Diet…", with the question as sent), turns into "handed to Diet · 34 s" when the answer is back, and sits under the reply that asked. Tap it to open the Agent's chat at that question. The relay run itself is recorded in `handoffs` (grava.db); the reply that asked is the one mid-reply when the relay arrives (the script can't tell which session called it; main-agent threads win, then the newest). Since 2026-10-05 a relay to a busy Agent waits for it instead of failing: the card shows "busy · queued" (`queued`), the question goes in as soon as the Agent is free (after any messages you queued there yourself), and the whole wait counts toward the relay's `timeout`. If it's still waiting when that runs out, the relay returns 200 with `status: queued` and keeps waiting in the background for up to 15 minutes; the answer lands in the Agent's chat and the card follows. Waiting relays count in `/api/chat/busy`, so `safe_restart` waits for them. Older records may still say `busy` (refused with 409 before this change).
+- **Handoff card**: appears as soon as the question goes out ("asking Diet…", with the question as sent), turns into "handed to Diet · 34 s" when the answer is back, and sits under the reply that asked. Tap it to open the Agent's chat at that question. The relay run itself is recorded in `handoffs` (mousse.db); the reply that asked is the one mid-reply when the relay arrives (the script can't tell which session called it; main-agent threads win, then the newest). With the built-in engine the script does know (`source` in the relay, see [Other sessions…](#other-sessions-handing-over-between-agents-and-mousse-agent-built-in-engine)), so the card records that conversation, Agents can hand over too, and the Agent-side line says which Agent it came from. Since 2026-10-05 a relay to a busy Agent waits for it instead of failing: the card shows "busy · queued" (`queued`), the question goes in as soon as the Agent is free (after any messages you queued there yourself), and the whole wait counts toward the relay's `timeout`. If it's still waiting when that runs out, the relay returns 200 with `status: queued` and keeps waiting in the background for up to 15 minutes; the answer lands in the Agent's chat and the card follows. Waiting relays count in `/api/chat/busy`, so `safe_restart` waits for them. Older records may still say `busy` (refused with 409 before this change).
 - **Task card**: read from OpenClaw's task ledger (`<openclaw_home>/state/openclaw.sqlite`, tables `task_runs` / `subagent_runs`, read-only, a few ms per read instead of a 2-second `tasks.list`). While a reply is running the server looks every 2 s for tasks that session started and sends them over the same SSE stream (`event: card`), so the card shows up mid-reply; when the reply ends they are attached to it (`task_links`). Running: the step it's on ("reading L2.pdf", from the sub-session's transcript, read at most every 20 s). Done: the start of the result. "Revise" sends notes to the same sub-session (`POST /api/tasks/{id}/revise`); rounds, notes and each round's result come from the `task:<id>` thread.
 - **Allowance**: `server.json` → `tasks: {daily_limit: 10, max_minutes: 30, notify_done: true}`. It's a number for the Agents to check (`tasks_ctl.py quota`, exit code 3 when used up); what actually stops a long task is OpenClaw's `agents.defaults.subagents.runTimeoutSeconds`.
 
@@ -190,7 +298,7 @@ Several Agents take turns on one topic while the main chat's agent hosts and wri
 
 One timeline per day and one list of things to remember, both editable. See [`schedule.py`](schedule.py).
 
-- **Schedule** = the timetable (the optional `calendar` source, read-only) + a layer the server keeps itself (`schedule_items` in grava.db: the user's own plans and the ones Agents put in) + deadlines due that day, each with a tick. The timetable can't change, but this layer can mark a class "not going" (`series` = every week), move its place, add a note. Past days record what actually happened: went / didn't, done / didn't, actual times (a workout planned with key `<agent>:training:<date>` gets its actual time from the workouts source).
+- **Schedule** = the timetable (the optional `calendar` source, read-only) + a layer the server keeps itself (`schedule_items` in mousse.db: the user's own plans and the ones Agents put in) + deadlines due that day, each with a tick. The timetable can't change, but this layer can mark a class "not going" (`series` = every week), move its place, add a note. Past days record what actually happened: went / didn't, done / didn't, actual times (a workout planned with key `<agent>:training:<date>` gets its actual time from the workouts source).
 - **To remember** = coursework deadlines (`study.deadlines_cmd`) + things pulled out of email (`remember.mail`, below) + application deadlines (`applications`) + the user's own deadlines. Each thing shows up once: the day it's due it moves into that day's timeline. Groups: `security` (pinned), `overdue`, `tomorrow`, `week`, `later`, `nodate`, `news` (undated money / status mail).
 - **Tick** = done or not needed (`schedule_marks.done_at`): gone from the list, and scripts that remind (Grava's watcher reads `schedule_marks`) stop mentioning it. Ticking a mail item also runs `remember.mail.cmd --done <id>` (untick: `--undo`); fixing one (`/api/remember/edit`) runs `--edit <id> --json …`.
 - **Changes by Agents** (via `schedule_ctl.py`, which calls this API with `source`): while an Agent is replying, a `schedule` card goes out on its SSE stream; when the reply ends the change is attached to it (`schedule_log.message_id`). Every change can be undone (`/api/schedule/undo/{id}`). An Agent re-adding with the same `key` updates that item, but never overrides a time the user moved himself.
@@ -247,6 +355,8 @@ Turn it on with `"today": {"categories": true}` in `server.json` (without it Tod
 ### Engineering board (2026-10-15, optional)
 
 `"today": {"engineering": {"todos": "path to the handoff file", "archive": "glob of archived files (optional)"}}` syncs Claude Code's handoff file (markdown: each `## ` section is a line of work, each `- [ ]` / `- [x]` a task) into `eng_lines` / `eng_items`, read only ([`engboard.py`](engboard.py)), re-reading only when the file changes (no timer). Today's reports get an engineering card (`type: eng`: done this week / not started / waiting on you, and the main line), which opens the board page. Unticked tasks that need you (waiting on you, you decide, sign-off …) count as waiting; ones marked "→ moved to …" or dropped don't count; tasks done in a section that was later moved out still count.
+
+Or read a GitHub Projects board instead (2026-10-19): `"today": {"engineering": {"source": "github", "owner": "user or org", "number": 1, "mainline": "path to a main-line JSON (optional)"}}`. The server runs `gh api graphql` with the machine's own `gh` login (no token passes through it), keeps a read for 5 minutes (1 on the board page), and falls back to the last read (also kept in `eng_gh`) when gh fails, saying when it was from. A line is an option of the board's line field, a task is an item. Waiting → waiting; In progress and Ready to ship → shown as doing (ready-to-ship titles start with "Ready to ship · "); Queued → queued; these three are "not started" in the three numbers. Later is left out of that number, gets its own column, and a line with only later items folds into earlier lines. Field and option names default to the Chinese ones (`fields` / `statuses` override them; GitHub's default Todo / In Progress / Done are understood).
 
 | Route | What it does |
 |---|---|
@@ -501,12 +611,16 @@ Me → Memory tree in the app. The memory your AI apps share (Claude, ChatGPT, G
 
 With the open-source tree, a new Agent gets a small branch of its own (its id in `agents`, so the engine shows that Agent the leaves on its branches), and older Agents get theirs when the server starts. **Weekly pruning** ([`treeprune.py`](treeprune.py), builtin engine only): a scheduled job of the main chat, every Sunday at 19:00 by default, follows the `tree-prune` skill: `tree prune-context`, then a plan through `tree prune-plan`, which becomes a quiet inbox card (kind `tree`, one per week, expires after a week). Approving it prunes exactly as planned on the server and marks the card done; declining discards the plan. `server.json` `"tree": {"prune": {"when": "every sunday 19:00"}}` moves it, `"tree": {"prune": false}` turns it off.
 
+**Manuals** (tree 0.6, builtin engine): a procedure you want followed the same way everywhere (how you write documents, log a workout, prepare a meeting) is kept once as a manual next to the tree (`mousse-tree manual …`, see [`../tree/README.md`](../tree/README.md)); every other place keeps a four-line pointer (`mousse-tree manual pointers`). Before each of your turns the engine searches your manuals and the Agent's skills for what you just said (plus your previous message) and adds only the matching bodies after your message ([`engine/manuals.py`](engine/manuals.py)); the skills list at the top of the conversation keeps only names. Each turn records what it actually read (manuals, skills, memory leaves; [`engine/used.py`](engine/used.py)): the reply carries `used` and a line such as "Following the "Writing documents" manual · used 2 leaves ›". An Agent that wants to change a manual uses `manual_manage` ([`engine/manual_write.py`](engine/manual_write.py)): manuals are "how things are done" in the memory gate, so the change becomes an approval card first and the old version is kept; through the `tree` tool they are read-only. The weekly pruning card gets a "Not used this month" section: manuals and your own skills nobody used, each left as is by default; approve = reword (a second card with everyday wording), or revise the item with "disable". `"engine": {"manuals": false}` brings back the old behaviour; the other settings are in `engine/models.py`.
+
 | Route | What |
 |---|---|
 | `GET /api/tree` | `branches` in pre-order (a big branch, then its small ones; `leaves` = hung directly on it, `total` = including its small branches, `agents` = Agents whose memories land there by default), `leaves` (current ones: active and pending, profile lines excluded; `source` as written in the note, `origin` = the app that first saved it, traced through `supersedes` for leaves the weekly pruning rewrote), `trunk: {name, count}` (the profile), `counts: {total, pending, bySource}` (by origin), `issues` (notes skipped because of bad formatting) |
 | `POST /api/tree/{id}` | `{action: confirm}` pending → active; `{action: forget}` the note becomes an empty shell in the archive (no text, no tags) and leaves the index, and with the open-source tree the answer lists `profileLines` (profile lines pruning added from it; `alsoProfile: true` removes them too); `{action: move, branch}` hangs it on another branch (the trunk's name = straight on the trunk). The activity-log line, written by the tree, never contains the memory itself |
 | `GET /api/tree/prune` | The latest pruning plan (every step, done or not) and its card |
 | `GET /api/tree/prune/context` | This week's pruning candidates (what `tree prune-context` shows, as JSON) |
+| `GET /api/engine/used/{turn}`, `GET /api/engine/used?message=db123` | What one turn used: `used` (manuals, skills, guides, the number of leaves, the `line`) and `items` (each manual or skill with its when-to-use and description, each leaf with its text and branch) |
+| `GET /api/engine/skills?agent=main` | The Agent's skills, manuals and pack guides with `lastUsed`, `idleDays` and `stale` (unused for `engine.manuals.stale_days`, 14 by default; marked only, never removed) |
 
 ## Connections
 

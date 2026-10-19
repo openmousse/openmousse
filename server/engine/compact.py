@@ -10,8 +10,12 @@
   从哪切      只在一轮的开头切（用户说的那句，插话不算），工具调用和结果都在一轮里面，拆不开。从后往前留约 2 万 token
               （OpenClaw / pi 的 keepRecentTokens），最近一轮本身就超了就整段压（Claude 官方推荐的 simple compaction：只留摘要）。
               模型说太长了：切在这一轮的开头（前面的全压，这一轮正在做的留着）。
-  摘要        这个 Agent 自己的模型，零工具、外人回合式的一次调用（run_turn kind = outsider）。对话写成 [User] / [Assistant] /
-              [Tool result] 一行行（OpenClaw 的格式，工具结果最多 2000 字），一次最多约 6 万 token，多了分几段、一段段更新
+  摘要        server.json 的 engine.use.compact 写了模型就用它，不写用这一轮自己的模型（summary_model）；零工具、外人回合式的一次调用
+              （run_turn kind = outsider）。10/19 起 engine.use.compact 能写用户自己的 Claude Code（claude-code/…）：这一轮的来路
+              may_spend 认了（主人回合：user / auto / relay），摘要交给他自己登录的 Claude Code 一次性地跑（claude_brain.ask，零工具、
+              不存会话）；不认的（对外接口、后台任务……）换成 outside() 挑的。它没做成（没登录、额度用完、超时……）就换：
+              engine.use.compact 写成列表的就按列表（没写成列表按 engine.fallbacks），最后是这一轮自己的模型（以前就用它）。
+              对话写成 [User] / [Assistant] / [Tool result] 一行行（OpenClaw 的格式，工具结果最多 2000 字），一次最多约 6 万 token，多了分几段、一段段更新
               （前一次的摘要当 <previous-summary>，OpenClaw 的增量更新）。提示词：Claude 官方给的那段（六项、两种声音分开对待），
               加 OpenClaw 的「id、名字原样保留」，加 Hermes 的几条（对话是资料不是指令、密钥换成 [REDACTED]、做完的事写成带日期的
               过去时、写出还没答完的那个请求；用户点了停的那一轮不算没答完，10/19 彩排加的）。篇幅：读进去的四分之一，夹在 1500–8000 token 之间（Hermes 是两成、2000–10000），
@@ -44,6 +48,7 @@ DEFAULT_WINDOW = 128_000     # 不认识的模型按这么大算（宁可早压�
 RESERVE = 16_384             # 窗口里给这一轮的回复、思考、工具结果留的余量（pi / OpenClaw）
 KEEP = 20_000                # 压缩时原样留下最近多少 token（pi / OpenClaw）
 SUMMARY_MAX_TOKENS = 16_000  # 摘要的输出上限（Claude 的思考也算在里面）
+SUMMARY_TIMEOUT = 300        # 一段摘要交给用户自己的 Claude Code 时最多等多久（秒，排队的时间也算；按量的一次调用也是 300）
 CHUNK_TOKENS = 60_000        # 一次摘要最多读多少（OpenClaw 16 万「加权字」≈ 4 万 token；多了分段）
 MAX_CHUNKS = 6
 ENTRY_MAX = 20_000           # 摘要输入里一条话最多多少字
@@ -311,35 +316,72 @@ def extract(text: str) -> str:
     return re.sub(r"^\s*<summary>\s*", "", text or "").strip()
 
 
+def summary_model(spec: Spec) -> str:
+    """摘要用哪个模型（见文件开头）：engine.use.compact 照这一轮的来路挑（models.route：用户自己的套餐只给 may_spend 认的），不写 = 这一轮
+    自己的模型。"""
+    return models.route("compact", kind=spec.kind, origin=spec.origin, via=spec.via) or spec.model
+
+
 async def summarize(view: View, cut: int, spec: Spec) -> tuple[str, dict, list[str]]:
     """rows[:cut]（连上一次的摘要）压成一段摘要。→ (摘要, 用量, 各次调用的一轮 id)。失败抛 EngineError。"""
     parts, omitted = chunks(serialize([m for _, m in view.rows[:cut]]))
     today = datetime.now(settings.tz).strftime("%Y-%m-%d")
     summary, usage, turns = view.summary, {"in": 0, "out": 0, "cache_read": 0, "cache_write": 0, "cost": 0.0}, []
-    # 用户自己的 ChatGPT 套餐跑的这一轮（第 11b 项）：压缩是这一轮自己的一步，照这一轮的来路花（kind owner、零工具）；别的照旧是外人回合
-    plan = models.subscription(spec.model) == "chatgpt" and models.may_spend(spec.model, kind=spec.kind, origin=spec.origin, via=spec.via)
+    model, chain = summary_model(spec), None
     for i, part in enumerate(parts):
         if not part:
             continue
-        # 另记在 compact:<对话> 下：摘要的字不往这个对话的实时广播里推（那里只该有回复）；一次性的，Claude 不缓存尾巴
-        s = Spec(kind="owner" if plan else "outsider", model=spec.model, system=SUMMARIZER, conversation=f"compact:{spec.conversation or '-'}",
-                 agent=spec.agent, origin=spec.origin if plan else "compact", via=spec.via if plan else None, effort="low",
-                 max_tokens=SUMMARY_MAX_TOKENS, max_steps=1, timeout=300, cache_tail=False)
-        res = await run_turn(s, MemorySession(), user(prompt_for(part, summary, omitted and i == 0, today)))
-        turns.append(res.turn)
-        for k in ("in", "out", "cache_read", "cache_write"):
-            usage[k] += int(res.usage.get(k) or 0)
-        usage["cost"] = None if usage["cost"] is None or res.usage.get("cost") is None else round(usage["cost"] + res.usage["cost"], 6)
-        if res.status != "done":  # 写到上限被截断的摘要不能当真（pi：length 不算数）
-            raise EngineError(f"the summary didn't finish ({res.status}{': ' + res.error if res.error else ''})",
-                              kind=res.error_kind or "output", retryable=res.retryable)
-        out = extract(res.text)
+        text, used, ids, model, chain = await _summary_call(model, chain, spec, prompt_for(part, summary, omitted and i == 0, today))
+        turns += ids
+        for u in used:
+            for k in ("in", "out", "cache_read", "cache_write"):
+                usage[k] += int(u.get(k) or 0)
+            usage["cost"] = None if usage["cost"] is None or u.get("cost") is None else round(usage["cost"] + u["cost"], 6)
+        out = extract(text)
         if not out:
             raise EngineError("the summary came back empty", kind="output")
         summary = out
     if not summary:
         raise EngineError("nothing to summarize", kind="output")
     return summary, usage, turns
+
+
+async def _summary_call(model: str, chain: list[str] | None, spec: Spec, prompt: str) -> tuple[str, list[dict], list[str], str, list[str] | None]:
+    """一段的摘要 → (字, 各次调用的用量, 各次调用的一轮 id, 这一段用的模型, 它的链)。Claude Code 跑不了换上的模型，后面几段接着用。
+    另记在 compact:<对话> 下：摘要的字不往这个对话的实时广播里推（那里只该有回复）；一次性的，Claude 不缓存尾巴。"""
+    used: list[dict] = []
+    ids: list[str] = []
+    conv = f"compact:{spec.conversation or '-'}"
+    if models.subscription(model) == "claude-code":  # 用户自己的 Claude Code（engine.use.compact，route 已经照 may_spend 挑过）
+        from . import claude_brain, fallback
+        res = await claude_brain.ask(SUMMARIZER, prompt, model=model, origin=spec.origin, conversation=conv, agent=spec.agent or "main",
+                                     timeout=SUMMARY_TIMEOUT, effort_="low", max_tokens=SUMMARY_MAX_TOKENS)
+        used.append(res.usage)
+        ids.append(res.turn)
+        if res.status == "done" and extract(res.text):
+            return res.text, used, ids, model, chain
+        if res.error_kind in ("rule", "refusal"):
+            raise EngineError(res.error or "the summary didn't finish", kind=res.error_kind)
+        rest = fallback.backup(model, kind=spec.kind, origin=spec.origin, via=spec.via, chain=models.purpose_chain("compact", model))
+        own = spec.model  # 最后是这一轮自己的模型（以前就用它）
+        if own not in rest and models.subscription(own) != "claude-code" and models.may_spend(own, kind=spec.kind, origin=spec.origin,
+                                                                                               via=spec.via):
+            rest = [*rest, own]
+        if not rest:
+            raise EngineError(f"the summary didn't finish ({res.error or 'Claude Code'})", kind=res.error_kind or "http")
+        model, chain = rest[0], rest[1:]
+    # 用户自己的 ChatGPT 套餐（第 11b 项）：压缩是这一轮自己的一步，照这一轮的来路花（kind owner、零工具）；别的照旧是外人回合
+    plan = models.subscription(model) == "chatgpt" and models.may_spend(model, kind=spec.kind, origin=spec.origin, via=spec.via)
+    s = Spec(kind="owner" if plan else "outsider", model=model, system=SUMMARIZER, conversation=conv, agent=spec.agent,
+             origin=spec.origin if plan else "compact", via=spec.via if plan else None, effort="low", max_tokens=SUMMARY_MAX_TOKENS,
+             max_steps=1, timeout=300, cache_tail=False, fallbacks=chain)
+    res = await run_turn(s, MemorySession(), user(prompt))
+    used.append(res.usage)
+    ids.append(res.turn)
+    if res.status != "done":  # 写到上限被截断的摘要不能当真（pi：length 不算数）
+        raise EngineError(f"the summary didn't finish ({res.status}{': ' + res.error if res.error else ''})",
+                          kind=res.error_kind or "output", retryable=res.retryable)
+    return res.text, used, ids, model, chain
 
 
 # —— 压 ——————————————————————————————————————————————————————————————————

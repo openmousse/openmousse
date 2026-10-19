@@ -37,6 +37,7 @@ from __future__ import annotations
 import argparse
 import json
 import mimetypes
+import os
 import sys
 import urllib.error
 import urllib.parse
@@ -184,6 +185,8 @@ def multipart(path: str, fields: dict, files: list[Path], field: str = "files") 
     token = settings.api_token()
     if token:
         headers["Authorization"] = f"Bearer {token}"
+    if os.environ.get("MOUSSE_VIA"):  # 经 /mcp、内核的工具跑的：服务器据此认能不能花套餐（bridges.py），和 inbox_ctl.call 一样
+        headers["X-Mousse-Via"] = os.environ["MOUSSE_VIA"]
     req = urllib.request.Request(f"http://{settings.host}:{settings.port}{path}", data=bytes(body), headers=headers, method="POST")
     try:
         with urllib.request.urlopen(req, timeout=300) as r:  # noqa: S310 — 本机服务

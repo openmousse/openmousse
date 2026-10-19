@@ -339,12 +339,14 @@ class Picker:
         return out
 
 
-def backup(ref: str, *, kind: str = "owner", origin: str | None = None, via: str | None = None) -> list[str]:
+def backup(ref: str, *, kind: str = "owner", origin: str | None = None, via: str | None = None,
+           chain: list[str] | None = None) -> list[str]:
     """套餐模型（claude-code/…）这一轮跑不了（engine/claude_brain.py：登录掉了、命令坏了、额度用完）往下换哪几个：models.chain_after
     （它自己写的链，没写用 engine.fallbacks），只要不是套餐、这一轮能花（models.may_spend）、有密钥的。打头的是现在就能用的（没在冷却），
-    都在冷却就用 PROBE 秒内冷却完的那个（同 Picker._next）。→ [换上的, 它后面的…]（后面的交给 Spec.fallbacks 接着当链）；没有 → []。"""
-    cands = [r for r in models.chain_after(ref) if not models.subscription(r) and models.may_spend(r, kind=kind, origin=origin, via=via)
-             and models.has_key(r)]
+    都在冷却就用 PROBE 秒内冷却完的那个（同 Picker._next）。→ [换上的, 它后面的…]（后面的交给 Spec.fallbacks 接着当链）；没有 → []。
+    chain：调用方自己的链（一次性调用：engine.use.<这件事> 写成列表的那条，models.purpose_chain），给了就不看 chain_after。"""
+    cands = [r for r in (models.chain_after(ref) if chain is None else chain) if not models.subscription(r)
+             and models.may_spend(r, kind=kind, origin=origin, via=via) and models.has_key(r)]
     waits = {r: cooling(r) for r in cands}
     first = next((r for r in cands if waits[r] <= 0), None)
     if first is None:

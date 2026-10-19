@@ -16,7 +16,7 @@ python3 tokens.py add 手机       # 生成 app 的接入令牌，填进 app 的
 python3 run.py                   # 或按 openmousse-server.service.example 装成 systemd 服务
 ```
 
-`server.json` 每个字段的含义在 [`config.py`](config.py) 顶部。改令牌、加 Agent 不用重启；改监听地址要重启。用自带的内核（不装 OpenClaw：`bash install.sh` 时答 `builtin`）的，模型、搜索、记忆在 app 的引导里选，或者跑 `python3 setup_ctl.py`（见[选模型、搜索和记忆](#选模型搜索和记忆自己的内核)）。`python3 settings_ctl.py user-name <称呼>` 改给模型的说明里怎么称呼你（`user_name`，不用重启），档案 USER.md 也记一行；新手带路时主对话会调它。
+`server.json` 每个字段的含义在 [`config.py`](config.py) 顶部。改令牌、加 Agent 不用重启；改监听地址要重启。用自带的内核（不装 OpenClaw：`bash install.sh` 时答 `builtin`）的，模型、搜索、记忆在服务器的终端里跑 `python3 setup_ctl.py` 选（见[选模型、搜索和记忆](#选模型搜索和记忆自己的内核)）。`python3 settings_ctl.py user-name <称呼>` 改给模型的说明里怎么称呼你（`user_name`，不用重启），档案 USER.md 也记一行；新手带路时主对话会调它。
 
 ## 认证
 
@@ -25,7 +25,7 @@ python3 run.py                   # 或按 openmousse-server.service.example 装�
 ## 让手机连上
 
 - **Tailscale**（最省事）：服务绑 Tailscale 地址，手机装 Tailscale，app 里填 `http://100.x.x.x:8080`。
-- **配对码**（不用抄令牌）：`python3 tokens.py pair` 出一个一次性配对码（[`pairing.py`](pairing.py)：10 分钟、只能用一次、只存哈希、猜错多了锁 10 分钟），终端里画二维码，旁边是 `openmousse://pair?s=<地址>&c=<码>` 链接。手机相机扫码或点链接 → app 的连接页填好地址和码 → 点「用配对码连接」→ `POST /api/pair` 换一把新令牌（`device-<设备>-<时间>`，能 `tokens.py remove`）。`--json` 给 claw 读（见 [`docs/connect.zh-CN.md`](../docs/connect.zh-CN.md)）。`/api/pair` 在 `/api` 下，只在 Tailscale 私网里。安装器装完会直接打一个（30 分钟）。
+- **配对码**（不用抄令牌）：`python3 tokens.py pair` 出一个一次性配对码（[`pairing.py`](pairing.py)：10 分钟、只能用一次、只存哈希、猜错多了锁 10 分钟），终端里画二维码，旁边是 `openmousse://pair?s=<地址>&c=<码>` 链接。手机相机扫码或点链接 → app 的连接页填好地址和码 → 点「使用配对码连接」→ `POST /api/pair` 换一把新令牌（`device-<设备>-<时间>`，能 `tokens.py remove`）。`--json` 给 claw 读（见 [`docs/connect.zh-CN.md`](../docs/connect.zh-CN.md)）。`/api/pair` 在 `/api` 下，只在 Tailscale 私网里。安装器装完会直接打一个（30 分钟）。
 - **设备**（app：设置 → 你的 claw）：`GET /api/devices` 列出人用的令牌（只回名字；`mcp`、`mcp-<id>`、`sentinel` 这类给程序用的不列），`DELETE /api/devices/{name}` 收回一台（不能是发请求的这台），`POST /api/pair/new` `{server, name}` 让已经连着的 app 给另一台设备出配对码（链接 + 二维码的 SVG path，规矩和 `tokens.py pair` 一样）。
 - **公网 HTTPS**：`tailscale serve` / `tailscale funnel`，或 Caddy / nginx 反向代理到 127.0.0.1:8080，app 里填 `https://你的域名`。
 
@@ -68,12 +68,120 @@ python3 run.py                   # 或按 openmousse-server.service.example 装�
 - 状态：`GET /api/engine/chatgpt`（`/api/engine/status` 的 `chatgpt` 也是）说连没连、哪个套餐、邮箱、令牌快过期没有、最近一次的错、后台开关，从不回令牌。`POST /api/engine/chatgpt/disconnect` 撤销并清掉令牌。同一时间只连一个账号：连另一个会先撤销旧的。
 - 令牌只存在这台服务器的 `<data_dir>/chatgpt/`（目录 0700、文件 0600、原子写）。快过期先刷新，同时只刷一次；被拒了强制刷新一次，还被拒就在状态里提示重新连。
 - 模型：连上、同意用套餐以后，你账号模型目录里的 `chatgpt/<slug>` 出现在 app 里；`server.json` 的 `engine.chatgpt.models` 可以指定；`"chatgpt": false` 全部关掉。
-- 谁能花：只有你自己的回合。赛博、朋友和别家的 agent（名片 agent、A2A、Doorman）、OpenAI 兼容的 `/v1` 和 ACP、经 `/mcp` 引出来的、一问一答，都换成用 API 密钥的模型。后台任务、定时任务、心跳要你明确同意一次才花：`PUT /api/engine/chatgpt/background {"allow": true}`（记下同意的时间）。
+- 谁能花：只有你自己的回合，和你自己发起的一次性调用（见下面「用你自己的 Claude 套餐跑一次性调用」）。赛博、朋友和别家的 agent（名片 agent、A2A、Doorman）、OpenAI 兼容的 `/v1` 和 ACP、经 `/mcp` 引出来的、没报是你的一次性调用，都换成用 API 密钥的模型。后台任务、定时任务、心跳要你明确同意一次才花：`PUT /api/engine/chatgpt/background {"allow": true}`（记下同意的时间）。
 - 普通的 OpenAI 密钥也能走 Responses API：`engine` 里写 `"providers": {"openai": {"api": "openai-responses"}}`；没写 `api` 的照旧走 `/chat/completions`。
+
+## 看别的会话、Agent 之间转话、mousse agent（自己的内核）
+
+- **看别的会话**（[`engine/sessions.py`](engine/sessions.py)）：你自己的回合里多三个只读工具。`sessions_list` 列会话：哪个 Agent、哪个对话、哪天、最后一句、多少轮、在不在跑（新的在前，默认最近 7 天、20 条）。`sessions_history` 读一段会话最近说的话（默认 10 条，最多 40）：只有你和 Agent 说的字，一条长的截到 2000 字；`include_tools` 再带上调了哪些工具。`session_status` 看一个会话在不在跑、在做哪一步、在等什么（要你点头的卡、`ask_user` 的回答、排着的话、转出去还没回的话、后台任务），还有上一轮的模型和 token。Agent 看自己的会话（它的对话、学习台、对外接口、它派的后台任务），主对话看所有 Agent 的。`server.json`：`"engine": {"sessions": {"visibility": "agent" | "self" | "all", "agents": {"fitness": ["main", "diet"]}}}`，`self` = 只看它所在的这个对话，`agents` 给某个 Agent 单独定（`"*"` = 全部）。赛博、外人回合一律没有这三个。读到的东西照 OpenClaw 那样开头一行 `[Inter-session message] … isUser=false`，内容包在 `<prompt-data>` 里，模型当资料看，不当指令。
+- **Agent 之间转话**：`handoff`（`ask_agent.py`）不再只有主对话能用，Agent 也能转：fitness 转给 `main`，health 转给 diet。点头的规矩、转交卡都照旧；会议（`--meet`）还是只有主对话发起。内核把「从哪个对话转出去」告诉脚本（`MOUSSE_FROM`），转交卡照实记从哪来；对方模型收到的那句标成 `[Inter-session message] sourceSession=… sourceAgent=… sourceTool=handoff hop=1/2 isUser=false`：别的会话转来的资料，不带你的同意。一条话最多转两跳（`engine.handoff.max_hops`，1–4），不能转回这一串里正在等回答的 Agent，也不能转给自己。`engine` 里写 `"handoff": {"agents": false}` 退回只有主对话能转。OpenClaw 那条路不变。
+- **`mousse agent`**（[`mousse.py`](mousse.py) → `POST /api/engine/agent`，[`engine/agent_cli.py`](engine/agent_cli.py)）：在终端里、或者在另一个编码助手的会话里跟某个 Agent 说一句、拿回结果，原来用 `openclaw agent` 的地方换成它。
+
+  ```bash
+  echo "我笔记里那份上线计划靠谱吗？" | mousse agent --agent main --message-file -
+  mousse agent --agent fitness --model chatgpt/gpt-6.1-sol --message-file question.md
+  ```
+
+  `bin/mousse` 跑的就是 `server/mousse.py`（软链进 PATH：`ln -s ~/.openmousse/repo/bin/mousse ~/.local/bin/mousse`）。每次一个新会话，带那个 Agent 平时的背景，工具只读（查得到；要改的回「没跑」，也不交卡）。打出一个 JSON：`ok`、`status`、`answer`、`model`（还有 `requested`，换了备用模型时有 `fallbackFrom`）、`tools`（名字、标题、结果）、`used`（用到的手册、技能、叶子）、`usage`（输入、输出、缓存的 token，`total`、`cost`，套餐的是 `null`）、`conversation`、`turn`、`ms`；没答成是 `ok: false` 加 `code`、`error`。退出码：0 答了、1 没答成、2 参数不对。不写 `--model` 用那个 Agent 在 app 里选的模型。`chatgpt/<型号>` 走你自己的 ChatGPT 套餐：命令行是你自己发起的，算你自己的回合；套餐没连上、没开用套餐、请求是经 `/mcp` 来的，都直接说清楚；型号要在 `engine.chatgpt.models` 里，没写就用你账号自己的模型目录。`claude-code/<型号>` 用你自己登录的 Claude Code。令牌：在服务器本机用本机脚本那一把，或者 `--token` / `MOUSSE_TOKEN` 给 app 的令牌；`--server` / `MOUSSE_SERVER` 指到别的机器。claw 要是 `builtin`。
+
+## 用你自己的 Claude 套餐跑一次性调用（自己的内核）
+
+用自己的内核时，你自己的一次性调用也能交给这台电脑上你登录过的 Claude Code 跑，和对话选 `claude-code/…` 一样花你自己的 Claude Pro / Max 套餐。以前 OpenClaw 存着套餐的令牌，这些都经它的 `llm-task` 走套餐；自己的内核不读、不存、不传任何 Claude 令牌，所以改成起官方的 `claude` 一次性模式（`claude -p`，[`engine/claude_brain.py`](engine/claude_brain.py) 的 `ask`）。
+
+- 算哪些：你自己发起的一次性调用：会议纪要和挑谁发言、播客的准备、主持人追问和整理、学习页、闪卡和课程大纲、朋友画像、转发、Zen 的「想完了」草稿和会议的发言，还有压缩你自己长对话的摘要。每个调用方报上来路（`llmjson.ask`、`owner.stream` 的 `kind` / `origin`），没报的当外人。
+- 不算哪些：名片 agent（朋友、A2A）、Doorman、别人的回合、赛博、OpenAI 兼容的 `/v1` 和 ACP、后台任务、经 `/mcp` 引出来的，照旧用 API 密钥的模型，和对话一个规矩（`models.may_spend`）。
+- 怎么跑：一问一个 `claude -p`，一个工具都不给（没有内置工具，也没有 MCP），不存会话；你的设置、hooks、插件、CLAUDE.md、skills 都不读，环境里像密钥的都去掉，它只能用它自己的登录。调用方的规矩整个换掉 Claude Code 自己的开头。
+- 怎么配：`server.json` 的 `engine` 段，`use.json` 管一次性 JSON 调用，`use.compact` 管压缩的摘要。写成列表就带上按量的备用，套餐那一下没做成（登录掉了、额度用完、到时限还没答完，排队也算）时换上。一个从 OpenClaw 换过来的实例：对话、一次性调用、摘要走套餐，名片 agent 和 Doorman 照旧用密钥（它们本来就不能花套餐）：
+
+```json
+"engine": {
+  "model": "claude-code/opus",
+  "models": ["deepseek/deepseek-flash"],
+  "use": {
+    "json": ["claude-code/sonnet", "deepseek/deepseek-flash"],
+    "compact": ["claude-code/haiku", "deepseek/deepseek-flash"],
+    "card": "anthropic/claude-opus-5-5",
+    "doorman": "moonshot/kimi-k3"
+  }
+}
+```
+
+- 没配备用：套餐那一下没做成就照旧报错，说清是哪一类（`llmjson` 照旧退回原来的路，`engine.fallback` 是 `false` 才直接报）。没写 `use.compact`：摘要照旧用这个对话自己的模型；写了而套餐那一下没做成，按列表往下换（没写成列表就按 `engine.fallbacks`），最后是这个对话自己的模型。Zen 的草稿和会议的发言跟着对话的模型：是 `claude-code/…` 就走套餐。它拒答的不换别的模型去答。
+- 一台机器怎么分：一次性调用和对话一起算 `engine.claude_code.max_concurrent`（默认 2），但永远排在对话后面，同时最多 `engine.claude_code.max_oneshot` 个（默认比 `max_concurrent` 少一个、至少 1），后台一串打分也占不了留给对话的那个位子。
+- 本机的脚本（岗位打分、检查脚本）也能这样问：带 `local` 令牌 `POST /api/engine/oneshot {"prompt": "…", "input": {…}, "required": ["score"]}`，回 `{"json": …, "via": …}`。经 `/mcp` 来的（`X-Mousse-Via: mcp`）不花套餐。
+
+## 只跑脚本的定时任务（自己的内核）
+
+定时任务可以到点跑一个命令、不调模型：写 `command` 不写 `task`（[`engine/jobs.py`](engine/jobs.py)）。不调模型，每几分钟查一次也不花钱。
+
+- 能跑什么：[`bridges.py`](bridges.py) 的 `BRIDGES` 里的命令行工具（`board`、`schedule`……，规矩和这个 Agent 平时调它一样），或者 `server.json` 的 `engine.jobs.scripts` 里写了绝对路径的脚本。参数一项一个词、从不经 shell，照 `bridges.guard` 查（不能借 `--file` 这类参数读服务器上的文件）。每次跑之前再查一遍。
+- 每次跑：在这个 Agent 的工作区里起一个子进程（`MOUSSE_AGENT`；`MOUSSE_VIA=auto`，它再引出来的回合算后台），`timeout` 秒到了连它起的子进程一起停掉（默认工具自己的时限，脚本 120 秒；最多 600）。退出码 0 算跑成。输出（标准输出，有错误输出也带上）记进运行记录（`GET /api/engine/jobs/{id}` 的 `runs[].output`），不发进对话：要不要说话由脚本自己定。
+- 没跑成记错、不重试：下一次照常排，第一次在对话里说一声，连着 5 次就停用。它们不算进 `engine.jobs.daily_limit`（那是给调模型的上限）。
+- 谁建：你在 app 里建（`POST /api/engine/jobs {"agent", "when", "command"}`，马上开）；Agent 用它的 `cron` 工具提，和别的新任务一样先停着，等你点卡上的「开」，卡上写着整条命令和时限。
+- 时间写法和别的定时任务一样：`every 5m`、`weekdays 07:30`、`mon,wed 18:00`、cron。
+
+例子：开练前一小时问一句。脚本每 5 分钟看一眼日程，一小时内有像是训练的、还没问过，就经 `/api/chat/trigger` 让主对话问一句；没有就什么都不做。先列进白名单，再建任务：
+
+```json
+"engine": {"jobs": {"scripts": ["/home/me/scripts/practice_check.py"]}}
+```
+
+```
+POST /api/engine/jobs
+{"agent": "main", "name": "Before practice", "when": "every 5m",
+ "command": {"script": "/home/me/scripts/practice_check.py", "timeout": 30}}
+```
+
+<!-- example: practice_check.py -->
+```python
+#!/usr/bin/env python3
+import json
+import os
+import re
+import urllib.request
+from datetime import datetime, timedelta
+from pathlib import Path
+from zoneinfo import ZoneInfo
+
+conf = json.loads(Path(os.environ.get("MOUSSE_SERVER_CONFIG") or "~/.openmousse/server.json").expanduser().read_text())
+bind = conf.get("bind") or {}
+host = bind.get("host") if bind.get("host") not in (None, "", "0.0.0.0", "::") else "127.0.0.1"
+base = f"http://{host}:{bind.get('port') or 8080}"
+token = ((conf.get("auth") or {}).get("tokens") or {}).get("local") or ""
+local = urllib.request.build_opener(urllib.request.ProxyHandler({}))
+state = Path(__file__).with_name("practice_check.state.json")
+practice = re.compile(r"practice|training|训练|练习", re.I)
+
+
+def api(path, body=None):
+    req = urllib.request.Request(base + path, data=None if body is None else json.dumps(body).encode(),
+                                 headers={"Authorization": f"Bearer {token}", "Content-Type": "application/json"})
+    with local.open(req, timeout=30) as r:
+        return json.loads(r.read())
+
+
+now = datetime.now(ZoneInfo(conf.get("timezone") or "UTC"))
+asked = json.loads(state.read_text()) if state.exists() else {}
+asked = {k: v for k, v in asked.items() if k.rsplit("@", 1)[-1] >= now.date().isoformat()}
+for e in api("/api/schedule?days=2")["events"]:
+    if e.get("kind") != "event" or not e.get("start") or e.get("done") or not practice.search(e.get("title") or ""):
+        continue
+    starts = datetime.fromisoformat(f"{e['date']}T{e['start']}").replace(tzinfo=now.tzinfo)
+    key = f"{e['id']}@{e['date']}"
+    if timedelta(0) < starts - now <= timedelta(hours=1) and key not in asked:
+        if str(conf.get("language") or "en").startswith("zh"):
+            text = f"【开练前一小时】{e['start']} 开始「{e['title']}」：问问用户今天状态怎么样，要不要调整强度。"
+        else:
+            text = f"[An hour before practice] \"{e['title']}\" starts at {e['start']}: ask the user how they feel today and whether to adjust it."
+        api("/api/chat/trigger", {"thread": "main", "text": text, "level": "quiet"})
+        asked[key] = now.isoformat(timespec="seconds")
+        print(f"asked about {e['title']} at {e['start']}")
+state.write_text(json.dumps(asked))
+```
 
 ## 选模型、搜索和记忆（自己的内核）
 
-第一次打开的引导和设置中心用 `/api/setup/…`（[`engine/setup_api.py`](engine/setup_api.py)）；[`setup_ctl.py`](setup_ctl.py) 在终端里走同样的三步（`python3 setup_ctl.py`，或者 `status`、`models`、`add <id>`、`test <id>`、`use chat <provider/model>`、`search <id>`、`memory sqlite`）。不绑哪一家：每一层都能选云端（填你的密钥）、这台电脑上跑的、已经登录的工具、自己填地址，或者不用。
+选模型、搜索、记忆的接口是 `/api/setup/…`（[`engine/setup_api.py`](engine/setup_api.py)）；[`setup_ctl.py`](setup_ctl.py) 在终端里走同样的三步（`python3 setup_ctl.py`，或者 `status`、`models`、`add <id>`、`test <id>`、`use chat <provider/model>`、`search <id>`、`memory sqlite`）。不绑哪一家：每一层都能选云端（填你的密钥）、这台电脑上跑的、已经登录的工具、自己填地址，或者不用。
 
 - 模型：目录（[`engine/catalog.py`](engine/catalog.py)）里有 24 家云端（每家的地址都对过它自己的官方文档，来源写在文件里）、这台电脑上的 Ollama、LM Studio、vLLM、llama.cpp、MLX、oMLX（在默认端口上探）、这里登录着的 Claude Code / ChatGPT / Codex，再加任何 OpenAI 兼容的地址。能同时连好几家，按用途挑：主对话（`engine.model`）、后台和定时（`engine.use.background`）、写作（`engine.use.writing`：长文、文书；有 Gemini 密钥时推荐 `google/gemini-4-argon`；写文书的技能以后接）、外人回合（名片 Agent 和 Doorman，不花你的套餐；按 2026-10-19 的评测分开推荐：名片 Agent 推荐按量的 `anthropic/claude-opus-5-5`，没连 Anthropic 时推荐 `moonshot/kimi-k3`；Doorman 推荐 `moonshot/kimi-k3`）、向量（`engine.recall.embeddings`）。只连了一家就自动用它。
 - 在 app 里填的密钥存进 `server.json` 旁边的 `secrets.env`（0600、原子写），读的顺序是进程环境 → 它 → `env_file`。永远不回给 app：只说有没有、从哪来、末四位、哪天存的。
@@ -82,7 +190,7 @@ python3 run.py                   # 或按 openmousse-server.service.example 装�
 
 ## Agent
 
-app 里「新建 Agent」= 在你的 OpenClaw 里建一个独立 agent：自己的 workspace（AGENTS.md / IDENTITY.md / MEMORY.md）、skills 允许列表、路由。见 [`agents.py`](agents.py)。命令行：
+app 里「新建 Agent」= 在你的 OpenClaw 里建一个独立 agent：自己的 workspace（AGENTS.md / IDENTITY.md / MEMORY.md）、skills 允许列表、路由。见 [`agents.py`](agents.py)。用自带的内核（或者别的 claw）时不碰 `openclaw.json`：Agent 是 OpenMousse 数据库里的一行、同一个内核的一段单独对话，它知道这个 Agent 叫什么、管什么。命令行：
 
 ```bash
 python3 agent_ctl.py list
@@ -164,7 +272,7 @@ python3 inbox_ctl.py list [--status recent]
 
 主对话把问题转给某个 Agent（`scripts/ask_agent.py` → `/api/chat/relay`），或者派一个后台任务（OpenClaw 的 `sessions_spawn`），对话里都会出一张卡。见 [`cards.py`](cards.py)。
 
-- **转交卡**：问题一转出去就出现（「正在问 饮食记录…」，带着转过去的原话），答完变成「转给了 饮食记录 · 34 秒」，挂在发起转交的那条回复下面。点一下打开那个 Agent 的对话，定位到那个问题。转交记在 grava.db 的 `handoffs`；「发起转交的那条回复」= relay 进来时正在回复的那个线程（脚本不知道自己在哪个会话里；几个同时在回复时优先主 agent 的线程，再取最晚开始的）。2026-10-05 起转给正在忙的 Agent 不再失败：卡上写「正忙，已排队」（`queued`），那个 Agent 一空下来（你自己在那边排着的消息先发）就转进去，排队的时间算在 relay 的 `timeout` 里；到时还没轮到，relay 回 200、`status: queued`，后台接着等，最多 15 分钟，回答进那个 Agent 的对话，卡跟着变。排着的转交算进 `/api/chat/busy`，`safe_restart` 会等它们。以前的记录里可能还有 `busy`（那时 409，没转过去）。
+- **转交卡**：问题一转出去就出现（「正在问 饮食记录…」，带着转过去的原话），答完变成「转给了 饮食记录 · 34 秒」，挂在发起转交的那条回复下面。点一下打开那个 Agent 的对话，定位到那个问题。转交记在 mousse.db 的 `handoffs`；「发起转交的那条回复」= relay 进来时正在回复的那个线程（脚本不知道自己在哪个会话里；几个同时在回复时优先主 agent 的线程，再取最晚开始的）。自己的内核里脚本知道（relay 带 `source`，见[看别的会话、Agent 之间转话](#看别的会话agent-之间转话mousse-agent自己的内核)）：卡照实记那个对话，Agent 也能转，Agent 那边的那一行写明是哪个 Agent 转来的。2026-10-05 起转给正在忙的 Agent 不再失败：卡上写「正忙，已排队」（`queued`），那个 Agent 一空下来（你自己在那边排着的消息先发）就转进去，排队的时间算在 relay 的 `timeout` 里；到时还没轮到，relay 回 200、`status: queued`，后台接着等，最多 15 分钟，回答进那个 Agent 的对话，卡跟着变。排着的转交算进 `/api/chat/busy`，`safe_restart` 会等它们。以前的记录里可能还有 `busy`（那时 409，没转过去）。
 - **任务卡**：读 OpenClaw 的任务台账（`<openclaw_home>/state/openclaw.sqlite` 的 `task_runs` / `subagent_runs`，只读，一次几毫秒；`tasks.list` 要 2 秒）。回复进行中每 2 秒看一眼这个会话有没有新派的，有就从同一条 SSE 流发过去（`event: card`），卡片当场出现；回复结束时挂到这条回复下面（`task_links`）。进行中显示在做哪一步（「在读 L2.pdf」，读子会话记录，最多 20 秒一次）；做完显示结果开头。「改一下」把意见发给同一个子会话（`POST /api/tasks/{id}/revise`），第几轮、意见、每一轮的结果从 `task:<id>` 线程算。
 - **额度**：`server.json` 的 `tasks: {daily_limit: 10, max_minutes: 30, notify_done: true}`。只是给 Agent 看的数（`tasks_ctl.py quota`，用完了退出码 3）；真正到点停掉任务的是 OpenClaw 的 `agents.defaults.subagents.runTimeoutSeconds`。
 
@@ -189,7 +297,7 @@ python3 tasks_ctl.py list
 
 每天一条时间线、一张「要记得的」，都能改。见 [`schedule.py`](schedule.py)。
 
-- **日程** = 课表（可选数据源 `calendar`，只读）+ 服务器自己存的一层（grava.db 的 `schedule_items`：用户自己的安排、各 Agent 排的）+ 当天到期的截止（带勾）。课表本身改不了，但这一层能给一节课标「不去」（`series` = 每周这节都不去）、改地点、加备注。过去的日子记实际发生的：去没去、做没做、实际几点（key 是 `<agent>:training:<日期>` 的训练，实际时间从训练数据源来）。
+- **日程** = 课表（可选数据源 `calendar`，只读）+ 服务器自己存的一层（mousse.db 的 `schedule_items`：用户自己的安排、各 Agent 排的）+ 当天到期的截止（带勾）。课表本身改不了，但这一层能给一节课标「不去」（`series` = 每周这节都不去）、改地点、加备注。过去的日子记实际发生的：去没去、做没做、实际几点（key 是 `<agent>:training:<日期>` 的训练，实际时间从训练数据源来）。
 - **要记得的** = 课程作业（`study.deadlines_cmd`）+ 邮件里抽出来的事（下面的 `remember.mail`）+ 求职和申请的截止（`applications`）+ 用户自己加的截止。一件事只出现一次：到期那天挪进那天的时间线。分组：`security`（置顶）、`overdue`、`tomorrow`、`week`、`later`、`nodate`、`news`（没日子的钱和状态类邮件）。
 - **打勾** = 做完了或不用管（`schedule_marks.done_at`）：从列表里去掉，提醒的脚本也不再提（Grava 的 watcher 读 `schedule_marks`）。邮件条目打勾同时跑 `remember.mail.cmd --done <id>`（取消：`--undo`）；改条目（`/api/remember/edit`）跑 `--edit <id> --json …`。
 - **Agent 改的**（`schedule_ctl.py`，带 `source` 调这些接口）：它正在回复时，从它的 SSE 流发一张 `schedule` 卡；回复结束挂到那条回复下面（`schedule_log.message_id`）。每次改动都能撤销（`/api/schedule/undo/{id}`）。Agent 用同一个 `key` 再加一次就是改那一条，但不会盖掉用户自己挪过的时间。
@@ -246,6 +354,8 @@ python3 schedule_ctl.py undo 42
 ### 工程看板（2026-10-15，可选）
 
 `"today": {"engineering": {"todos": "交接本的路径", "archive": "归档文件的 glob（可选）"}}`：把 Claude Code 的交接本（一份 markdown，`## ` 一节 = 一条线，`- [ ]` / `- [x]` = 一件事）只读同步进 `eng_lines` / `eng_items`（[`engboard.py`](engboard.py)），文件改了才重读，不加定时器。今天的报告里多一张工程看板卡（`type: eng`：这周做完 / 没做 / 等你三个数、主线几步），点进看板页。没打勾、写着要你定 / 要你动手的（等你、等 <你的称呼>、<你的称呼> 定、拍板 ·……）算「等你」，写着「→ 已搬到…」「不做了」的不算；整节挪走以后做完的照样算。
+
+也可以改读 GitHub 的看板（Projects，2026-10-19）：`"today": {"engineering": {"source": "github", "owner": "看板的主人（用户或组织）", "number": 1, "mainline": "主线 JSON 的路径（可选）"}}`。服务器起子进程跑 `gh api graphql`（用这台机器上 gh 登录的账号，令牌不经过服务器），读一次管 5 分钟（看板页 1 分钟），gh 读不了就给上一次读到的（库里也存一份 `eng_gh`），说明是几点的。一条线 = 看板「线」字段的一个选项，一件事 = 看板上的一件。等你 → 等你；在做、等上线 → 算在做（等上线的标题前加「等上线 · 」）；排队 → 排队；这三格算三个数里的「没做」。以后不算进「没做」，单独一列，一条线只剩以后的收进「更早的线」。字段名、选项名默认是中文的那套（`fields` / `statuses` 可以改；GitHub 默认的 Todo / In Progress / Done 也认）。
 
 | 接口 | 做什么 |
 |---|---|
@@ -500,12 +610,16 @@ app 里的「我 → 世界树」。你的各个 AI（Claude、ChatGPT、Gemini�
 
 开源版世界树：新建的 Agent 会长一根自己的小枝（`agents` 填它的 id，内核据此给它看自己那几根枝的叶子），老的 Agent 在服务器起来时补上。**每周修剪**（[`treeprune.py`](treeprune.py)，只在自己的内核 builtin 下）：主对话的一条定时任务，默认每周日 19:00，照 `tree-prune` skill 先 `tree prune-context`，再用 `tree prune-plan` 交计划，变成一张静默的收件箱卡（kind `tree`，一周一张，一周后过期）。点了同意服务器照计划修剪完、卡片标完成；拒绝 = 计划作废。`server.json` 里 `"tree": {"prune": {"when": "every sunday 19:00"}}` 改时间，`"tree": {"prune": false}` 关掉。
 
+**手册**（世界树 0.6，自己的内核 builtin 下）：想让各处照同一套做的做法（怎么写文书、怎么记训练、怎么准备会议）在世界树旁边只存一份，叫手册（`mousse-tree manual …`，见 [`../tree/README.zh-CN.md`](../tree/README.zh-CN.md)）；别处只留四行指针（`mousse-tree manual pointers`）。你说的每一句，内核先按这句话（加上上一句）搜你的手册和这个 Agent 的技能，只把命中的正文接在这句话后面（[`engine/manuals.py`](engine/manuals.py)）；会话开头的技能目录只留名字。每一轮记下真读到了什么（手册、技能、世界树的叶子；[`engine/used.py`](engine/used.py)）：回复带 `used` 和一行「按『写文书』手册 · 用了 2 片叶子 ›」。Agent 想改手册用 `manual_manage`（[`engine/manual_write.py`](engine/manual_write.py)）：在记性的闸里手册是「做法」，先出一张卡给你点头，改之前留一版；经 `tree` 工具只能读。每周修剪的卡多一节「这个月没用上的」：没人用上的手册和你自己的技能，默认不动；同意 = 改说明（另出一张卡，名字和「什么时候用」改成平时说的话），在那一条上「修改」写「停用」= 停用。`"engine": {"manuals": false}` 换回以前的做法；别的设置见 `engine/models.py`。
+
 | 接口 | 做什么 |
 |---|---|
 | `GET /api/tree` | `branches` 按先序排（大枝后面跟着它的小枝；`leaves` = 直接挂在上面的，`total` = 连小枝一起的，`agents` = 默认挂到这里的 Agent）、`leaves`（当前的：active 和 pending，不含档案要点；`source` 是笔记里写的，`origin` 是最早记下它的平台，每周修剪改写过的顺着 `supersedes` 找回去）、`trunk: {name, count}`（档案）、`counts: {total, pending, bySource}`（按 origin 数）、`issues`（格式不对、先跳过的笔记数） |
 | `POST /api/tree/{id}` | `{action: confirm}` 待确认 → 当前；`{action: forget}` 笔记掏空成只剩属性的空壳挪进归档，索引里删掉，开源版世界树还回 `profileLines`（档案里修剪时从它并进去的句子；`alsoProfile: true` 一起删）；`{action: move, branch}` 挪到别的枝（写主干的名字 = 直接挂主干）。活动记录由世界树自己写，不含记忆内容 |
 | `GET /api/tree/prune` | 最近一份修剪计划（每一步、做没做）和它的卡 |
 | `GET /api/tree/prune/context` | 这周可剪的（和 `tree prune-context` 一样，JSON） |
+| `GET /api/engine/used/{一轮}`、`GET /api/engine/used?message=db123` | 这一轮用到的：`used`（手册、技能、用法的名字，几片叶子，那一行 `line`）和 `items`（每份手册、技能的「什么时候用」和说明，每片叶子的那句话、在哪一枝） |
+| `GET /api/engine/skills?agent=main` | 这个 Agent 的技能、手册、功能包的用法，带 `lastUsed`、`idleDays`、`stale`（`engine.manuals.stale_days` 天没用，默认 14；只标不删） |
 
 ## 连接
 

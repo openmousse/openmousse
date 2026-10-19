@@ -20,7 +20,8 @@ def test_builtin_turns_on_tasks_and_agent_workspaces(server_json):
     server_json(BUILTIN)
     c = claw.caps()
     assert c["tasks"] and c["agentWorkspaces"] and c["steer"]
-    assert not (c["approvals"] or c["cron"] or c["billing"] or c["channels"])  # 这几个页面还是读 OpenClaw 的
+    assert c["approvals"] and c["cron"] and c["billing"]  # 10/19 第 1 批起这几页读内核（engine/appdata.py，test_builtin_pages.py）
+    assert not c["channels"]  # 内核没有 Telegram、Discord 这些渠道
     server_json({"claw": {"kind": "openai", "url": "http://127.0.0.1:9/v1"}})
     c = claw.caps()
     assert not (c["tasks"] or c["agentWorkspaces"] or c["steer"])  # 别的 claw 照旧

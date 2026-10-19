@@ -129,6 +129,7 @@ class Outcome:
     usage: dict = field(default_factory=dict)
     message: int | None = None     # 发进对话的那条回复（app 里的 id）
     served: str = ""               # 备用链换过模型时真正回答的那个（engine/fallback.py）；没换 = 空
+    output: str | None = None      # 只跑命令的定时任务（engine/jobs.py）：命令的输出（记进运行记录）
 
 
 def tools_for(agent: str) -> list:

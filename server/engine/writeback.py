@@ -11,8 +11,16 @@
               我们短一点，当天就记下来）
     rollover  跨过了 04:00（那一天的会话不会再有新的话了；OpenClaw 每天重置那一刻存记录）
     turns     还在聊，但上次写回以后用户已经说了 TURNS 句（Hermes 每 10 句、Letta 每 5 轮那种：一整天聊个不停的，不攒到半夜才写）
-  游标（engine_writeback.upto = 写回到会话的哪一条）只在成功以后往前挪；失败的下一轮再试，最多 RETRIES 次（letta-code 的做法）。
+  游标（engine_writeback.upto = 写回到会话的哪一条）只在成功以后往前挪（letta-code 的做法）。没写成的游标不动，退避以后再试（先等 BACKOFF_MIN
+  分钟，一次比一次长一倍），同一段连着失败 RETRIES 次就停（failed），等这个对话有新的话（用户说的，定时发进来的【自动触发】不算；名片 Agent
+  那边是对方说的）再从头数：有了新的话也照样等这一段停下来（或者跨过 04:00、从没写成的那一条起又攒够 TURNS 句）才再写，还在聊的不是每说
+  一句都重来。会话没变（游标之后、失败的那一段之后都没有新的话）就不重跑。自己的对话、名片 Agent 的对话两条路一样。
   这一段里用户的话太少（不到 MIN_WORDS 个字：汉字一个算一个、英文一个词算一个）就不调模型，只把游标挪过去。
+缺东西（blocked）：调模型之前先看写回要的都在不在：核对原话的开源世界树包（openmousse_tree.provenance；作者那份世界树脚本不带它），一个写回
+  能花的模型。缺了：这一轮不调模型、不算一次失败，那一行记 blocked，error 写缺什么（这一句也是缺口的指纹：没变就不再记），GET 的时候说清楚
+  怎么补（照仓库 README 装包）。包查过一次就记下来，服务重启或过一天再查（装了包要重启服务）；模型每次照 server.json 现挑（改了配置下一轮
+  就接着写）。10/19 一台刚换到自带内核的实例：Python 里没装这个包，原来是先调模型、挑的时候才导入，每一段每一轮都白花一次，名片 Agent
+  那条路失败了也不封顶，一小时调了 30 多次。
 写回本身：一次便宜的模型调用（外人回合的写法：零工具、不落会话，engine/oneshot.py），模型照 engine.writeback.model → engine.use.background
   → engine.use.json → 不花套餐的默认模型；不花用户的套餐（models.may_spend 的外人回合）。它读这一段对话（[User] / [Assistant]）、世界树的
   规则、这个 Agent 看得到的叶子（查重、取代），回一串候选，每条三项打分（规则.md 的检验）：
@@ -26,22 +34,27 @@
   「改做法」（用户纠正了它做某类事的办法）不写叶子：最多 2 条，交一张收件箱卡（kind other，一条一条），用户同意了再让它去改 skill / 规矩文件
   （那一步照样交卡、点头、留版本）。
 没选的留一笔：engine_writeback 这条会话那一行的 skipped（每条为什么没选：分不够、原话对不上、内容检查、超过 3 条、树上已有、写不进去），
-  留 KEEP_DAYS 天（覆盖四次每周修剪；过了这么久，对话本身照样能用 memory_search 搜到，候选单就不用留了），GET /api/engine/writeback 看；
-  POST /api/engine/writeback/run {conversation?} 现在就写回（记忆页的「现在回看一遍」、测试服用）。
+  留 KEEP_DAYS 天（覆盖四次每周修剪；过了这么久，对话本身照样能用 memory_search 搜到，候选单就不用留了），GET /api/engine/writeback 看
+  （还带着现在的状态：缺什么、哪几段在退避、哪几段停了、为什么、今天调了几次模型）；
+  POST /api/engine/writeback/run {conversation?} 现在就写回（记忆页的「现在回看一遍」、测试服用；给了对话的不管退避，缺东西照样不调）。
 别人说的（outside）：名片 Agent 收到的（A2A、分享的追问，card_log）一段对话停下来以后，同样列候选、打分，但一条都不写叶子，挑出来的进待定
   （../memhold.py，写明是谁、谁的 Agent 说的、原话）；对方要它记、说用户答应过什么的标 asked，卡上写出来。好友聊天不读（那是人和人的
   私聊，原本不经过任何模型；要不要读等用户定，读的话照 run_card 的样子交给 memhold.hold(channel="friend")）。
 server.json：
   "engine": {"writeback": {"idle_minutes": 30, "turns": 20, "max_leaves": 3, "model": "deepseek/deepseek-flash", "outside": true,
-                           "per_day": 40}}     写 "writeback": false 整个关掉；"outside": false 不看名片 Agent 的对话
+                           "per_day": 40}}     写 "writeback": false 整个关掉；"outside": false 不看名片 Agent 的对话；
+                                               per_day = 一天最多调几次模型（所有对话合计：没写成的、回的不像样再问的那一次都算）
 """
 from __future__ import annotations
 
 import asyncio
+import importlib
 import json
 import re
+import sys
 import time
 from datetime import datetime, timedelta
+from pathlib import Path
 
 from fastapi import APIRouter
 from pydantic import BaseModel
@@ -61,9 +74,14 @@ ENTRY_MAX = 1_500
 LEAVES_MAX = 6_000     # 给模型看的已有叶子（查重、取代用）
 RULES_MAX = 6_000
 KEEP_DAYS = 30
-RETRIES = 3
-PER_DAY = 40           # 一天最多写回几次（所有对话合计）
+RETRIES = 3            # 同一段连着失败几次就停（failed），等这个对话有新的话再从头数
+BACKOFF_MIN = 10       # 失败以后先等多久再试（分钟），一次比一次长一倍：10、20……
+FAILED = ("error", "failed")  # 没写成的：error = 退避以后再试，failed = 停了
+NEEDS_TTL = 86_400     # 写回要的包查过一次记多久（秒）：过一天或服务重启再查
+RECENT_DAYS = 3        # 只看最近几天动过的会话、名片 Agent 的对话（名片的对话不分天：再早的那一行过了 KEEP_DAYS 就清掉了，别从头再读一遍）
+PER_DAY = 40           # 一天最多调几次模型写回（所有对话合计，没写成的也算）
 TICK = 300             # 后台多久看一眼
+TREE_GIT = '"git+https://github.com/openmousse/openmousse#subdirectory=tree"'  # 仓库 tree/README.md 的装法（这台没有仓库的 tree/ 时用）
 SKIP_PREFIXES = ("【自动触发】", "【收件箱】", "【只记下】")  # 不是用户自己说的话（定时脚本、收件箱发进来的）
 SKIP_CONVS = ("api:", "task:", "cron:", "heartbeat:", "compact:", "writeback:", "skills:", "eval:")
 KEY = re.compile(r"^mousse:(?P<conv>.+):(?P<day>\d{4}-\d{2}-\d{2})$")
@@ -71,6 +89,7 @@ router = APIRouter()
 _running: set[str] = set()
 _bg: set[asyncio.Task] = set()
 _gate = asyncio.Semaphore(1)  # 同一时间只写回一段（省钱、省内存）
+_needs: dict = {}  # 写回要的包查过的结果 {"at": time.time(), "error": 导入时的错 | None}：进程新起（服务重启）或过了 NEEDS_TTL 再查
 
 
 def cfg() -> dict:
@@ -97,6 +116,49 @@ def model_for() -> str | None:
         if isinstance(m, str) and m and models.may_spend(m, kind="outsider", origin="writeback") and models.valid_ref(m):
             return m
     return models.outside()
+
+
+def tree_package() -> str | None:
+    """核对原话要的开源世界树包（openmousse_tree.provenance，0.4 起有）导不导得进来：能 → None，不能 → 导入时的错。
+    查一次记在 _needs，服务重启或过 NEEDS_TTL 再查（见文件开头「缺东西」）。"""
+    if _needs and time.time() - _needs["at"] < NEEDS_TTL:
+        return _needs["error"]
+    importlib.invalidate_caches()  # 隔了一天再查：这期间装上的也看得见
+    try:
+        from openmousse_tree.provenance import found_in  # noqa: F401 — 只看导不导得进来
+        err = None
+    except Exception as e:  # noqa: BLE001 — 没装、太旧、装坏了
+        err = f"{type(e).__name__}: {e}"
+    _needs.update(at=time.time(), error=err)
+    return err
+
+
+def blocker(model: str | None) -> str | None:
+    """调模型之前：写回要的缺了哪些 → 一句 "missing openmousse_tree (ModuleNotFoundError: …)"（记在那一行的 error，也是这个缺口的
+    指纹）；都在 → None。"""
+    gaps = [f"missing openmousse_tree ({err})"] if (err := tree_package()) else []
+    if not model:
+        gaps.append("missing model (none that writeback may spend)")
+    return "; ".join(gaps) or None
+
+
+def explain(error: str | None) -> str:
+    """blocked 那一行的 error（blocker 的那一句）→ 给人看的：缺什么、怎么补。"""
+    error, out = error or "", []
+    if "missing openmousse_tree" in error:
+        tree = Path(__file__).resolve().parents[2] / "tree"
+        cmd = f"{sys.executable} -m pip install {tree if (tree / 'pyproject.toml').is_file() else TREE_GIT}"
+        out.append(L(f"写回核对原话要用开源世界树包（openmousse_tree 0.4 起），这台服务器的 Python 里没有（或者太旧）。照仓库 README（tree/README.md）"
+                     f"装上，要装进服务器自己的 Python（安装器 install.sh 就是这么装的）：{cmd}，装好重启服务。在那之前写回不调模型。",
+                     f"Writeback checks quotes with the open-source memory tree package (openmousse_tree 0.4 or later), which this server's "
+                     f"Python doesn't have (or has an older one). Install it as the repository README (tree/README.md) says, into the server's own "
+                     f"Python the way install.sh does: {cmd}, then restart the server. Until then writeback calls no model."))
+    if "missing model" in error:
+        out.append(L("没有写回能用的模型：写回不花套餐，要一个按量付费、有密钥的（server.json 的 engine.writeback.model，或 engine.model）。"
+                     "改好了下一轮就接着写。",
+                     "There's no model writeback may use: it never spends a plan, so it needs a pay-as-you-go one with a key "
+                     "(engine.writeback.model or engine.model in server.json). It picks up again at the next round once that's set."))
+    return " ".join(out) or error
 
 
 # —— 提示词 ————————————————————————————————————————————————————————————————————
@@ -325,6 +387,29 @@ def _save(session: str, conversation: str, agent: str, **cols) -> None:
                          f"VALUES(?,?,?,?,?{', ?' * len(cols)})", (session, conversation, agent, now, now, *cols.values()))
 
 
+CLEAR = {"error": None, "tries": 0, "tried": None, "retry_at": None}  # 写成了、跳过了：没写成留下的记号清掉
+
+
+def _block(key: str, conversation: str, agent: str, prev: dict, reason: str, why: str) -> dict:
+    """缺东西（blocker 的那一句）：这一轮不调模型、不算一次失败，记成 blocked。同一个缺口记过了（指纹没变）就不再写、不再打日志。"""
+    if prev.get("status") != "blocked" or prev.get("error") != why:
+        _save(key, conversation, agent, status="blocked", reason=reason, error=why, tries=0, tried=None, retry_at=None)
+        print(f"[engine] 写回 {conversation} 先不调模型：{why}")
+    return _wb(key) or {}
+
+
+def _fail(key: str, conversation: str, agent: str, prev: dict, last: str | None, reason: str, e: Exception, *, said: bool) -> dict:
+    """这一段没写成：游标不动，记下这一段到哪一条（tried）、第几次（上一次也没写成、之后没有新的话 said → 接着数，不然从 1 数起）。
+    没到 RETRIES 次的退避（BACKOFF_MIN 分钟起，一次比一次长一倍），到了的停下（failed），等这个对话有新的话。"""
+    tries = (int(prev.get("tries") or 0) if prev.get("status") in FAILED and not said else 0) + 1
+    stop = tries >= RETRIES
+    retry_at = None if stop else (datetime.now(settings.tz) + timedelta(minutes=BACKOFF_MIN * 2 ** (tries - 1))).isoformat(timespec="seconds")
+    error = f"{type(e).__name__}: {str(e)[:200]}"
+    _save(key, conversation, agent, status="failed" if stop else "error", reason=reason, error=error, tries=tries, tried=last, retry_at=retry_at)
+    print(f"[engine] 写回 {conversation} 没成（第 {tries} 次，{'停了，等有新的话' if stop else f'{retry_at} 以后再试'}）：{error[:160]}")
+    return _wb(key) or {}
+
+
 async def write_leaf(agent: str, conversation: str, item: dict) -> tuple[str, bool]:
     """一片叶子经 tree 工具同一条路写（bridges.run：按这个 Agent 跑、出处 = 这个对话、原话出自的那条消息）→ (叶子 id, 是不是树上已有的)。"""
     import bridges
@@ -376,7 +461,8 @@ async def propose_procedures(agent: str, conversation: str, session: str, procs:
 
 
 async def run_session(session_id: str, reason: str) -> dict:
-    """写回一条会话游标之后的那一段（见文件开头）→ 这一次的结果（engine_writeback 那一行）。出错的记 error，游标不动。"""
+    """写回一条会话游标之后的那一段（见文件开头）→ 这一次的结果（engine_writeback 那一行）。缺东西的记 blocked、不调模型；
+    出错的游标不动，记 error（退避以后再试）或 failed（连着 RETRIES 次，停了）。"""
     from .oneshot import ask_json
     from .session import DbSession
     s = DbSession.get(session_id)
@@ -386,17 +472,17 @@ async def run_session(session_id: str, reason: str) -> dict:
     conversation, _day = conv
     agent = s.agent or "main"
     prev = _wb(session_id) or {}
-    msgs, last = segment(s.path(), prev.get("upto"))
+    path = s.path()
+    msgs, last = segment(path, prev.get("upto"))
     if not has_tree(agent):
-        _save(session_id, conversation, agent, upto=last, status="skipped", reason="no-tree")
+        _save(session_id, conversation, agent, upto=last, status="skipped", reason="no-tree", **CLEAR)
         return _wb(session_id) or {}
     if words(" ".join(m["text"] for m in msgs if m["role"] == "user")) < MIN_WORDS:
-        _save(session_id, conversation, agent, upto=last, status="skipped", reason="too-little")
+        _save(session_id, conversation, agent, upto=last, status="skipped", reason="too-little", **CLEAR)
         return _wb(session_id) or {}
     ref = model_for()
-    if not ref:
-        _save(session_id, conversation, agent, status="error", reason=reason, error="no model")
-        return _wb(session_id) or {}
+    if why := blocker(ref):
+        return _block(session_id, conversation, agent, prev, reason, why)
     _running.add(session_id)
     try:
         async with _gate:
@@ -422,16 +508,14 @@ async def run_session(session_id: str, reason: str) -> dict:
                 memgate.done(d, leaf, ok=not dup, target=f"tree:{leaf}")
                 (skipped.append({**item, "reason": "duplicate", "leaf": leaf}) if dup else picked.append({**item, "leaf": leaf}))
             card = await propose_procedures(agent, conversation, session_id, pick["procedures"])
-        _save(session_id, conversation, agent, upto=last, status="done", reason=reason, error=None,
+        _save(session_id, conversation, agent, upto=last, status="done", reason=reason, **CLEAR,
               candidates=json.dumps(out.get("candidates") if isinstance(out, dict) else [], ensure_ascii=False)[:20_000],
               picked=json.dumps(picked, ensure_ascii=False), skipped=json.dumps(skipped, ensure_ascii=False),
               turn=card or None)
         return _wb(session_id) or {}
-    except Exception as e:  # noqa: BLE001 — 写回是锦上添花：失败了记下来，游标不动，下一轮再试（最多 RETRIES 次）
-        tries = int(str((prev.get("reason") or "")).partition("#")[2] or 0) + 1 if prev.get("status") == "error" else 1
-        _save(session_id, conversation, agent, status="error", reason=f"{reason}#{tries}", error=f"{type(e).__name__}: {str(e)[:200]}")
-        print(f"[engine] 写回 {conversation} 没成：{type(e).__name__}: {str(e)[:160]}")
-        return _wb(session_id) or {}
+    except Exception as e:  # noqa: BLE001 — 写回是锦上添花：失败了记下来，游标不动，退避以后再试（连着 RETRIES 次就停）
+        said = any(m["role"] == "user" for m in segment(path, prev.get("tried"))[0])  # 上一次失败的那一段之后用户又说了话
+        return _fail(session_id, conversation, agent, prev, last, reason, e, said=said)
     finally:
         _running.discard(session_id)
 
@@ -439,7 +523,8 @@ async def run_session(session_id: str, reason: str) -> dict:
 # —— 别人说的：名片 Agent 收到的 → 待定 ——————————————————————————————————————————————————
 
 def card_refs(idle: timedelta, now: datetime) -> list[tuple[str, str, str, str]]:
-    """名片 Agent 的对话（card_log 按 ref 分）里停下来了、有新进来的话的 → [(ref, 最后一条的 id, 对方的 key, 对方的名字)]。"""
+    """名片 Agent 的对话（card_log 按 ref 分）里停下来了的（对方最后一句在 idle 以前、RECENT_DAYS 天以内）
+    → [(ref, 对方最后一句的时间, 对方的 key, 对方的名字)]。"""
     import cardagent
     import chat
     out = []
@@ -455,13 +540,13 @@ def card_refs(idle: timedelta, now: datetime) -> list[tuple[str, str, str, str]]
             continue
         if last.tzinfo is None:
             last = last.replace(tzinfo=settings.tz)
-        if now - last >= idle:
+        if idle <= now - last <= timedelta(days=RECENT_DAYS):
             out.append((r["ref"], r["last"], r["peer"], r["peer_name"]))
     return out
 
 
 def card_segment(ref: str, since: str | None) -> tuple[list[dict], str | None, str]:
-    """一段名片 Agent 的对话：游标（那一条的时间）之后的每一句 → ([{"id", "role": them | card, "text"}], 最后一条的时间, 渠道)。"""
+    """一段名片 Agent 的对话：游标（那一条的时间）之后的每一句 → ([{"id", "role": them | card, "text", "ts"}], 最后一条的时间, 渠道)。"""
     import cardagent
     import chat
     with chat._lock, cardagent.cdb() as conn:
@@ -472,14 +557,15 @@ def card_segment(ref: str, since: str | None) -> tuple[list[dict], str | None, s
             continue
         last, channel = str(r["ts"]), str(r["channel"] or channel)
         if r["dir"] == "in":
-            out.append({"id": r["id"], "role": "them", "text": str(r["text"] or "")})
+            out.append({"id": r["id"], "role": "them", "text": str(r["text"] or ""), "ts": last})
         elif r["status"] == "sent":
-            out.append({"id": r["id"], "role": "card", "text": str(r["text"] or "")})
+            out.append({"id": r["id"], "role": "card", "text": str(r["text"] or ""), "ts": last})
     return out, last, channel
 
 
 async def run_card(ref: str, peer: str, peer_name: str) -> dict:
-    """名片 Agent 的一段对话停下来了：列候选、打分，挑出来的进待定（一片叶子都不写）。"""
+    """名片 Agent 的一段对话停下来了：列候选、打分，挑出来的进待定（一片叶子都不写）。缺东西、没写成的和自己的对话一样记
+    （blocked / error / failed，见 run_session）。"""
     import memhold
 
     from .oneshot import ask_json
@@ -489,11 +575,11 @@ async def run_card(ref: str, peer: str, peer_name: str) -> dict:
     prev = _wb(key) or {}
     msgs, last, channel = await asyncio.to_thread(card_segment, ref, prev.get("upto"))
     if words(" ".join(m["text"] for m in msgs if m["role"] == "them")) < MIN_WORDS:
-        _save(key, ref, "main", upto=last, status="skipped", reason="too-little")
+        _save(key, ref, "main", upto=last, status="skipped", reason="too-little", **CLEAR)
         return _wb(key) or {}
     model = model_for()
-    if not model:
-        return {}
+    if why := blocker(model):
+        return _block(key, ref, "main", prev, "idle", why)
     _running.add(key)
     try:
         async with _gate:
@@ -514,27 +600,40 @@ async def run_card(ref: str, peer: str, peer_name: str) -> dict:
                     held.append({**item, "held": got["id"], "duplicate": got["duplicate"]})
                 except ValueError as e:
                     pick["skipped"].append({**item, "reason": "error", "detail": str(e)[:120]})
-        _save(key, ref, "main", upto=last, status="done", reason="idle", error=None,
+        _save(key, ref, "main", upto=last, status="done", reason="idle", **CLEAR,
               candidates=json.dumps(out.get("candidates") if isinstance(out, dict) else [], ensure_ascii=False)[:20_000],
               picked=json.dumps(held, ensure_ascii=False), skipped=json.dumps(pick["skipped"], ensure_ascii=False))
         return _wb(key) or {}
-    except Exception as e:  # noqa: BLE001
-        _save(key, ref, "main", status="error", reason="idle", error=f"{type(e).__name__}: {str(e)[:200]}")
-        return _wb(key) or {}
+    except Exception as e:  # noqa: BLE001 — 和自己的对话一样：退避以后再试，连着 RETRIES 次就停
+        said = any(m["role"] == "them" and m["ts"] > str(prev.get("tried") or "") for m in msgs)  # 上一次失败的那一段之后对方又说了话
+        return _fail(key, ref, "main", prev, last, "idle", e, said=said)
     finally:
         _running.discard(key)
 
 
 # —— 什么时候 ——————————————————————————————————————————————————————————————————————
 
+def waiting(row: dict, now: datetime, *, said: bool) -> bool:
+    """没写成的这一段这会儿还不跑：之后没有新的话（said），而且停了（failed）或者还在退避（retry_at 没到）。"""
+    if row.get("status") not in FAILED or said:
+        return False
+    if row["status"] == "failed":
+        return True
+    try:
+        return now < datetime.fromisoformat(str(row.get("retry_at")))
+    except (TypeError, ValueError):
+        return False
+
+
 def due(now: datetime | None = None) -> list[tuple[str, str]]:
-    """该写回的会话 → [(会话 id, 为什么：idle / rollover / turns)]（见文件开头「对话结束」）。正在跑一轮的不算（loop 的会话锁）。"""
+    """该写回的会话 → [(会话 id, 为什么：idle / rollover / turns)]（见文件开头「对话结束」）。不算：正在跑一轮的（loop 的会话锁）、
+    写回过以后没有新条目的、没写成以后用户没说新的话而停了或者还在退避的（waiting）。"""
     from . import loop
     now = now or datetime.now(settings.tz)
     idle = timedelta(minutes=_int("idle_minutes", IDLE_MIN))
-    since = (now - timedelta(days=3)).isoformat(timespec="seconds")  # 只看最近三天动过的会话
+    since = (now - timedelta(days=RECENT_DAYS)).isoformat(timespec="seconds")  # 只看最近几天动过的会话
     with store.read() as conn:
-        rows = conn.execute("SELECT s.id, s.key, s.updated_at, w.upto, w.status, w.reason, w.updated_at wat FROM engine_sessions s "
+        rows = conn.execute("SELECT s.id, s.key, s.leaf, s.updated_at, w.upto, w.status, w.tried, w.retry_at FROM engine_sessions s "
                             "LEFT JOIN engine_writeback w ON w.session = s.id WHERE s.kind='owner' AND julianday(s.updated_at) >= julianday(?)",
                             (since,)).fetchall()
     import chat
@@ -547,36 +646,22 @@ def due(now: datetime | None = None) -> list[tuple[str, str]]:
         lock = loop._locks.get(r["id"])
         if lock is not None and lock.locked():
             continue
-        if r["status"] == "error":
-            tries = int(str(r["reason"] or "").partition("#")[2] or 0)
-            if tries >= RETRIES:
-                continue
-            try:
-                waited = now - datetime.fromisoformat(r["wat"])
-            except (TypeError, ValueError):
-                waited = idle
-            if waited < timedelta(minutes=10 * tries):
-                continue
+        said = r["status"] in FAILED and r["leaf"] != r["tried"] and _user_turns(r["id"], r["tried"]) > 0  # 没写成以后用户又说了话
+        if waiting(dict(r), now, said=said):
+            continue
+        if r["upto"] and r["status"] in ("done", "skipped") and (not r["leaf"] or r["leaf"] == r["upto"]):
+            continue  # 写回过了，之后没有新条目
         try:
             touched = datetime.fromisoformat(r["updated_at"])
         except ValueError:
-            continue
-        if r["upto"] and r["status"] in ("done", "skipped") and not _moved(r["id"], r["upto"]):
             continue
         if conv[1] < day_now:
             out.append((r["id"], "rollover"))
         elif now - touched >= idle:
             out.append((r["id"], "idle"))
-        elif _user_turns(r["id"], r["upto"]) >= _int("turns", TURNS):
-            out.append((r["id"], "turns"))
+        elif _user_turns(r["id"], r["tried"] if said else r["upto"]) >= _int("turns", TURNS):
+            out.append((r["id"], "turns"))  # 没写成以后又说了话的从没写成那一条数起：还在聊的不是每说一句都重来一次
     return out
-
-
-def _moved(session_id: str, upto: str) -> bool:
-    """游标之后这条会话又有新的条目了吗（叶子不再是游标那一条）。"""
-    with store.read() as conn:
-        r = conn.execute("SELECT leaf FROM engine_sessions WHERE id=?", (session_id,)).fetchone()
-    return bool(r and r["leaf"] and r["leaf"] != upto)
 
 
 def _user_turns(session_id: str, upto: str | None) -> int:
@@ -589,10 +674,12 @@ def _user_turns(session_id: str, upto: str | None) -> int:
 
 
 def today_count() -> int:
+    """今天写回调了几次模型（per_day 管的）：事件表里写回的每一轮都算，写成的、没写成的、回的不像样再问的那一次都是一轮。
+    缺东西、话太少没调模型的不算。"""
     start = datetime.now(settings.tz).replace(hour=0, minute=0, second=0, microsecond=0).isoformat(timespec="seconds")
-    with store.read() as conn:
-        return conn.execute("SELECT COUNT(*) FROM engine_writeback WHERE status='done' AND julianday(updated_at) >= julianday(?)",
-                            (start,)).fetchone()[0]
+    with store.read() as conn:  # conversation 都是 writeback:…（GLOB 走得上 engine_turns 的索引）
+        return conn.execute("SELECT COUNT(*) FROM engine_turns WHERE conversation GLOB 'writeback:*' AND origin='writeback' "
+                            "AND julianday(started_at) >= julianday(?)", (start,)).fetchone()[0]
 
 
 def prune_old() -> int:
@@ -603,7 +690,7 @@ def prune_old() -> int:
 
 
 async def sweep(now: datetime | None = None) -> list[dict]:
-    """看一眼：到点的会话写回、停下来的名片 Agent 对话进待定 → 这一次做了的。"""
+    """看一眼：到点的会话写回、停下来的名片 Agent 对话进待定 → 这一次做了的。今天调模型调够了 per_day 次（没写成的也算）就不再跑。"""
     if not enabled():
         return []
     now = now or datetime.now(settings.tz)
@@ -615,9 +702,11 @@ async def sweep(now: datetime | None = None) -> list[dict]:
     if cfg().get("outside", True) is not False:
         idle = timedelta(minutes=_int("idle_minutes", IDLE_MIN))
         for ref, last, peer, name in await asyncio.to_thread(card_refs, idle, now):
-            prev = await asyncio.to_thread(_wb, f"card:{ref}")
-            if prev and prev.get("upto") and str(prev["upto"]) >= str(last):
-                continue
+            prev = await asyncio.to_thread(_wb, f"card:{ref}") or {}
+            if prev.get("upto") and str(prev["upto"]) >= str(last):
+                continue  # 读过了，之后对方没说新的话
+            if waiting(prev, now, said=str(last) > str(prev.get("tried") or "")):
+                continue  # 没写成，之后对方没说新的话：停了，或者还在退避
             if await asyncio.to_thread(today_count) >= _int("per_day", PER_DAY):
                 break
             done.append(await run_card(ref, peer, name))
@@ -652,7 +741,8 @@ def rows(conversation: str | None = None, limit: int = 20) -> list[dict]:
 
 
 def parsed(d: dict) -> dict:
-    """engine_writeback 的一行 → 给 app 的样子：候选、选了的、没选的拆成列表，没选的每条带一句为什么（reasonText）。"""
+    """engine_writeback 的一行 → 给 app 的样子：候选、选了的、没选的拆成列表，没选的每条带一句为什么（reasonText），
+    这一行现在怎样了（statusText：缺东西、在退避、停了；写成了、跳过了的是空的）。"""
     for k in ("candidates", "picked", "skipped"):
         try:
             d[k] = json.loads(d.get(k) or "[]")
@@ -660,13 +750,47 @@ def parsed(d: dict) -> dict:
             d[k] = []
     for x in d["skipped"]:
         x["reasonText"] = L(*REASONS.get(x.get("reason") or "", (x.get("reason") or "", x.get("reason") or "")))
+    d["statusText"] = status_text(d)
     return d
+
+
+def status_text(d: dict) -> str:
+    """一行写回现在怎样了，给人看的一句：缺东西的说缺什么、怎么补，在退避的说第几次、几点以后再试，停了的说什么时候重新开始。"""
+    st, n, err = d.get("status"), int(d.get("tries") or 0), str(d.get("error") or "")
+    if st == "blocked":
+        return explain(err)
+    if st == "error":
+        try:
+            at = datetime.fromisoformat(str(d.get("retry_at"))).astimezone(settings.tz).strftime("%H:%M")
+        except ValueError:  # 加退避以前记的那种：没有 retry_at，下一轮就重新看
+            return L(f"没写成，下一轮再看（{err}）", f"Failed; it gets another look next round ({err})")
+        return L(f"第 {n} 次没写成，{at} 以后再试（{err}）", f"Attempt {n} failed; trying again after {at} ({err})")
+    if st == "failed":
+        return L(f"连着 {n} 次没写成，停了：这段对话有新的话再从头来（最后一次：{err}）",
+                 f"Failed {n} times in a row, so it stopped; it starts over once something new is said here (last error: {err})")
+    return ""
+
+
+def status(conversation: str | None = None) -> dict:
+    """现在的状态：blocked = 缺东西，写回这会儿一次模型都不调（error 缺什么、text 怎么补；都在 → null），backoff = 在退避的那几段
+    （tries 第几次、retry_at 以后再试、error 为什么），stopped = 连着失败 RETRIES 次停了的（等那个对话有新的话），today = 今天写回调了
+    几次模型、per_day 上限。"""
+    with store.read() as conn:
+        rs = conn.execute("SELECT session, conversation, agent, status, reason, tries, tried, retry_at, error, updated_at FROM engine_writeback "
+                          "WHERE status IN ('error', 'failed') AND (? IS NULL OR conversation=?) ORDER BY updated_at DESC",
+                          (conversation, conversation)).fetchall()
+    items = [{**dict(r), "statusText": status_text(dict(r))} for r in rs]
+    why = blocker(model_for())
+    return {"blocked": {"error": why, "text": explain(why)} if why else None,
+            "backoff": [x for x in items if x["status"] == "error"], "stopped": [x for x in items if x["status"] == "failed"],
+            "today": {"calls": today_count(), "limit": _int("per_day", PER_DAY)}}
 
 
 @router.get("/api/engine/writeback")
 def writeback_log(conversation: str | None = None, limit: int = 20):
-    """写回记录（新的在前）：这一段长了哪几片叶子（picked，带 leaf）、没选的和为什么（skipped，reasonText）、改做法的卡（turn = 卡 id）。"""
-    return {"ok": True, "items": rows(conversation, max(1, min(limit, 100)))}
+    """写回记录（新的在前）：这一段长了哪几片叶子（picked，带 leaf）、没选的和为什么（skipped，reasonText）、改做法的卡（turn = 卡 id）、
+    这一行现在怎样了（statusText）；外加现在的状态（status()：缺什么、哪几段在退避、哪几段停了、今天调了几次模型）。"""
+    return {"ok": True, "items": rows(conversation, max(1, min(limit, 100))), **status(conversation)}
 
 
 class RunIn(BaseModel):

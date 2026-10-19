@@ -71,8 +71,8 @@ curl -fsSL https://raw.githubusercontent.com/openmousse/openmousse/main/install.
 
 ## 5. 给自己加上 OpenMousse 的工具
 
-- **OpenClaw：** 安装器已经在 `mcp.servers` 里加了 `openmousse`，Gateway 会自己热加载。核对：`openclaw mcp probe openmousse` 应该列出 12 个工具（没装世界树是 11 个）。
-- **Hermes：** `hermes mcp add openmousse --url "<MCP 地址>"`（写进 `~/.hermes/config.yaml`），`hermes mcp test openmousse` 应该列出 12 个工具。网关重启以后（第 2 步那次 `/restart`）工具就进来了；不重启的话请用户在聊天里发 `/reload-mcp`。
+- **OpenClaw：** 安装器已经在 `mcp.servers` 里加了 `openmousse`，Gateway 会自己热加载。核对：`openclaw mcp probe openmousse` 应该列出 15 个工具（没装世界树是 14 个）。
+- **Hermes：** `hermes mcp add openmousse --url "<MCP 地址>"`（写进 `~/.hermes/config.yaml`），`hermes mcp test openmousse` 应该列出 15 个工具。网关重启以后（第 2 步那次 `/restart`）工具就进来了；不重启的话请用户在聊天里发 `/reload-mcp`。
 - **nanobot：** `~/.nanobot/config.json` 的 `tools.mcpServers` 下面加 `"openmousse": {"url": "<MCP 地址>"}`，然后重启 nanobot。
 - **Letta Code：** `/mcp add --transport http openmousse <MCP 地址>`
 
@@ -100,7 +100,7 @@ bash ~/openmousse/check.sh
 
 1. 手机装 Tailscale app，登和这台机器同一个账号（第 3 步）。
 2. 装 OpenMousse app，怎么装见仓库 README 的「两种用法」。
-3. 点这个链接。app 会打开连接页，服务器地址和配对码都已经填好；看一眼地址，点「用配对码连接」。也可以把链接或 8 位码粘贴在那里。
+3. 点这个链接。app 会打开连接页，服务器地址和配对码都已经填好；看一眼地址，点「使用配对码连接」。也可以把链接或 8 位码粘贴在那里。
 
 配对码只能用一次，10 分钟后过期，过期了就再出一个。别的什么都不用发：app 连上的时候，会从服务器拿到它自己的令牌。
 
@@ -110,7 +110,7 @@ bash ~/openmousse/check.sh
 - **KimiClaw 这类容器（还没实测）：** 容器里常常没有 `sudo`，没有给 Tailscale 用的网卡，也没有 systemd。这样的话：
   - Tailscale 用「用户态网络」模式跑：`tailscaled --tun=userspace-networking --statedir="$HOME/.tailscale" &`，再 `tailscale up`，把登录链接发给用户。这个模式不要 root。
   - 安装时让它只听本机、不用 systemd：`curl … | MOUSSE_NONINTERACTIVE=1 MOUSSE_BIND=127.0.0.1 … bash -s -- --no-systemd`。用户态模式下，Tailscale 会把手机的连接转给本机的 127.0.0.1。
-  - 服务器自己起：`cd ~/openmousse/server && nohup ~/.openmousse/venv/bin/python run.py >> ~/.openmousse/server.log 2>&1 &`。容器一重启，它和 `tailscaled` 都要重新起。
+  - 服务和世界树自己起，和安装器最后打印的一样：`cd ~/.openmousse/repo/server && nohup ~/.openmousse/venv/bin/python run.py >> ~/.openmousse/logs/server.log 2>&1 &`、`nohup ~/.openmousse/venv/bin/mousse-tree serve >> ~/.mousse-tree/tree.log 2>&1 &`。容器一重启，它们和 `tailscaled` 都要重新起。
   - 配对链接会自动用这台机器的 Tailscale 地址。
   - KimiClaw 的 Gateway 一重启终端就断，所以别在它要重启的时候装。
   - Tailscale 实在起不来的话，告诉用户手机暂时连不到这台，然后停下，没问过就别开公网。

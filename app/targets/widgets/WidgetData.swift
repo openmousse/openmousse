@@ -133,7 +133,7 @@ extension WidgetSnapshot {
       recovery: Recovery(score: 76, label: zh ? "不错" : "Good", tint: "green", line: zh ? "睡了 7 小时 20 分" : "Slept 7h 20m"),
       meal: Meal(label: zh ? "午餐" : "Lunch", time: "12:30", text: zh ? "鸡胸肉、米饭、西兰花" : "Chicken, rice, broccoli", kcal: 650),
       items: [
-        Item(start: now + 3600, end: now + 3 * 3600, time: "14:00", title: zh ? "战略课" : "Strategy class", place: "SAF 120", kind: "class"),
+        Item(start: now + 3600, end: now + 3 * 3600, time: "14:00", title: zh ? "战略课" : "Strategy class", place: "Room 2.14", kind: "class"),
         Item(start: now + 5 * 3600, end: now + 6 * 3600, time: "18:00", title: zh ? "训练" : "Workout", place: nil, kind: "training"),
       ],
       remember: Remember(count: 2, first: zh ? "小组视频 10/2" : "Group video 2 Oct"),

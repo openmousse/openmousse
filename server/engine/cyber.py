@@ -1,7 +1,9 @@
 """赛博回合（内核第 0 步：后端 + 测试入口；新建、形象、通讯录这些界面在主线第三步，见 ~/openmousse-wt/agents-groups/README.md）。
 
 赛博 = 只说话的 Agent：性格（identity：身份、语气、规矩三行）、自己的模型、认识你多少（sources）、自己的会话。
-不建 OpenClaw agent，由内核直接跑；零工具（以后加只读的「问搭档」，经 /mcp 按 mcp-<id> 令牌过滤，不靠提示词自觉）。
+不建 OpenClaw agent，由内核直接跑；工具只有只读的 manual（13c，engine/manuals.py 的 cyber_tool：找手册、读手册的正文，世界树有手册才有；
+它自己决定读才读，不像主人回合那样按句自动带进来：赛博用哪家模型，资料就发到哪家）。以后加只读的「问搭档」，经 /mcp 按 mcp-<id>
+令牌过滤，不靠提示词自觉。
 
 cyber 是一个 dict：{"id", "name", "identity", "model"?, "sources"?: ["card"], "effort"?}
   model    不写 = server.json 的 engine.use.cyber，再不行用 engine.model。写成列表 ["anthropic/claude-sonnet-5-5", "moonshot/kimi-k3"]
@@ -45,13 +47,17 @@ def card_text() -> str:
     return "\n".join(f"- {m['label']}: {m['text']}" for m in mats if m.get("text"))
 
 
-def system_prompt(cyber: dict) -> str:
+def system_prompt(cyber: dict, manuals: bool = False) -> str:
+    """manuals：有只读的 manual 工具（13c）。"""
     name = str(cyber.get("name") or "").strip() or "Cyber"
     owner = settings.user_name or "the user"
     identity = str(cyber.get("identity") or "").strip()
+    tools = (f"Your only tool is manual (read-only): it finds and reads {owner}'s manuals, their own written procedures; when they ask "
+             "you to do something one of them may cover, read it first and follow it. Otherwise you cannot look anything up, remember "
+             "things on your own, message anyone or act in the world, so don't offer to.") if manuals else (
+        "You have no tools: you cannot look anything up, remember things on your own, message anyone or act in the world, so don't offer to.")
     parts = [f"You are {name}, one of {owner}'s Cybers in {settings.app_name}: a character {owner} talks with. "
-             "You only talk. You have no tools: you cannot look anything up, remember things on your own, message anyone or act in the world, "
-             "so don't offer to. If something needs doing, say which of their agents or which step would do it.",
+             f"You only talk. {tools} If something needs doing, say which of their agents or which step would do it.",
              f"Who you are and how you talk:\n{identity}" if identity else "",
              "Reply in the language the user writes in. Keep replies short unless they ask for more."]
     if "card" in (cyber.get("sources") or []):
@@ -88,14 +94,17 @@ async def chat(cyber: dict, text: str, *, on_event=None, control: Control | None
     """跟一个赛博说一句：接在它今天的会话后面，跑一轮赛博回合（零工具），回 Result（text = 它的回复）。"""
     cid = cyber_id(cyber)
     model = model_of(cyber)
-    rules = system_prompt(cyber)
+    from . import manuals  # 13c：只读的 manual 工具（世界树有手册才有）
+    tool = manuals.cyber_tool()
+    rules = system_prompt(cyber, manuals=tool is not None)
     session = DbSession.open(f"cyber:{cid}:{logical_day()}", kind="cyber", agent=cid, model=model, system=rules)
     notes = [text_of(m) for m in session.messages() if m.get("role") == "system"]
     current = notes[-1][len(CHANGED):] if notes and notes[-1].startswith(CHANGED) else session.system
     prompt = [user(text)]
     if current != rules:  # 当天改了性格：跟在这句话后面补一条 system（Claude 要求它跟在 user 后面），不回头改开头
         prompt.append(system_note(CHANGED + rules))
-    spec = Spec(kind="cyber", model=model, system=session.system, conversation=f"cyber:{cid}", agent=cid, origin=origin,
+    spec = Spec(kind="cyber", model=model, system=session.system, tools=[tool] if tool is not None else [], conversation=f"cyber:{cid}", agent=cid,
+                origin=origin,
                 effort=cyber.get("effort") if cyber.get("effort") in ("low", "medium", "high", "xhigh", "max") else None,
                 display="summarized", cache_ttl="1h", fallbacks=fallbacks_of(cyber, model))
     return await run_turn(spec, session, prompt, on_event=on_event, control=control)

@@ -22,6 +22,7 @@ Agent，我们的工具和关卡照旧在我们的服务器上把关。
     命令行里一项放不下（Linux 一项 128K）。它在一个会话第一次请求时把开头记下来，之后 --resume 都用记下的（它自己压缩以后才换）：
     和我们「开头一个字不改」的规矩一样。
   背景变了：照 context 的「更新了」：那一段接在这句话前面交给它（我们的会话里照旧是这句话后面一条 system，换回别的模型时一样）。
+    13c：按这句话搜到的手册和技能（engine/manuals.py）同样接在这句话前面，会话里也是这句话后面一条 system。
   它没看到的：我们的会话里它上一次回复之后多出来的（换别的模型聊的几轮、定时任务补的 mirror、后台任务的说明……）整理成一段记录，
     接在这句话前面；开新会话时（当天第一次用它、撤回过、它那边找不着了）就是到这句为止的整段（太长的留后面的）。
   流式：--output-format stream-json --include-partial-messages，翻成我们的 on_event：model（又一次调模型）、text / thinking（增量）、
@@ -61,7 +62,8 @@ Agent，我们的工具和关卡照旧在我们的服务器上把关。
 同时跑几个（10/19 彩排：夜里的日结几乎同时给六七个对话各起一轮，一个 claude 进程约 0.3 GB，小服务器顶不住）：最多
   engine.claude_code.max_concurrent 个（默认 2），多出来的排队，先来先得（_acquire：事件 phase queued，app 照「在想」显示；事件表记一步
   queue）；排着的时候点了停就不起它。按量模型的回合不受影响；后台任务的外援另有 tasks.max_external；转交过来的那一轮（origin relay）
-  不排队（发起它的那一轮正占着位子等它）。
+  不排队（发起它的那一轮正占着位子等它）。一次性调用（ask，见下）也占这些位子，但排在所有整轮对话后面，同时最多
+  engine.claude_code.max_oneshot 个（默认比 max_concurrent 少一个：总留一个位子给整轮对话，后台的打分挤不掉主对话）。
 跑不了（10/19 彩排）：出错分几类（Turn.kind_of）：auth 登录掉了、quota 套餐额度用完、broken 命令跑不起来（找不到、版本不对认不得
   我们的参数、这个型号用不了），这三类换个模型才好；别的（过载、超时、连不上、普通的限流，fallback.py 也不冷却的那几种）一会儿就好，不换。
   它自己编的那条回复（model <synthetic>、带 error：接口报错、没登录、额度用完）不当成它说的话给用户看，只拿来认是哪一类。
@@ -73,6 +75,15 @@ Agent，我们的工具和关卡照旧在我们的服务器上把关。
   记录当背景交给它：只有字，以前的工具结果只留开头、思考不带，它的缓存从头来；撤掉的那几句在它原来的会话里还在，只是不再用。
 没人在看的一轮（once，engine/unattended.py fresh 转过来的：用户自己的定时任务和心跳）：一次性的新会话（--no-session-persistence），
   工具是调用方给的（去掉 cron / tasks），关卡照旧。
+一次性调用（ask，10/19：以前 OpenClaw 存着订阅令牌，一问一答和摘要都走套餐；换到内核以后这些走了按量的接口）：主人自己的一问一答
+  （owner.stream：Zen「想完了」、会议的发言）、一次性 JSON（engine/oneshot.ask_json：llmjson.ask 的会议纪要、播客、学习页……，
+  /api/engine/oneshot）、主人回合的压缩摘要（engine/compact.py）。一个 claude -p 进程问一句答一句：开头整个换成调用方的规矩
+  （--system-prompt-file），一个工具都不给（--tools ""、--strict-mcp-config 又不给 MCP 配置），不存会话（没有工具，答一句就完：不另设
+  --max-turns，官方只说它数调工具的轮数，到了算出错）；
+  隔离和整轮对话一样（不读用户的设置、hooks、插件、CLAUDE.md、skills，环境里去掉像密钥的和换登录方式的）；工作目录
+  <data_dir>/claude-code/.oneshot/。谁能用照 may_spend（kind owner、调用方报的来路；不报的当外人，根本到不了这里）。
+  它不换模型：没做成（没登录、额度用完、命令坏了、timeout 秒还没答完、过载……）回 Result 的 error / error_kind，调用方配了按量的备用
+  就换（fallback.backup，链是 engine.use.<这件事> 写成列表的那条），没配照原来的规矩报错。花费照整轮对话记（套餐登录不记钱）。
 参考（10/16 读，只借设计没拿代码）：OpenClaw d5f78745 的 extensions/anthropic/cli-backend.ts、cli-shared.ts（受限跑法的
   --setting-sources "" 加 --settings、--session-id / --resume）、cli-runtime-args.ts 和 cli.runtime.ts（往标准输入写插话、停）、
   src/agents/cli-output-stream.ts（事件怎么接）；Hermes cf71b1aa 的 agent/codex_runtime.py（会话 id 记在自己的会话上，续不上就开新的并
@@ -100,7 +111,7 @@ from i18n import L
 from . import events, mcp_engine, models, runners
 from .errors import EngineError
 from .loop import Control, Result, Tool
-from .session import DbSession, text_of, time_stamp, with_time
+from .session import DbSession, text_of, time_stamp, user, with_time
 
 KEY = "claude-code"
 BUILTIN_OK = ("WebSearch",)          # 能放开的内置工具：只有在 Anthropic 那边跑、不碰这台电脑的
@@ -171,6 +182,19 @@ def max_concurrent() -> int:
         return max(1, int(cfg().get("max_concurrent") or MAX_CONCURRENT))
     except (TypeError, ValueError):
         return MAX_CONCURRENT
+
+
+def max_oneshot() -> int:
+    """其中一次性调用（ask）同时最多占几个位子（engine.claude_code.max_oneshot）：默认比 max_concurrent 少一个、至少 1，写了也不超过
+    max_concurrent。为什么：一次性的（后台的打分、学习页、会议纪要、压缩摘要）一来就是一串，一个 claude -p 又可能跑上几分钟；
+    只靠排在后面不够：位子全被它们占着时，主对话还是要等它们跑完。总留一个位子给整轮对话，主对话最多等别的整轮对话，不等一次性的。
+    max_concurrent 是 1 时没法留：一次性的也能占那一个，整轮对话照样排在它们前面。"""
+    cap = max_concurrent()
+    try:
+        n = int(cfg().get("max_oneshot") or 0)
+    except (TypeError, ValueError):
+        n = 0
+    return max(1, min(cap, n)) if n > 0 else max(1, cap - 1)
 
 
 def builtin_tools() -> list[str]:
@@ -339,8 +363,8 @@ def record(msgs: list[dict], limit: int = RECORD_MAX) -> str:
     return out
 
 
-def prompt_prefix(why: str, unseen: list[dict], note: str | None) -> str:
-    """这句话前面接的：它没看到的那一段记录、变了的背景。没有就空。"""
+def prompt_prefix(why: str, unseen: list[dict], note: str | None, manuals: str | None = None) -> str:
+    """这句话前面接的：它没看到的那一段记录、变了的背景、按这句话搜到的手册和技能（13c，engine/manuals.py）。没有就空。"""
     app = settings.app_name
     parts: list[str] = []
     rec = record(unseen) if unseen else ""
@@ -355,6 +379,8 @@ def prompt_prefix(why: str, unseen: list[dict], note: str | None) -> str:
         parts.append(f"{head}\n<conversation_record>\n{rec}\n</conversation_record>")
     if note:
         parts.append(f"[{app}: background update]\n{note}")
+    if manuals:
+        parts.append(f"[{app}: manuals and skills for this message]\n{manuals}")
     if not parts:
         return ""
     return "\n\n".join(parts) + "\n\n[The user's message:]\n"
@@ -433,6 +459,7 @@ class Turn:
     notices: list[str] = field(default_factory=list)     # 它自己编的那几条回复的字（接口报错、没登录……）：不给用户看成回复，报错时用
     api_errors: list[str] = field(default_factory=list)  # 那几条上它标的错（authentication_failed / billing_error / rate_limit …）
     origin: str | None = None                   # 这一轮的来路：交给经 MCP 跑的工具（脚本再引出一轮时带上，engine/mcp_engine.py）
+    oneshot: bool = False                       # 一次性调用（ask）：零工具、没有 MCP；排位子时排在整轮对话后面（_acquire）
     input_closed: bool = False
     stopping: str | None = None                 # user / idle
     t0: float = field(default_factory=time.monotonic)
@@ -767,7 +794,7 @@ class Turn:
         if kind in SWITCH:
             return advice(kind, detail)[:600], kind
         why = "Claude Code: " + (detail or ("exited without a result" + (f" (exit code {self.rc})" if self.rc else "")))
-        if self.connected is False:
+        if self.connected is False and not self.oneshot:  # 一次性调用本来就不连我们的 MCP
             why += L(f"；{settings.app_name} 的工具没连上", f"; {settings.app_name}'s tools didn't connect")
         return why[:600], kind
 
@@ -923,7 +950,8 @@ async def _unready(e: EngineError, conversation: str, agent: str, model: str, or
 
 async def respond(thread: str, day: str, content: str | list, model: str, on_delta: Callable[[str], None], *, ref: int | None = None,
                   origin: str = "user", timeout: float = 600, control: Control | None = None,
-                  on_event: Callable[[dict], None] | None = None, watched: bool = False, switch: Switch | None = None) -> Result:
+                  on_event: Callable[[dict], None] | None = None, watched: bool = False, switch: Switch | None = None,
+                  via: str | None = None) -> Result:
     """owner.respond 转过来的一轮（见文件开头）。接口和 owner.respond 一样；模型出的错记在 Result 里，不抛；配置不对抛 EngineError。
     switch：Claude Code 这一轮跑不了（SWITCH 那几类：登录掉了、命令坏了、套餐额度用完），还没出字、没调工具，备用链里又有能换的：
     这一轮从我们的会话里撤掉（它没给用户留下什么），交给 switch 换上链里第一个从头答这一句。不给、换不了 = 照旧报错（advice）。"""
@@ -960,7 +988,7 @@ async def respond(thread: str, day: str, content: str | list, model: str, on_del
     lock = loop_mod._locks.setdefault(session.id, asyncio.Lock())  # 和内核自己的回合同一把锁：同一条会话同时只跑一轮
     async with lock:
         res, shown, base = await _turn(thread, day, agent, session, ready, tools, msg, model, name, info, origin=origin, control=control,
-                                       emit=emit, on_delta=on_delta, idle=idle_limit(max(float(timeout), IDLE)))
+                                       emit=emit, on_delta=on_delta, idle=idle_limit(max(float(timeout), IDLE)), via=via)
         chain = _backup(res, shown, model, origin, switch)
         if chain:  # 换：这一轮在我们的会话里退回这句话之前（库里那一枝还在），换上的模型照常把这句话接在后面
             session.set_leaf(base)
@@ -969,9 +997,9 @@ async def respond(thread: str, day: str, content: str | list, model: str, on_del
 
 async def _turn(thread: str, day: str, agent: str, session: DbSession, ready, tools: list[Tool], msg: dict, model: str, name: str,
                 info: dict, *, origin: str, control: Control, emit: Callable[[dict], None], on_delta: Callable[[str], None],
-                idle: float) -> tuple[Result, bool, str | None]:
+                idle: float, via: str | None = None) -> tuple[Result, bool, str | None]:
     """→ (这一轮, 给用户看到过东西没有（出过字、调过工具）, 这句话进会话之前的叶子)。"""
-    from . import context
+    from . import context, manuals
     from . import tools as tools_mod
     tid = events.turn_open(conversation=thread, kind="owner", model=model, session=session.id, agent=agent, origin=origin)
     new: list[dict] = []
@@ -1021,11 +1049,19 @@ async def _turn(thread: str, day: str, agent: str, session: DbSession, ready, to
         note, state = context.changes(session.view().ctx, ctx)
         sid, unseen, why, prev = plan(session)
         base = session.leaf
+        try:  # 13c：按这句话搜手册和技能（和 owner.respond 的备料一样，命中的进它这一轮的开头）
+            found = None if manuals.skip(origin, via) else await manuals.prep_for(tid, [msg], session, agent=agent,
+                                                                                   offered={t.name for t in tools}, conversation=thread)
+        except Exception as e:  # noqa: BLE001 — 搜手册是锦上添花
+            print(f"[engine] 这一轮没搜手册：{type(e).__name__}: {str(e)[:120]}")
+            found = None
         add(msg)
         if note:
             add(context.note_message(note, state or ctx.state()))
         elif state is not None:  # 变了但它已经知道（项目卡是它自己改的）：只记指纹
             session.append(context.state_entry(state), turn=tid, kind="context")
+        if found:
+            add(found)
         carry: list[dict] = []
         for attempt in (1, 2):
             resume = sid is not None
@@ -1050,7 +1086,8 @@ async def _turn(thread: str, day: str, agent: str, session: DbSession, ready, to
             if control.aborted.is_set():  # 还在备料时就点了停：不起它
                 turn.stopping = "user"
                 break
-            await _run(turn, info, agent, session.effective_system(), tools, name, msg, prompt_prefix(why, unseen, note),
+            await _run(turn, info, agent, session.effective_system(), tools, name, msg,
+                       prompt_prefix(why, unseen, note, text_of(found) if found else None),
                        gate=tools_mod.gate, conversation=thread, persist=True, resume=resume)
             if attempt == 1 and resume and turn.resume_missing() and not turn.stopping:  # 它那边找不着这个会话了：开新的，带上整段记录
                 carry = [s.msg for s in turn.sent] + turn.left  # 写给那个进程、它没读到的插话：没赶上，排成下一轮
@@ -1115,9 +1152,11 @@ def _flush(session: DbSession, turn: Turn, name: str, add: Callable[[dict], None
 
 @dataclass
 class _Slots:
-    """同时跑的 claude 进程占的位子（max_concurrent）：busy = 占着的，queue = 排着的（Future，先来先得）。"""
+    """同时跑的 claude 进程占的位子（max_concurrent）：busy = 占着的（once = 其中一次性调用占的），queue = 排着的
+    [(Future, 是不是一次性调用)]：整轮对话先轮到（它们之间先来先得），一次性调用排在所有整轮对话后面、最多同时 max_oneshot 个。"""
     loop: Any = None
     busy: int = 0
+    once: int = 0
     queue: list = field(default_factory=list)
 
 
@@ -1133,45 +1172,74 @@ def _slots_here() -> _Slots:
     return _slots
 
 
-def _release() -> None:
-    """还一个位子，排在最前面的接上（位子直接交给它，busy 不变）。"""
+def _can_take(s: _Slots, oneshot: bool) -> bool:
+    return s.busy < max_concurrent() and (not oneshot or s.once < max_oneshot())
+
+
+def _next_waiter(s: _Slots) -> tuple[asyncio.Future, bool] | None:
+    """下一个该轮到的：排着的整轮对话里最早的；没有整轮对话在排，才轮到一次性调用里最早的（它们另有上限）。"""
+    for fut, oneshot in s.queue:
+        if not oneshot and not fut.done():
+            return fut, oneshot
+    for fut, oneshot in s.queue:
+        if not fut.done():
+            return fut, oneshot
+    return None
+
+
+def _hand_out(s: _Slots) -> None:
+    """空出来的位子按先后交给排着的（位子直接交到它手上：busy / once 这里就算上）。"""
+    s.queue = [(f, o) for f, o in s.queue if not f.done()]
+    while (nxt := _next_waiter(s)) is not None and _can_take(s, nxt[1]):
+        fut, oneshot = nxt
+        s.queue.remove(nxt)
+        fut.set_result(None)
+        s.busy += 1
+        s.once += int(oneshot)
+
+
+def _release(oneshot: bool = False) -> None:
+    """还一个位子，排着的接上（_hand_out）。"""
     s = _slots_here()
     s.busy = max(0, s.busy - 1)
-    while s.queue and s.busy < max_concurrent():
-        fut = s.queue.pop(0)
-        if not fut.done():
-            fut.set_result(None)
-            s.busy += 1
+    if oneshot:
+        s.once = max(0, s.once - 1)
+    _hand_out(s)
 
 
-def _give_back(s: _Slots, fut: asyncio.Future) -> None:
+def _give_back(s: _Slots, fut: asyncio.Future, oneshot: bool) -> None:
     """不排了（停了、被取消）：还在排的出队；位子已经交到它手上的还回去。"""
-    if fut in s.queue:
-        s.queue.remove(fut)
+    if (fut, oneshot) in s.queue:
+        s.queue.remove((fut, oneshot))
     elif fut.done() and not fut.cancelled():
-        _release()
+        _release(oneshot)
     if not fut.done():
         fut.cancel()
 
 
 async def _acquire(turn: Turn) -> bool:
     """占一个位子；满了就排队：事件 phase queued（chat.note_engine 画进 app 的「在想」，app 照「正在思考」显示），每 QUEUE_TICK 秒再报
-    一次（没人在看的一轮的看门狗按事件算动静），事件表记一步 queue（等了多久）。排队时点了停（或者看门狗停了它）→ False，这一轮不起它。"""
+    一次（没人在看的一轮的看门狗按事件算动静），事件表记一步 queue（等了多久）。排队时点了停（或者看门狗停了它）→ False，这一轮不起它。
+    一次性调用（turn.oneshot）排在整轮对话后面：有整轮对话在排、一次性的已经占满 max_oneshot 个，它都不插进去。"""
     s = _slots_here()
-    if s.busy < max_concurrent() and not s.queue:
+    oneshot = turn.oneshot
+    waiting = any(not f.done() and (oneshot or not o) for f, o in s.queue)  # 排在它前面的：整轮对话只看整轮对话，一次性的谁都看
+    if _can_take(s, oneshot) and not waiting:
         s.busy += 1
+        s.once += int(oneshot)
         return True
     fut = asyncio.get_running_loop().create_future()
-    s.queue.append(fut)
+    s.queue.append((fut, oneshot))
     sid = events.step_open(turn.tid, type_="queue", name=KEY, detail=f"{s.busy} running", conversation=turn.conversation)
     t0 = time.monotonic()
     stop = asyncio.ensure_future(turn.control.aborted.wait())
     try:
         while not fut.done() and not stop.done():
-            turn.emit({"type": "phase", "phase": "queued", "ahead": s.queue.index(fut) if fut in s.queue else 0})
+            ahead = [f for f, o in s.queue if not f.done() and (oneshot or not o)]
+            turn.emit({"type": "phase", "phase": "queued", "ahead": ahead.index(fut) if fut in ahead else 0})
             await asyncio.wait({fut, stop}, timeout=QUEUE_TICK, return_when=asyncio.FIRST_COMPLETED)
     except asyncio.CancelledError:
-        _give_back(s, fut)
+        _give_back(s, fut, oneshot)
         events.step_close(sid, status="aborted", data={"waited_ms": int((time.monotonic() - t0) * 1000)}, conversation=turn.conversation,
                           turn=turn.tid)
         raise
@@ -1179,7 +1247,7 @@ async def _acquire(turn: Turn) -> bool:
         stop.cancel()
     waited = {"waited_ms": int((time.monotonic() - t0) * 1000)}
     if turn.control.aborted.is_set():  # 排着的时候停了（轮到的同一刻停的也算停了）
-        _give_back(s, fut)
+        _give_back(s, fut, oneshot)
         events.step_close(sid, status="aborted", data=waited, conversation=turn.conversation, turn=turn.tid)
         return False
     events.step_close(sid, status="ok", data=waited, conversation=turn.conversation, turn=turn.tid)
@@ -1229,11 +1297,12 @@ async def _start(turn: Turn, info: dict, agent: str, system: str, tools: list[To
 
 
 async def once(agent: str, conversation: str, system: str, tools: list[Tool], prompt: str, *, model: str, origin: str = "auto",
-               on_event: Callable[[dict], None] | None = None, control: Control | None = None, switch: Switch | None = None) -> Result:
+               on_event: Callable[[dict], None] | None = None, control: Control | None = None, switch: Switch | None = None,
+               gate: Callable | None = None) -> Result:
     """没人在看的一轮（unattended.fresh 转过来的：用户自己的定时任务和心跳）：一次性的新会话，不存（见文件开头）。
-    switch：同 respond（跑不了、还没出字没调工具，就换备用链里的；会话本来就不存，不用撤）。"""
+    switch：同 respond（跑不了、还没出字没调工具，就换备用链里的；会话本来就不存，不用撤）。
+    gate：换一道关卡（不给 = tools.gate）：命令行 mousse agent 的一轮只放只读的（engine/agent_cli.py，第 1 批 b）。"""
     from . import tools as tools_mod
-    from .session import user
 
     def emit(ev: dict) -> None:
         if on_event is not None:
@@ -1258,7 +1327,8 @@ async def once(agent: str, conversation: str, system: str, tools: list[Tool], pr
     status, error, ekind = "done", None, None
     try:
         asked = {**user(prompt), "at": time_stamp()}  # 带上当地时间（同 app 里说的一句）
-        await _run(turn, info, agent, system, tools, name, asked, "", gate=tools_mod.gate, conversation=conversation, persist=False, resume=False)
+        await _run(turn, info, agent, system, tools, name, asked, "", gate=gate or tools_mod.gate, conversation=conversation, persist=False,
+                   resume=False)
         fail = None if turn.stopping == "user" else turn.failure()
         if turn.stopping == "user":
             status = "aborted"
@@ -1281,3 +1351,106 @@ async def once(agent: str, conversation: str, system: str, tools: list[Tool], pr
                  first_ms=turn.first_ms, models=[model])
     chain = _backup(res, bool(segs) or bool(turn.tools_seen), model, origin, switch)
     return await _switch(switch, chain, res, control) if chain and switch is not None else res
+
+
+# —— 一次性调用（ask）———————————————————————————————————————————————————————————————————
+
+ONESHOT_DIR = ".oneshot"  # 一次性调用的工作目录 <data_dir>/claude-code/.oneshot/（空的；Agent 的目录名去掉了开头的点，撞不上）
+
+
+def oneshot_dir() -> Path:
+    d = base_dir() / ONESHOT_DIR
+    d.mkdir(mode=0o700, exist_ok=True)
+    os.chmod(d, 0o700)
+    return d
+
+
+def oneshot_command(exe: str, *, system_file: Path, model: str, effort_: str | None = None) -> list[str]:
+    """一次性调用的命令行：隔离照 command()（用户的设置、hooks、插件、CLAUDE.md、skills 一个不读），另外一个工具都不给（--tools "" 拿掉
+    内置的；--strict-mcp-config 又不给 --mcp-config：一个 MCP 服务都没有）、不存会话。effort_：调用方要的思考档位
+    （llmjson 的 thinking），不给 = engine.claude_code.effort。"""
+    cmd = [exe, "-p", "--input-format", "stream-json", "--output-format", "stream-json", "--verbose", "--include-partial-messages",
+           "--setting-sources", "", "--settings", SETTINGS, "--strict-mcp-config", "--tools", "", "--permission-mode", "dontAsk",
+           "--permission-prompts", "none", "--disable-slash-commands", "--disallowedTools", "AskUserQuestion",
+           "--system-prompt-file", str(system_file), "--model", model, "--no-session-persistence"]
+    if e := effort_ if effort_ in EFFORTS else effort():
+        cmd += ["--effort", e]
+    if f := fallback_model():
+        cmd += ["--fallback-model", f]
+    return cmd
+
+
+async def ask(system: str, prompt: str | dict, *, model: str, origin: str | None, conversation: str, agent: str = "main",
+              timeout: float = 120, effort_: str | None = None, max_tokens: int | None = None) -> Result:
+    """一次性调用（见文件开头）：问一句、答一句，零工具、不存会话。prompt：一段字，或中立格式的 user 消息（可以带图）。
+    max_tokens：长的输出（学习页）要给够：经 CLAUDE_CODE_MAX_OUTPUT_TOKENS 交给它（不给 = 它自己的默认）。
+    → Result：done 的 text 是它的回答；没做成的 status error，error_kind = auth / quota / broken（SWITCH 那几类）、timeout（timeout 秒
+    还没答完，排队的时间也算）、http（过载、连不上……）；它拒答 = status refused（error_kind refusal：别换别的模型去答）。
+    换不换备用由调用方定（这里不换）。谁能花调用方先问 may_spend，这里再挡一道。"""
+    if not models.may_spend(model, kind="owner", origin=origin):
+        raise EngineError("only the user's own calls can use their Claude Code", kind="rule")
+    name = _model_name(model)
+    try:
+        info = await ready_helper()
+    except EngineError as e:  # 没装、没登录、在设置里关了：照样记一轮出错（事件表里看得出为什么换了）
+        tid = events.turn_open(conversation=conversation, kind="owner", model=model, agent=agent, origin=origin)
+        events.turn_close(tid, conversation=conversation, status="error", error=str(e), models=[model])
+        return Result(turn=tid, status="error", text="", messages=[], usage={}, model=model, error=str(e), error_kind=e.kind, models=[model])
+    control = Control()
+    tid = events.turn_open(conversation=conversation, kind="owner", model=model, session=None, agent=agent, origin=origin)
+    turn = Turn(tid=tid, conversation=conversation, model=model, tools={}, emit=lambda _e: None, on_text=lambda _t: None, control=control,
+                idle=idle_limit(), origin=origin, oneshot=True)
+    late = {"hit": False}
+
+    def deadline() -> None:  # 到点了：排着的不起它，在答的照停的办法停
+        late["hit"] = True
+        control.abort()
+    timer = asyncio.get_running_loop().call_later(max(1.0, float(timeout)), deadline)
+    status, error, ekind = "done", None, None
+    try:
+        await _run_once(turn, info, system, name, prompt if isinstance(prompt, dict) else user(prompt), effort_, max_tokens)
+        if late["hit"]:
+            status, error, ekind = "error", L(f"Claude Code {int(timeout)} 秒没答完", f"Claude Code didn't answer within {int(timeout)}s"), "timeout"
+        elif fail := turn.failure():
+            status, (error, ekind) = "error", fail
+        elif turn.last_result().get("stop_reason") == "refusal":  # 拒答不是出错，也不换别的模型去答（同 loop.py）
+            status, error, ekind = "refused", "Claude Code declined to answer", "refusal"
+    except asyncio.CancelledError:
+        events.turn_close(tid, conversation=conversation, status="aborted", usage=turn.usage, error="cancelled", models=[model])
+        raise
+    except EngineError as e:  # 起不来（命令不在了：broken）
+        status, error, ekind = "error", str(e), e.kind
+    except Exception as e:  # noqa: BLE001 — 记成这一次没做成，不让一个意外把调用方带崩
+        status, error, ekind = "error", f"{type(e).__name__}: {str(e)[:200]}", "internal"
+    finally:
+        timer.cancel()
+    control.close()
+    usage = _cost(turn, None, info)
+    events.turn_close(tid, conversation=conversation, status=status, usage=usage, error=error, models=[model])
+    final = turn.last_result().get("result")
+    text = (final if isinstance(final, str) and final.strip() else turn.text()) if status == "done" else ""
+    return Result(turn=tid, status=status, text=text, messages=[], usage=usage, model=model, error=error, error_kind=ekind,
+                  first_ms=turn.first_ms, models=[model])
+
+
+async def _run_once(turn: Turn, info: dict, system: str, name: str, msg: dict, effort_: str | None, max_tokens: int | None) -> None:
+    """起一个 claude -p 答这一句：开头的文件只活到它答完。位子和整轮对话共用（max_concurrent），排在它们后面（_acquire）。"""
+    if not await _acquire(turn):
+        turn.stopping = turn.stopping or "user"
+        return
+    system_file = None
+    try:
+        work = await asyncio.to_thread(oneshot_dir)
+        system_file = _private(base_dir() / f".system-{turn.tid}-{uuid.uuid4().hex[:6]}.md", system.rstrip())
+        cmd = oneshot_command(info["bin"], system_file=system_file, model=name, effort_=effort_)
+        env = child_env()
+        if max_tokens:
+            env["CLAUDE_CODE_MAX_OUTPUT_TOKENS"] = str(int(max_tokens))
+        await drive(turn, cmd, work, env, line(msg, str(uuid.uuid4()), None))
+    finally:
+        _release(True)
+        if system_file is not None:
+            try:
+                system_file.unlink()
+            except OSError:
+                pass

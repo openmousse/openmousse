@@ -112,9 +112,11 @@ def test_create_shows_up_in_the_next_turns_skills_list(home, fake, runner):
     assert "Saved the skill \"weekly-review\"" in result and "skill_manage delete name=weekly-review" in result  # 回复里有存了什么、怎么撤
     assert (home.main / "skills" / "weekly-review" / "SKILL.md").read_text(encoding="utf8") == GOOD
     say("main", day, "do the weekly review")
-    note = f.requests[2][1].messages[-1]
-    assert note["role"] == "system" and "## Skills (updated)" in text_of(note)
-    assert "- weekly-review: Use when the user asks for the weekly review" in text_of(note)  # 下一轮的技能目录里有它
+    msgs = f.requests[2][1].messages
+    note = next(m for m in msgs[-3:] if m["role"] == "system" and "## Skills (updated)" in text_of(m))
+    assert "- weekly-review" in text_of(note)  # 下一轮的技能目录里有它（13c 起默认只列名字，engine/manuals.py）
+    hit = msgs[-1]  # 13c：这句话正好对上它：正文接在后面
+    assert hit["role"] == "system" and hit.get("manuals") == ["skill:weekly-review"] and "Write three lines" in text_of(hit)
     assert "weekly-review" not in f.requests[2][1].system  # 开头一个字没动，变化往后补
 
 
