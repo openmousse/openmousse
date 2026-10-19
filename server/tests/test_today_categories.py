@@ -62,8 +62,8 @@ def test_undated_todo_and_category(env):
 
 
 def test_overdue_stays_and_folds_after_a_week(env):
-    a = add(title="Accenture interview prep", kind="deadline", date=ago(3), source="leo")
-    b = add(title="寄回 EE 路由器", kind="deadline", date=ago(10), source="leo")
+    a = add(title="Acme interview prep", kind="deadline", date=ago(3), source="leo")
+    b = add(title="寄回宽带路由器", kind="deadline", date=ago(10), source="leo")
     d = day()
     row = next(r for r in d["pending"]["items"] if r["id"] == a)
     assert row["overdueDays"] == 3 and row["tone"] == "bad" and row["category"] == "work"
@@ -107,7 +107,7 @@ def test_category_override_wins_and_undoes(env):
 
 def test_mail_todo_kept_after_source_drops_it(env):
     _, write_mail = env
-    x = {"id": "t1:todo", "type": "todo", "title": "寄回 EE 路由器，不然扣 £85", "detail": "", "due": ago(2), "source": "zxy",
+    x = {"id": "t1:todo", "type": "todo", "title": "寄回宽带路由器，不然扣 £60", "detail": "", "due": ago(2), "source": "personal",
          "thread_id": "t1", "urgent": False, "first_seen": "2026-10-01T10:00:00+01:00"}
     write_mail([x])
     row = next(r for r in day()["pending"]["items"] if r["id"] == "mail:t1:todo")
@@ -171,7 +171,7 @@ def test_undo_tick_keeps_a_later_category(env):
 
 def test_retyped_mail_item_is_not_kept(env):
     _, write_mail = env
-    x = {"id": "t2:todo", "type": "todo", "title": "回信补材料", "detail": "", "due": ago(1), "source": "zxy", "thread_id": "t2",
+    x = {"id": "t2:todo", "type": "todo", "title": "回信补材料", "detail": "", "due": ago(1), "source": "personal", "thread_id": "t2",
          "urgent": False, "first_seen": "2026-10-01T10:00:00+01:00"}
     write_mail([x])
     day()

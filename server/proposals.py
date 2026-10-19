@@ -459,7 +459,7 @@ def context(days: int = CONTEXT_DAYS):
     since = day_bounds(first)[0]
     names = thread_names()
     with _lock, db() as conn:
-        rows = conn.execute("""SELECT id, thread, role, text, ts, attachments FROM messages WHERE ts>=? AND role IN ('user','grava')
+        rows = conn.execute("""SELECT id, thread, role, text, ts, attachments FROM messages WHERE julianday(ts)>=julianday(?) AND role IN ('user','grava')
             ORDER BY thread, id""", (since,)).fetchall()
     by_day: dict[str, list[dict]] = {}
     for i, r in enumerate(rows):

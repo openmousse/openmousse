@@ -20,16 +20,12 @@ server.json 的 mcp 段（可选，每次读文件）：{"scripts": {"工具名"
 （比如日志换成你自己 workspace 里的脚本）；写成 null = 不提供这个工具。改了工具列表要重启服务。
 连接器（apps.py）：你连上的第三方应用的工具也从这里给出去（<应用 id>__<工具名>），接在这 14 个后面；每次列工具时现查，连上、断开、
 改权限都不用重启。它们经 EXTRA 挂进来，这 14 个工具本身不经过它。
+内核发给外援的临时令牌（内核第 11 项，engine/mcp_engine.py；第 5 项后台任务的外援也改用它）：自己的内核把一轮交给本机用户自己登录的
+Claude Code / Codex 时，发一把只给这一轮的令牌（只在内存里，这一轮完了就收回；不在 server.json 里）。Gate 认出是它，就交给
+engine/mcp_engine.py 的那个 MCP 服务：工具是内核的那张表、关卡是内核的那一套，和这里的 14 个工具不混；server.json 的令牌照旧只到这里。
 """
-import asyncio
-import os
 import secrets
 import shlex
-import shutil
-import signal
-import sqlite3
-import sys
-from pathlib import Path
 from typing import Annotated, Awaitable, Callable
 
 from mcp import types
@@ -39,101 +35,15 @@ from mcp.server.transport_security import TransportSecuritySettings
 from pydantic import Field
 from starlette.responses import JSONResponse
 
-from config import raw, settings
+import bridges
+from bridges import BRIDGES, command
+from config import settings
 from i18n import L
 
-SERVER = Path(__file__).resolve().parent
-REPO = SERVER.parent
-MAX_OUT = 30000        # 回给模型的输出最多多少字（多了掐中间）
-MAX_ARGS = 200000      # args + input 一共最多多少字
-TIMEOUT, SLOW = 120, 300  # SLOW：handoff 等另一个 Agent 回话（ask_agent.py 默认等 150 秒）
-PARALLEL = asyncio.Semaphore(4)
-
-# 工具名 → (脚本, 中文说明, English, 超时)。说明只写它管什么；子命令和写法在对应的 skill 里。
-BRIDGES: dict[str, tuple[str, str, str, int]] = {
-    "board": ("server/board_ctl.py", "你自己的数据表和看板（board_ctl.py）：show、table、rows、check、apply、propose、view（集合块的视图）、pack、alert、history、revert。写法见 board skill。",
-              "Your own data tables and board (board_ctl.py): show, table, rows, check, apply, propose, view (a collection's views), pack, alert, history, revert. See the board skill.", TIMEOUT),
-    "inbox": ("server/inbox_ctl.py", "收件箱，要用户点头的事（inbox_ctl.py）：add、update、done、fail、withdraw、list、get。什么时候交、怎么写见 inbox skill。",
-              "The inbox, things that need the user's OK (inbox_ctl.py): add, update, done, fail, withdraw, list, get. When and how: the inbox skill.", TIMEOUT),
-    "goals": ("server/goals_ctl.py", "用户的长期目标（goals_ctl.py）：list、trend、log、add、update、done、drop、reopen、undo。见 goals skill。",
-              "The user's long-term goals (goals_ctl.py): list, trend, log, add, update, done, drop, reopen, undo. See the goals skill.", TIMEOUT),
-    "project": ("server/project_ctl.py", "项目（project_ctl.py）：list、show、create、propose、goal、progress、add、done、ask、conclude、archive…。见 project skill。",
-                "Projects (project_ctl.py): list, show, create, propose, goal, progress, add, done, ask, conclude, archive… See the project skill.", TIMEOUT),
-    "schedule": ("server/schedule_ctl.py", "日程和「要记得的」（schedule_ctl.py）：day、remember、add、update、delete、skip、attend、place、done、undo…。",
-                 "The schedule and things to remember (schedule_ctl.py): day, remember, add, update, delete, skip, attend, place, done, undo…", TIMEOUT),
-    "study": ("server/study_ctl.py", "学习台的课（study_ctl.py）：courses、show、check、session、reading、ddl、file、assign、syllabus、answer、style、generate、undo、log、create、delete。见 study skill。",
-              "Study desk courses (study_ctl.py): courses, show, check, session, reading, ddl, file, assign, syllabus, answer, style, generate, undo, log, create, delete. See the study skill.", TIMEOUT),
-    "agents": ("server/agent_ctl.py", "新建 / 改 / 删 Agent（agent_ctl.py）：list、create、update、delete。见 agent-builder skill。",
-               "Create, edit or delete Agents (agent_ctl.py): list, create, update, delete. See the agent-builder skill.", TIMEOUT),
-    "handoff": ("packs/core/scripts/ask_agent.py", "把属于某个 Agent 的事转给它、等它回话（ask_agent.py）：--list 看有哪些 Agent。见 handoff skill。",
-                "Hand something to the Agent it belongs to and wait for its answer (ask_agent.py); --list shows the Agents. See the handoff skill.", SLOW),
-    "tasks": ("server/tasks_ctl.py", "派后台任务之前看额度（tasks_ctl.py）：quota、list。见 dispatch skill。",
-              "Check the background-task allowance before dispatching (tasks_ctl.py): quota, list. See the dispatch skill.", TIMEOUT),
-    "proposals": ("server/proposals_ctl.py", "日结提案（proposals_ctl.py）：context、skill、agent、list、show、withdraw。见 proposals skill。",
-                  "Nightly proposals (proposals_ctl.py): context, skill, agent, list, show, withdraw. See the proposals skill.", TIMEOUT),
-    "journal": ("packs/core/scripts/journal.py", "用户的日志：感受、想法、决定（journal.py）：add、list、search、delete。见 journal skill。",
-                "The user's journal: feelings, thoughts, decisions (journal.py): add, list, search, delete. See the journal skill.", TIMEOUT),
-    "diet": ("server/diet_ctl.py", "饮食记录（diet_ctl.py）：day、days、library、lookup、foods、food-save、food-add、food-update、add、log-plan、edit、rm、undo、targets。"
-                                    "记录默认只预览，加 --commit 才写。用法：board 工具 pack guide diet。",
-             "The meal log (diet_ctl.py): day, days, library, lookup, foods, food-save, food-add, food-update, add, log-plan, edit, rm, undo, targets. "
-             "Logging previews unless you add --commit. How to use it: the board tool's pack guide diet.", TIMEOUT),
-    "settings": ("server/settings_ctl.py", "助手的设置，比如用户的称呼（settings_ctl.py）：user-name。",
-                 "Assistant settings such as what to call the user (settings_ctl.py): user-name.", TIMEOUT),
-    "tree": ("mousse-tree", "世界树，用户跨平台共享的记忆（mousse-tree 命令行）。见 memory-tree skill。",
-             "The memory tree, the user's memory shared across AI platforms (the mousse-tree CLI). See the memory-tree skill.", TIMEOUT),
-    "page": ("server/page_ctl.py", "页面（page_ctl.py）：积木画不了的互动和可视化，写一份网页，app 放进盒子里显示：check、publish、list、show、get、data、rm。"
-                                   "HTML 放 input、args 里写 --file -，要读的数据用 --data 名字=查询。见 page skill。",
-             "Pages (page_ctl.py): interactive views the board blocks can't draw; write one web page and the app shows it in a sandbox: check, publish, "
-             "list, show, get, data, rm. Put the HTML in input with --file - in args, and the data it reads as --data NAME=query. See the page skill.", TIMEOUT),
-}
-
-
-# 读服务器上文件的参数：经 MCP 只许写 -（内容放 input）。沙箱里的 Agent、云上的 claw 本来碰不到这台机器的文件，
-# 不能借 --detail-file /某个文件 把它塞进收件箱卡再读回去。argparse 认缩写（--detail-f、--pla），所以前缀也算，
-# 除了本身就是别的参数的这几个（--brief、--detail、--field 是正经参数，不读文件）。
-FILE_FLAGS = ("--file", "--detail-file", "--board-file", "--brief-file", "--fields-file", "--plan", "--data-file")
-NOT_FILE = {"--brief", "--detail", "--field"}
-TREE_OK = {"add", "recall", "recent", "forget", "stats"}  # 世界树只给记忆本身的操作；init、migrate、urls（会打印令牌）这些不给
+# 工具表、起子进程那一套在 bridges.py（2026-10-16 拆出来，自己的内核 engine/tools.py 也用它）；这里只把它的错换成 MCP 的 ToolError。
 # 别的模块加到 /mcp 上的工具（连接器 apps.py）：一项 = (tools, call)。tools(who) → [types.Tool]，每次列工具时现问；
 # call(工具名, 参数, who) → types.CallToolResult，不是它的工具回 None。who = {"token": 令牌名, "agent": 令牌绑的 Agent 或 None}。
 EXTRA: list[tuple[Callable[[dict], Awaitable[list[types.Tool]]], Callable[[str, dict, dict], Awaitable[types.CallToolResult | None]]]] = []
-
-
-def guard(name: str, args: list[str]) -> None:
-    if name == "tree" and (not args or args[0] not in TREE_OK):
-        raise ToolError(L(f"tree 只能用 {'、'.join(sorted(TREE_OK))}", f"tree only allows {', '.join(sorted(TREE_OK))}"))
-    for i, a in enumerate(args):
-        flag, eq, val = a.partition("=")
-        if not flag.startswith("--") or flag in NOT_FILE or not any(f.startswith(flag) for f in FILE_FLAGS) or len(flag) < 4:
-            continue
-        v = val if eq else (args[i + 1] if i + 1 < len(args) else "")
-        if v != "-":
-            raise ToolError(L(f"经 MCP 不能读服务器上的文件：{flag} 写 -，内容放 input",
-                              f"Over MCP you can't read files on the server: write {flag} -, and put the content in input"))
-
-
-def overrides() -> dict:
-    m = raw().get("mcp")
-    s = m.get("scripts") if isinstance(m, dict) else None
-    return s if isinstance(s, dict) else {}
-
-
-def command(name: str) -> list[str] | None:
-    """这个工具背后要跑的命令（不含 args）；找不到就 None（工具不提供）。"""
-    o = overrides()
-    if name in o:
-        v = o[name]
-        if v is None:
-            return None
-        v = [v] if isinstance(v, str) else v
-        return [str(Path(x).expanduser()) if str(x).startswith("~") else str(x) for x in v] or None
-    script = BRIDGES[name][0]
-    if script == "mousse-tree":  # 世界树的命令行装在服务同一个 venv 里（安装器装的）；没有就看 PATH
-        exe = Path(sys.executable).parent / "mousse-tree"
-        found = str(exe) if exe.exists() else shutil.which("mousse-tree")
-        return [found] if found else None
-    path = REPO / script
-    return [sys.executable, str(path)] if path.exists() else None
 
 
 def identify(token: str) -> tuple[str, str | None] | None:
@@ -146,74 +56,27 @@ def identify(token: str) -> tuple[str, str | None] | None:
     return None
 
 
-def known_agent(aid: str) -> bool:
-    """有这个 Agent 吗：OpenClaw 那种有自己 workspace 的，或者 groups 表里的（别的 claw 的 Agent 只在表里）。"""
-    if aid == "main" or aid in settings.agent_workspaces:
-        return True
+def engine_app(token: str):
+    """是内核发给外援的临时令牌（engine/mcp_engine.py，一轮一把、只在内存里）→ 那边的 ASGI 服务；不是 → None。
+    内核没加载就不是（OpenClaw 那边没有这种令牌）。"""
+    import sys
+    mod = sys.modules.get("engine.mcp_engine")
+    if mod is None or not token:
+        return None
     try:
-        with sqlite3.connect(f"file:{settings.db}?mode=ro", uri=True, timeout=5) as conn:
-            return conn.execute("SELECT 1 FROM groups WHERE id=?", (aid,)).fetchone() is not None
-    except sqlite3.Error:
-        return False
-
-
-def workdir(agent: str | None) -> Path:
-    """命令在哪儿跑：是某个有 workspace 的 Agent 就在它的 workspace（和它自己在 shell 里跑一样）；否则在主 workspace。
-    是谁另外经环境变量 MOUSSE_AGENT 告诉脚本（看板、收件箱先认它），别的 claw 的 Agent 没有 workspace 也认得出。"""
-    if agent and agent != "main":
-        if not known_agent(agent):
-            raise ToolError(L(f"没有「{agent}」这个 Agent（agents 工具的 list 能看到有哪些）",
-                              f"There's no Agent called {agent} (the agents tool's list shows them)"))
-        ws = settings.agent_workspaces.get(agent)
-        if ws and ws.is_dir():
-            return ws
-    ws = settings.workspace
-    return ws if ws.is_dir() else REPO
-
-
-def clip(text: str) -> str:
-    if len(text) <= MAX_OUT:
-        return text
-    head, tail = text[: MAX_OUT * 2 // 3], text[-MAX_OUT // 4:]
-    return f"{head}\n…（{L('中间省略', 'omitted')} {len(text) - len(head) - len(tail)} {L('字', 'chars')}）…\n{tail}"
+        return mod.app if mod.lookup(token) is not None else None
+    except Exception:  # noqa: BLE001
+        return None
 
 
 async def run(name: str, args: list[str], stdin: str | None, agent: str | None) -> str:
-    cmd = command(name)
-    if not cmd:
-        raise ToolError(L(f"这台服务器上没有 {name} 这个功能", f"{name} isn't available on this server"))
-    args = [str(a) for a in args or []]
-    if sum(len(a) for a in args) + len(stdin or "") > MAX_ARGS or any("\x00" in a for a in args):
-        raise ToolError(L("参数太长或者有非法字符", "Arguments too long or contain invalid characters"))
-    guard(name, args)
-    cwd = workdir(agent)
-    env = dict(os.environ, PYTHONIOENCODING="utf-8", MOUSSE_MCP="1")
-    env.pop("MOUSSE_AGENT", None)
-    if agent:
-        env["MOUSSE_AGENT"] = agent
-    timeout = BRIDGES[name][3]
-    async with PARALLEL:
-        proc = await asyncio.create_subprocess_exec(
-            *cmd, *args, cwd=str(cwd), env=env, start_new_session=True,
-            stdin=asyncio.subprocess.PIPE if stdin is not None else asyncio.subprocess.DEVNULL,
-            stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE)
-        try:
-            out, err = await asyncio.wait_for(proc.communicate(stdin.encode("utf8") if stdin is not None else None), timeout)
-        except asyncio.TimeoutError:
-            try:
-                os.killpg(proc.pid, signal.SIGKILL)  # 连它起的子进程一起
-            except ProcessLookupError:
-                pass
-            await proc.wait()
-            raise ToolError(L(f"{name} 超过 {timeout} 秒没跑完，停掉了", f"{name} didn't finish within {timeout} seconds and was stopped")) from None
-    text_out = out.decode("utf8", "replace").strip()
-    text_err = err.decode("utf8", "replace").strip()
-    if proc.returncode != 0:
-        why = text_err or text_out or L("（没有输出）", "(no output)")
-        raise ToolError(clip(L(f"退出码 {proc.returncode}：", f"Exit code {proc.returncode}: ") + why))
-    if text_err and not text_out:
-        return clip(text_err)
-    return clip(text_out or L("（完成，没有输出）", "(done, no output)"))
+    token = bridges.VIA.set("mcp")  # 外面的 MCP 客户端：脚本再请求服务器（转交、触发）时带上，自己的内核不让这样引出来的回合花 ChatGPT 套餐
+    try:
+        return await bridges.run(name, args, stdin, agent)
+    except bridges.BridgeError as e:
+        raise ToolError(str(e)) from None
+    finally:
+        bridges.VIA.reset(token)
 
 
 def build() -> FastMCP:
@@ -328,6 +191,9 @@ class Gate:
         if "/" in token:
             return await JSONResponse({"error": "not found"}, status_code=404)(scope, receive, send)
         who = identify(token)
+        if who is None and (engine := engine_app(token)) is not None:  # 内核发给外援的令牌：交给 engine/mcp_engine.py（这 14 个工具不经过它）
+            state = dict(scope.get("state") or {}, mousse_engine=token)
+            return await engine(dict(scope, path="/", raw_path=b"/", root_path="", state=state), receive, send)
         if who is None:
             return await JSONResponse({"error": "unauthorized"}, status_code=401, headers={"WWW-Authenticate": "Bearer"})(scope, receive, send)
         state = dict(scope.get("state") or {}, mousse_mcp={"token": who[0], "agent": who[1]})

@@ -4,8 +4,9 @@
 不建 OpenClaw agent，由内核直接跑；零工具（以后加只读的「问搭档」，经 /mcp 按 mcp-<id> 令牌过滤，不靠提示词自觉）。
 
 cyber 是一个 dict：{"id", "name", "identity", "model"?, "sources"?: ["card"], "effort"?}
-  model    不写 = server.json 的 engine.use.cyber，再不行用 engine.model
-  sources  第 0 步只有 "card" = 名片（名片 Agent 给「朋友」这一档公开的那部分）。「它记住的」「问搭档」等 Leo 定了「认识你」再做。
+  model    不写 = server.json 的 engine.use.cyber，再不行用 engine.model。写成列表 ["anthropic/claude-sonnet-5-5", "moonshot/kimi-k3"]
+           = 第一个是它的模型、后面是它自己的备用链（第 13 步，engine/fallback.py；只写一个 = 不换）
+  sources  第 0 步只有 "card" = 名片（名片 Agent 给「朋友」这一档公开的那部分）。「它记住的」「问搭档」等「认识你」定了再做。
            赛博用哪家模型，这些资料就发到哪家：默认什么都不给。
 会话：每个赛博每个逻辑日一条（cyber:<id>:<逻辑日>，04:00 换新）。开头的规矩在当天第一句时定下；当天改了性格，往后补一条 system，不改开头。
 """
@@ -61,13 +62,26 @@ def system_prompt(cyber: dict) -> str:
 
 
 def model_of(cyber: dict) -> str:
-    m = str(cyber.get("model") or "").strip()
+    own = models.chain_of(cyber.get("model"))
+    if own:
+        return own[0]
+    m = str(cyber.get("model") or "").strip() if isinstance(cyber.get("model"), str) else ""
     if m and models.valid_ref(m):
         return m
     m = models.route("cyber") or models.default_model()
+    if models.subscription(m):  # 赛博回合不花用户的套餐：换成默认的非套餐模型
+        m = models.outside(m) or ""
     if not m:
         raise EngineError("no model for this Cyber: give it one, or set engine.model in server.json", kind="config")
     return m
+
+
+def fallbacks_of(cyber: dict, model: str) -> list[str] | None:
+    """它自己的备用链：model 写成列表的后面那几个；用的是 engine.use.cyber 的就看那一项；都不是 → None（按模型找默认链）。"""
+    own = models.chain_of(cyber.get("model"))
+    if own and own[0] == model:
+        return own[1:]
+    return models.purpose_chain("cyber", model)
 
 
 async def chat(cyber: dict, text: str, *, on_event=None, control: Control | None = None, origin: str = "user") -> Result:
@@ -83,5 +97,5 @@ async def chat(cyber: dict, text: str, *, on_event=None, control: Control | None
         prompt.append(system_note(CHANGED + rules))
     spec = Spec(kind="cyber", model=model, system=session.system, conversation=f"cyber:{cid}", agent=cid, origin=origin,
                 effort=cyber.get("effort") if cyber.get("effort") in ("low", "medium", "high", "xhigh", "max") else None,
-                display="summarized", cache_ttl="1h")
+                display="summarized", cache_ttl="1h", fallbacks=fallbacks_of(cyber, model))
     return await run_turn(spec, session, prompt, on_event=on_event, control=control)

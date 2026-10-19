@@ -97,7 +97,7 @@ function render(el, items, pendingOnly) {
   for (const it of items) {
     const d = document.createElement("div"); d.className = "item";
     d.innerHTML = `<div>${esc(it.text)}</div>
-      <div class="meta">${esc(it.kind)} · ${esc(it.source)} · ${esc(it.observed_at)}${it.tags ? " · #" + esc(it.tags) : ""} ${it.status === "pending" ? `<span class='pending'>${L("待确认", "Pending")}</span>` : ""}</div>
+      <div class="meta">${esc(it.kind)} · ${esc(it.source)} · ${esc(it.observed_at)}${it.branch ? " · " + esc(it.branch) : ""}${it.tags ? " · #" + esc(it.tags) : ""} ${it.status === "pending" ? `<span class='pending'>${L("待确认", "Pending")}</span>` : ""}</div>
       <div class="row">
         ${it.status === "pending" ? `<button onclick="act('confirm','${it.id}')">${L("确认", "Confirm")}</button>` : ""}
         <button onclick="editOne('${it.id}')">${L("改", "Edit")}</button>
@@ -125,7 +125,13 @@ async function load() {
 }
 async function act(action, id) {
   if (action === "forget" && !confirm(L("忘记这条？正文会清空，只留骨架。", "Forget this one? The text is cleared; only its id and date are kept."))) return;
-  await api("action", {action, id}); load();
+  const r = await api("action", {action, id});
+  // 档案里有从它来的句子（每周修剪并进去的）：问要不要一起删
+  if (action === "forget" && (r.profile || []).length && confirm(L(`档案里有 ${r.profile.length} 句是从它来的：\n${r.profile.map(x => "- " + x.text).join("\n")}\n一起删掉？`,
+      `${r.profile.length} profile line(s) came from it:\n${r.profile.map(x => "- " + x.text).join("\n")}\nRemove them too?`))) {
+    await api("action", {action: "drop-profile", id});
+  }
+  load();
 }
 async function editOne(id) {
   const cur = [...document.querySelectorAll(".item")].find(x => x.innerHTML.includes(`'${id}'`));

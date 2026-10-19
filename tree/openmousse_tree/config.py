@@ -4,6 +4,7 @@
 多 agent 或自定义布局在 config.json 里改 profile_path / export_path。
 存储二选一（storage）：sqlite = 记忆存在 tree.db；markdown = 一条一篇笔记放在 notes_dir（比如 Obsidian 库里的一个文件夹），
 index.db 只当检索索引和操作记录（见 notes.py）。换存储用 mousse-tree migrate。
+树目录（tree_dir）：规则 rules.md 放在这里；sqlite = ~/.mousse-tree，markdown = 笔记文件夹（枝的笔记在它的 branches/ 里，见 branches.py）。
 """
 from __future__ import annotations
 
@@ -36,7 +37,10 @@ DEFAULTS = {
     "notes_dir": "",                     # markdown：笔记文件夹；空 = ~/.mousse-tree/notes
     "archive_dir": "",                   # markdown：被取代 / 遗忘的笔记放的子文件夹名；空 = 按 language「归档」/ "Archive"
     "profile_note": "",                  # markdown：在笔记文件夹里放一份档案（如 "Profile.md"），和 profile_path 双向同步；空 = 不放
+    "trunk": "",                         # 主干（档案）的名字；空 = 第一次用时按 language 定成「档案」/ "Profile" 存进来，以后换语言也不变
 }
+RULES = "rules.md"                       # 规则：一篇 Markdown，放在树目录（tree_dir）
+BRANCHES = "branches"                    # markdown：枝的笔记放在笔记文件夹的这个子文件夹（一枝一篇）
 
 
 def load() -> dict:
@@ -90,6 +94,28 @@ def notes_dir(cfg: dict | None = None) -> Path:
 def archive_name(cfg: dict | None = None) -> str:
     c = cfg or load()
     return c.get("archive_dir") or ("归档" if lang(c) == "zh" else "Archive")
+
+
+def tree_dir(cfg: dict | None = None) -> Path:
+    """规则文件放在哪：Markdown 存储放笔记文件夹（在 Obsidian 里能改），SQLite 存储放 ~/.mousse-tree。"""
+    c = cfg or load()
+    return notes_dir(c) if markdown(c) else HOME
+
+
+def rules_path(cfg: dict | None = None) -> Path:
+    return tree_dir(cfg) / RULES
+
+
+def trunk(cfg: dict | None = None) -> str:
+    """主干的名字：存下来的那个；还没存过按语言（「档案」/ Profile）。"""
+    c = cfg or load()
+    return str(c.get("trunk") or "").strip() or ("档案" if lang(c) == "zh" else "Profile")
+
+
+def owner(cfg: dict | None = None) -> str:
+    """规则里怎么称呼用户：config 的 owner_name；没有就「用户」/ the user。"""
+    c = cfg or load()
+    return str(c.get("owner_name") or "").strip() or ("用户" if lang(c) == "zh" else "the user")
 
 
 def lang(cfg: dict | None = None) -> str:

@@ -71,6 +71,8 @@ def api(path: str, body: dict | None = None, timeout: float = 30) -> dict:
     headers = {"Accept": "application/json"}
     if token():
         headers["Authorization"] = f"Bearer {token()}"
+    if os.environ.get("MOUSSE_VIA"):  # 经 /mcp、内核的工具跑的：服务据此认这一下引出来的回合能不能花 ChatGPT 套餐（server/bridges.py）
+        headers["X-Mousse-Via"] = os.environ["MOUSSE_VIA"]
     data = None
     if body is not None:
         data = json.dumps(body, ensure_ascii=False).encode()

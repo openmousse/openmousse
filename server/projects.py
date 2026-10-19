@@ -173,10 +173,14 @@ def next_of(entries: list[dict]) -> dict | None:
 # —— 任务 ——————————————————————————————————————————————————————————
 
 def tasks_of(pid: str) -> dict:
-    """在这个项目里派的后台任务（OpenClaw 台账里 owner 是这个项目的会话）。读不到台账 = available false。"""
+    """在这个项目里派的后台任务（OpenClaw 台账里 owner 是这个项目的会话；claw 选 builtin 时读内核的台账 engine/ledger.py，这个项目的
+    对话直接派的）。读不到台账 = available false。"""
     try:
         import cards  # 延迟导入：cards 依赖 chat
-        rows = cards.ledger("owner_key=?", (chat.session_key(pid),), 30)
+        if chat.claw.is_builtin():
+            rows = cards.engine_tasks(thread=pid, limit=30)
+        else:
+            rows = cards.ledger("owner_key=?", (chat.session_key(pid),), 30)
     except Exception:  # noqa: BLE001
         rows = None
     if rows is None:
@@ -349,6 +353,21 @@ def context_for(thread: str) -> str | None:
     with _lock, pdb() as conn:
         conn.execute("UPDATE side_chats SET fed_rev=?, fed_at=? WHERE id=?", (c["rev"], now_iso(), thread))
     return text
+
+
+def card_state(thread: str) -> tuple[str, int, bool] | None:
+    """自己的内核（engine/context.py）用，不走 context_for：→ (项目卡的文字, 版本, 最近一次改动是不是这个项目自己的对话改的)。
+    自己改的（bump 时把 fed_rev 记成了 rev）它知道，内核不再补一条；别处改的（app 里、主对话）在下一句话后面补。不是项目 → None。"""
+    if not thread.startswith("sc-"):
+        return None
+    with _lock, pdb() as conn:
+        r = conn.execute("SELECT * FROM side_chats WHERE id=?", (thread,)).fetchone()
+        if r is None:
+            return None
+        c = card_json(conn, r, with_tasks=False)
+    c["tasks"] = tasks_of(thread)
+    rev = int(r["rev"] or 0)
+    return context_text(c), rev, r["fed_rev"] == rev
 
 
 # —— 改动：日志、卡片、版本 ———————————————————————————————————————————————

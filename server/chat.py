@@ -19,12 +19,14 @@ import re
 import shutil
 import signal
 import sqlite3
+import sys
 import threading
 import time
+from contextvars import ContextVar
 from datetime import datetime, timedelta
 from pathlib import Path
 from dataclasses import dataclass, field
-from typing import AsyncIterator
+from typing import Any, AsyncIterator
 
 import httpx
 from fastapi import APIRouter, HTTPException
@@ -39,8 +41,12 @@ OPENCLAW = settings.openclaw_json
 DB = settings.db
 GATEWAY = settings.gateway
 DEFAULT_MODEL = settings.default_model
+# 这个请求是经谁来的（main.guard 按 X-Mousse-Via 设；脚本经 bridges.run 跑时带上 MOUSSE_VIA）：外面的 MCP 客户端 = mcp，内核工具跑的脚本 =
+# 那一轮的来路。begin() 记进 Run.via，自己的内核据此不让 /mcp 和后台引出来的回合花 ChatGPT 套餐（engine/models.may_spend）
+REQUEST_VIA: ContextVar[str | None] = ContextVar("mousse_via", default=None)
 router = APIRouter()
 _lock = threading.Lock()
+_at_index: set[str] = set()  # 建过 messages 时间索引的库（见 db）
 
 
 @dataclass
@@ -71,7 +77,21 @@ class Run:
     stopping: bool = False  # 用户点了「停」（/api/chat/stop）：断开到 Gateway 的连接，Gateway 就中止这一轮
     stream_task: asyncio.Task | None = None  # 流式读 Gateway 的那一段（停的时候取消它）
     gw_run: str | None = None  # 走 WebSocket 对话通道时 Gateway 给这一轮的 runId（停、插话、断线后接着收都靠它）
-    progress: dict | None = None  # 走对话通道时：准备阶段、工具步骤、最近的思考摘要（note_progress），客户端重新接上时补发
+    progress: dict | None = None  # 准备阶段、工具步骤、最近的思考摘要（对话通道：note_progress；自己的内核：note_engine），客户端重新接上时补发
+    control: Any = None  # 自己的内核（builtin）跑的这一轮：engine.Control（插话 steer、停 abort 都经它）
+    steered: dict = field(default_factory=dict)  # builtin：插进这一轮、还没被它读到的话（app 消息 id → Queued）；没赶上的回完变成下一轮
+    thought: str = ""  # builtin：这次调模型到现在的思考（progress 的 thought 取它的最后一段）
+    progress_at: float = 0.0  # builtin：上次推 progress 的时间（思考一个字一个字来，最多 PROGRESS_EVERY 秒推一次）
+    record: Any = None  # OpenClaw：这一轮也记进内核的事件表（ClawRecord；server.json 的 engine.record_openclaw，默认关 = None）
+    shutdown: bool = False  # builtin：是关服务时停下的（stop_engine_runs），不是用户点的停
+    watched: bool = False  # builtin：用户自己在 app 里说的这一轮（有人在看）：内核多给 ask_user（engine/ask.py）
+    asking: dict | None = None  # builtin：ask_user 正在等的那个问题（ask_user 事件；重连时补发）
+    todo: list | None = None  # builtin：这一轮最新的待办清单（todo 事件；重连时补发）
+    via: str | None = None  # builtin：经谁的请求引出来的（REQUEST_VIA；后台任务做完开的那一轮 = task）：ChatGPT 套餐据此认 /mcp 和后台
+    served: str | None = None  # builtin：备用链（engine/fallback.py）换过模型时真正回答的那个；回完当 model，原来要的记成 requested（→ fallbackFrom）
+    watchdog: bool = False  # builtin：是定时任务的看门狗停的（engine/unattended.in_chat 一直没动静），不是用户点的停：会话里不补「用户停了」
+    turn: str | None = None  # builtin：内核记的这一轮（engine_turns.id）和它的用量：定时任务 chat 模式的运行记录带上（engine/jobs.py）
+    usage: dict | None = None
 
     def publish(self, item: tuple[str, dict]) -> None:
         for q in list(self.queues):
@@ -80,6 +100,12 @@ class Run:
 
 RUNS: dict[str, Run] = {}
 RUN_KEEP_SECONDS = 15 * 60  # 回完的回复留一会儿：手机断线后重新接上还能拿到完整内容，不至于显示"没发出去"
+RESTART_TAIL = ("（服务重启了，这一轮停在这里）", "(The server restarted; this turn stopped here.)")  # 关服务停的那条回复接在后面的
+
+
+def stopped_by_user(status: str | None, text: str | None) -> bool:
+    """库里这条回复是不是用户点了停的（stopped，后面接的不是 RESTART_TAIL）：engine/context.tail_part 据此说那件事别接着做。"""
+    return status == "stopped" and not (text or "").rstrip().endswith(RESTART_TAIL)
 
 
 @dataclass
@@ -143,7 +169,12 @@ def study_agent() -> str | None:
 
 
 def agent_of(thread: str) -> str:
-    """线程归哪个 agent：main 和独立空间在 main，Group 各自一个，学习台归 study.agent。groups 表里有但配置里没建 agent 的先留在 main。"""
+    """线程归哪个 agent：main 和独立空间在 main，Group 各自一个，学习台归 study.agent。groups 表里有但配置里没建 agent 的先留在 main。
+    builtin（自己的内核）：和内核一样分（engine/owner.agent_of：groups 表里的 Agent 不用有工作区）——内核按它定脚本认成谁（MOUSSE_AGENT），
+    日程 / 页面 / 项目的改动卡再按它找「这会儿在回复的是哪一次」，两边要一致，不然卡挂不到那个 Agent 的回复下面。"""
+    if claw.is_builtin():
+        from engine import owner as engine_owner  # 延迟导入：内核只在 builtin 时用
+        return engine_owner.agent_of(thread)
     if thread in settings.group_agents:
         return thread
     if thread.startswith("study-") and (a := study_agent()):
@@ -184,6 +215,12 @@ def db() -> sqlite3.Connection:
         id INTEGER PRIMARY KEY AUTOINCREMENT, thread TEXT NOT NULL, role TEXT NOT NULL, text TEXT NOT NULL,
         model TEXT, ts TEXT NOT NULL, status TEXT NOT NULL DEFAULT 'ok')""")
     conn.execute("CREATE INDEX IF NOT EXISTS messages_thread ON messages(thread, id)")
+    if str(DB) not in _at_index:  # 每个进程每个库只建（试）一次
+        _at_index.add(str(DB))
+        try:  # 按时间取（某一天、上次聊到哪）都比 julianday(ts)（见 day_bounds）：表达式索引让它照样走索引，老数据不用改写
+            conn.execute("CREATE INDEX IF NOT EXISTS messages_thread_at ON messages(thread, julianday(ts))")
+        except sqlite3.Error as e:  # 建不起来（哪一行的 ts 不像时间）只是按天取慢一点，别拦着整个对话
+            print(f"[chat] messages 的时间索引没建上：{e}")
     conn.execute("""CREATE TABLE IF NOT EXISTS threads (
         id TEXT PRIMARY KEY, model TEXT, updated_at TEXT)""")
     cols = {r[1] for r in conn.execute("PRAGMA table_info(messages)")}
@@ -217,7 +254,7 @@ DAY_START_HOUR = 4  # 逻辑日从 04:00 开始（蓝图 4.3）：凌晨 1 点�
 
 
 def day_of(ts: str) -> str:
-    """一条消息属于哪个逻辑日（YYYY-MM-DD，伦敦时间，04:00 为界）。"""
+    """一条消息属于哪个逻辑日（YYYY-MM-DD，按 server.json 现在的时区，04:00 为界）。"""
     try:
         dt = datetime.fromisoformat(ts).astimezone(TZ)
     except ValueError:
@@ -226,13 +263,31 @@ def day_of(ts: str) -> str:
 
 
 def day_bounds(day: str) -> tuple[str, str]:
-    """逻辑日 day 对应的 [起, 止) ISO 时间（含时区）。"""
+    """逻辑日 day 对应的 [起, 止) ISO 时间（含时区）。
+    库里的 ts 带的是写下那一刻的时区偏移：server.json 的 timezone 改过（比如 +01:00 的里斯本改成 +08:00 的上海），新旧两种偏移就混在一起，
+    按字符串比、按字符串排都会错（上海的「17 日 05:00」按字符串排在里斯本的「16 日 23:00」后面，其实早了一个小时）。
+    所以 SQL 里一律比 julianday(ts) 和 julianday(?)：SQLite 自己解开偏移、换到同一条时间轴上再比，老数据不用改写；
+    messages 有 (thread, julianday(ts)) 的表达式索引（见 db），按天取照样走索引。Python 里按 instant 比。"""
     d = datetime.strptime(day, "%Y-%m-%d").replace(tzinfo=TZ, hour=DAY_START_HOUR)
     return d.isoformat(), (d + timedelta(days=1)).isoformat()
 
 
+def instant(ts: str | None) -> float:
+    """ISO 时间 → Unix 秒，按真时间比、排序用（偏移不一定一样，见 day_bounds）。不带偏移的按现在的时区算；不像样的 → 0。"""
+    try:
+        dt = datetime.fromisoformat(str(ts))
+    except ValueError:
+        return 0.0
+    return (dt if dt.tzinfo else dt.replace(tzinfo=TZ)).timestamp()
+
+
 def hhmm(ts: str) -> str:
-    return ts[11:16]
+    """显示的几点几分：带偏移的换到现在的时区（时区改过以后，和它归到哪一天对得上）。"""
+    try:
+        dt = datetime.fromisoformat(ts)
+    except (TypeError, ValueError):
+        dt = None
+    return dt.astimezone(TZ).strftime("%H:%M") if dt is not None and dt.tzinfo else ts[11:16]
 
 
 def row_to_msg(r: sqlite3.Row) -> dict:
@@ -280,8 +335,9 @@ def history(thread: str = "main", limit: int = 200, day: str | None = None, all:
                 lo, hi = day_bounds(day)
             except ValueError as exc:
                 raise HTTPException(400, L("day 要写成 YYYY-MM-DD", "day must be YYYY-MM-DD")) from exc
-            # ts 是带时区的 ISO 字符串，同一时区下字符串比较等价于时间比较（伦敦夏令时切换的那两小时忽略）
-            rows = conn.execute("SELECT * FROM messages WHERE thread=? AND ts>=? AND ts<? ORDER BY id DESC LIMIT 1000", (thread, lo, hi)).fetchall()
+            # 按真时间比（时区改过、夏令时切换，偏移都可能不一样，见 day_bounds）
+            rows = conn.execute("SELECT * FROM messages WHERE thread=? AND julianday(ts)>=julianday(?) AND julianday(ts)<julianday(?) "
+                                "ORDER BY id DESC LIMIT 1000", (thread, lo, hi)).fetchall()
         else:
             rows = conn.execute("SELECT * FROM messages WHERE thread=? ORDER BY id DESC LIMIT ?", (thread, min(limit, 500))).fetchall()
         quoted = {r["reply_to"] for r in rows if r["reply_to"]}
@@ -350,7 +406,7 @@ def search(q: str, thread: str | None = None, limit: int = 60):
                              "snippet": h["snippet"]})
         except Exception:  # noqa: BLE001 — 好友表没建好不影响别的
             pass
-    hits.sort(key=lambda h: h["ts"], reverse=True)
+    hits.sort(key=lambda h: instant(h["ts"]), reverse=True)
     return {"ok": True, "q": q, "hits": hits[:limit]}
 
 
@@ -430,7 +486,11 @@ def ws_ok(content: str | list) -> bool:
 
 
 async def claw_stream(run: Run, content: str | list) -> None:
-    """别的 claw（claw.py，OpenAI 兼容接口）：history 模式把这个对话今天在这一条之前的记录一起发过去，claw 自己不用记会话。"""
+    """别的 claw（claw.py，OpenAI 兼容接口）：history 模式把这个对话今天在这一条之前的记录一起发过去，claw 自己不用记会话。
+    builtin（自己的内核）：见 engine_stream。"""
+    if claw.is_builtin():
+        await engine_stream(run, content)
+        return
     mode, _, turns = claw.session_mode()
     messages: list[dict] = []
     if mode == "history":
@@ -444,8 +504,184 @@ async def claw_stream(run: Run, content: str | list) -> None:
     await claw.stream(messages, claw.day_key(run.key or session_key(run.thread), day_of(run.started)), run.model, on_delta)
 
 
+async def engine_stream(run: Run, content: str | list) -> None:
+    """builtin（自己的内核，engine/owner.py）：接在这个对话这一天的会话后面跑一轮主人回合，带这个 Agent 的工具和关卡（第 3 项起和
+    OpenClaw 的对话通道一样有「在想 / 在做」、插话、停）：
+    - 进度：内核的事件经 note_engine 画成 run.progress（和 note_progress 一样的形状），推 SSE progress；重连时 attach 补发。
+    - 插话：回复进行中又说的一句经 run.control 进这一轮（steer_engine）。写进会话了（steer 事件）= 并进了这一轮；这一轮没来得及用上
+      就结束了 = 排到队首，回完和排着的一起变成下一轮（drain 发，那几条的连接接到那一轮上）——不丢。
+    - 停：/api/chat/stop → run.control.abort()：已经出来的字留着，正在跑的工具收到取消，会话补完整，这一轮记成 stopped；
+      等你点头的收件箱卡不受影响（关卡交卡就返回了，卡照样在收件箱里等）。会话里补一句「用户停了」（engine/loop.note_stopped）：
+      下一轮、压缩摘要都不把它当成没做完的接着做。
+    - 后台任务的线程 task:<id>（任务卡上的「改一下」、派它的对话 send 的，第 5 项）：不是主对话，交给 engine/tasks.round_turn
+      在那个任务的子会话里接着跑一轮（子 Agent 的工具和关卡）。
+    - ⑫b：用户自己说的这一轮（run.watched）有 ask_user：问题是回复里的一段字，同时推 SSE 的 ask_user 事件（以后 app 画选项按钮），
+      用户插的下一句就是回答（answer 事件：那条的连接接到这一轮上，和插话一样）；todo、plan_mode 事件也推成 SSE（以后 app 画）。
+      app 现在不认这几个事件，直接跳过（同 card、progress）。
+    模型出错 → RuntimeError（run_gateway 记成没拿到回复）。被取消（硬停、服务关了）照常往外抛，内核已经把会话补完整。"""
+    from engine import Control  # 延迟导入：内核只在 builtin 时用
+    from engine import owner as engine_owner
+
+    if run.control is None:
+        run.control = Control()
+
+    def on_text(text: str) -> None:
+        run.text += text
+        run.publish(("delta", {"text": text}))
+
+    def on_event(ev: dict) -> None:
+        t = ev.get("type")
+        if t in ("steer", "follow_up", "answer"):  # 插话写进会话了（answer：ask_user 等到的回答）：并进了这一轮，那条的连接接到这一轮上
+            item = run.steered.pop(ev.get("ref"), None)
+            if item is not None and not item.future.done():
+                item.future.set_result(run)
+            return
+        if t in ("ask_user", "ask_user_done", "todo", "plan_mode"):  # ⑫b：推给 app（以后画选项按钮、清单、开关）；重连时补发
+            data = {k: v for k, v in ev.items() if k != "type"}
+            if t == "ask_user":
+                run.asking = data
+            elif t == "ask_user_done":
+                run.asking = None
+            elif t == "todo":
+                run.todo = data.get("items")
+            run.publish((t, data))
+            return
+        if t == "rewrite":  # 撤回了一段（Claude Code 流断了整条重来、前一段后面又整个说了一遍，engine/claude_brain）：整段换掉
+            run.text = str(ev.get("text") or "")
+            run.publish(("text", {"text": run.text}))
+            return
+        if ev.get("type") == "task" and isinstance(ev.get("task"), dict):  # 这一轮派的后台任务（第 5 项发）：当场出任务卡，重连时补发
+            import cards as cards_mod  # 延迟导入：cards.py 依赖本模块
+            cards_mod.publish(run, cards_mod.task_json(ev["task"]))
+            return
+        if not note_engine(run, ev):
+            return
+        now = time.monotonic()
+        if ev.get("type") == "thinking" and now - run.progress_at < PROGRESS_EVERY:
+            return  # 思考一个字一个字来：攒着，下一次（或者下一个事件）一起推
+        run.progress_at = now
+        pr = run.progress  # 推一份快照：note_engine 原地改 run.progress，连接慢的话排着的几条会都变成最新的样子
+        run.publish(("progress", {**pr, "steps": [dict(s) for s in pr["steps"]]}))
+
+    try:
+        if run.thread.startswith("task:"):  # 后台任务的线程（改一下、接着说，第 5 项）：在那个任务的子会话里接着跑一轮
+            from engine import tasks as engine_tasks
+            res = await engine_tasks.round_turn(run.thread[5:], content, on_text, origin=run.origin, control=run.control, on_event=on_event)
+        else:
+            res = await engine_owner.respond(run.thread, day_of(run.started), content, run.model, on_text, ref=run.user_id, origin=run.origin,
+                                             control=run.control, on_event=on_event, watched=run.watched, via=run.via)
+    finally:
+        run.control.close()  # 这一轮不再收插话：没赶上的排到队首，这一轮收完尾 drain 一起发出去
+        left = [it for it in run.steered.values() if not it.future.done()]
+        run.steered.clear()
+        if left:  # 库里也改成排着的：万一还没 drain 服务就停了，下次启动 resume_queued 接着发
+            QUEUED[run.thread] = [*left, *QUEUED.get(run.thread, [])]
+            ids = [it.user_id for it in left]
+            with _lock, db() as conn:
+                conn.execute(f"UPDATE messages SET status='queued' WHERE id IN ({','.join('?' * len(ids))})", ids)
+        close_steps(run)
+    run.turn, run.usage = res.turn, dict(res.usage or {})
+    if res.models and res.model and res.model != res.models[0]:  # 备用链换过模型（Result.models 按先后）：res.model 是出了回复的那个
+        run.served = res.model
+    if res.status == "aborted":
+        run.status, run.level = "stopped", "none"
+        from engine import loop as engine_loop
+        if run.shutdown:  # 关服务时停的（不是用户点的）：会话里补一句，下一轮它知道用户没看到后面
+            engine_loop.note_restart(res.turn)
+        elif run.stopping and not run.watchdog:  # 用户点了停：补一句「用户停了」，压缩摘要、下一轮都别当成没做完的待办接着做
+            engine_loop.note_stopped(res.turn)
+    elif res.status == "error":
+        raise RuntimeError(res.error or "model error")
+    elif res.status == "refused" and not res.text:
+        raise RuntimeError("the model declined to answer")
+
+
+def steer_engine(thread: str, cur: Run, text: str, context: str | None) -> tuple[int, str, asyncio.Future] | None:
+    """builtin 的插话：记下这一条（status steered，app 上标「插话」，和 OpenClaw 时一样），交给正在跑的这一轮（Control.steer：这一批工具
+    做完带着它再问模型；模型已经说完了也带着再问一次）。返回 (消息 id, 时间, 结果)：结果是这条该接着看的那一轮——写进会话了 = 这一轮
+    （cur）；没赶上 = 下一轮（engine_stream 收尾时排到队首，drain 开跑时给）。进不去（这一轮刚结束、停了、插话已经排满 STEER_CAP 条）
+    → None，调用方当排队处理。
+    连着插好几句：每句各占一条消息，这一批工具做完一起读到（OpenClaw 的 steer 也是逐条进记录）；没赶上的几句回完合成一轮（combine）。"""
+    ctl = cur.control
+    if ctl is None or not ctl.can_steer():
+        return None
+    from engine import owner as engine_owner
+    content = f"{context}\n\n{text}" if context else text
+    msg = engine_owner.user_message(content)
+    if msg is None:
+        return None
+    ts = now_iso()
+    with _lock, db() as conn:
+        user_id = conn.execute("INSERT INTO messages(thread, role, text, model, ts, status, gw_text) VALUES(?,?,?,?,?,?,?)",
+                               (thread, "user", text, None, ts, "steered", content)).lastrowid
+    item = Queued(user_id=user_id, content=content, gw_text=content, ts=ts, future=asyncio.get_running_loop().create_future())
+    cur.steered[user_id] = item
+    # 上面查过进得去，中间没有 await；万一没进去，它还在 cur.steered 里，收尾时照样变成下一轮。said：ask_user 正在等的话，这句就是回答（⑫b）
+    ctl.steer({**msg, "ref": user_id}, said=True)
+    return user_id, ts, item.future
+
+
+def close_steps(run: Run) -> None:
+    """一轮结束：还转着的步骤标成没做完（Hermes 的 flush_open_tool_calls：被挡下、被打断的调用不会自己报结束，别一直转）。"""
+    pr = run.progress
+    if pr and any(s.get("status") == "running" for s in pr["steps"]):
+        pr["steps"] = [{**s, "status": "failed"} if s.get("status") == "running" else s for s in pr["steps"]]
+
+
 PROGRESS_STEPS = 6       # 进度里最多留最近几步
 PROGRESS_THOUGHT = 600   # 思考摘要留最后多少字
+PROGRESS_EVERY = 0.4     # builtin：思考的进度最多多久推一次（秒）
+
+
+def note_engine(run: Run, ev: dict) -> bool:
+    """自己的内核（builtin）的事件（engine/loop.py 开头列的）→ run.progress，和 note_progress 一样的形状，app 不用改：
+      phase（建会话备料、压缩：preparing_context）→ phase；model（又要问模型了）→ waiting_for_model，思考从这次重新攒；
+      thinking → thought（这次调模型的思考的最后 PROGRESS_THOUGHT 字，同对话通道）；
+      tool_run → 一步 running，tool = 工具名，detail = Tool.title（一句标题，不放参数原文）；
+      tool_end → done / failed（交给你点头的算 done，detail 后面写「等你点头」；被关卡挡下、出错、超时、点了停的算 failed）。
+    返回 False = 这个事件不改变显示。"""
+    t = ev.get("type")
+    pr = run.progress or {"since": round(run.t0, 1), "phase": "", "steps": [], "thought": ""}
+    if t == "phase":
+        phase = str(ev.get("phase") or "")
+        if not phase or pr["phase"] == phase:
+            return False
+        pr["phase"] = phase
+    elif t == "model":
+        run.thought = ""
+        if pr["phase"] == "waiting_for_model":
+            return False
+        pr["phase"] = "waiting_for_model"
+    elif t == "thinking":
+        run.thought = (run.thought + str(ev.get("text") or ""))[-PROGRESS_THOUGHT * 4:]
+        thought = run.thought.strip()[-PROGRESS_THOUGHT:]
+        if not thought or (pr["thought"] == thought and pr["phase"] == "thinking"):
+            return False
+        pr["phase"], pr["thought"] = "thinking", thought
+    elif t in ("tool_run", "tool_end"):
+        sid, name = str(ev.get("id") or ""), str(ev.get("name") or "")
+        if not sid:
+            return False
+        old = next((x for x in pr["steps"] if x["id"] == sid), None)
+        detail = str(ev.get("detail") or "").strip()[:120] or (old or {}).get("detail", "")
+        if t == "tool_run":
+            status = "running"
+        else:
+            how = str(ev.get("status") or ("ok" if ev.get("ok") else "error"))
+            status = "done" if how in ("ok", "pending") else "failed"
+            if how == "pending":
+                wait = L("等你点头", "waiting for your OK")
+                detail = f"{detail} · {wait}" if detail else wait
+        step = {"id": sid, "tool": name, "detail": detail, "status": status}
+        if step == old:
+            return False
+        steps = [step if x["id"] == sid else x for x in pr["steps"]] if old else [*pr["steps"], step]
+        pr["steps"] = steps[-PROGRESS_STEPS:]
+        pr["phase"] = "tool" if any(x["status"] == "running" for x in pr["steps"]) else "thinking"
+    else:
+        return False
+    run.progress = pr
+    return True
 
 
 def note_progress(run: Run, p: dict) -> bool:
@@ -469,10 +705,7 @@ def note_progress(run: Run, p: dict) -> bool:
         if d.get("kind") != "tool" or not d.get("itemId"):
             return False
         sid, name = str(d["itemId"]), str(d.get("name") or "")
-        detail = str(d.get("meta") or "").strip()
-        if name in ("read", "write", "edit", "apply_patch") and detail:
-            detail = re.sub(r"^(from|to|in)\s+", "", detail)
-            detail = detail.rstrip("/").rsplit("/", 1)[-1]
+        detail = item_detail(name, d.get("meta"))
         status = str(d.get("status") or "")
         status = "failed" if d.get("isError") or status in ("failed", "error") else "done" if d.get("phase") == "end" or status == "completed" else "running"
         old = next((x for x in pr["steps"] if x["id"] == sid), None)
@@ -486,6 +719,76 @@ def note_progress(run: Run, p: dict) -> bool:
         return False
     run.progress = pr
     return True
+
+
+def item_detail(name: str, meta) -> str:
+    """对话通道里一个工具调用的标题（模型自己写的）：读写文件的只留文件名，不带命令参数和输出。"""
+    detail = str(meta or "").strip()
+    if name in ("read", "write", "edit", "apply_patch") and detail:
+        detail = re.sub(r"^(from|to|in)\s+", "", detail)
+        detail = detail.rstrip("/").rsplit("/", 1)[-1]
+    return detail
+
+
+class ClawRecord:
+    """claw 是 OpenClaw 时，把它的一轮也记进内核的事件表（engine_turns 的 kind = claw，加 engine_steps）：harness 方案要的「两份记录
+    合成一条事件流」，以后的账本、台账、桌面工作台看一张表就够。server.json 的 engine.record_openclaw = true 才记（默认关）。
+    只多记一份：每一步都在 try 里，出错只是少一行记录，OpenClaw 这条路的行为一点不变。记：一轮（哪个对话、Agent、请求的模型、来源、
+    多久、结果）+ 对话通道（chat.transport = ws）报的每个工具调用（工具名、模型写的标题，同 note_progress）；不记说的话、思考、
+    工具的参数和输出（同 engine/events.py）。服务重启时它们和内核自己的回合一样被标成 aborted（Gateway 那边那一轮可能还在跑，
+    重新接上的那一段另记一轮）。"""
+
+    def __init__(self, run: Run) -> None:
+        self.tid: str | None = None
+        self.conv = run.thread
+        self.steps: dict[str, int] = {}
+        self.ended: set[str] = set()
+        try:
+            from engine import events as engine_events  # 延迟导入：只在开了记录时用
+            self.tid = engine_events.turn_open(conversation=run.thread, kind="claw", model=run.model, agent=agent_of(run.thread),
+                                               origin=run.origin)
+        except Exception as e:  # noqa: BLE001
+            print(f"[chat] OpenClaw 的这一轮没记进事件表：{type(e).__name__}")
+
+    @staticmethod
+    def wanted() -> bool:
+        e = raw().get("engine")
+        return claw.is_openclaw() and isinstance(e, dict) and e.get("record_openclaw") is True
+
+    def note(self, p: dict) -> None:
+        """对话通道的一个 agent 事件：工具调用开始 → 开一步，结束 → 收这一步。"""
+        if self.tid is None:
+            return
+        try:
+            d = p.get("data") or {}
+            if p.get("stream") != "item" or d.get("kind") != "tool" or not d.get("itemId"):
+                return
+            from engine import events as engine_events
+            iid, name = str(d["itemId"]), str(d.get("name") or "")
+            if iid not in self.steps:
+                self.steps[iid] = engine_events.step_open(self.tid, type_="tool", name=name, detail=item_detail(name, d.get("meta")),
+                                                          conversation=self.conv)
+            status = str(d.get("status") or "")
+            failed = bool(d.get("isError")) or status in ("failed", "error")
+            if (failed or d.get("phase") == "end" or status == "completed") and iid not in self.ended:
+                self.ended.add(iid)
+                engine_events.step_close(self.steps[iid], status="error" if failed else "ok", conversation=self.conv, turn=self.tid)
+        except Exception:  # noqa: BLE001 — 少记一步而已
+            pass
+
+    def close(self, status: str, error: str | None = None) -> None:
+        """这一轮结束：没收的步骤标 aborted，一轮记上结果（done / aborted / error）。只收一次。"""
+        if self.tid is None:
+            return
+        tid, self.tid = self.tid, None
+        try:
+            from engine import events as engine_events
+            for iid, sid in self.steps.items():
+                if iid not in self.ended:
+                    engine_events.step_close(sid, status="aborted", conversation=self.conv, turn=tid)
+            engine_events.turn_close(tid, conversation=self.conv, status=status, error=error)
+        except Exception:  # noqa: BLE001
+            pass
 
 
 async def gateway_ws_stream(run: Run, text: str | None) -> None:
@@ -503,6 +806,8 @@ async def gateway_ws_stream(run: Run, text: str | None) -> None:
         async for p in c.events(run.gw_run):
             st = p.get("state")
             if st == "agent":
+                if run.record is not None:  # 默认没有（engine.record_openclaw）
+                    run.record.note(p)
                 if note_progress(run, p):
                     run.publish(("progress", run.progress))
                 continue
@@ -564,12 +869,16 @@ async def run_gateway(run: Run, text: str | list | None, token: str) -> None:
     if not claw.is_openclaw():
         run.stream_task = asyncio.create_task(claw_stream(run, text if text is not None else ""))
     else:
+        if ClawRecord.wanted():  # 默认关：开了只是多记一份进内核的事件表
+            run.record = ClawRecord(run)
         use_ws = text is None or ws_ok(text)
         run.stream_task = asyncio.create_task(gateway_ws_stream(run, text) if use_ws else gateway_stream(run, text, token))
     try:
         await run.stream_task
     except asyncio.CancelledError:
         if not run.stopping:  # 不是用户点的「停」（服务关了之类）：照常往外抛
+            if run.record is not None:
+                run.record.close("aborted", "cancelled")
             raise
         run.status = "stopped"
         run.level = "none"  # 自己停的不用推
@@ -579,13 +888,16 @@ async def run_gateway(run: Run, text: str | list | None, token: str) -> None:
     except Exception as e:  # noqa: BLE001 — WebSocket 那条路的错（连不上、Gateway 拒了）：这一条记成没拿到回复
         run.status = "error"
         run.error = str(e)
+    if run.record is not None:
+        run.record.close({"ok": "done", "stopped": "aborted"}.get(run.status, "error"), run.error)
     if run.status == "stopped":
-        run.text = (run.text.rstrip() + "\n\n" if run.text.strip() else "") + L("（停了）", "(Stopped)")
+        tail = L(*RESTART_TAIL) if run.shutdown else L("（停了）", "(Stopped)")
+        run.text = (run.text.rstrip() + "\n\n" if run.text.strip() else "") + tail
     if run.status == "error" and not run.text:
         run.text = L(f"（没拿到回复：{run.error}）", f"(Didn't get a reply: {run.error})")
     run.requested = run.model
-    if run.status == "ok":
-        run.model = await actual_model(run.key or session_key(run.thread)) or run.model
+    if run.status == "ok":  # 回退链换了模型：OpenClaw 从会话记录里读，自己的内核在 run.served（engine_stream 记的）
+        run.model = await actual_model(run.key or session_key(run.thread)) or run.served or run.model
     run.finished = now_iso()
     with _lock, db() as conn:
         cur = conn.execute("INSERT INTO messages(thread, role, text, model, requested, ts, status, origin) VALUES(?,?,?,?,?,?,?,?)",
@@ -654,6 +966,10 @@ async def attach(run: Run) -> AsyncIterator[bytes]:
             yield sse("card", card)
         if run.progress and not run.done:  # 想到哪、做到哪（老版本 app 不认 progress 事件，直接跳过）
             yield sse("progress", run.progress)
+        if run.todo and not run.done:  # ⑫b：这一轮的待办清单、正在等回答的问题（app 现在不认，跳过）
+            yield sse("todo", {"items": run.todo})
+        if run.asking and not run.done:
+            yield sse("ask_user", run.asking)
         if run.text:
             yield sse("delta", {"text": run.text})
         if run.done:
@@ -727,24 +1043,26 @@ def start_run(thread: str, text: str, model: str | None, key: str | None = None,
 
 def daily_context(thread: str) -> str | None:
     """每天第一句话（和卡片变了以后）要带给模型的：思考主题的碎片和「陪你想」的规矩（think.py）、项目卡（projects.py）。
-    OpenClaw 每天重置会话，靠它接上。两个 context_for 都会记下「今天带过了」，所以只在真要发出去的时候调。"""
+    OpenClaw 每天重置会话，靠它接上。两个 context_for 都会记下「今天带过了」，所以只在真要发出去的时候调。
+    builtin（自己的内核）：Agent 的职责、上一次的日结、项目卡由内核自己备（engine/context.py：放在当天会话的开头，变了往后补），这里不重复。"""
     parts = []
     try:
         import think as think_mod  # 延迟导入：think.py 依赖本模块
         parts.append(think_mod.context_for(thread))
     except Exception:  # noqa: BLE001 — 带不上只是模型少看一眼碎片
         pass
-    try:
-        import projects as projects_mod  # 延迟导入：projects.py 依赖本模块
-        parts.append(projects_mod.context_for(thread))
-    except Exception:  # noqa: BLE001 — 带不上只是模型少看一眼项目卡，消息照发
-        pass
+    if not claw.is_builtin():
+        try:
+            import projects as projects_mod  # 延迟导入：projects.py 依赖本模块
+            parts.append(projects_mod.context_for(thread))
+        except Exception:  # noqa: BLE001 — 带不上只是模型少看一眼项目卡，消息照发
+            pass
     try:
         import meetings as meetings_mod  # 延迟导入：meetings.py 依赖本模块
         parts.append(meetings_mod.context_for(thread))  # 它发起的会议有了纪要、确认了：没告诉过它的带上
     except Exception:  # noqa: BLE001
         pass
-    if not claw.is_openclaw() and first_today(thread):
+    if not claw.is_openclaw() and not claw.is_builtin() and first_today(thread):
         parts += [agent_role(thread), last_digest(thread)]
     return "\n\n".join(x for x in parts if x) or None
 
@@ -753,7 +1071,7 @@ def first_today(thread: str) -> bool:
     """这个对话今天（逻辑日）还没说过话：开跑前调，这一句就是今天的第一句。"""
     since = day_bounds(day_of(now_iso()))[0]
     with _lock, db() as conn:
-        return conn.execute("SELECT 1 FROM messages WHERE thread=? AND ts>=? LIMIT 1", (thread, since)).fetchone() is None
+        return conn.execute("SELECT 1 FROM messages WHERE thread=? AND julianday(ts)>=julianday(?) LIMIT 1", (thread, since)).fetchone() is None
 
 
 DIGEST_DAYS = 7  # 带上一次的日结：最多往回找这么多天
@@ -806,10 +1124,15 @@ def agent_role(thread: str) -> str | None:
 
 
 def begin(thread: str, model: str, user_id: int, ts: str, content: str | list, token: str, key: str | None = None, origin: str = "user",
-          level: str | None = None) -> Run:
-    """开跑：记下这一轮，后台发给 Gateway。"""
+          level: str | None = None, watched: bool | None = None, via: str | None = None) -> Run:
+    """开跑：记下这一轮，后台发给 Gateway。watched：有人在看（builtin 的 ask_user）；不给 = 用户自己发的（origin user）就算。
+    via：不给 = 这个请求的 REQUEST_VIA（见上）。"""
     run = Run(thread=thread, model=model, user_id=user_id, started=ts, key=key, origin=origin, level=level, feed_mark=feed_mark(),
-              inbox_mark=max_rowid("inbox"), handoff_mark=max_rowid("handoffs"))
+              inbox_mark=max_rowid("inbox"), handoff_mark=max_rowid("handoffs"), watched=origin == "user" if watched is None else watched,
+              via=via if via is not None else REQUEST_VIA.get())
+    if claw.is_builtin():  # 自己的内核：插话、停都经它（engine_stream）；现在就建好，还在备料时插的话、点的停也接得住
+        from engine import Control  # 延迟导入：内核只在 builtin 时用
+        run.control = Control()
     RUNS[thread] = run
     asyncio.create_task(run_gateway(run, content, token))
     try:  # 回复进行中盯着 OpenClaw 的任务台账：这次新派的子任务当场出任务卡（见 cards.py）；别的 claw 没有这本台账
@@ -876,9 +1199,10 @@ def combine(items: list[Queued]) -> tuple[str | list, str]:
 
 
 def drain(thread: str) -> None:
-    """这个线程没在回复了：排着的全部合成一轮发出去，等着的连接都接到这一轮上。"""
+    """这个线程没在回复了：排着的全部合成一轮发出去，等着的连接都接到这一轮上。
+    服务正在关（SHUTTING_DOWN，builtin 才会有）：先不发，库里还是排着的，下次启动 resume_queued 接着发。"""
     items = QUEUED.get(thread) or []
-    if not items or busy(thread):
+    if not items or busy(thread) or SHUTTING_DOWN:
         return
     QUEUED.pop(thread, None)
     ids = [it.user_id for it in items]
@@ -995,7 +1319,7 @@ async def resume_ws() -> None:
     cutoff = (datetime.now(TZ) - timedelta(minutes=QUEUE_RESUME_MINUTES)).isoformat(timespec="seconds")
     with _lock, db() as conn:
         rows = conn.execute("""SELECT m.* FROM messages m JOIN (SELECT thread, MAX(id) id FROM messages GROUP BY thread) last ON last.id = m.id
-            WHERE m.role='user' AND m.status IN ('ok','steered') AND m.ts >= ?""", (cutoff,)).fetchall()
+            WHERE m.role='user' AND m.status IN ('ok','steered') AND julianday(m.ts) >= julianday(?)""", (cutoff,)).fetchall()
     for r in rows:
         thread = r["thread"]
         if busy(thread):
@@ -1044,17 +1368,72 @@ def save_recovered(thread: str, text: str) -> None:
     log_activity(L("服务重启时补回了一条回复", "Recovered a reply after a server restart"), "edit")
 
 
+def resume_engine() -> None:
+    """服务启动时（main.py，在 resume_queued 之前）：上次停机时自己的内核还在跑的回合。两种：
+    - 进程被杀（OOM、断电）：事件表里还是 running——engine/loop.recover 标成 aborted、会话补完整（没结果的工具调用各补一条
+      「可能做了、可能没做」，再补一句「上一轮被重启打断了」）；
+    - 正常关服务（systemd stop、重启）：asyncio 当时取消了它，内核已经补好会话、记成 aborted / cancelled（events.cancelled 找回来，
+      app 那边没拿到回复的再补那句「被重启打断了」）。
+    app 这边和 OpenClaw 重启后对齐：这一轮的那句没有回复的，补一条没拿到回复（status error），已经说出来、存进会话的几段字带上
+    （正在流的半截在内存里，没了）；插进去还没被它读到的话（status steered、会话里没有）当成排着的，交给 resume_queued 接着发
+    （QUEUE_RESUME_MINUTES 以内；更早的它标成没发出去）。这一轮本身不重跑：工具可能已经做了一半，重跑会做两遍。
+    没用过内核（库里没有内核的表）什么都不做；跑两遍也只补一次（看的是 app 里最后一条回复之后还有没有没回的话）。"""
+    try:
+        from engine import events as engine_events  # 延迟导入：内核只在用到时加载
+        from engine import loop as engine_loop
+        from engine import owner as engine_owner
+        killed = engine_loop.recover()
+        stopped = engine_events.cancelled()
+    except Exception as e:  # noqa: BLE001 — 收不了尾不拦着服务启动
+        print(f"[chat] 内核的回合重启后没收好尾：{type(e).__name__}: {str(e)[:160]}")
+        return
+    for t in [*killed, *({**x, "cancelled": True} for x in stopped)]:
+        if t.get("kind") != "owner" or not t.get("session"):
+            continue  # 赛博、外人回合、一问一答（不存会话）：不在 app 的对话里
+        try:
+            if settle_restarted(t, engine_owner.said(t["id"]), engine_owner.refs(t["session"])) and t.get("cancelled"):
+                engine_loop.note_restart(t["id"], t["session"])
+        except Exception as e:  # noqa: BLE001
+            print(f"[chat] {t.get('conversation')}：重启打断的那一轮没补上回复：{type(e).__name__}: {str(e)[:160]}")
+    try:
+        engine_events.checked([t["id"] for t in stopped])  # 每个只看一次
+    except Exception:  # noqa: BLE001
+        pass
+
+
+def settle_restarted(t: dict, said: str, refs: set[int]) -> bool:
+    """重启打断的一轮（resume_engine）：app 里这个对话最后一条回复之后还有没回的话，就补一条没拿到回复，没被读到的插话改成排着的。
+    → 补了没有（没有没回的话 = 那一轮的回复已经入库了，比如点停以后被取消的那种）。"""
+    thread = t["conversation"]
+    with _lock, db() as conn:
+        last = conn.execute("SELECT IFNULL(MAX(id), 0) FROM messages WHERE thread=? AND role='grava'", (thread,)).fetchone()[0]
+        asked = conn.execute("SELECT id, status FROM messages WHERE thread=? AND id>? AND role IN ('user','auto') AND status IN ('ok','steered') "
+                             "ORDER BY id", (thread, last)).fetchall()
+        if not asked:
+            return False
+        late = [r["id"] for r in asked if r["status"] == "steered" and r["id"] not in refs]
+        if late:
+            conn.execute(f"UPDATE messages SET status='queued' WHERE id IN ({','.join('?' * len(late))})", late)
+        why = L("服务重启了", "the server restarted")
+        text = (f"{said}\n\n" + L("（服务重启了，这一轮没做完）", "(The server restarted; this turn didn't finish.)") if said
+                else L(f"（没拿到回复：{why}）", f"(Didn't get a reply: {why})"))
+        conn.execute("INSERT INTO messages(thread, role, text, model, requested, ts, status, origin) VALUES(?,?,?,?,?,?,?,?)",
+                     (thread, "grava", text, t.get("model"), t.get("model"), now_iso(), "error", t.get("origin") or "user"))
+    log_activity(L("服务重启，打断了一轮正在进行的回复", "A server restart cut off a reply in progress"), "failed")
+    return True
+
+
 def resume_queued() -> None:
     """服务启动时：库里还排着的（上次重启前没来得及发的）。QUEUE_RESUME_MINUTES 以内的按线程合成一轮接着发（附件只剩文字），更早的标成没发出去。"""
-    cutoff = (datetime.now(TZ) - timedelta(minutes=QUEUE_RESUME_MINUTES)).isoformat(timespec="seconds")
+    cutoff = time.time() - QUEUE_RESUME_MINUTES * 60  # 按真时间比：重启前后时区可能改过（见 day_bounds）
     with _lock, db() as conn:
         rows = conn.execute("SELECT id, thread, text, gw_text, ts FROM messages WHERE status='queued' ORDER BY id").fetchall()
-        old = [r["id"] for r in rows if r["ts"] < cutoff]
+        old = [r["id"] for r in rows if instant(r["ts"]) < cutoff]
         if old:
             conn.execute(f"UPDATE messages SET status='error' WHERE id IN ({','.join('?' * len(old))})", old)
     loop = asyncio.get_running_loop()
     for r in rows:
-        if r["ts"] >= cutoff:
+        if instant(r["ts"]) >= cutoff:
             QUEUED.setdefault(r["thread"], []).append(Queued(user_id=r["id"], content=r["gw_text"] or r["text"], gw_text=r["gw_text"] or r["text"],
                                                              ts=r["ts"], future=loop.create_future()))
     for thread in list(QUEUED):
@@ -1088,7 +1467,16 @@ async def send(body: SendBody):
     if quote:
         context = f"{quote}\n\n{context}" if context else quote
     cur = RUNS.get(body.thread)
-    if body.origin == "user" and busy(body.thread) and cur and cur.gw_run and not body.attachments and not QUEUED.get(body.thread) and transport() == "ws":
+    steered = None
+    if body.origin == "user" and busy(body.thread) and cur and cur.control is not None and body.attachments and cur.control.asking():
+        cur.control.answer({"cancel": True})  # ⑫b：ask_user 在等，用户发来带附件的一条：不算回答，问题收起来，这一条照常排成下一轮
+    if body.origin == "user" and busy(body.thread) and cur and cur.control is not None and not body.attachments and not QUEUED.get(body.thread):
+        # 自己的内核、它正在回我们的上一条：插话——这一批工具做完带着这句再问模型，还是同一条回复（进不去就走下面的排队）
+        steered = steer_engine(body.thread, cur, text, context)
+    if steered:
+        user_id, ts, fut = steered
+        stream = steered_stream(body.thread, user_id, ts, fut)
+    elif body.origin == "user" and busy(body.thread) and cur and cur.gw_run and not body.attachments and not QUEUED.get(body.thread) and transport() == "ws":
         # 走对话通道、它正在回我们的上一条：插话——Gateway 在这一轮的下一步把这句交给模型，还是同一条回复
         user_id, ts, fut = await steer(body.thread, cur, text, context)
         stream = steered_stream(body.thread, user_id, ts, fut)
@@ -1131,12 +1519,17 @@ class StopBody(BaseModel):
 
 @router.post("/api/chat/stop")
 async def stop(body: StopBody):
-    """停掉这个线程正在进行的回复：断开到 Gateway 的连接（Gateway 就中止这一轮），已经说了的留着、末尾标「停了」。排着的消息接着发。"""
+    """停掉这个线程正在进行的回复：断开到 Gateway 的连接（Gateway 就中止这一轮），已经说了的留着、末尾标「停了」。排着的消息接着发。
+    自己的内核（builtin）：Control.abort()——正在流的字留下、正在跑的工具收到取消（子进程一起杀掉）、会话补完整；这一轮照常收尾、入库。
+    等你点头的收件箱卡不受影响。abort 打不断的地方（等会话锁、换天时等前一天那一轮）STOP_GRACE 秒后直接取消。"""
     run = RUNS.get(body.thread)
     if not run or run.done:
         return {"ok": True, "stopped": False}
     run.stopping = True
-    if run.gw_run:  # WebSocket 那条路：让 Gateway 中止这一轮（收到 aborted 事件这一轮就结束）；它不认再断连接
+    if run.control is not None:
+        run.control.abort()
+        asyncio.get_running_loop().call_later(STOP_GRACE, hard_stop, run)
+    elif run.gw_run:  # WebSocket 那条路：让 Gateway 中止这一轮（收到 aborted 事件这一轮就结束）；它不认再断连接
         import gateway_ws as gw_mod
         try:
             await gw_mod.client().abort(run.key or session_key(run.thread), run.gw_run)
@@ -1149,10 +1542,106 @@ async def stop(body: StopBody):
     return {"ok": True, "stopped": True}
 
 
+STOP_GRACE = 5.0  # builtin：点了停这么多秒还没收尾就直接取消
+
+
+def hard_stop(run: Run) -> None:
+    if not run.done and run.stream_task and not run.stream_task.done():
+        run.stream_task.cancel()
+
+
+# —— 关服务（builtin）：先把自己内核正在跑的回合停下 ——————————————————————————————————
+# uvicorn 收到 SIGTERM：先关端口，再等连接关完（app 正接着的回复要等它跑完），最后把 SIGTERM 原样再发给自己、进程当场退出
+# （asyncio 来不及取消剩下的任务）。不管的话：这期间那一轮还在跑，调自己接口的工具全都连不上，模型对着一串「连不上」接着说，
+# 然后进程直接没了（下次启动按 resume_engine 收尾）。所以收到信号就先像点了停那样停下（已经出来的字留着、会话补完整、回复入库），
+# 连接跟着结束，关服务不用等；lifespan 关的时候再等它们收完尾。OpenClaw 的回复不在这台机器上跑，不用管。
+
+SHUTTING_DOWN = False
+SHUTDOWN_WAIT = 8.0  # 关服务时最多等停下的回合收尾几秒
+
+
+def stop_engine_runs() -> int:
+    """把自己内核正在跑的回合都停下（关服务）：像点了停，回复末尾写「服务重启了」。排着的先不发（drain 看 SHUTTING_DOWN）。
+    对外接口（engine/openai_api.py，开了才导入）正在跑的回合也停，它们的连接跟着结束。→ 停了几个。"""
+    global SHUTTING_DOWN
+    SHUTTING_DOWN = True
+    n = 0
+    for run in list(RUNS.values()):
+        if not run.done and run.control is not None and not run.stopping:
+            run.stopping = run.shutdown = True
+            run.control.abort()
+            n += 1
+    try:  # 后台任务的子 Agent 也停下（第 5 项）：结果下次启动再交回对话
+        if engine_tasks := loaded_tasks():
+            n += engine_tasks.shutdown()
+    except Exception:  # noqa: BLE001
+        pass
+    api = sys.modules.get("engine.openai_api")  # 对外接口（第 14 项）的回合也停下
+    if api is not None:
+        n += api.stop_all()
+    return n
+
+
+def loaded_tasks():
+    """内核的后台任务模块（engine/tasks.py，第 5 项），只在已经加载过时给：没加载过 = 一个任务都没派过（builtin 启动时
+    main.py 就会加载它）。关服务的路上不现导入它（第一次导入要上百毫秒，机器忙时更久）。"""
+    return sys.modules.get("engine.tasks")
+
+
+def watch_shutdown() -> bool:
+    """服务启动时（main.py，claw 是 builtin 才调）：接在 uvicorn 自己的 SIGTERM / SIGINT 处理前面，收到就先 stop_engine_runs。
+    只接 uvicorn.Server 用 signal.signal 装的那个（0.29 起都是）；认不出就不接，照旧（lifespan 关的时候 engine_shutdown 还会停一次）。"""
+    loop = asyncio.get_running_loop()
+    hooked = False
+    for sig in (signal.SIGTERM, signal.SIGINT):
+        old = signal.getsignal(sig)
+        if not callable(old) or type(getattr(old, "__self__", None)).__module__.split(".")[0] != "uvicorn":
+            continue
+
+        def handler(signum, frame, _old=old) -> None:
+            try:
+                loop.call_soon_threadsafe(stop_engine_runs)
+            except RuntimeError:  # 事件循环已经关了
+                pass
+            _old(signum, frame)
+        signal.signal(sig, handler)
+        hooked = True
+    return hooked
+
+
+async def engine_shutdown() -> None:
+    """lifespan 关的时候（main.py）：还在跑的内核回合（和后台任务的子 Agent、对外接口的回合）停下，等它们收完尾、回复入库
+    （最多 SHUTDOWN_WAIT 秒）。没有就马上返回。"""
+    engine_tasks = loaded_tasks()
+    api = sys.modules.get("engine.openai_api")
+
+    def busy_tasks() -> bool:
+        try:
+            return bool(engine_tasks and engine_tasks.busy())
+        except Exception:  # noqa: BLE001
+            return False
+
+    def running() -> bool:
+        return (any(not r.done and r.control is not None for r in RUNS.values()) or busy_tasks()
+                or bool(api is not None and api.busy()))
+    if not running():
+        return
+    stop_engine_runs()
+    end = time.monotonic() + SHUTDOWN_WAIT
+    while time.monotonic() < end and running():
+        await asyncio.sleep(0.05)
+
+
 @router.get("/api/chat/busy")
 def busy_threads():
     """正在回复的线程和排着的消息数。safe_restart.py 等它们都没了再重启服务（重启会掐断进行中的回复）。"""
     running = [t for t, r in RUNS.items() if not r.done]
+    if claw.is_builtin():  # 自己内核的后台任务（第 5 项）：重启会打断它们（下次启动交回去说被打断了），safe_restart 等它们做完
+        try:
+            from engine import tasks as engine_tasks
+            running += [f"task:{tid}" for tid in engine_tasks.running_ids() if f"task:{tid}" not in running]
+        except Exception:  # noqa: BLE001
+            pass
     try:  # 正在进行的会议（成员在发言、在写纪要）
         import meetings as meetings_mod  # 延迟导入：meetings.py 依赖本模块
         running += meetings_mod.busy()
@@ -1369,6 +1858,9 @@ async def rewind(body: MessageRef):
     entry = await find_entry(body.thread, (r["gw_text"] if "gw_text" in r.keys() and r["gw_text"] else r["text"]), r["ts"]) if claw.is_openclaw() else None
     if entry:
         await gateway_call("sessions.rewind", {"sessionKey": session_key(body.thread), "entryId": entry})
+    elif claw.is_builtin():  # 自己的内核：那一天的会话换叶子，回到这句话之前（库里那一枝还留着）
+        from engine import owner as engine_owner
+        entry = engine_owner.rewind(body.thread, day_of(r["ts"]), rid) or None
     with _lock, db() as conn:
         n = conn.execute("DELETE FROM messages WHERE thread=? AND id>=?", (body.thread, rid)).rowcount
     tail = L(f"，{settings.app_name} 的会话也退回到那之前", f"; {settings.app_name}'s session was rewound to before them too") if entry else ""

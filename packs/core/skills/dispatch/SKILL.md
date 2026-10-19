@@ -7,6 +7,8 @@ description: 派后台任务（sessions_spawn 开子会话）之前读。超过�
 
 > **有 OpenMousse 的 MCP 工具时（工具名里带 openmousse，比如 openmousse__board）就不用 shell**：下面每条命令对应一个工具——board_ctl.py → board、inbox_ctl.py → inbox、goals_ctl.py → goals、project_ctl.py → project、schedule_ctl.py → schedule、agent_ctl.py → agents、ask_agent.py → handoff、tasks_ctl.py → tasks、proposals_ctl.py → proposals、journal.py → journal、settings_ctl.py → settings、mousse-tree → tree。args 放命令里脚本名后面的词（一个词一项，JSON 整段一项，不用加引号），本来要从标准输入给的放 input；你是某个 Agent 时 agent 填你的 id（主对话不填）。没有这些工具就照原样在 shell 里跑命令。
 
+> **自己的内核（工具里有一个带 action 参数的 tasks 工具）时**：sessions_spawn = tasks 的 action spawn（label、task，可选 minutes / model / runner），sessions_send = action send（id + task），tasks_ctl.py quota = action quota，另外还有 list / get / stop / retry。超额度、超时不用自己交收件箱：照常 spawn，它自己出卡等用户点「派出去」（回 approval-pending）。做完结果会作为一条消息回到你的对话（前面一行灰字「后台任务做完了」），不用 sessions_yield，也别反复 get。
+
 额度内、只读或能撤回的活直接派，用卡片告诉用户；超额度、预计超时、会动外面的东西，先交收件箱等用户点头（`skills/inbox`）。
 
 ## 派之前看额度

@@ -16,11 +16,11 @@ python3 tokens.py add 手机       # 生成 app 的接入令牌，填进 app 的
 python3 run.py                   # 或按 openmousse-server.service.example 装成 systemd 服务
 ```
 
-`server.json` 每个字段的含义在 [`config.py`](config.py) 顶部。改令牌、加 Agent 不用重启；改监听地址要重启。`python3 settings_ctl.py user-name <称呼>` 改给模型的说明里怎么称呼你（`user_name`，不用重启），档案 USER.md 也记一行；新手带路时主对话会调它。
+`server.json` 每个字段的含义在 [`config.py`](config.py) 顶部。改令牌、加 Agent 不用重启；改监听地址要重启。用自带的内核（不装 OpenClaw：`bash install.sh` 时答 `builtin`）的，模型、搜索、记忆在 app 的引导里选，或者跑 `python3 setup_ctl.py`（见[选模型、搜索和记忆](#选模型搜索和记忆自己的内核)）。`python3 settings_ctl.py user-name <称呼>` 改给模型的说明里怎么称呼你（`user_name`，不用重启），档案 USER.md 也记一行；新手带路时主对话会调它。
 
 ## 认证
 
-`/api/*` 要 `Authorization: Bearer <令牌>`（也认 `X-API-Key`；`?token=` 只用于 GET 文件：`/api/files/…`、思考里的附件和收藏的原件、播客的原声，给带不了请求头的图片和网页版的 `<audio>` 用）。没凭证返回 401。两个免令牌的口子都默认关：`auth.tailscale_nodes`（Tailscale 设备名白名单，本机要装 tailscale）和 `auth.trust_loopback`（反向代理在本机时不能开）。网页版的静态文件公开。`mcp`、`mcp-<agent id>` 令牌只能用在 `/mcp` 上（`/api` 回 403：只拿着它的 claw 不能替你点收件箱的卡、配对新设备），`sentinel` 只能用在 `/api/egress`；本机脚本（`*_ctl.py`、`safe_restart.py`、`check.sh`）用第一把不是这几种的令牌，和 `server.json` 里的顺序无关。
+`/api/*` 要 `Authorization: Bearer <令牌>`（也认 `X-API-Key`；`?token=` 只用于 GET 文件：`/api/files/…`、思考里的附件和收藏的原件、播客的原声，给带不了请求头的图片和网页版的 `<audio>` 用）。没凭证返回 401。两个免令牌的口子都默认关：`auth.tailscale_nodes`（Tailscale 设备名白名单，本机要装 tailscale）和 `auth.trust_loopback`（反向代理在本机时不能开）。网页版的静态文件公开。`mcp`、`mcp-<agent id>` 令牌只能用在 `/mcp` 上（`/api` 回 403：只拿着它的 claw 不能替你点收件箱的卡、配对新设备），`sentinel` 只能用在 `/api/egress`，`api`、`api-<agent id>` 只能用在 `/v1`（自己内核的 OpenAI 兼容接口和 ACP 适配器，`engine.api` 开了才有；见 [`engine/openai_api.py`](engine/openai_api.py)、[`engine/acp.py`](engine/acp.py)）；本机脚本（`*_ctl.py`、`safe_restart.py`、`check.sh`）用第一把不是这几种的令牌，和 `server.json` 里的顺序无关。
 
 ## 让手机连上
 
@@ -56,7 +56,29 @@ python3 run.py                   # 或按 openmousse-server.service.example 装�
 - 别的 claw：安装完打印地址和它那家怎么加（Hermes 的 `mcp_servers`、nanobot 的 `tools.mcpServers`、Letta Code 的 `/mcp add`）。Agent 那段说明里带着它的 id，调工具时填进 `agent`。
 - `server.json` 的 `mcp.scripts` 可以换掉或加一个工具背后的命令（`{"journal": ["python3", "~/…/my_journal.py"]}`，写 `null` = 不提供），改了要重启服务。
 - 你连上的应用（见[连接器](#连接器经-mcp-接进来的应用)）的工具接在这些后面，名字是 `<应用 id>__<工具名>`；连上、删掉、改权限都不用重启。
+- 用自己的内核时，`/mcp` 还认内核发给本机用户自己登录的 Claude Code / Codex 的临时令牌：一轮或一个后台任务一把，只在内存里，完了就收回，不进 `server.json`。拿着它看到的是这个 Agent 在内核里的工具（模型选 `claude-code/…` 时、后台任务的外援），走内核自己的关卡，不是上面这些。见 [`engine/mcp_engine.py`](engine/mcp_engine.py)、[`engine/claude_brain.py`](engine/claude_brain.py)。
 - 每轮的上下文：11 个工具的定义约 7,500 字，跟 11 个 skill 的描述差不多。
+- 经 `/mcp` 跑的脚本请求服务器时带 `X-Mousse-Via: mcp`（环境变量 `MOUSSE_VIA`），所以外面的 MCP 客户端引出来的转交、触发不会花你的 ChatGPT 套餐（见下）。
+
+## 用你自己的 ChatGPT 套餐（自己的内核）
+
+用自己的内核时，模型写 `chatgpt/<型号>` 就用你自己的 ChatGPT Plus / Pro 套餐跑：走 OpenAI 官方给开源 / 本地应用的 [Sign in with ChatGPT](https://developers.openai.com/siwc/token-sharing-open-source) 那条路，调公开的 Responses API（`https://api.openai.com/v1/responses`）。见 [`engine/chatgpt_plan.py`](engine/chatgpt_plan.py)。
+
+- 连接：`POST /api/engine/chatgpt/login` 开始授权，回授权网址 `url`；服务器先在 `http://127.0.0.1:<端口>/auth/callback` 起好监听。在任何浏览器里打开、同意：在服务器本机（或者开了 `ssh -N -L <端口>:127.0.0.1:<端口> …`，见 `tunnel`）浏览器直接落到监听上，就连好了；手机上那一页打不开，把地址栏里的整串复制下来，`POST /api/engine/chatgpt/callback {"url": "…"}` 交回来。换令牌、PKCE 的 verifier、令牌都只在服务器上。
+- 状态：`GET /api/engine/chatgpt`（`/api/engine/status` 的 `chatgpt` 也是）说连没连、哪个套餐、邮箱、令牌快过期没有、最近一次的错、后台开关，从不回令牌。`POST /api/engine/chatgpt/disconnect` 撤销并清掉令牌。同一时间只连一个账号：连另一个会先撤销旧的。
+- 令牌只存在这台服务器的 `<data_dir>/chatgpt/`（目录 0700、文件 0600、原子写）。快过期先刷新，同时只刷一次；被拒了强制刷新一次，还被拒就在状态里提示重新连。
+- 模型：连上、同意用套餐以后，你账号模型目录里的 `chatgpt/<slug>` 出现在 app 里；`server.json` 的 `engine.chatgpt.models` 可以指定；`"chatgpt": false` 全部关掉。
+- 谁能花：只有你自己的回合。赛博、朋友和别家的 agent（名片 agent、A2A、Doorman）、OpenAI 兼容的 `/v1` 和 ACP、经 `/mcp` 引出来的、一问一答，都换成用 API 密钥的模型。后台任务、定时任务、心跳要你明确同意一次才花：`PUT /api/engine/chatgpt/background {"allow": true}`（记下同意的时间）。
+- 普通的 OpenAI 密钥也能走 Responses API：`engine` 里写 `"providers": {"openai": {"api": "openai-responses"}}`；没写 `api` 的照旧走 `/chat/completions`。
+
+## 选模型、搜索和记忆（自己的内核）
+
+第一次打开的引导和设置中心用 `/api/setup/…`（[`engine/setup_api.py`](engine/setup_api.py)）；[`setup_ctl.py`](setup_ctl.py) 在终端里走同样的三步（`python3 setup_ctl.py`，或者 `status`、`models`、`add <id>`、`test <id>`、`use chat <provider/model>`、`search <id>`、`memory sqlite`）。不绑哪一家：每一层都能选云端（填你的密钥）、这台电脑上跑的、已经登录的工具、自己填地址，或者不用。
+
+- 模型：目录（[`engine/catalog.py`](engine/catalog.py)）里有 24 家云端（每家的地址都对过它自己的官方文档，来源写在文件里）、这台电脑上的 Ollama、LM Studio、vLLM、llama.cpp、MLX、oMLX（在默认端口上探）、这里登录着的 Claude Code / ChatGPT / Codex，再加任何 OpenAI 兼容的地址。能同时连好几家，按用途挑：主对话（`engine.model`）、后台和定时（`engine.use.background`）、写作（`engine.use.writing`：长文、文书；有 Gemini 密钥时推荐 `google/gemini-4-argon`；写文书的技能以后接）、外人回合（名片 Agent 和 Doorman，不花你的套餐；按 2026-10-19 的评测分开推荐：名片 Agent 推荐按量的 `anthropic/claude-opus-5-5`，没连 Anthropic 时推荐 `moonshot/kimi-k3`；Doorman 推荐 `moonshot/kimi-k3`）、向量（`engine.recall.embeddings`）。只连了一家就自动用它。
+- 在 app 里填的密钥存进 `server.json` 旁边的 `secrets.env`（0600、原子写），读的顺序是进程环境 → 它 → `env_file`。永远不回给 app：只说有没有、从哪来、末四位、哪天存的。
+- 点了保存才写，写之前在同一目录备份一份 `server.json`（`server.json.bak-<时间>`，留最近 20 份）。已经在用 OpenClaw 的照实显示，不会自己去改。
+- `GET /api/setup/usage`（也挂在 `/api/engine/usage`）按天、模型、用途汇总内核的 token 和花费；套餐的记「套餐」、不计钱。每一轮按它那天的价算（[`engine/models.py`](engine/models.py) 的 `PRICES` / `PRICES_FROM`：Gemini 4 Argon 2026-12-01 起每百万 token 从 $2 / $10 涨到 $4 / $20）。向量的调用（建索引、搜的那一句、设置页测一下）也算，单独一栏 `embeddings`（按天、型号、种类）：token 用服务商回的，没回按字数估、标成估的；价目里有的才算钱。
 
 ## Agent
 
@@ -223,7 +245,7 @@ python3 schedule_ctl.py undo 42
 
 ### 工程看板（2026-10-15，可选）
 
-`"today": {"engineering": {"todos": "交接本的路径", "archive": "归档文件的 glob（可选）"}}`：把 Claude Code 的交接本（一份 markdown，`## ` 一节 = 一条线，`- [ ]` / `- [x]` = 一件事）只读同步进 `eng_lines` / `eng_items`（[`engboard.py`](engboard.py)），文件改了才重读，不加定时器。今天的报告里多一张工程看板卡（`type: eng`：这周做完 / 没做 / 等你三个数、主线几步），点进看板页。没打勾、写着要你定 / 要你动手的（等 Leo、Leo 定、拍板 ·……）算「等你」，写着「→ 已搬到…」「不做了」的不算；整节挪走以后做完的照样算。
+`"today": {"engineering": {"todos": "交接本的路径", "archive": "归档文件的 glob（可选）"}}`：把 Claude Code 的交接本（一份 markdown，`## ` 一节 = 一条线，`- [ ]` / `- [x]` = 一件事）只读同步进 `eng_lines` / `eng_items`（[`engboard.py`](engboard.py)），文件改了才重读，不加定时器。今天的报告里多一张工程看板卡（`type: eng`：这周做完 / 没做 / 等你三个数、主线几步），点进看板页。没打勾、写着要你定 / 要你动手的（等你、等 <你的称呼>、<你的称呼> 定、拍板 ·……）算「等你」，写着「→ 已搬到…」「不做了」的不算；整节挪走以后做完的照样算。
 
 | 接口 | 做什么 |
 |---|---|
@@ -474,12 +496,16 @@ python3 proposals_ctl.py agent --slug reading --name 读书 --purpose "…" --ic
 
 ## 世界树
 
-app 里的「我 → 世界树」。你的各个 AI（Claude、ChatGPT、Gemini、Claude Code 和你自己的 Agent）共用的记忆放在 Obsidian 库里，一条记忆一篇笔记，挂在枝上。索引、写入、遗忘都归 workspace 的 `memory_tree.py` 管；这个服务只读它，再把三个动作转过去（可选数据源 `tree`：没有这个脚本时两个接口都回 `ok=false` + `missing_source: tree`）。见 [`memtree.py`](memtree.py)。
+app 里的「我 → 世界树」。你的各个 AI（Claude、ChatGPT、Gemini、Claude Code 和你自己的 Agent）共用的记忆：主干是档案，枝按生活领域分、每个 Agent 一根，叶子是一条条记忆。真身是 workspace 的 `memory_tree.py`，或者安装器装的开源版世界树（[`../tree/`](../tree/) 的 `openmousse_tree`，经 [`treelib.py`](treelib.py)）；[`sources.py`](sources.py) 选一份，`tree` 工具和 Zen 的「想完了」用的也是这一份。索引、写入、遗忘都归它管；这个服务只读它，再把动作转过去（可选数据源 `tree`：两份都没有时两个接口都回 `ok=false` + `missing_source: tree`）。见 [`memtree.py`](memtree.py)。
+
+开源版世界树：新建的 Agent 会长一根自己的小枝（`agents` 填它的 id，内核据此给它看自己那几根枝的叶子），老的 Agent 在服务器起来时补上。**每周修剪**（[`treeprune.py`](treeprune.py)，只在自己的内核 builtin 下）：主对话的一条定时任务，默认每周日 19:00，照 `tree-prune` skill 先 `tree prune-context`，再用 `tree prune-plan` 交计划，变成一张静默的收件箱卡（kind `tree`，一周一张，一周后过期）。点了同意服务器照计划修剪完、卡片标完成；拒绝 = 计划作废。`server.json` 里 `"tree": {"prune": {"when": "every sunday 19:00"}}` 改时间，`"tree": {"prune": false}` 关掉。
 
 | 接口 | 做什么 |
 |---|---|
 | `GET /api/tree` | `branches` 按先序排（大枝后面跟着它的小枝；`leaves` = 直接挂在上面的，`total` = 连小枝一起的，`agents` = 默认挂到这里的 Agent）、`leaves`（当前的：active 和 pending，不含档案要点；`source` 是笔记里写的，`origin` 是最早记下它的平台，每周修剪改写过的顺着 `supersedes` 找回去）、`trunk: {name, count}`（档案）、`counts: {total, pending, bySource}`（按 origin 数）、`issues`（格式不对、先跳过的笔记数） |
-| `POST /api/tree/{id}` | `{action: confirm}` 待确认 → 当前；`{action: forget}` 笔记掏空成只剩属性的空壳挪进归档，索引里删掉；`{action: move, branch}` 挪到别的枝（写主干的名字 = 直接挂主干）。活动记录由 `memory_tree.py` 写，不含记忆内容 |
+| `POST /api/tree/{id}` | `{action: confirm}` 待确认 → 当前；`{action: forget}` 笔记掏空成只剩属性的空壳挪进归档，索引里删掉，开源版世界树还回 `profileLines`（档案里修剪时从它并进去的句子；`alsoProfile: true` 一起删）；`{action: move, branch}` 挪到别的枝（写主干的名字 = 直接挂主干）。活动记录由世界树自己写，不含记忆内容 |
+| `GET /api/tree/prune` | 最近一份修剪计划（每一步、做没做）和它的卡 |
+| `GET /api/tree/prune/context` | 这周可剪的（和 `tree prune-context` 一样，JSON） |
 
 ## 连接
 
@@ -671,4 +697,4 @@ Doorman 在 2026-10 之前叫 Sentinel；内部名字沿用旧词（服务 `open
 
 看板要的训练 / 餐食 / 身体 / 日历 / 健康派生指标，各来自 `server.json` 的 `scripts` 目录（默认 `<workspace>/scripts`）里的一个脚本：`xunji.py`（训练 / 身体；餐食只在 `diet.source` 设成 `xunji` 时从它读，平时记在服务自己的库里，见「饮食记录」）、`calendar_ics.py`（日历）、`apple_health.py`（恢复分、热量缺口、体能趋势，还有起没起床：`/api/health/wake` 看手机推到 `/api/health/sleep` 的睡眠分段和 `/api/health/signal` 收到的起床信号）。`memory_tree.py` 提供世界树（「我 → 世界树」）。脚本在就加载，不在就是「还没接」：`/api/health` 的 `sources` 告诉 app 哪些接了，没接的接口回 `ok=false` + `missing_source`，app 的看板显示空状态，其它功能照常。见 [`sources.py`](sources.py)。
 
-这三个脚本目前还是作者自己的数据源（训记、IC 日历、Apple 健康）的形状，正在拆成可选的功能包（packs/）：每个包只声明需要的数据类型，来源由你映射。
+这三个脚本目前还是作者自己的数据源（训记、ICS 日历、Apple 健康）的形状，正在拆成可选的功能包（packs/）：每个包只声明需要的数据类型，来源由你映射。

@@ -69,7 +69,7 @@ import socket
 import sqlite3
 import threading
 import time
-from contextlib import contextmanager, suppress
+from contextlib import asynccontextmanager, contextmanager, suppress
 from datetime import timedelta
 from pathlib import Path
 from typing import Any, Awaitable, Callable
@@ -81,8 +81,8 @@ import jsonschema
 from fastapi import APIRouter, HTTPException
 from fastapi.responses import JSONResponse
 from mcp import ClientSession, types
+from mcp.client import streamable_http
 from mcp.client.sse import sse_client
-from mcp.client.streamable_http import streamablehttp_client
 from mcp.server.fastmcp.exceptions import ToolError
 from mcp.shared.exceptions import McpError
 from pydantic import BaseModel
@@ -885,8 +885,11 @@ async def revoke(app: dict) -> bool:
 
 # —— 远端 MCP ——————————————————————————————————————————————————————————
 
-async def session_run(url: str, transport: str, token: str | None, op: Callable[[ClientSession], Awaitable[Any]]) -> Any:
-    """连上（streamable HTTP 或 SSE）、初始化、跑 op。只跟同源的跳转（令牌只给这一个服务）。"""
+async def session_run(url: str, transport: str, token: str | None, op: Callable[[ClientSession], Awaitable[Any]],
+                      headers: dict[str, str] | None = None, read_timeout: float | None = None) -> Any:
+    """连上（streamable HTTP 或 SSE）、初始化、跑 op。只跟同源的跳转（令牌只给这一个服务）。
+    headers：另外带的固定请求头；read_timeout：等回话最多多少秒（不给 = CALL_TIMEOUT）。这两个是内核里你自己在 server.json 配的
+    远端 MCP 服务用的（engine/mcp_client.py），连接器不带。"""
     seen: list[tuple[str, int]] = []
     base = origin(url)
 
@@ -901,11 +904,11 @@ async def session_run(url: str, transport: str, token: str | None, op: Callable[
         return httpx.AsyncClient(headers=headers, timeout=timeout, auth=auth, follow_redirects=True,
                                  event_hooks={"request": [on_request], "response": [on_response]})
 
-    headers = {"Authorization": f"Bearer {token}"} if token else {}
+    headers = {**(headers or {}), **({"Authorization": f"Bearer {token}"} if token else {})}
     info = types.Implementation(name=settings.app_name or "OpenMousse", version="1")
     try:
         with quiet():
-            return await _session(url, transport, headers, factory, info, op)
+            return await _session(url, transport, headers, factory, info, op, read_timeout or CALL_TIMEOUT)
     except Exception as e:
         if any(code == 401 for _, code in seen):
             raise Unauthorized from e
@@ -916,14 +919,28 @@ async def session_run(url: str, transport: str, token: str | None, op: Callable[
 
 
 async def _session(url: str, transport: str, headers: dict, factory: Callable[..., httpx.AsyncClient], info: types.Implementation,
-                   op: Callable[[ClientSession], Awaitable[Any]]) -> Any:
+                   op: Callable[[ClientSession], Awaitable[Any]], read_timeout: float = CALL_TIMEOUT) -> Any:
     if transport == "sse":
-        cm = sse_client(url, headers=headers, timeout=30, sse_read_timeout=CALL_TIMEOUT, httpx_client_factory=factory)
+        cm = sse_client(url, headers=headers, timeout=30, sse_read_timeout=read_timeout, httpx_client_factory=factory)
     else:
-        cm = streamablehttp_client(url, headers=headers, timeout=30, sse_read_timeout=CALL_TIMEOUT, httpx_client_factory=factory)
-    async with cm as streams, ClientSession(streams[0], streams[1], read_timeout_seconds=timedelta(seconds=CALL_TIMEOUT), client_info=info) as s:
+        cm = _http_streams(url, headers, factory, read_timeout)
+    async with cm as streams, ClientSession(streams[0], streams[1], read_timeout_seconds=timedelta(seconds=read_timeout), client_info=info) as s:
         await s.initialize()
         return await op(s)
+
+
+@asynccontextmanager
+async def _http_streams(url: str, headers: dict, factory: Callable[..., httpx.AsyncClient], read_timeout: float):
+    """streamable HTTP 的连接：新版 mcp 包用 streamable_http_client（httpx 客户端自己建好交给它；旧名字一调就报弃用警告），
+    老版本没有新名字就照旧用 streamablehttp_client。两种的超时一样：连 30 秒、等回话 read_timeout。"""
+    new = getattr(streamable_http, "streamable_http_client", None)
+    if new is None:
+        async with streamable_http.streamablehttp_client(url, headers=headers, timeout=30, sse_read_timeout=read_timeout,
+                                                         httpx_client_factory=factory) as streams:
+            yield streams
+        return
+    async with factory(headers=headers, timeout=httpx.Timeout(30, read=read_timeout)) as client, new(url, http_client=client) as streams:
+        yield streams
 
 
 async def remote(aid: str, op: Callable[[ClientSession], Awaitable[Any]]) -> Any:

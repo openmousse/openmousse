@@ -17,9 +17,12 @@
 - 思考空间和收藏：/api/think/*（碎片是库里收件箱的笔记，AI 不碰，等你叫它；收藏存原件和抽出来的正文；冥想时间压住推送。见 think.py、saves.py）。
 - 日程和「要记得的」：/api/schedule（课表 + 自己的日程 + 当天的截止，能改）、/api/remember（作业、邮件、求职的 ddl，打勾），iPhone 日历订阅 /cal/<令牌>.ics（见 schedule.py）。
 - 目标：/api/goals（你和 Agent 都能改，每次改动能撤销）、/api/goals/trend（体重、体脂的读数：训记为主、Apple 健康对照）（见 goals.py）。
-- 世界树：/api/tree（各 AI 平台共用的记忆：枝和叶子，确认 / 忘记 / 挪枝；真源是 workspace 的 memory_tree.py，见 memtree.py）。
+- 世界树：/api/tree（各 AI 平台共用的记忆：枝和叶子，确认 / 忘记 / 挪枝；真源是 workspace 的 memory_tree.py 或开源版世界树，见 memtree.py）；
+  每周修剪的卡和执行：/api/tree/prune（见 treeprune.py）；待定（别人说的要记的先放这里，逐条同意才长成叶子）：/api/memory/held（memhold.py）。
 - 连接：/api/connectors（助手接着的每样东西现在怎么样：数据来源、日程和邮件、文件和笔记、记忆、渠道和推送；见 connectors.py）。
 - 连接器：/api/apps（你接进来的第三方应用：Notion、Linear……经 OAuth 连上，工具经 /mcp 给 claw，按工具设权限；见 apps.py）。
+- 对外接口：/v1/models、/v1/chat/completions（OpenAI 兼容：别的程序把 Agent 当成一个模型用）和 ACP 适配器（engine/acp.py）用的 /v1/openmousse/…；
+  server.json 的 engine.api 开了才挂（claw 要是 builtin），只认 api、api-<agent id> 令牌（见 engine/openai_api.py）。
 - 数据源可选（sources.py）：workspace 的 scripts/ 里没有对应脚本时，相关接口回 ok=false + missing_source，其它照常。
 """
 from __future__ import annotations
@@ -30,6 +33,7 @@ import re
 import secrets
 import shutil
 import subprocess
+import sys
 import threading
 import time
 from datetime import date, datetime, timedelta
@@ -90,6 +94,8 @@ from packs import router as packs_router  # noqa: E402
 from podcast import router as podcast_router  # noqa: E402
 from proposals import router as proposals_router  # noqa: E402 — 顺带挂上 kind=skill / agent 的收件箱钩子（日结提案）
 from memtree import router as tree_router  # noqa: E402
+import treeprune  # noqa: E402 — 世界树的每周修剪：/api/tree/prune…，顺带挂上收件箱 kind tree 的钩子和 tree 工具交计划后出卡（bridges.AFTER）
+import memhold  # noqa: E402 — 待定（别人说的要记的先放这里）：/api/memory/held…，顺带把待定接上每周修剪卡（inbox 的 EXTEND_ITEMS / AFTER_ITEMS）
 from connectors import router as connectors_router  # noqa: E402
 from think import router as think_router  # noqa: E402 — 思考空间、冥想时间
 from saves import router as saves_router  # noqa: E402 — 收藏
@@ -105,7 +111,12 @@ import diet  # noqa: E402
 from diet import router as diet_router  # noqa: E402 — 饮食记录、个人食物库、营养目标、查营养（diet.py + nutrition.py）
 from outputs import router as outputs_router  # noqa: E402 — Agent 的产出：浮动标签、小板子、对话里的产出卡片（2026-10-13）
 from meetings import router as meetings_router  # noqa: E402 — Agent 会议：/api/meetings…（几个 Agent 轮流发言、Grava 写纪要，见 meetings.py）
-from engine.api import router as engine_router  # noqa: E402 — 自己的内核：/api/engine/…（状态、一轮轮的记录、赛博的测试入口）
+from engine.api import router as engine_router  # noqa: E402 — 自己的内核：/api/engine/…（状态、一轮轮的记录、赛博的测试入口）、/api/setup/…
+from engine import setup_api as engine_setup  # noqa: E402 — 第 9 步「通用的选择层」：出错的样子、/api/health 的 no_model
+from engine import tools as engine_tools  # noqa: E402 — 内核的工具和关卡：收件箱 kind tool / schedule 的钩子（重启后点同意也照样跑）
+from engine import jobs as engine_jobs  # noqa: E402 — 内核的定时任务和心跳（claw 选 builtin 时才跑，engine/jobs.py、heartbeat.py）
+from engine import openai_api as engine_api  # noqa: E402 — 对外接口 /v1（OpenAI 兼容；server.json 的 engine.api 开了才挂）
+engine_tools.install_hooks()
 
 DIST = settings.dist
 settings.db.parent.mkdir(parents=True, exist_ok=True)  # 新实例第一次启动：数据目录还不存在
@@ -118,20 +129,45 @@ def weekday_name(i: int) -> str:
 
 @asynccontextmanager
 async def lifespan(_app: FastAPI):
-    if claw.is_openclaw():  # 这两个读 OpenClaw 的任务台账和会话记录；别的 claw 没有
+    if claw.is_openclaw():  # 这两个读 OpenClaw 的任务台账和会话记录；别的 claw 没有（自己的内核的任务卡、回报从内核的事件出，第 5 项）
         cards.start()  # 盯 OpenClaw 的任务台账：后台任务做完了静默推一条
         settle.start()  # 从 app 派的后台任务做完后，派它的对话里那一轮回话接回 app（实时接管 + 从 chat.history 补漏）
+    chat.resume_engine()  # 自己的内核上次停机时还在跑的回合：标成 aborted、会话补完整，app 那句补「没拿到回复」（没用过内核什么都不做）
     chat.resume_queued()  # 上次重启前还排着没发的消息：接着发
+    if claw.is_builtin():  # 自己内核的后台任务（第 5 项）：上次没跑完的标成被重启打断、做完还没交的交回原对话；在后台查本机的 Claude Code / Codex
+        from engine import runners as engine_runners
+        from engine import tasks as engine_tasks
+        engine_tasks.resume()
+        engine_runners.warm()
     asyncio.create_task(chat.resume_ws())  # 走对话通道的：重启前发出去、还没拿到回复的，接回来或补回回复
     alerts.start()  # Agent 的提醒：到点查表，有东西就推
+    engine_jobs.start()  # 内核的定时任务和心跳：到点跑一轮主人回合（claw 不是 builtin 时只转不跑）
+    treeprune.start()  # 开源版世界树：老 Agent 补上枝；builtin 时建好每周修剪的定时任务（server.json tree.prune 能关）
+    memhold.start()  # 待定：周日晚上这一周还没有带待定的修剪卡，就出一张只有待定的卡
+    if claw.is_builtin():  # 13b：对话结束时的写回（闲了一阵、跨过 04:00、攒够了轮数）：挑几条长成叶子，别人说的进待定（engine/writeback.py）
+        from engine import writeback as engine_writeback
+        engine_writeback.start()
     coursegen.start()  # 学习台：生成学习页的队列用服务的事件循环
     friends.start()  # 朋友聊天的投递循环：发出去的消息排队发、失败重试；名片变了告诉朋友
     relay.start()  # 往外连中继：没有公网入口时朋友经它找到这台服务器（server.json "relay": false 关掉）
+    if claw.is_builtin():  # 关服务时先停自己内核正在跑的回合（像点了停），别等 app 那条连接、别让工具对着关掉的端口一直连不上
+        chat.watch_shutdown()
+    if claw.is_builtin():  # 内核的沙箱（第 8 项）：认回 / 收掉上次留下的容器，之后闲了收掉
+        from engine import sandbox as engine_sandbox
+        engine_sandbox.start()
+    if claw.is_builtin():  # 记忆检索按意思搜（配了 engine.recall.embeddings 才有）：后台慢慢补向量，不卡主人回合
+        from engine import semantic as engine_semantic
+        engine_semantic.start()
     if mcp_bridge is None:
         yield
-        return
-    async with mcp_bridge.server.session_manager.run():  # /mcp 要它（无状态：每个请求一个传输）
-        yield
+    else:
+        async with mcp_bridge.server.session_manager.run():  # /mcp 要它（无状态：每个请求一个传输）
+            yield
+    await chat.engine_shutdown()  # 关的时候还有内核的回合在跑：停下，等它们收完尾、回复入库（最多几秒；没有就马上过）
+    if (engine_semantic := sys.modules.get("engine.semantic")) is not None:  # 补向量的后台线程：叫它停（没导入过就不导入）
+        await asyncio.to_thread(engine_semantic.stop, 2.0)
+    from engine import mcp_client as engine_mcp  # 第 13 步：你配的 stdio MCP 服务连进程组一起收（没起过就什么都不做）
+    await engine_mcp.shutdown()
 
 
 app = FastAPI(title=f"{settings.app_name} API", docs_url=None, redoc_url=None, openapi_url=None, lifespan=lifespan)
@@ -163,7 +199,9 @@ app.include_router(pages_router)
 app.include_router(projects_router)
 app.include_router(proposals_router)
 app.include_router(goals_router)
+app.include_router(treeprune.router)  # 在 tree_router 之前：/api/tree/prune… 是 GET，和 POST /api/tree/{id} 不打架，放前面好找
 app.include_router(tree_router)
+app.include_router(memhold.router)  # /api/memory/held…：待定（记忆页的「待定」）
 app.include_router(connectors_router)
 app.include_router(saves_router)  # 在 think 之前：/api/think/saves/… 不能被 think 的路由先接走
 app.include_router(live_router)
@@ -183,6 +221,7 @@ app.include_router(engine_router)
 if apps is not None:
     app.include_router(apps.router)
 app.add_exception_handler(sources.NoSource, sources.no_source_handler)
+app.add_exception_handler(engine_setup.SetupError, engine_setup.on_error)  # /api/setup/… 出错：{"ok": false, "error", …}
 _whois: dict[str, tuple[float, str | None]] = {}
 TOKEN_URL = re.compile(r"^/api/(?:files/|think/file/|think/saves/[^/]+/(?:file|page/\d+)$|podcast/episodes/pe-[0-9a-f]{8}/audio/\d+$|study/file(?:/page)?$)")
 _lock = threading.Lock()
@@ -233,6 +272,10 @@ def principal_of(request: Request) -> str | None:
 async def guard(request: Request, call_next):
     # 这个请求用什么语言回文字（app 带 Accept-Language；没有就用 server.json 的 language）。下游任务会继承它。
     lang_token = i18n.use(request.headers.get("accept-language"))
+    # 经谁来的（脚本经 /mcp、内核的工具跑时带 X-Mousse-Via，见 bridges.py）：这个请求开的回合记下它，ChatGPT 套餐据此认 /mcp 和后台。
+    # 只会更严：认不出的值当成「不能花」
+    via = request.headers.get("x-mousse-via")
+    via_token = chat.REQUEST_VIA.set(None if via is None else via if re.fullmatch(r"[a-z0-9_-]{1,24}", via) else "-")
     try:
         # 网页版的静态文件公开；/api/* 要认证。
         if request.url.path.startswith("/api/") and request.url.path != "/api/pair":  # 配对码换令牌：本来就没令牌（见 pairing.py）
@@ -248,14 +291,23 @@ async def guard(request: Request, call_next):
             # MCP 令牌（mcp、mcp-<agent id>）只给 /mcp：只拿着它的 claw（沙箱里的、云上的）不能经 /api 替你点头、配对新设备
             if who == "token:mcp" or who.startswith("token:mcp-"):
                 return JSONResponse({"ok": False, "error": L("MCP 令牌只能用在 /mcp 上", "The MCP token only works on /mcp")}, status_code=403)
+            # 对外接口的令牌（api、api-<agent id>）同理只给 /v1（engine/openai_api.py）
+            if who == "token:api" or who.startswith("token:api-"):
+                return JSONResponse({"ok": False, "error": L("API 令牌只能用在 /v1 上", "The API token only works on /v1")}, status_code=403)
         resp = await call_next(request)
     finally:
         i18n.reset(lang_token)
+        chat.REQUEST_VIA.reset(via_token)
     # index.html 和接口都不缓存，避免主屏幕 app 看到旧版；带哈希的静态资源照常缓存。
     # 接口自己标了 private 缓存的照它的：附件的缩略图、大图、页图（内容不会变），只在这台设备上缓存
     if (request.url.path.startswith("/api/") or request.url.path in ("/", "/index.html")) and not resp.headers.get("cache-control", "").startswith("private"):
         resp.headers["Cache-Control"] = "no-store"
     return resp
+
+
+# 对外接口 /v1（engine/openai_api.py）：加在最外层。server.json 的 engine.api 开着（claw 是 builtin）才接 /v1/…，自己认 api 令牌；
+# 关着就原样往下交，和没有它一样（每次现读，开、关都不用重启）
+app.add_middleware(engine_api.Gate)
 
 
 def today() -> date:
@@ -338,7 +390,8 @@ def health(request: Request):
     return {"ok": True, "app_name": settings.app_name, "time": datetime.now(TZ).strftime("%Y-%m-%d %H:%M"), "timezone": settings.timezone,
             "principal": getattr(request.state, "principal", None), "shared_channels": shared_channels(),
             "sources": sources.AVAILABLE, "chat": "live", "claw": claw.info(), "server": version.info(claw.kind()),
-            "first_run": first_run()}  # 新实例（还没有消息、没有 Agent）：app 在主对话顶上放「从这里开始」
+            "first_run": first_run(),  # 新实例（还没有消息、没有 Agent）：app 在主对话顶上放「从这里开始」
+            "no_model": engine_setup.no_model()}  # 第 9 步：还没有能用的模型（自带内核没选、选的没密钥）→ app 走 /api/setup 的引导
 
 
 @app.get("/api/fitness/week")

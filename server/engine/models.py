@@ -3,69 +3,151 @@
 provider = 谁家的接口、地址、密钥放哪。三处按顺序叠（后面的盖前面的）：
   1. 内置的常见几家（PROVIDERS）
   2. openclaw.json 的 models.providers（这台机器装着 OpenClaw 时：地址、接口类型、apiKey 写成 ${VAR} 就认这个变量名）
-  3. server.json 的 engine.providers：{"名字": {"api": "openai" | "anthropic", "url": ".../v1", "key_env": "变量名", "headers": {…},
-     "json_mode": true, "reasoning_effort": false, "fallbacks": true, "block_binding": "drop_block", …各家脾气见 PROVIDERS}}，
+  3. server.json 的 engine.providers：{"名字": {"api": "openai" | "anthropic" | "openai-responses", "url": ".../v1", "key_env": "变量名",
+     "headers": {…}, "json_mode": true, "reasoning_effort": false, "fallbacks": true, "block_binding": "drop_block", …各家脾气见 PROVIDERS}}，
      可以加新的（本机的 Ollama、公司的代理），也可以只改一项（比如 moonshot 换成国内地址 https://api.moonshot.cn/v1）
 api：anthropic = 官方 SDK（只认 API 密钥：Anthropic 条款不许第三方产品借 Claude 订阅登录）；openai = OpenAI 兼容的 /chat/completions
-（Kimi、DeepSeek、Qwen、Gemini、OpenRouter、Ollama、LM Studio、vLLM…）。
-密钥：key_env 指环境变量名（默认 <PROVIDER>_API_KEY），先看进程环境、再看 server.json 的 env_file（默认 <openclaw_home>/.env）。
-每次现读，改了不用重启；不打印、不记日志。
+（Kimi、DeepSeek、Qwen、Gemini、OpenRouter、Ollama、LM Studio、vLLM…）；openai-responses = OpenAI 的 Responses API（engine/provider_responses.py：
+思考项加密回放；普通 OpenAI 密钥写 {"openai": {"api": "openai-responses"}} 就换过去，不写的照旧走 /chat/completions；还可以写
+"reasoning": false 给不会思考的型号、"effort_map"）。provider 名 chatgpt 留给用户自己的 ChatGPT 套餐（见下），不能另作他用。
+密钥：key_env 指环境变量名（默认 <PROVIDER>_API_KEY），先看进程环境、再看 app 里存的 secrets.env（第 9 步，secretstore.py）、
+再看 server.json 的 env_file（默认 <openclaw_home>/.env）。每次现读，改了不用重启；不打印、不记日志。
+第 9 步（通用的选择层）：内置的这几家来自 engine/catalog.py 的服务商目录（云端、本机的二十几家，地址都核对过官方文档），设置页在
+/api/setup/…（engine/setup_api.py）。一家有好几把密钥时 key_env 写成列表（["DEEPSEEK_API_KEY", "DEEPSEEK_API_KEY_2"]）：
+按顺序用第一把没在冷却的，这一把限流、计费错、不认了就先换下一把，都不行才换模型（engine/fallback.py）。
 
 server.json 的 engine 段（不写这一段 = 内核不接管任何事，全部照旧）：
   "engine": {
     "model": "deepseek/deepseek-flash",       默认模型（DeepSeek 10/16 列出来的只有 deepseek-flash、deepseek-v4-pro）
-    "models": ["deepseek/deepseek-flash", …], claw 选 builtin 时 app 里能切换的模型（不写就只有 model）
-    "use": {"card": true, "doorman": "moonshot/kimi-k3", "json": false},
+    "models": ["deepseek/deepseek-flash", …], claw 选 builtin 时 app 里能切换的模型（不写就只有 model）；某一项写成列表
+                                               ["anthropic/claude-opus-5-5", "moonshot/kimi-k3"] = 这个模型自己的备用链（app 里只显示第一个；
+                                               Agent、对话、定时任务选了它就带上这条链）。model 也能这样写成列表
+    "fallbacks": ["moonshot/kimi-k3", …],      默认的备用链（第 13 步，engine/fallback.py）：模型出了能换的错（限流、过载、5xx、超时 /
+                                               连不上、这一家的密钥 / 额度 / 计费错、型号不存在），重试用完以后按顺序换下一个；已经给用户
+                                               看到字的那一步不换，用户点停、我们自己写错的请求（400）、拒答也不换。上下文太长：链里有窗口
+                                               更大的就换它，没有就压缩（compact.py）。换过的模型这一轮剩下的步接着用，下一轮从头来。
+                                               不写 = 不换（和以前一样）。对走内核的每件事都有效（主人回合、赛博、外人回合、压缩的摘要）；
+                                               某件事不想换到别家，就把它写成只有一个模型的列表。主人回合用 Claude Code（claude-code/…）
+                                               时它跑不了（登录掉了、命令坏了、套餐额度用完）也换（engine/claude_brain.py），只换到不是
+                                               套餐的；它自己的链写成 "model": ["claude-code/opus", "deepseek/deepseek-flash"]
+    "use": {"card": true, "doorman": "moonshot/kimi-k3", "json": false, "background": "deepseek/deepseek-flash", "writing": "google/gemini-4-argon"},
                                                哪些事改走内核：true = 用默认模型，写模型 = 用它；不写 / false = 照旧（llm-task 等）
-                                               card = 名片 Agent（含 A2A）；doorman = Doorman 复查（名片回复 + 代办出网）；json = llmjson.ask
-    "fallback": true,                          内核这条路出错时退回原来的路（默认 true；false = 不退，直接报错）
+                                               card = 名片 Agent（含 A2A）；doorman = Doorman 复查（名片回复 + 代办出网）；json = llmjson.ask；
+                                               background（第 9 步）= 定时任务、心跳、后台任务没自己写模型时用的（不写 = 跟对话的模型）；
+                                               writing（10/19）= 写作：长文、文书（写文书的技能以后接，现在只有路由和设置）；能配成用户自己的套餐，
+                                               照 may_spend：route("writing", kind=…, origin=…) 认这一轮能花才回套餐，不认的换成 outside() 挑的；
+                                               不写 = 跟这一轮自己的模型；
+                                               写成列表 ["anthropic/claude-sonnet-5-5", "moonshot/kimi-k3"] = 第一个是主模型、后面是它自己的链
+                                               （盖过默认链；只写一个 = 这件事不换模型）。赛博自己的 model 也能写成列表（engine/cyber.py）
+    "fallback": true,                          内核这条路出错时退回原来的路（默认 true；false = 不退，直接报错）。外人回合的一次性 JSON
+                                               先走完备用链，链走完了才退回原来的路（llmjson、名片 Agent、Doorman）
     "effort": "low",                           外人回合的思考档位（low / medium / high；只给支持的模型）
+    "record_openclaw": false,                  claw 是 OpenClaw 时把它的每一轮也记进内核的事件表（engine_turns 的 kind = claw，
+                                               chat.ClawRecord；只多记一份，默认关）
     "providers": {…}                           见上
+    "recall": {"extra": ["~/…/profile/USER.md", {"path": "~/vault/笔记", "name": "笔记", "agents": ["main"]}], "main": "own",
+               "tree": true, "max_chars": 6000, "half_life_days": 30, "db": "<data_dir>/recall.db",
+               "embeddings": {"backend": "gemini", "model": "gemini-embedding-001", "dims": 768, "key_env": "GEMINI_API_KEY", "rpm": 30},
+               "tree_md": "~/…/TREE.md"}
+                                               记忆检索（memory_search / memory_get，说明在 engine/recall.py 开头）：extra = 共享给 Agent 的
+                                               文件或文件夹（不写 = 只有档案）；main = "all" 时主对话搜得到所有 Agent 的；tree = 顺手查世界树；
+                                               embeddings = 按意思搜（不写 = 不开，什么都不发出去；写法在 engine/embeddings.py 开头）；
+                                               tree_md = 世界树的模块读不了时退回读的 TREE.md 导出（engine/recall_tree.py）
+    "jobs": {"catch_up_missed": true, "idle_timeout": 600, "max_parallel": 3, "daily_limit": 1000}
+                                               定时任务（cron 工具，说明在 engine/jobs.py 开头）：服务器停着时错过的要不要补跑一次、
+                                               多久没动静就停、同时跑几条、一天最多跑几次（所有任务合计）
+    "heartbeat": {"main": {"every": "30m", "active": ["08:00", "22:00"], "level": "quiet", "model": "…", "light": true, "prompt": "…"}}
+                                               心跳（说明在 engine/heartbeat.py 开头）：开了的 Agent 定期「看一眼」，不写 = 不开
+    "sandbox": {"network": "mousse-errand", "proxy": "http://172.30.99.1:3128", "idle_minutes": 120, "max_containers": 4,
+                "agents": {"errand": {"access": "none", "browser": true}}}
+                                               沙箱（说明在 engine/sandbox.py 开头）：在沙箱里干活的 Agent（代办一定在）、容器的网络、Doorman 的地址、
+                                               镜像、上限、闲多久收；不写 = 照 errand.py setup 装好的那一套
+    "skills": {"nudge": true, "nudge_tools": 8, "review": false, "agents": {"g-diet": ["board", "inbox"]}}
+                                               写自己的 skill（第 13 步，说明在 engine/skill_write.py 开头）：上一轮调了很多次工具、被纠正过，
+                                               这一轮提醒一句可以存（不多调模型）；review = true（或者写一个模型）在后台多一次便宜的调用，
+                                               读那一轮决定要不要存，默认关。agents = 每个 Agent 能用哪些技能（技能名的列表；没写的 Agent
+                                               看全部，说明在 engine/agent_skills.py 开头）
+    "claude_code": {"models": ["claude-code/opus", "claude-code/sonnet", "claude-code/haiku"], "effort": "medium",
+                    "fallback_model": "sonnet", "idle": 600, "builtin_tools": [], "max_concurrent": 2}
+                                               主人回合交给这台电脑上用户自己登录的官方 Claude Code 跑（第 11 项，说明在 engine/claude_brain.py
+                                               开头）：models = app 里多出来的那几个（查到登录了才出现）；max_concurrent = 同时最多跑几个
+                                               （一个 claude 进程约 0.3 GB，多出来的排队，默认 2）；false = 关掉
+    "chatgpt": {"models": ["chatgpt/gpt-6.1-sol"], "headers": {…}}
+                                               用户自己的 ChatGPT 套餐（第 11b 项，说明在 engine/chatgpt_plan.py 开头）：models = app 里列哪几个
+                                               （不写用这个账号的模型目录；连上了、开了用套餐才出现）；false = 关掉
   }
+另外 server.json 的 mcp_servers（不在 engine 段里）：你自己配的 MCP 服务，说明在 engine/mcp_client.py 开头
+
+用户自己的套餐（第 11 项）：claude-code/<型号>（opus / sonnet / haiku 或完整 id，交给 --model）不经我们的接口，一轮交给本机用户自己登录的
+Claude Code 跑（engine/claude_brain.py），花的是他自己的套餐。subscription(ref) 认它；只有主人回合能用（may_spend）：赛博、外人回合、
+对外接口（OpenAI 兼容接口、ACP：外面的程序不算用户本人）一律换成 outside() 挑的非套餐模型，挑不到就照调用方自己的退路。
+valid_ref 对它回 False（我们的接口跑不了），所以没专门处理的地方默认就碰不到它；loop.run_turn 再挡一道。
+第 11b 项：chatgpt/<型号>（型号是这个账号模型目录里的 slug）= 用户自己的 ChatGPT 套餐（engine/chatgpt_plan.py 拿令牌，
+provider_responses.py 调公开的 Responses API）。也是套餐：subscription() 回 "chatgpt"，valid_ref 同样回 False（不进备用链、outside()、
+route() 这些地方），只在专门放行的地方跑：owner.respond（主人回合）、unattended.fresh（定时任务、心跳）、tasks（后台任务）、
+compact.summarize（这些回合自己的压缩），每一处都问 may_spend，loop.run_turn 再挡一道。may_spend 对它比 claude-code 严：
+用户自己引出来的（user、relay）能花；后台的（auto：定时任务、心跳、收件箱和后台任务接着做的；task：后台任务自己）要用户在设置里同意过
+（chatgpt_plan.background_allowed）；别的（赛博、外人回合、对外接口、/mcp 来的、一问一答……）一律不行。via = 这一轮是经谁的请求引出来的
+（外面的 MCP 客户端经 /mcp 跑的脚本 = mcp；内核自己的工具跑的脚本 = 那一轮的来路，比如后台的一轮里调了转交 = auto）：和 origin 取更严的那个。
 """
 from __future__ import annotations
 
 import json
-import os
 import re
+from datetime import datetime, timezone
 from pathlib import Path
 
+import secretstore
 from config import raw, settings
 
+from . import catalog
 from .errors import EngineError
 
-ANTHROPIC, OPENAI = "anthropic", "openai"
+ANTHROPIC, OPENAI, RESPONSES = "anthropic", "openai", "openai-responses"
 
-# 各家的脾气（provider_openai.py 开头有每一项的意思；10/16 对照 pi、OpenClaw、Hermes 的源码 + 真调核对）
-PROVIDERS: dict[str, dict] = {
-    "anthropic": {"api": ANTHROPIC, "key_env": "ANTHROPIC_API_KEY"},
-    "openai": {"api": OPENAI, "url": "https://api.openai.com/v1", "key_env": "OPENAI_API_KEY", "max_tokens_field": "max_completion_tokens",
-               "reasoning_effort": True, "effort_map": {}, "tool_id_max": 40},
-    "moonshot": {"api": OPENAI, "url": "https://api.moonshot.ai/v1", "key_env": "MOONSHOT_API_KEY", "reasoning_replay": "all", "mid_system": True,
-                 "reasoning_effort": True, "effort_map": {"xhigh": "high"}, "schema_fix": True},
-    "deepseek": {"api": OPENAI, "url": "https://api.deepseek.com", "key_env": "DEEPSEEK_API_KEY", "reasoning_replay": "all", "images": False},
-    "dashscope": {"api": OPENAI, "url": "https://dashscope-intl.aliyuncs.com/compatible-mode/v1", "key_env": "DASHSCOPE_API_KEY"},
-    "google": {"api": OPENAI, "url": "https://generativelanguage.googleapis.com/v1beta/openai", "key_env": "GEMINI_API_KEY"},
-    "openrouter": {"api": OPENAI, "url": "https://openrouter.ai/api/v1", "key_env": "OPENROUTER_API_KEY"},
-    "xai": {"api": OPENAI, "url": "https://api.x.ai/v1", "key_env": "XAI_API_KEY"},
-    "mistral": {"api": OPENAI, "url": "https://api.mistral.ai/v1", "key_env": "MISTRAL_API_KEY", "tool_id": "mistral9", "reasoning_replay": "none"},
-    "groq": {"api": OPENAI, "url": "https://api.groq.com/openai/v1", "key_env": "GROQ_API_KEY", "reasoning_replay": "none"},
-    "ollama": {"api": OPENAI, "url": "http://127.0.0.1:11434/v1", "key_env": "", "require_finish": False},
-    "lmstudio": {"api": OPENAI, "url": "http://127.0.0.1:1234/v1", "key_env": "", "require_finish": False},
-    "vllm": {"api": OPENAI, "url": "http://127.0.0.1:8000/v1", "key_env": "", "require_finish": False},
-}
+# 各家的脾气（provider_openai.py 开头有每一项的意思；10/16 对照 pi、OpenClaw、Hermes 的源码 + 真调核对）。第 9 步起这一份从服务商目录来
+# （engine/catalog.py：云端、本机的二十几家，10/17 逐家核对过官方文档）；原来就有的十三家一项没变
+PROVIDERS: dict[str, dict] = catalog.engine_providers()
 OPENCLAW_API = {"openai-completions": OPENAI, "openai-responses": OPENAI, "anthropic-messages": ANTHROPIC}
 ENV_REF = re.compile(r"^\$\{([A-Z_][A-Z0-9_]*)\}$")
 REF = re.compile(r"^([a-z0-9][a-z0-9_.-]*)/(\S+)$")
 
-# 每百万 token 的美元价：(输入, 输出, 缓存读, 缓存写)。只列核对过的（Anthropic 2026-10-06 的价目）；没列的不算钱，界面上写「?」。
+# 每百万 token 的美元价：(输入, 输出, 缓存读, 缓存写)。只列核对过官方价目页的；没列的不算钱，界面上写「?」。
+#   Anthropic  2026-10-06 的价目
+#   DeepSeek   api-docs.deepseek.com/quick_start/pricing，2026-10-17 核对（这一版价目 2026-09-10 起）：输入 = 缓存没命中，缓存读 = 命中，
+#              没有单独的缓存写入价（按没命中算）。列的是峰时价，闲时半价（OFF_PEAK）
+#   Kimi       platform.moonshot.ai/docs/pricing/chat（现在跳到 platform.kimi.ai），2026-10-17 核对：输入 = 缓存没命中，缓存读 = 命中，
+#              缓存写入按默认的 5 分钟档（$3.00，和输入一样；1 小时档 $6.00，我们不设）。国内站按人民币计价，这里一律按国际站的美元价。
+#              kimi-k2.6 在同一页的 K2 那张表，2026-10-19 核对（页面没写日期）：缓存命中 $0.16、没命中 $0.95、输出 $4.00；那张表没有缓存
+#              写入价，按没命中算（照 DeepSeek 那一项）
+#   Gemini     ai.google.dev/gemini-api/docs/pricing（页面 2026-10-16 更新），2026-10-19 核对 Standard 档：输出含思考的 token；缓存读 =
+#              Context caching（只有隐式缓存，没有存储费、没有单独的写入价：缓存写按输入算）；不按提示长短分档。12 月 1 日起价钱翻倍（PRICES_FROM）
+#   向量       只有输入价（输出、缓存记 0；engine/usage.py 的 embeddings 那一栏用）。OpenAI：developers.openai.com/api/docs/pricing（页面没写
+#              日期），2026-10-19 核对。Google：同一天的价目页只列了 gemini-embedding-2（文字输入），gemini-embedding-001 已经不在上面，不写
 PRICES: dict[str, tuple[float, float, float, float]] = {
     "anthropic/claude-fable-5-1": (10, 50, 0.25, 12.5),
     "anthropic/claude-opus-5-5": (4, 20, 0.20, 5),
     "anthropic/claude-opus-5": (5, 25, 0.50, 6.25),
     "anthropic/claude-sonnet-5-5": (2, 10, 0.20, 2.5),
     "anthropic/claude-haiku-5-5": (0.10, 0.50, 0.01, 0.125),
+    "deepseek/deepseek-flash": (0.30, 1.20, 0.006, 0.30),
+    "deepseek/deepseek-v4-pro": (1.32, 3.96, 0.044, 1.32),
+    "moonshot/kimi-k3": (3.00, 15.00, 0.30, 3.00),
+    "moonshot/kimi-k2.6": (0.95, 4.00, 0.16, 0.95),
+    "google/gemini-4-argon": (2.00, 10.00, 0.10, 2.00),
+    "openai/text-embedding-3-small": (0.02, 0, 0, 0),
+    "openai/text-embedding-3-large": (0.13, 0, 0, 0),
+    "openai/text-embedding-ada-002": (0.10, 0, 0, 0),
+    "google/gemini-embedding-2": (0.20, 0, 0, 0),
 }
+# 从哪天起换价（价目页写了「几号起」的）：ref → ((哪天起, 那天起的价), …)，按日子排；日子按 UTC 的日历日算（价目页没写时区），
+# 那天以前照 PRICES（PRICES 里没有 = 那天以前不算钱）
+PRICES_FROM: dict[str, tuple[tuple[str, tuple[float, float, float, float]], ...]] = {
+    "google/gemini-4-argon": (("2026-12-01", (4.00, 20.00, 0.20, 4.00)),),
+}
+# 分峰谷的：provider → 峰时（UTC 的 [起, 止) 小时，周一到周五），别的时候和周末按 PRICES 的一半算。DeepSeek 价目页的脚注：峰时
+# 01:00–04:00、06:00–10:00 UTC，闲时半价；中国法定节假日整天也算闲时，这里认不出节假日，那几天照峰时算（只会多算，不会少算）
+OFF_PEAK: dict[str, tuple[tuple[int, int], ...]] = {"deepseek": ((1, 4), (6, 10))}
 
 # Anthropic 各型号能用的参数（只认确切的型号名；不认识的按名字里的代数猜：5 代及以后当新的，更老的什么都不带）
 ADAPTIVE = {"claude-fable-5-1", "claude-mythos-5-1", "claude-fable-5", "claude-mythos-5", "claude-opus-5-5", "claude-opus-5",
@@ -84,43 +166,237 @@ def cfg() -> dict:
 
 
 def parse_ref(ref: str) -> tuple[str, str]:
-    """「provider/model」→ (provider, model)。model 里可以再有斜杠（openrouter/anthropic/claude-…）。不像样的抛 EngineError(config)。"""
+    """「provider/model」→ (provider, model)。model 里可以再有斜杠（openrouter/anthropic/claude-…）。不像样的抛 EngineError(config)。
+    model 是规范的写法：目录里那家列出来带前缀的（Google 的 models/<型号>，catalog.bare）去掉前缀，老配置里带着的照样能调。"""
     m = REF.match(str(ref or "").strip())
     if not m:
         raise EngineError(f"model should look like provider/model, got {str(ref)[:60]!r}", kind="config")
-    return m.group(1), m.group(2)
+    return m.group(1), catalog.bare(m.group(1), m.group(2))
+
+
+def canonical(ref: str | None) -> str:
+    """模型引用的规范写法（google/models/gemini-x → google/gemini-x，见 parse_ref）；不像样的原样还回去。比价、汇总、按用途选都按它比。"""
+    try:
+        name, model = parse_ref(ref or "")
+    except EngineError:
+        return str(ref or "")
+    return f"{name}/{model}"
 
 
 def valid_ref(ref: str | None) -> bool:
+    """我们的接口拿密钥跑得了的模型引用。用户自己的套餐（claude-code/…、chatgpt/…）一律 False：只在专门放行的地方跑（见文件开头）。"""
     try:
         name, _ = parse_ref(ref or "")
     except EngineError:
         return False
-    return name in PROVIDERS or name in _openclaw_providers() or name in (cfg().get("providers") or {})
+    return name not in SUBSCRIPTIONS and (name in PROVIDERS or name in _openclaw_providers() or name in (cfg().get("providers") or {}))
+
+
+def _first(v) -> str:
+    """一处写的模型（规范的写法，见 canonical）：字符串照旧；写成列表（主模型 + 它的链）取第一个。"""
+    if isinstance(v, list):
+        v = next((x for x in v if isinstance(x, str) and x.strip()), "")
+    return canonical(str(v or "").strip()) if isinstance(v, str) else ""
+
+
+def chain_of(v) -> list[str] | None:
+    """写成列表的一处 → 整条链（合法的引用，规范的写法，去重、保持顺序，第一个是主模型）；字符串 / 不写 → None（用默认链）。"""
+    if not isinstance(v, list):
+        return None
+    out: list[str] = []
+    for x in v:
+        r = canonical(str(x).strip()) if isinstance(x, str) else ""
+        if r and valid_ref(r) and r not in out:
+            out.append(r)
+    return out
 
 
 def default_model() -> str:
-    return str(cfg().get("model") or "").strip()
+    return _first(cfg().get("model"))
 
 
 def models() -> list[str]:
-    ms = [str(m).strip() for m in cfg().get("models") or [] if valid_ref(str(m))]
+    """claw 选 builtin 时 app 里能切换的：engine.models 里合法的（写成列表的那一项取第一个；没写就只有 engine.model），加上这台电脑上有用户自己登录的 Claude Code
+    时的 claude-code/…（没有就一个都不列，写在 engine.models 里的也不列）。"""
+    ms = [m for m in (_first(x) for x in cfg().get("models") or []) if valid_ref(m) or subscription_ready(m)]
     d = default_model()
-    return ms or ([d] if d else [])
+    if not ms and d and (not subscription(d) or subscription_ready(d)):
+        ms = [d]
+    return ms + [m for m in subscription_models() if m not in ms]
 
 
-def route(purpose: str, override: str | None = None) -> str | None:
-    """这件事（card / doorman / json）走不走内核：走就回模型引用，不走回 None。override = 调用方自己指定的模型（合法才用）。"""
+PLAN_PURPOSES = frozenset({"writing"})  # 能配成用户自己套餐的那几件事（route 照 may_spend 放不放）
+
+
+def route(purpose: str, override: str | None = None, *, kind: str = "outsider", origin: str | None = None,
+          via: str | None = None) -> str | None:
+    """这件事（card / doorman / json / writing）走不走内核：走就回模型引用，不走回 None。override = 调用方自己指定的模型（合法才用）。
+    card / doorman / json 都是外人回合，不花用户的套餐：配成 claude-code/…（或者默认模型就是它）的换成 outside() 挑的，挑不到就不走内核。
+    writing（写作）能配成套餐：调用方报上这一轮的 kind / origin / via，may_spend 认的才回套餐，不认的（不报 = 当外人回合）一样换成
+    outside() 挑的。写成列表的：回第一个（主模型），后面的链由 purpose_chain 给。"""
     use = cfg().get("use")
     v = use.get(purpose) if isinstance(use, dict) else None
     if v is None or v is False:
         return None
     if override and valid_ref(override):
-        return override
+        return canonical(override)
+    if isinstance(v, list):
+        c = chain_of(v)
+        return c[0] if c else None
     if isinstance(v, str) and valid_ref(v):
-        return v
+        return canonical(v)
     d = default_model()
+    want = canonical(v) if isinstance(v, str) else d if v is True else ""
+    if subscription(want):
+        return want if purpose in PLAN_PURPOSES and may_spend(want, kind=kind, origin=origin, via=via) else outside()
     return d if v is True and valid_ref(d) else None
+
+
+def background_model() -> str | None:
+    """engine.use.background（第 9 步「按用途选模型」的「后台和定时」）：定时任务、心跳、后台任务没自己写模型时用哪个。true = 默认模型；
+    写成列表取第一个（主模型）；不写、写错了 → None（照旧：跟那个对话的模型）。可以是用户自己的套餐（后台用 ChatGPT 套餐要用户同意过，
+    调用方照旧问 may_spend）。"""
+    use = cfg().get("use")
+    v = use.get("background") if isinstance(use, dict) else None
+    m = default_model() if v is True else _first(v)
+    return m if m and known(m) else None
+
+
+# —— 备用链（第 13 步，engine/fallback.py 用）——————————————————————————————————————
+
+def fallbacks() -> list[str]:
+    """默认的备用链：engine.fallbacks（合法的、去重）。不写 = []。"""
+    return chain_of(cfg().get("fallbacks")) or []
+
+
+def purpose_chain(purpose: str, primary: str) -> list[str] | None:
+    """engine.use.<这件事> 写成列表、第一个就是 primary → 它后面那几个（它自己的链，可以是空的 = 不换）；否则 None（用默认的）。"""
+    use = cfg().get("use")
+    c = chain_of(use.get(purpose) if isinstance(use, dict) else None)
+    return c[1:] if c and c[0] == primary else None
+
+
+def own_chain(ref: str) -> list[str] | None:
+    """这个模型自己写了链吗：engine.model 或 engine.models 里写成列表、第一个就是它的那一项 → 后面那几个；没写 → None。"""
+    for v in [cfg().get("model"), *(cfg().get("models") or [])]:
+        c = chain_of(v)
+        if c and c[0] == ref:
+            return c[1:]
+    return None
+
+
+def chain_after(ref: str) -> list[str]:
+    """ref 跑不了时往下换的那几个（不含它自己）：它自己写的链，没写用 engine.fallbacks（同 fallback.chain）。套餐模型（claude-code/…）
+    自己写的链也认：["claude-code/opus", "deepseek/deepseek-flash"]（own_chain 认不出：chain_of 先把套餐去掉了，第一个对不上）。
+    只有我们的接口跑得了的（chain_of 去掉了套餐和写错的）。"""
+    own = own_chain(ref)
+    if own is None and subscription(ref):
+        own = next((chain_of(v) or [] for v in [cfg().get("model"), *(cfg().get("models") or [])] if isinstance(v, list) and _first(v) == ref),
+                   None)
+    return [r for r in (fallbacks() if own is None else own) if r != ref]
+
+
+# —— 用户自己的套餐（第 11 项）——————————————————————————————————————————————————————
+
+SUBSCRIPTIONS = {"claude-code": "claude-code", "chatgpt": "chatgpt"}  # provider → 哪家的套餐（chatgpt：第 11b 项，engine/chatgpt_plan.py）
+# 主人回合里能花套餐的来路：用户自己说的（user）、他自己的定时任务和心跳、收件箱和后台任务替他接着做的（auto）、主对话转给 Agent 的（relay）。
+# 别的（赛博、外人回合、对外接口 openai / acp ……）一律不行：只认名单里的，新加的来路默认不能花。
+OWNER_ORIGINS = frozenset({"user", "auto", "relay"})
+# ChatGPT 套餐更严（条款：后台用之前要用户明确同意）：用户自己引出来的直接能花；后台的（auto、后台任务自己 task）要用户在设置里同意过
+PLAN_FOREGROUND = frozenset({"user", "relay"})
+PLAN_BACKGROUND = frozenset({"auto", "task"})
+CLAUDE_CODE_MODELS = ("claude-code/opus", "claude-code/sonnet", "claude-code/haiku")
+NAME = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:\[\]-]{0,79}$")  # 交给 --model 的：别名（opus）或完整 id（claude-<型号>-<版本>，可带 [1m]）
+
+
+def subscription(ref: str | None) -> str | None:
+    """这个模型花不花用户自己的套餐：claude-code/<型号> → "claude-code"；chatgpt/<型号> → "chatgpt"；别的 → None。所有「花用户套餐」的
+    判断都用它。"""
+    m = REF.match(str(ref or "").strip())
+    return SUBSCRIPTIONS.get(m.group(1)) if m and NAME.match(m.group(2)) else None
+
+
+def known(ref: str | None) -> bool:
+    """设置里写的模型认不认（定时任务、心跳）：我们的接口能跑的，或者用户自己的套餐（到点时这台电脑上没有就报错）。"""
+    return valid_ref(ref) or subscription(ref) is not None
+
+
+def _rank(o: str | None) -> int:
+    return 0 if o in PLAN_FOREGROUND else 1 if o in PLAN_BACKGROUND else 2
+
+
+def stricter(origin: str | None, via: str | None) -> str | None:
+    """origin 和 via 里对 ChatGPT 套餐更严的那个（via 没给 = origin）。工具跑的脚本再引出一轮时，带下去的就是它。"""
+    return via if via is not None and _rank(via) > _rank(origin) else origin
+
+
+def plan_class(origin: str | None, via: str | None = None) -> str:
+    """ChatGPT 套餐眼里这一轮算什么：foreground（用户自己引出来的）/ background（后台，要同意过）/ never。via 给了就和 origin 取更严的。"""
+    return ("foreground", "background", "never")[_rank(stricter(origin, via))]
+
+
+def may_spend(ref: str | None, *, kind: str, origin: str | None, via: str | None = None) -> bool:
+    """这一轮能不能用这个模型：不花套餐的都能；花套餐的只给主人回合。claude-code：来路在 OWNER_ORIGINS 里。chatgpt：用户自己引出来的
+    能花，后台的要用户同意过，别的都不行（plan_class，见文件开头）。"""
+    sub = subscription(ref)
+    if sub is None:
+        return True
+    if kind != "owner":
+        return False
+    if sub == "chatgpt":
+        how = plan_class(origin, via)
+        if how == "background":
+            from . import chatgpt_plan
+            return chatgpt_plan.background_allowed()
+        return how == "foreground"
+    return origin in OWNER_ORIGINS
+
+
+def outside(ref: str | None = None) -> str | None:
+    """不能花套餐的那些（赛博、外人回合、对外接口、一问一答）用哪个模型：ref 是我们的接口能跑的就用它；否则（是套餐的、没给的）
+    用默认模型，默认的也是套餐就挑 engine.models 里第一个能跑的；都没有 → None（调用方照自己的退路：llm-task、不做……）。"""
+    if ref and valid_ref(ref):
+        return ref
+    for m in (default_model(), *(_first(x) for x in cfg().get("models") or [])):
+        if m and valid_ref(m):
+            return m
+    return None
+
+
+def claude_code_cfg() -> dict:
+    """server.json 的 engine.claude_code（false = 关掉）。"""
+    v = cfg().get("claude_code")
+    return {"enabled": False} if v is False else v if isinstance(v, dict) else {}
+
+
+def subscription_ready(ref: str | None) -> bool:
+    """这台电脑上现在跑得了这个套餐模型吗：claude-code/… → 有用户自己登录的官方 Claude Code（runners 的检测，登录是它自己存的那种），
+    engine.claude_code 没关；chatgpt/… → ChatGPT 套餐连着、开了用套餐、没标要重连（chatgpt_plan.usable，不连网）。"""
+    sub = subscription(ref)
+    if sub == "chatgpt":
+        from . import chatgpt_plan
+        return chatgpt_plan.usable()
+    if sub != "claude-code" or claude_code_cfg().get("enabled") is False:
+        return False
+    from . import runners
+    if runners.checking("claude-code"):  # 服务刚起来、登录还在后台查（有这个命令）：先当它在，app 别闪一下「选模型」的引导
+        return True
+    return "claude-code" in runners.offered() and runners.own_login(runners.available().get("claude-code"))
+
+
+def claude_code_models() -> list[str]:
+    """app 里多出来的 claude-code/…：这台电脑上有用户自己登录的 Claude Code 才有（engine.claude_code.models，默认 opus / sonnet / haiku）。"""
+    if not subscription_ready(CLAUDE_CODE_MODELS[0]):
+        return []
+    ms = claude_code_cfg().get("models")
+    return [m for m in ((str(x).strip() for x in ms) if isinstance(ms, list) else CLAUDE_CODE_MODELS) if subscription(m) == "claude-code"]
+
+
+def subscription_models() -> list[str]:
+    """app 里多出来的套餐模型：claude-code/…（同上）+ chatgpt/…（连上了、开了用套餐才有，chatgpt_plan.model_ids）。都没有 = []。"""
+    from . import chatgpt_plan
+    out = claude_code_models()
+    return out + [m for m in chatgpt_plan.model_ids() if m not in out]
 
 
 def fallback_allowed() -> bool:
@@ -156,7 +432,12 @@ def _openclaw_providers() -> dict:
 
 
 def provider(name: str) -> dict:
-    """{"name", "api", "url", "key", "headers", …其余设置}。不认识的 provider 抛 EngineError(config)。key 可能是空的（本机模型不要密钥）。"""
+    """{"name", "api", "url", "key", "headers", …其余设置}。不认识的 provider 抛 EngineError(config)。key 可能是空的（本机模型不要密钥）。
+    另有 keys = [(哪一把, 值)…]（key_env 写成列表时有好几把）和 key_name（key 是哪一把）：用哪一把由 engine/fallback.py 挑。
+    chatgpt：用户自己的 ChatGPT 套餐（engine/chatgpt_plan.py）不连网的那一份，key 是空的（推理前 providers.stream 现取令牌）。"""
+    if name == "chatgpt":
+        from . import chatgpt_plan
+        return chatgpt_plan.provider_stub()
     p: dict = dict(PROVIDERS.get(name) or {})
     oc = _openclaw_providers().get(name)
     if isinstance(oc, dict):
@@ -172,36 +453,34 @@ def provider(name: str) -> dict:
     over = (cfg().get("providers") or {}).get(name)
     if isinstance(over, dict):
         p.update(over)
-    if p.get("api") not in (ANTHROPIC, OPENAI):
+    if p.get("api") not in (ANTHROPIC, OPENAI, RESPONSES):
         raise EngineError(f"unknown model provider {name!r} (add it under engine.providers in server.json)", kind="config")
     p["name"] = name
     p["url"] = str(p.get("url") or "").rstrip("/")
-    if p["api"] == OPENAI and not p["url"]:
+    if p["api"] in (OPENAI, RESPONSES) and not p["url"]:
         raise EngineError(f"provider {name!r} has no url", kind="config")
     key_env = p.get("key_env", f"{name.upper()}_API_KEY")
-    p["key"] = str(p.get("key") or "").strip() or env_value(str(key_env or ""))
+    literal = str(p.get("key") or "").strip()
+    if literal:
+        keys = [("key", literal)]
+    else:
+        names = [str(x) for x in key_env] if isinstance(key_env, list) else [str(key_env or "")]
+        keys = [(n, v) for n in names if n and (v := env_value(n))]
+    p["keys"] = keys
+    p["key_name"], p["key"] = keys[0] if keys else ("", "")
     return p
 
 
 def env_value(name: str) -> str:
-    """环境变量：先看进程环境，再看 server.json 的 env_file（没写就是 <openclaw_home>/.env）。读不到 = 空。"""
-    if not name:
-        return ""
-    if os.environ.get(name):
-        return os.environ[name]
-    env_file = Path(str(raw().get("env_file"))).expanduser() if raw().get("env_file") else settings.env_file
-    try:
-        for line in env_file.read_text(encoding="utf8").splitlines():
-            k, sep, v = line.strip().removeprefix("export ").partition("=")
-            if sep and k.strip() == name:
-                return v.strip().strip("'\"")
-    except OSError:
-        pass
-    return ""
+    """环境变量：先看进程环境，再看 app 里存的 secrets.env（第 9 步，secretstore.py），再看 server.json 的 env_file（没写就是
+    <openclaw_home>/.env）。读不到 = 空。"""
+    return secretstore.lookup(name)[0]
 
 
 def has_key(ref: str) -> bool:
-    """这个模型能不能用：provider 认得、要密钥的有密钥（本机的 Ollama 这类不要密钥）。"""
+    """这个模型能不能用：provider 认得、要密钥的有密钥（本机的 Ollama 这类不要密钥）。chatgpt/…：套餐连着、开了用套餐。"""
+    if subscription(ref) == "chatgpt":
+        return subscription_ready(ref)
     try:
         name, _ = parse_ref(ref)
         p = provider(name)
@@ -223,10 +502,28 @@ def anthropic_caps(model_id: str) -> dict:
     return {"adaptive": new, "mid_system": new, "updates": False, "fallbacks": False}
 
 
-def cost(ref: str, usage: dict) -> float | None:
-    """这次用量值多少美元；价目里没有的回 None。usage：in / out / cache_read / cache_write（token 数）。"""
+def price(ref: str, at: datetime | None = None) -> tuple[float, float, float, float] | None:
+    """at 那一刻这个模型的价（每百万 token：输入, 输出, 缓存读, 缓存写）：PRICES，过了 PRICES_FROM 里写的日子换成那天起的；没有 → None。
+    ref 按规范的写法查（google/models/… 和 google/… 是同一个价）。"""
+    ref = canonical(ref)
     p = PRICES.get(ref)
+    day = (at or datetime.now(timezone.utc)).astimezone(timezone.utc).date().isoformat()
+    for since, later in PRICES_FROM.get(ref, ()):
+        if day >= since:
+            p = later
+    return p
+
+
+def cost(ref: str, usage: dict, at: datetime | None = None) -> float | None:
+    """这次用量值多少美元；价目里没有的回 None。usage：in / out / cache_read / cache_write（token 数）。at：什么时候调的（按日子换价的
+    见 PRICES_FROM，分峰谷的见 OFF_PEAK；不给 = 现在）。"""
+    p = price(ref, at)
     if not p:
         return None
-    return round((usage.get("in", 0) * p[0] + usage.get("out", 0) * p[1] + usage.get("cache_read", 0) * p[2]
-                  + usage.get("cache_write", 0) * p[3]) / 1e6, 6)
+    total = (usage.get("in", 0) * p[0] + usage.get("out", 0) * p[1] + usage.get("cache_read", 0) * p[2]
+             + usage.get("cache_write", 0) * p[3]) / 1e6
+    if (peaks := OFF_PEAK.get(ref.split("/", 1)[0])) is not None:
+        t = (at or datetime.now(timezone.utc)).astimezone(timezone.utc)
+        if t.weekday() >= 5 or not any(a <= t.hour < b for a, b in peaks):
+            total /= 2
+    return round(total, 6)

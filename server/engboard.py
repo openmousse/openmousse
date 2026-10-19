@@ -57,7 +57,7 @@ DROPPED_NOTE = re.compile(r"[（(]\s*(\d{1,2}/\d{1,2}\s*核对\s*[:：]\s*)?不�
 # 拍板 · / 你做 ·。括号里的补充、「」里引的原话不算；「上线前先问 <名字>」这种做事的规矩也不算
 WAIT_TPL = (r"等\s*({who}|你)|(要|问|让|请)\s*({who})|({who})\s*(来|自己|亲自)?\s*(定|选|看|点|拍板|决定|确认|真机|手动|手机|登录|装|开|批|同意|"
             r"回复|答|填|签|在|用)(?![了过])|^({who})\s*[:：]|^(拍板|你做)\s*·|({who}) 的事|只有 ({who})")
-# 已经定过的不算：「10/8 Leo 定「…」」「10/15 03:5x Leo 选了…」
+# 已经定过的不算：「10/8 Alex 定「…」」「10/15 03:5x Alex 选了…」（Alex 是 server.json 的 user_name）
 DECIDED_TPL = r"\d{{1,2}}/\d{{1,2}}(\s*\d{{1,2}}:\d{{1,2}}x?)?\s*({who})\s*(定|选|说|点|看|同意|拍板)"
 PROCEDURE_TPL = r"(之前|以前|前|先)\s*(用选项)?(问|告诉)\s*({who})"
 QUOTE = re.compile(r"「[^「」]*」")
@@ -128,7 +128,7 @@ def line_name(heading: str) -> str:
     h = re.sub(r"^\d{4}-\d{2}-\d{2}\s*新增[:：]\s*", "", h)
     h = re.split(r"[（(]", h, maxsplit=1)[0].strip()
     m = re.search(r"[:：]", h)
-    if m and len(CJK.findall(h[:m.start()])) >= 4:  # 冒号前是一个够说明白的中文名（「开发设备分工：Mac、…」）；「求职：Dymon」「Zen：…」整个留着
+    if m and len(CJK.findall(h[:m.start()])) >= 4:  # 冒号前是一个够说明白的中文名（「开发设备分工：Mac、…」）；「求职：Acme」「Zen：…」整个留着
         h = h[:m.start()].strip()
     return h[:40] or plain(heading)[:40]
 

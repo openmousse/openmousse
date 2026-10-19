@@ -7,14 +7,14 @@ import todocat
 
 
 @pytest.mark.parametrize("title, want", [
-    ("寄回 EE 路由器，不然扣 £85", "life"),
-    ("OVH：关掉旧机器 vps-00ae8334 的自动续费", "life"),
-    ("买 J. Cole 伦敦演唱会票（O2，10/19、10/20、11/2）", "life"),
-    ("递交香港高才通 C 类（赶 2027-01 去香港）", "work"),
+    ("寄回宽带路由器，不然扣 £60", "life"),
+    ("云主机：关掉旧机器 vps-demo-01 的自动续费", "life"),
+    ("买演唱会门票（10/19、10/20、11/2）", "life"),
+    ("递交高才通申请材料（月底截止）", "work"),
     ("办申根旅行签证", "life"),
-    ("BE Group Assignment", "study"),
-    ("推荐信：给 Ian 发邮件，再回 Lagos 5/23 那封", "study"),
-    ("Optiver QT internship interview", "work"),
+    ("Group Assignment 2", "study"),
+    ("推荐信：给导师发邮件，再回 5/23 那封", "study"),
+    ("Acme quant internship interview", "work"),
     ("写 OpenMousse BP", "work"),
     ("Book a dentist appointment", "life"),
 ])
@@ -56,9 +56,9 @@ def test_precedence():
     assert todocat.of_entry(entry(origin="apply", by="apply"), None, agents) == "work"
     # Agent 排的按它的看板；主对话加的按幂等键的前缀
     assert todocat.of_entry(entry(by="fitness", title="训练 · Push A"), None, agents) == "life"
-    assert todocat.of_entry(entry(by="main", key="apply:dymon-written:leo-deadline", title="Dymon 书面答题"), None, agents) == "work"
+    assert todocat.of_entry(entry(by="main", key="apply:acme-written:owner-deadline", title="Acme 书面答题"), None, agents) == "work"
     # 都认不出：生活
-    assert todocat.of_entry(entry(by="leo", title="一件说不清的事"), None, agents) == "life"
+    assert todocat.of_entry(entry(by="owner", title="一件说不清的事"), None, agents) == "life"
 
 
 def test_annotate_marks_override():

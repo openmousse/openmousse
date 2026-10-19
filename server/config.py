@@ -13,7 +13,25 @@
                     {"kind": "builtin"}：OpenMousse 自己的内核（模型在下面的 engine 段）
   engine            自己的内核（engine/）：{"model": "deepseek/deepseek-flash", "use": {"card": true, "doorman": "moonshot/kimi-k3", "json": true},
                     "providers": {…}}。use 里开了的事改走内核（名片 Agent、Doorman、一次性 JSON），出错退回原来的路；不写 = 一切照旧。
-                    说明见 engine/models.py（每次读文件，不用重启）
+                    说明见 engine/models.py（每次读文件，不用重启）。第 13 步加的：
+                    "fallbacks": ["moonshot/kimi-k3", …] 默认的备用链（限流、过载、5xx、超时、密钥 / 计费错、型号不存在时按顺序换，
+                    engine/fallback.py）；use.<这件事>、models 里的一项、赛博的 model 写成列表 = 第一个是主模型、后面是它自己的链；
+                    providers.<家>.key_env 写成列表 = 一家几把密钥，先换密钥再换模型；
+                    "skills": {"nudge": true, "nudge_tools": 8, "review": false} 写 skill（engine/skill_write.py）：提醒存、后台回看（默认关）
+                    第 11b 项：模型写 chatgpt/<型号> = 用户自己的 ChatGPT 套餐（engine/chatgpt_plan.py；在设置里 Continue with ChatGPT 连一次，
+                    令牌只存在这台服务器的 <data_dir>/chatgpt/ 里）；"chatgpt": {"models": [...], "headers": {...}} 或 false（关掉）。
+                    普通 OpenAI 密钥想走 Responses API：providers.openai.api 写 "openai-responses"
+                    普通 Agent 的手（⑫，engine/handkit.py）：主对话和用户建的 Agent 默认都有主机上的文件（自己的工作区）、web_fetch、
+                    web_search（engine.web.search 配了后端才有）、自己的沙箱（装好了沙箱才有，看不到工作区）；主机上的命令默认全关。
+                    engine.files {agents, secrets, ask}、engine.web {search, fetch, agents}、engine.sandbox.agents.<id>（普通 Agent 写
+                    only: false；access none / ro / rw）、engine.host_exec {agents: {<id>: {allow, ask, security, timeout, env}}}、
+                    engine.tools.levels（键 = 工具名）。说明在 engine/handkit.py 和各自的文件开头
+  engine.api        对外接口（默认关；说明见 engine/openai_api.py、engine/acp.py）：true 或 {"agents": ["main", …], "approve": true, "wait": 300}。
+                    开了（claw 要是 builtin）才挂 /v1：OpenAI 兼容的 /v1/models、/v1/chat/completions（model 写 openmousse/<agent id>，
+                    会话键 X-Session-Id 或 user 字段），和 ACP 适配器用的 /v1/openmousse/…（会话列表、对自己会话里交的卡点头）。
+                    令牌只认 auth.tokens 里的 api（哪个 Agent 都能用）和 api-<agent id>（只能用那个 Agent，同 mcp-<id>），这几把在 /api 上不通。
+                    agents：只给这几个 Agent（不写 = 全部）；approve：false = 调用方点不了头，卡只在 app 里等；wait：流式请求说了能问用户时，
+                    撤不回的调用当场等点头最多几秒（默认 300）。每次读文件，开、关都不用重启
   openclaw_home     OpenClaw 的家（默认 ~/.openclaw）
   workspace         主 agent 的 workspace（默认 <openclaw_home>/workspace）
   agent_workspaces  {agent_id: workspace 路径}：有独立 workspace 的 Agent（对话按 id 路由到它，记忆页读它的 MEMORY.md）
@@ -25,8 +43,11 @@
   gateway           OpenClaw Gateway 的 HTTP 地址（默认 http://127.0.0.1:<openclaw.json 的 gateway.port，没写就 18789>）
   openclaw_bin      openclaw 命令的路径（PATH 里找不到时用）
   env_file          读 API 密钥的 .env（默认 <openclaw_home>/.env）
+  secrets_file      app 里（或 setup_ctl.py 的三步引导里）存的密钥（默认 server.json 旁边的 secrets.env，0600；见 secretstore.py）：
+                    读密钥的顺序是进程环境 → 这里 → env_file。值永远不回给 app、不写进本文件
   default_model     新线程默认模型
-  auth.tokens       {名字: 令牌}：app 带 Authorization: Bearer <令牌>（或 X-API-Key、?token=）即通过
+  auth.tokens       {名字: 令牌}：app 带 Authorization: Bearer <令牌>（或 X-API-Key、?token=）即通过。给程序用的几个名字只在自己那条路上通、
+                    /api 不认：mcp、mcp-<agent id>（/mcp）、sentinel（/api/egress）、api、api-<agent id>（/v1，见 engine.api）
   auth.tailscale_nodes  Tailscale 设备名白名单：来源设备在里面就免令牌（需要本机装了 tailscale）
   auth.trust_loopback   true 时 127.0.0.1 来的请求免令牌。反向代理在本机时千万别开
   nutrition_targets {kcal, protein, carb, fat} 手动营养目标
@@ -56,6 +77,11 @@
                     （令牌是 auth.tokens 里的 mcp、mcp-<agent id>，这几把只能用在 /mcp 上，/api 不认；改了工具要重启）
   apps              连接器（见 apps.py）：{"catalog": 加 / 改 / 藏目录里的应用, "client_id_url": CIMD 用的 client_id 网址,
                     "redirect_uris": [网页版用的 http(s) 回调], "allow_local": 只给测试}。每次读文件，不用重启
+  mcp_servers       你自己配的 MCP 服务，接进自己内核的主人回合（见 engine/mcp_client.py；也认 mcpServers：Claude Code / Claude Desktop
+                    的那一段原样贴进来就能用）：{"名字": {"command", "args", "env", "cwd"}（本机 stdio）或 {"type": "http" | "sse", "url",
+                    "headers"}（远端，写好令牌的；要 OAuth 的走连接器），外加 "agents": ["main"]（默认只有 main）、"tools": {"工具": "auto" |
+                    "ask" | "off"}、"timeout"、"idle"、"startup_timeout"、"resources"、"disabled"}。密钥只能写成 ${变量名}（从环境或 env_file
+                    取）。每次读文件，不用重启
   wake              起床信号：{"notify_cmd": [...], "notify_hours": ["05:30", "13:00"]}：早上收到信号（快捷指令、app 回到前台、「我起来了」）
                     时跑一下这个命令，比如立刻跑一次出起床报告的定时脚本（见 health.py；每次读文件，不用重启）
 
@@ -70,15 +96,16 @@ from zoneinfo import ZoneInfo
 
 CONFIG_PATH = Path(os.environ.get("MOUSSE_SERVER_CONFIG") or "~/.openmousse/server.json").expanduser()
 REPO = Path(__file__).resolve().parent.parent
-_cache: tuple[float, dict] | None = None
-NOT_API = ("mcp", "sentinel")  # 这些令牌（还有 mcp-<agent id>）在 /api 上不通：只给 /mcp、/api/egress（见 main.py 的 guard）
+_cache: tuple[tuple[int, int], dict] | None = None
+NOT_API = ("mcp", "sentinel", "api")  # 这些令牌（还有 mcp-<agent id>、api-<agent id>）在 /api 上不通：只给 /mcp、/api/egress、/v1（见 main.py 的 guard）
 
 
 def raw(fresh: bool = False) -> dict:
-    """配置文件的内容（按 mtime 缓存，改了令牌不用重启）。"""
+    """配置文件的内容（按修改时间 + 大小缓存，改了令牌不用重启）。"""
     global _cache
     try:
-        mtime = CONFIG_PATH.stat().st_mtime
+        st = CONFIG_PATH.stat()
+        mtime = (st.st_mtime_ns, st.st_size)  # 同一个时间刻里写两次 mtime 不变（测试里碰到过）：大小也算上
     except OSError:
         return {}
     if not fresh and _cache and _cache[0] == mtime:
@@ -97,13 +124,15 @@ def save(data: dict) -> None:
     tmp.write_text(json.dumps(data, ensure_ascii=False, indent=2) + "\n", encoding="utf8")
     os.chmod(tmp, 0o600)
     tmp.replace(CONFIG_PATH)
+    global _cache
+    _cache = None  # 自己刚写的：下一次 raw() 一定重读
 
 
 def pick_api_token(tokens: dict) -> str | None:
-    """本机脚本调 /api 用哪把令牌：第一把不是 mcp、mcp-<agent id>、sentinel 的（不管 server.json 里的顺序）。没有就 None。"""
+    """本机脚本调 /api 用哪把令牌：第一把不是 mcp、mcp-<agent id>、sentinel、api、api-<agent id> 的（不管 server.json 里的顺序）。没有就 None。"""
     for name, tok in tokens.items():
         name = str(name)
-        if tok and name not in NOT_API and not name.startswith("mcp-"):
+        if tok and name not in NOT_API and not name.startswith(("mcp-", "api-")):
             return str(tok)
     return None
 

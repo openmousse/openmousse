@@ -58,6 +58,15 @@ Short-lived tokens (Gmail sending, say) use OAuth: `errand.py oauth start GMAIL_
 
 The errand writes `MOUSSE_SECRET_BOOKING_PASSWORD` into its request; Doorman swaps in the real value only for `www.example.com` (anywhere else it's blocked) and swaps it back if the site echoes it. Writes carrying credentials always wait for your OK. The "Credentials you can use" section of the errand's AGENTS.md lists names and hosts automatically.
 
+## On the built-in engine
+
+When the claw is OpenMousse's own engine (`"claw": {"kind": "builtin"}`), the errand doesn't go through OpenClaw at all: the engine starts, watches and removes its containers itself (`server/engine/sandbox.py`) and gives it only sandbox tools (`server/engine/hands.py`): `exec` (bash, with a timeout, cut output and a stop that also ends everything the command started), `process` (background commands), `read` / `write` / `edit` / `ls` (files in the sandbox) and `browser` (headless Chromium over CDP: open, outline with refs, click, type, select, press, tabs). Host-side tools (OpenMousse's command-line tools, memory search, scheduled jobs, background tasks, skills) are never offered to it. Everything else stays as above: same images, same `mousse-errand` network without NAT, same host firewall, same Doorman.
+
+- Containers: `mousse-sbx-<instance>-errand` (shell) and `…-errand-browser` (started only when the browser is used), labelled `org.openmousse.sandbox.*`. Hardening: no capabilities, `no-new-privileges`, read-only root with tmpfs for `/tmp`, `/workspace` (scratch) and home, memory / CPU / process limits, no published ports, nothing mounted from the host.
+- Before a container starts, the engine checks the network (exists, no NAT, not `host` / `bridge`), the firewall unit (for `mousse-errand`), that Doorman is listening and that the image is built; any failure means no container (fail closed).
+- Idle containers are removed after `engine.sandbox.idle_minutes` (120 by default; `/workspace` goes with them); at most `max_containers` run at once. On restart the engine re-adopts its running containers and removes the rest. `GET /api/engine/sandbox` shows them, `POST /api/engine/sandbox/reset {"agent": "errand"}` removes them.
+- `errand.py setup` skips the two `openclaw.json` steps on a built-in claw; everything else is the same.
+
 ## Check, watch, roll back
 
 - `python3 errand.py status`: ✓ / ✗ for every piece

@@ -243,3 +243,40 @@ def test_to_anthropic_placement_rules():
     assert old[-1]["role"] == "user" and "<system-reminder>" in old[-1]["content"][-1]["text"]
     then_user = provider_anthropic.to_anthropic([user("a"), system_note("x"), user("b")], caps_new)
     assert [m["role"] for m in then_user] == ["user", "user"]  # system 后面紧跟 user 不合规矩：折进前一条
+
+
+# —— 报错里的密钥：进库、进事件、进对话之前抹掉（errors.scrub）——————————————————————————————————
+
+def test_scrub_masks_keys_and_their_masked_tails():
+    from engine.errors import scrub
+    assert scrub("deepseek HTTP 401: Authentication Fails, Your api key: ****abcd is invalid") == \
+        "deepseek HTTP 401: Authentication Fails, Your api key: *** is invalid"  # DeepSeek 自己打的码：末 4 位也是密钥
+    assert scrub("Incorrect API key provided: sk-proj-****wxyz.") == "Incorrect API key provided: ***."
+    assert scrub("Incorrect API key provided: abcd************wxyz") == "Incorrect API key provided: ***"
+    assert scrub("bad key sk-ant-api03-0123456789abcdef and AIzaSyA0123456789abcdef") == "bad key *** and ***"
+    assert scrub("Authorization: Bearer 0123456789abcdefXYZ") == "Authorization: ***"
+    assert scrub('echo "dsk0000aaaa1111bbbb2222abcd"', "dsk0000aaaa1111bbbb2222abcd") == 'echo "***"'  # 配着的那把：原样出现也抹
+    assert scrub("moonshot HTTP 429: rate limit, retry in 2s (request req_0a1b2c3d)") == "moonshot HTTP 429: rate limit, retry in 2s (request req_0a1b2c3d)"
+    assert scrub("subtask-0123456789 hit disk-image-quota; key=sk-0123456789abcdef") == "subtask-0123456789 hit disk-image-quota; key=***"  # 普通的词不抹
+
+
+def test_a_401_with_part_of_the_key_never_reaches_the_steps_turns_or_chat(monkeypatch):
+    """DeepSeek 的 401 原文带着密钥的末 4 位（它自己打的码）；配着的那把要是原样回来也一样。engine_steps、engine_turns、
+    回给对话的那句（Result.error）里都只剩 ***。"""
+    from engine import events
+    key = "dsk0000aaaa1111bbbb2222abcd"  # 编的
+    monkeypatch.setenv("DEEPSEEK_API_KEY", key)
+    bodies = [{"error": {"message": "Authentication Fails, Your api key: ****abcd is invalid", "type": "authentication_error",
+                         "code": "invalid_request_error"}},
+              {"error": {"message": f"key {key} was revoked", "type": "authentication_error"}}]
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(401, headers={"content-type": "application/json"}, content=json.dumps(bodies.pop(0)).encode())
+    monkeypatch.setattr(provider_openai, "TRANSPORT", httpx.MockTransport(handler))
+    for conv in ("t-key-masked", "t-key-echoed"):
+        res = run(engine.run_turn(engine.Spec(kind="owner", model="deepseek/deepseek-flash", conversation=conv), MemorySession(), user("hi")))
+        assert res.status == "error" and "HTTP 401" in res.error and "***" in res.error
+        step = next(s for s in events.steps(res.turn) if s["type"] == "model")
+        turn = events.turns(conv)[0]
+        for text in (res.error, step["data"]["error"], turn["error"]):
+            assert "abcd" not in text and key not in text and "****" not in text

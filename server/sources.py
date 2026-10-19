@@ -8,7 +8,8 @@
   calendar                  ← scripts/calendar_ics.py（ICS 链接）
   health                    ← scripts/apple_health.py（恢复分、热量缺口、体能趋势；原始数据由手机推到 /api/health/daily，不需要脚本）
   tree                      ← scripts/memory_tree.py（作者的世界树：Obsidian 库里的笔记，有枝）；没有它就用安装器装的开源版世界树
-                              （openmousse_tree，见 treelib.py）。各 AI 平台共用的记忆，见 memtree.py
+                              （openmousse_tree，见 treelib.py；0.3 起也有枝、规则和每周修剪）。各 AI 平台共用的记忆，见 memtree.py。
+                              选中哪一份，tree 工具（bridges.py）和 think.py 就用哪一份（tree_script）
 
 脚本目录在 server.json 的 `scripts`（默认 <workspace>/scripts）。
 """
@@ -17,6 +18,7 @@ from __future__ import annotations
 import importlib
 import sys
 import traceback
+from pathlib import Path
 from types import ModuleType
 
 from fastapi import Request
@@ -60,6 +62,16 @@ AVAILABLE: dict[str, bool] = {
 }
 
 
+def tree_script() -> Path | None:
+    """选中的世界树是 workspace 的 scripts/memory_tree.py（作者的实例）→ 那个脚本（tree 工具和 think.py 起子进程跑它）；
+    选中的是开源版（treelib）或者没接 → None。"""
+    mt = memory_tree
+    if mt is None or getattr(mt, "PACKAGE", False):
+        return None
+    f = getattr(mt, "__file__", None)
+    return Path(f) if f else settings.scripts / "memory_tree.py"
+
+
 def xunji_name() -> str:
     """训练 / 饮食 / 身体数据的来源名（看板的小字、目标的读数来源）。适配器脚本可以自报 SOURCE_NAME（字符串，或 {"zh": ..., "en": ...}），没写就是训记。"""
     name = getattr(xunji, "SOURCE_NAME", None) if xunji else None
@@ -92,8 +104,9 @@ def require(kind: str) -> None:
 
 def hint(kind: str) -> str:
     if kind == "tree":
-        return L("服务器的 scripts 目录里没有 memory_tree.py（世界树的脚本），接上以后这里就有了。",
-                 "memory_tree.py (the memory tree script) isn't in the server's scripts directory. Once it's there, this page fills in.")
+        return L("世界树还没装好：在服务器上运行 mousse-tree init（安装器会装），或者把 memory_tree.py 放进 scripts 目录，接上以后这里就有了。",
+                 "The memory tree isn't set up yet: run mousse-tree init on the server (the installer does it), or put memory_tree.py in the "
+                 "scripts directory. Once it's there, this page fills in.")
     return L(f"在 server.json 的 scripts 目录放一个提供{label(kind)}的脚本，或者直接在对话里记。",
              f"Put a script that provides {label(kind)} data in the scripts directory set in server.json, or just log it in chat.")
 

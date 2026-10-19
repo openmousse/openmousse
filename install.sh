@@ -4,7 +4,8 @@
 # 或在仓库里：bash install.sh
 #
 # 做的事：clone / 更新仓库到 ~/openmousse → 建 ~/.openmousse/venv 装依赖 → 问几个问题 + 两个可以跳过的 → packs/core/setup.py 配好一切。
-# 环境变量（非交互）：MOUSSE_LANG（zh|en）、MOUSSE_CLAW（openclaw | hermes | nanobot | letta，或别的 claw 的 OpenAI 兼容接口地址 http://…/v1）、MOUSSE_OPENCLAW_HOME、
+# 环境变量（非交互）：MOUSSE_LANG（zh|en）、MOUSSE_CLAW（openclaw | builtin（OpenMousse 自带的内核，不用装 OpenClaw）| hermes | nanobot | letta，
+#   或别的 claw 的 OpenAI 兼容接口地址 http://…/v1）、MOUSSE_OPENCLAW_HOME、
 #   别的 claw：MOUSSE_CLAW_NAME、MOUSSE_CLAW_TOKEN、MOUSSE_CLAW_MODEL、MOUSSE_CLAW_SKILLS（它的 skills 文件夹）、MOUSSE_CLAW_RULES（它每轮都读的规则文件）；
 #   MOUSSE_TZ、MOUSSE_NAME、MOUSSE_DIR（仓库位置）、MOUSSE_BIND（auto|127.0.0.1|<ip>）、
 #   MOUSSE_VAULT（服务器上已经在同步的 Obsidian 库文件夹，世界树和思考空间放进去；空 = 跳过）、MOUSSE_TREE_PUBLIC（y|n：用 Tailscale Funnel 开公网：AI 平台连世界树、分享链接、加朋友）
@@ -108,20 +109,26 @@ DEF_NAME="$(saved "c.get('app_name')")"
 say "几个问题 + 两个可以跳过的，直接回车用默认值 / a few questions + two optional ones, Enter keeps the default"
 ask MOUSSE_LANG "语言 / language (zh = 中文, en = English)" "$DEF_LANG"
 case "$(printf '%s' "$MOUSSE_LANG" | tr '[:upper:]' '[:lower:]')" in zh*|cn*|chinese*|中*) MOUSSE_LANG=zh ;; *) MOUSSE_LANG=en ;; esac
-# 你的 claw：回车 = OpenClaw；别的 claw / agent 填它的 OpenAI 兼容接口地址。默认：上次装的那个，没装过就看这台机器上有没有 OpenClaw
-DEF_CLAW="$(saved "(c.get('claw') or {}).get('url') if (c.get('claw') or {}).get('kind') == 'openai' else ''")"
-[ -n "$DEF_CLAW" ] || DEF_CLAW=openclaw
-ask MOUSSE_CLAW "你的 claw：回车 = OpenClaw；hermes、nanobot、letta；别的 claw 或 agent 填它的 OpenAI 兼容接口地址（写到 /v1） / your claw: Enter = OpenClaw; hermes, nanobot or letta; for another claw or agent, its OpenAI-compatible API URL (up to /v1)" "$DEF_CLAW"
+# 你的 claw：回车 = 默认的那个；builtin = OpenMousse 自带的内核（不用装 OpenClaw，装完在 app 里按引导选模型）；别的 claw / agent 填它的
+# OpenAI 兼容接口地址。默认：上次装的那个；没装过：这台机器上有 OpenClaw 就是它，没有就是 builtin
+DEF_CLAW="$(saved "(c.get('claw') or {}).get('url') if (c.get('claw') or {}).get('kind') == 'openai' else 'builtin' if (c.get('claw') or {}).get('kind') == 'builtin' else ''")"
+if [ -z "$DEF_CLAW" ]; then
+  if [ -f "$HOME/.openmousse/server.json" ] || command -v openclaw >/dev/null || [ -f "${MOUSSE_OPENCLAW_HOME:-$DEF_HOME}/openclaw.json" ]; then DEF_CLAW=openclaw; else DEF_CLAW=builtin; fi
+fi
+ask MOUSSE_CLAW "你的 claw：openclaw；builtin = OpenMousse 自带的内核（不用装 OpenClaw）；hermes、nanobot、letta；别的 claw 或 agent 填它的 OpenAI 兼容接口地址（写到 /v1） / your claw: openclaw; builtin = OpenMousse's own engine (no OpenClaw needed); hermes, nanobot or letta; for another claw or agent, its OpenAI-compatible API URL (up to /v1)" "$DEF_CLAW"
 PRESET=""
 case "$(printf '%s' "$MOUSSE_CLAW" | tr '[:upper:]' '[:lower:]')" in
   http://*|https://*) CLAW_KIND=openai ;;
   hermes|nanobot|letta) CLAW_KIND=openai; PRESET="$(printf '%s' "$MOUSSE_CLAW" | tr '[:upper:]' '[:lower:]')" ;;
+  builtin|mousse|openmousse|own|none) CLAW_KIND=builtin ;;
   *) CLAW_KIND=openclaw ;;
 esac
 preset() { python3 "$MOUSSE_DIR/server/claw_presets.py" "$PRESET" "$1" 2>/dev/null || true; }  # 预设的一个字段（server/claw_presets.py）
 CLAW_ARGS=()
-if [ "$CLAW_KIND" = openclaw ]; then
-  command -v openclaw >/dev/null || echo "提示 / note: openclaw is not on PATH. Install OpenClaw and run openclaw onboard first, then come back."
+if [ "$CLAW_KIND" = builtin ]; then
+  CLAW_ARGS=(--builtin)  # 模型、搜索、记忆装完以后选：app 的引导，或者终端里的 server/setup_ctl.py
+elif [ "$CLAW_KIND" = openclaw ]; then
+  command -v openclaw >/dev/null || echo "提示 / note: openclaw is not on PATH. Install OpenClaw and run openclaw onboard first, then come back (or answer builtin to use OpenMousse's own engine)."
   ask MOUSSE_OPENCLAW_HOME "OpenClaw 装在哪 / OpenClaw home (directory with openclaw.json)" "$DEF_HOME"
 else
   if [ -n "$PRESET" ]; then
@@ -159,7 +166,7 @@ zoneinfo.ZoneInfo(sys.argv[1])' "$MOUSSE_TZ" 2>/dev/null; then
 fi
 ask MOUSSE_NAME "助手叫什么 / assistant name (shown in the app)" "$DEF_NAME"
 if [ "$CLAW_KIND" = openclaw ] && [ ! -f "$MOUSSE_OPENCLAW_HOME/openclaw.json" ]; then
-  die "$MOUSSE_OPENCLAW_HOME/openclaw.json 不存在 / not found. Install OpenClaw and run openclaw onboard first (or give another claw's OpenAI-compatible URL instead)."
+  die "$MOUSSE_OPENCLAW_HOME/openclaw.json 不存在 / not found. Install OpenClaw and run openclaw onboard first (or answer builtin for OpenMousse's own engine, or give another claw's OpenAI-compatible URL instead)."
 fi
 # 可以跳过的两个：Obsidian 库（世界树和思考空间放进去）、开公网（Tailscale Funnel：AI 平台连世界树、分享链接、好友直连；默认开，2026-10-05）
 ask MOUSSE_VAULT "（可跳过）Obsidian 库在这台服务器上的文件夹（已在同步：Obsidian Sync / Syncthing / git），世界树和思考空间放进去，回车跳过 / (optional) Obsidian vault folder on this server (already synced: Obsidian Sync / Syncthing / git) for the memory tree and the thinking space, Enter skips" ""

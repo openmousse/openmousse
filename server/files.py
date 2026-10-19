@@ -13,7 +13,6 @@ from __future__ import annotations
 import base64
 import io
 import mimetypes
-import os
 import re
 import sqlite3
 import uuid
@@ -31,7 +30,6 @@ from config import settings  # noqa: E402
 from i18n import L  # noqa: E402
 
 UPLOAD_DIR = settings.uploads
-ENV_PATH = settings.env_file
 MAX_FILES = 10
 MAX_BYTES = 30 * 1024 * 1024
 MAX_IMAGES = 8
@@ -70,11 +68,9 @@ def adb() -> sqlite3.Connection:
 
 
 def env_key(name: str) -> str:
-    val = os.environ.get(name, "")
-    if not val and ENV_PATH.is_file():
-        for line in ENV_PATH.read_text(encoding="utf8").splitlines():
-            if line.strip().startswith(name + "="):
-                val = line.strip().split("=", 1)[1].strip().strip('"').strip("'")
+    """密钥（语音转写的 OPENAI_API_KEY 这类）：进程环境 → app 里存的 secrets.env → env_file（secretstore.lookup，第 9 步）。"""
+    import secretstore
+    val = secretstore.lookup(name)[0]
     if not val:
         raise RuntimeError(L(f"缺少 {name}", f"Missing {name}"))
     return val

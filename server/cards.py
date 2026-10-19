@@ -19,6 +19,10 @@
   进行中的任务最多 20 秒读一次，做完的读一次就留着（顺带拿 token 用量）。
 - 改一下：POST /api/tasks/{id}/revise 把意见发给同一个子会话（app 线程 task:<id>）；第几轮、意见、这一轮的结果从这个线程的记录算。
 - 做完以后派它的那个对话里模型再回的一轮（announce）：settle.py 接回 app。
+- claw 选 builtin（自己的内核）时不读 OpenClaw 的台账：任务从 engine/ledger.py 读（内核自己的表 engine_tasks，第 5 项），进行中的任务卡
+  由内核在派它的那一轮发事件 {"type": "task"}（chat.engine_stream 当场出卡，子 Agent 每做一步再发一次），不用每 2 秒看台账。
+  台账、步骤在下面的 tasks_of / today_rows / step_of 里分两边。做完的推送不走这里的 watch_tasks：内核做完就把结果交回原对话
+  （engine/tasks.py：开的那一轮回完静默推一条），「改一下」那一轮照旧 after_run。
 
 接口
 - GET /api/chat/cards?thread=&day=：这个线程这一天（04:00 起）的转交卡和任务卡，旧的在前（messageId = 挂在哪条回复下面，
@@ -166,6 +170,40 @@ def ledger(where: str = "1", args: tuple = (), limit: int = 200) -> list[dict] |
     return rows
 
 
+# —— 两边的台账：OpenClaw 的（上面）/ 自己的内核的（engine/ledger.py）——————————————————————————
+
+def engine_tasks(**kw) -> list[dict] | None:
+    """自己的内核的台账（engine/ledger.py，参数照它的 tasks()）。还没有（第 5 项之前）→ None，和读不到 OpenClaw 台账一样处理。"""
+    from engine import ledger as engine_ledger  # 延迟导入：内核只在 builtin 时用
+    if not engine_ledger.available():
+        return None
+    try:
+        return engine_ledger.tasks(**kw)
+    except Exception:  # noqa: BLE001 — 读不到当没有
+        return None
+
+
+def tasks_of(thread: str, since_ms: int, until_ms: int | None = None, limit: int = 50, key: str | None = None) -> list[dict] | None:
+    """这个对话派的后台任务（新的在前），created_at 在 [since_ms, until_ms) 里；读不到台账 → None。
+    builtin：engine/ledger.py；别的（OpenClaw，和通用 claw 照旧）：按会话键（key，不给就按 thread 推）读 OpenClaw 的台账。"""
+    if chat.claw.is_builtin():
+        return engine_tasks(thread=thread, since_ms=since_ms, until_ms=until_ms, limit=limit)
+    key = key or chat.session_key(thread)
+    if until_ms is None:
+        return ledger("owner_key=? AND created_at>=?", (key, since_ms), limit)
+    return ledger("owner_key=? AND created_at>=? AND created_at<?", (key, since_ms, until_ms), limit)
+
+
+def task_by_id(tid: str) -> dict | None:
+    rows = engine_tasks(task_id=tid, limit=1) if chat.claw.is_builtin() else ledger("task_id=?", (tid,), 1)
+    return rows[0] if rows else None
+
+
+def thread_of_task(r: dict) -> str | None:
+    """派这个任务的对话：内核的台账直接给 thread；OpenClaw 的从会话键反推。"""
+    return r.get("thread") or chat.thread_of(r.get("owner_key"))
+
+
 def status_of(r: dict) -> str:
     s = (r.get("status") or "").lower()
     if not s or s in RUNNING:
@@ -291,9 +329,9 @@ async def fetch_detail(tid: str, key: str, final: bool) -> None:
 
 
 def want_detail(r: dict) -> None:
-    """需要的话在后台读一次子会话记录：进行中的最多 20 秒一次，做完的读一次就不再读。"""
+    """需要的话在后台读一次子会话记录：进行中的最多 20 秒一次，做完的读一次就不再读。自己的内核的任务不用读（step_of 直接问台账）。"""
     tid, key = r.get("task_id"), r.get("child_session_key")
-    if not tid or not key or tid in _fetching:
+    if not tid or not key or tid in _fetching or chat.claw.is_builtin():
         return
     hit = _detail.get(tid)
     if hit and (hit[1].get("final") or time.time() - hit[0] < DETAIL_EVERY):
@@ -308,7 +346,18 @@ def forget(tid: str) -> None:
 
 
 def step_of(tid: str, last_tool: str | None) -> str:
-    """进行中的任务正在做哪一步：读过子会话记录就用它（带文件名、搜的词），否则只凭台账里最后一个工具的名字。"""
+    """进行中的任务正在做哪一步：读过子会话记录就用它（带文件名、搜的词），否则只凭台账里最后一个工具的名字。
+    自己的内核：台账自己说（engine/ledger.step：那一轮最后一个工具和它的标题）。"""
+    if chat.claw.is_builtin():
+        from engine import ledger as engine_ledger  # 延迟导入
+        try:
+            st = engine_ledger.step(tid)
+        except Exception:  # noqa: BLE001
+            st = None
+        if not st:
+            return human_step(last_tool)
+        name, title = st
+        return human_step(name, title) if name in STEP else (title or human_step(name))  # 内核自己的工具：标题就是人话
     det = (_detail.get(tid) or (0.0, {}))[1]
     return human_step(det.get("name") or last_tool, det.get("label") or "")
 
@@ -320,7 +369,7 @@ def rounds(conn: sqlite3.Connection | None, tid: str) -> tuple[int, str | None, 
     if conn is None:
         return 1, None, None, None
     rows = conn.execute("SELECT role, text, status FROM messages WHERE thread=? ORDER BY id", (f"task:{tid}",)).fetchall()
-    notes = [r["text"] for r in rows if r["role"] == "user"]
+    notes = [r["text"] for r in rows if r["role"] in ("user", "auto")]  # auto：自己的内核里派它的对话 send 的那一轮（第 5 项）
     if not notes:
         return 1, None, None, None
     run = chat.RUNS.get(f"task:{tid}")
@@ -339,7 +388,7 @@ def task_json(r: dict, message_id: int | None = None, conn: sqlite3.Connection |
     t1 = r.get("ended_at") if st != "进行中" else None
     det = (_detail.get(tid) or (0.0, {}))[1]
     n, note, round_status, round_text = rounds(conn, tid)
-    return {"kind": "task", "id": tid, "thread": chat.thread_of(r.get("owner_key")), "messageId": message_id,
+    return {"kind": "task", "id": tid, "thread": thread_of_task(r), "messageId": message_id,
             "createdAt": iso(r.get("created_at")), "status": st, "timedOut": timed_out(r), "title": title_of(r),
             "deliverable": deliverable(r.get("task") or ""), "modelId": (r.get("payload") or {}).get("model") or None,
             "minutes": max(0, round(((t1 or now) - t0) / 60000)), "startedAt": hm(t0), "finishedAt": hm(t1),
@@ -480,9 +529,9 @@ def on_run_end(run: chat.Run) -> None:
         src = _sources.pop(row["id"], None)
         if src and not src.done:
             publish(src, handoff_json(row, names()))
-    if run.thread.startswith(("task:", "study-")) or not chat.claw.is_openclaw():  # 别的 claw 没有 OpenClaw 的任务台账
+    if run.thread.startswith(("task:", "study-")) or not (chat.claw.is_openclaw() or chat.claw.is_builtin()):  # 通用 claw 没有任务台账
         return
-    rows = ledger("owner_key=? AND created_at>=?", (run.key or chat.session_key(run.thread), int(run.t0 * 1000) - 3000), 20) or []
+    rows = tasks_of(run.thread, int(run.t0 * 1000) - 3000, limit=20, key=run.key) or []  # builtin：内核的台账（第 5 项之前是空的）
     if rows:
         with _lock, cdb() as conn:
             conn.executemany("INSERT OR IGNORE INTO task_links(task_id, thread, message_id, created_at) VALUES(?,?,?,?)",
@@ -492,7 +541,8 @@ def on_run_end(run: chat.Run) -> None:
 # —— 回复进行中：新派的任务当场出卡 ————————————————————————————————————————————
 
 def watch(run: chat.Run) -> None:
-    if run.thread.startswith(("task:", "study-")) or not LEDGER.exists():
+    """回复进行中盯着 OpenClaw 的台账。自己的内核不用盯：派了任务、任务有进展，它在这一轮里当场发事件（chat.engine_stream 出卡）。"""
+    if run.thread.startswith(("task:", "study-")) or chat.claw.is_builtin() or not LEDGER.exists():
         return
     spawn(watch_run(run))
 
@@ -521,6 +571,8 @@ async def watch_run(run: chat.Run) -> None:
 
 def today_rows() -> list[dict] | None:
     lo, _hi = chat.day_bounds(chat.day_of(now_iso()))
+    if chat.claw.is_builtin():
+        return engine_tasks(since_ms=ms_of(lo), limit=500)
     return ledger("created_at>=?", (ms_of(lo),), 500)
 
 
@@ -549,20 +601,20 @@ def get_quota():
 
 @router.get("/api/chat/cards")
 async def cards(thread: str = "main", day: str | None = None):
-    """这个线程这一天的转交卡和任务卡（旧的在前），加上别的线程转给它的（incoming）。tasksAvailable=false：读不到 OpenClaw 的任务台账。"""
+    """这个线程这一天的转交卡和任务卡（旧的在前），加上别的线程转给它的（incoming）。tasksAvailable=false：读不到任务台账
+    （OpenClaw 的读不到；自己的内核第 5 项之前还没有）。"""
     try:
         day = day or chat.day_of(now_iso())
         lo, hi = chat.day_bounds(day)
     except ValueError as exc:
         raise HTTPException(400, L("day 要写成 YYYY-MM-DD", "day must be YYYY-MM-DD")) from exc
     nm = names()
-    rows = await asyncio.to_thread(ledger, "owner_key=? AND created_at>=? AND created_at<?", (chat.session_key(thread), ms_of(lo), ms_of(hi)), 50)
+    rows = await asyncio.to_thread(tasks_of, thread, ms_of(lo), ms_of(hi), 50)
     with _lock, cdb() as conn:
-        # ts 是带时区的 ISO 字符串，同一时区下字符串比较等价于时间比较（和 /api/chat/history 一样）
-        out = [handoff_json(h, nm) for h in conn.execute("SELECT * FROM handoffs WHERE from_thread=? AND created_at>=? AND created_at<? "
-                                                         "ORDER BY created_at, rowid", (thread, lo, hi))]
-        incoming = [handoff_json(h, nm) for h in conn.execute("SELECT * FROM handoffs WHERE to_thread=? AND created_at>=? AND created_at<? "
-                                                              "ORDER BY created_at, rowid", (thread, lo, hi))]
+        # 按真时间比（和 /api/chat/history 一样：时区改过偏移就不一样，见 chat.day_bounds）
+        span = "julianday(created_at)>=julianday(?) AND julianday(created_at)<julianday(?) ORDER BY julianday(created_at), rowid"
+        out = [handoff_json(h, nm) for h in conn.execute("SELECT * FROM handoffs WHERE from_thread=? AND " + span, (thread, lo, hi))]
+        incoming = [handoff_json(h, nm) for h in conn.execute("SELECT * FROM handoffs WHERE to_thread=? AND " + span, (thread, lo, hi))]
         links = {r["task_id"]: r["message_id"] for r in conn.execute("SELECT task_id, message_id FROM task_links WHERE thread=?", (thread,))}
         seq = today_seq() if rows else {}
         out += [task_json(r, links.get(r["task_id"]), conn, seq) for r in reversed(rows or [])]
@@ -593,7 +645,7 @@ async def push_done(r: dict) -> None:
     channel = ((r.get("payload") or {}).get("requesterOrigin") or {}).get("channel")
     if channel and channel != "webchat":  # Telegram 这类渠道派的：OpenClaw 自己在那边回
         return
-    thread = chat.thread_of(r.get("owner_key"))
+    thread = thread_of_task(r)
     if not thread or thread.startswith("study-"):
         return
     title = title_of(r)
@@ -614,9 +666,13 @@ async def push_done(r: dict) -> None:
 
 
 async def check_done() -> None:
-    """台账里新结束的任务记进 task_seen；刚结束的（15 分钟内）推一条。"""
+    """台账里新结束的任务记进 task_seen；刚结束的（15 分钟内）推一条。只给 OpenClaw（main.py 只在那边挂 watch_tasks）：自己的内核做完
+    就把结果交回原对话，那一轮回完自己推（engine/tasks.py）；这里的 builtin 分支留着给手动跑。"""
     since = int((time.time() - 2 * 86400) * 1000)
-    rows = await asyncio.to_thread(ledger, "status NOT IN ('running','queued','pending') AND IFNULL(ended_at, created_at)>=?", (since,), 200)
+    if chat.claw.is_builtin():
+        rows = await asyncio.to_thread(engine_tasks, ended=True, since_ms=since, limit=200)
+    else:
+        rows = await asyncio.to_thread(ledger, "status NOT IN ('running','queued','pending') AND IFNULL(ended_at, created_at)>=?", (since,), 200)
     if not rows:
         return
     with _lock, cdb() as conn:
@@ -648,15 +704,15 @@ async def after_run(run: chat.Run) -> None:
     if not run.thread.startswith("task:") or run.origin != "user" or not notify_enabled():
         return
     tid = run.thread[5:]
-    rows = await asyncio.to_thread(ledger, "task_id=?", (tid,), 1)
-    thread = chat.thread_of(rows[0].get("owner_key")) if rows else None
-    if not thread or thread.startswith("study-"):
+    row = await asyncio.to_thread(task_by_id, tid)
+    thread = thread_of_task(row) if row else None
+    if not row or not thread or thread.startswith("study-"):
         return
     with _lock, cdb() as conn:
         n = rounds(conn, tid)[0]
     ok = run.status == "ok"
     line = push.first_line(run.text) if ok else ""
-    title = title_of(rows[0])
+    title = title_of(row)
     await push.send_push(push.thread_title(thread), f"{title} · {push.cut(line, 80)}" if line else title,
                          {"thread": thread, "target": {"type": "thread", "thread": thread}}, thread_id=thread,
                          subtitle=L(f"改好了 · 第 {n} 轮", f"Revised · round {n}") if ok else L("这一轮没改成", "This round failed"),

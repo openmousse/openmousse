@@ -8,13 +8,20 @@ memory_tree 的函数都拿跨进程锁、会先按库的最新状态重建索�
   GET  /api/tree        枝（先序：大枝后面跟着它的小枝；leaves = 直接挂在这根枝上的叶子数，total = 连小枝一起的）
                         + 当前的叶子（active / pending，不含档案要点；挂的枝不存在的算主干「档案」）+ 档案条数 + 各来源条数 + 格式有问题的笔记数。
                         叶子的 source 是笔记里写的；origin 是最早记下它的平台：每周修剪改写 / 合并出来的（source=prune）顺着 supersedes 找回去，
-                        「按来源」和 counts.bySource 都按 origin 算
-  POST /api/tree/{id}   {action: confirm | forget | move, branch?}：确认 / 忘记 / 挪枝（branch 写枝名，写「档案」= 直接挂主干）
+                        「按来源」和 counts.bySource 都按 origin 算。
+                        出处和「用得上的时候」（2026-10-17，树有这几列才给）：quote（原话，没有是空的）、cues（几句平时会说的话）、
+                        said（来自哪次对话：platform / platformName / thread / message；是这台服务器上的对话就有 threadName 和
+                        link = {thread, day, messageId?}，app 按它打开那天的记录、滚到那条；Zen 想完写的 link = {topic, thought?}；
+                        thread 是网址的 link = {url}；没有出处是 null）
+                        tier（13d，2026-10-19）：信几分 profile / quoted（带你的原话、或你自己写的）/ inferred（平台推断的）
+  POST /api/tree/{id}   {action: confirm | forget | move, branch?, alsoProfile?}：确认 / 忘记 / 挪枝（branch 写枝名，写主干的名字 = 直接挂主干）。
+                        忘记时回 profileLines：档案里从这片叶子来的句子（每周修剪并进去的，开源版世界树才有）；alsoProfile = true 一起删掉
   GET  /api/tree/connect             接到你的 AI：真身放在哪、公网地址、每个平台的接入地址（含令牌）、怎么接、要贴的那句指令
   POST /api/tree/platforms {name}    加一个平台（DeepSeek、通义千问、Kimi……）：发一个新令牌，重启世界树服务
   DELETE /api/tree/platforms/{id}    删掉一个平台：它的地址立即作废，重启世界树服务
 
-两种世界树都能接：作者实例的 workspace scripts/memory_tree.py（有枝），或安装器装的开源版（treelib.py，没有枝，挪枝不支持）。
+两种世界树都能接：作者实例的 workspace scripts/memory_tree.py，或安装器装的开源版（treelib.py；0.3 起也有枝、规则和每周修剪，
+每周修剪的卡在 treeprune.py）。
 
 活动记录由 memory_tree 自己写，只写做了什么、不写记忆内容；actor 是「你 · 世界树」。这里不打印、不记录叶子的内容。
 """
@@ -33,6 +40,7 @@ from types import ModuleType
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
+import chat
 import sources
 from chat import _lock, db
 from config import settings
@@ -45,6 +53,10 @@ ACTIONS = ("confirm", "forget", "move")
 PLATFORMS = {"claude": "Claude", "chatgpt": "ChatGPT", "gemini": "Gemini", "claude-code": "Claude Code", "notion": "Notion",
              "deepseek": "DeepSeek", "qwen": "Qwen", "kimi": "Kimi"}
 PLATFORM_ID = re.compile(r"[a-z][a-z0-9-]{1,23}")
+APP_PLATFORMS = ("openmousse", "grava", "app")  # 叶子的出处是这台服务器上的对话（messages 表）：能跳回去、能回原话核对
+ZEN = "zen"  # 出处是 Zen 想完的一个主题（think.py，2026-10-19）：thread = 主题 id（tp-…），message = 原话出自的那条想法（th-…）或聊聊里的消息 id
+# 出处不是一个 AI 平台、是这台服务器上的别处（显示名）：Zen；别人说的、主人在待定里同意了的（memhold.py，2026-10-19）
+PLACES = {ZEN: "Zen", "friend": ("朋友", "Friend"), "a2a": ("别人的 Agent", "Someone's agent"), "group": ("群聊", "Group chat")}
 
 
 def tree() -> ModuleType:
@@ -64,25 +76,32 @@ def agent_names() -> dict[str, str]:
 
 
 AGENT_PREFIXES = ("grava-", "openclaw-")  # 作者的实例写 grava-<id>；开源版的 memory-tree skill 写 openclaw-<id>
+OWNER_SOURCES = ("leo", "owner")  # 用户自己写的：手机上直接写的笔记（作者的实例）/ mousse-tree 管理页、命令行（开源版）；记忆检索按意思搜时往前排
 
 
-def agent_of(source: str) -> str | None:
-    """grava-<id> / openclaw-<id> → 那个 Agent 的 id（grava / grava-main / openclaw-main → main）；别的来源不是 Agent。"""
+def agent_of(source: str, agents: dict[str, str] | None = None) -> str | None:
+    """grava-<id> / openclaw-<id> → 那个 Agent 的 id（grava / grava-main / openclaw-main → main）；内核和 /mcp 经 MOUSSE_AGENT
+    写的就是 Agent id 本身（main、g-…，agents 里有它才算）；别的来源不是 Agent。"""
     if source == "grava":
         return "main"
     prefix = next((p for p in AGENT_PREFIXES if source.startswith(p)), None)
-    return (source.removeprefix(prefix) or "main") if prefix else None
+    if prefix:
+        return source.removeprefix(prefix) or "main"
+    return source if agents is not None and source in agents else None
 
 
 def source_name(source: str, agents: dict[str, str]) -> str:
-    """来源的显示名：AI 平台、Agent 名、你自己（手机上直接写的笔记）、每周修剪（修剪时合并 / 改写出来的）。"""
+    """来源的显示名：AI 平台、Agent 名、你自己（手机上直接写的笔记）、每周修剪（修剪时合并 / 改写出来的）、Zen、朋友……（PLACES）。"""
     if source in PLATFORMS:
         return PLATFORMS[source]
-    if source in ("leo", "owner"):  # 手机上直接写的笔记（作者的实例）/ mousse-tree 管理页、命令行（开源版）
+    if source in PLACES:
+        v = PLACES[source]
+        return L(*v) if isinstance(v, tuple) else v
+    if source in OWNER_SOURCES:
         return L("你自己", "You")
     if source == "prune":
         return L("每周修剪", "Weekly pruning")
-    aid = agent_of(source)
+    aid = agent_of(source, agents)
     if aid:
         return agents.get(aid) or aid
     return source
@@ -98,15 +117,57 @@ def origin_of(mid: str, links: dict[str, tuple[str, str | None]]) -> str:
     return source
 
 
+def said_of(r: sqlite3.Row, agents: dict[str, str], days: dict[int, str]) -> dict | None:
+    """一片叶子来自哪次对话（app 点开叶子看出处、跳回去）。days = 消息 id → 它那天（逻辑日）。没有出处 → None。"""
+    th, plat, msg = r["thread"] or "", r["platform"] or "", str(r["message"] or "")
+    if not th and not r["quote"]:
+        return None
+    out: dict = {"platform": plat, "platformName": (settings.app_name if plat in APP_PLATFORMS else source_name(plat, agents)) if plat else "",
+                 "thread": th, "message": msg}
+    if plat in APP_PLATFORMS and th:
+        mid = int(msg) if msg.isdigit() else None
+        out["threadName"] = L("主对话", "Main chat") if th == "main" else agents.get(th) or th
+        out["link"] = {"thread": th, "day": days[mid] if mid in days else chat_day(r["created_at"]), **({"messageId": mid} if mid else {})}
+    elif plat == ZEN and th:  # Zen 想完的主题：app 打开那个主题（thought = 原话出自的那条想法）
+        out["link"] = {"topic": th, **({"thought": msg} if msg.startswith("th-") else {})}
+    elif th.startswith(("https://", "http://")):
+        out["link"] = {"url": th}
+    return out
+
+
+def tier_of(source: str, quote: str, platform: str) -> str:
+    """信几分（13d）：profile / quoted / inferred，同内核 engine/memgate.py 的 tier（app 的记忆页按它标）。"""
+    from engine.memgate import tier
+    return tier(source or "", quote or "", platform or "", owner_sources=OWNER_SOURCES)
+
+
+def chat_day(ts: str) -> str:
+    return chat.day_of(ts)
+
+
+def message_days(ids: set[int]) -> dict[int, str]:
+    """消息 id → 那条消息的逻辑日（跳回那次对话打开哪一天）。"""
+    if not ids:
+        return {}
+    try:
+        with _lock, db() as conn:
+            rows = conn.execute(f"SELECT id, ts FROM messages WHERE id IN ({','.join('?' * len(ids))})", sorted(ids)).fetchall()  # noqa: S608
+    except sqlite3.Error:
+        return {}
+    return {r["id"]: chat.day_of(r["ts"]) for r in rows}
+
+
 def snapshot() -> dict:
     """整棵树（在线程里跑）。"""
     mt = sources.memory_tree
     agents = agent_names()
     branch_col = "branch" if getattr(mt, "HAS_BRANCHES", True) else "NULL AS branch"  # 开源版世界树没有枝
+    prov = getattr(mt, "HAS_PROVENANCE", False)  # 树有出处和「用得上的时候」这几列（开源版 0.4、作者那份 10/17 起）
+    more = ", quote, platform, thread, message, cues" if prov else ""
     with contextlib.closing(mt.connect()) as conn:  # connect() 先按库的最新状态刷新索引
         branches = mt.branch_tree(conn)
         rows = conn.execute(
-            f"SELECT id, text, kind, source, status, {branch_col}, tags, observed_at, created_at FROM tree "  # noqa: S608 — 列名是常量
+            f"SELECT id, text, kind, source, status, {branch_col}, tags, observed_at, created_at{more} FROM tree "  # noqa: S608 — 列名是常量
             "WHERE source != 'profile' AND status IN ('active','pending') ORDER BY observed_at DESC, created_at DESC").fetchall()
         links = {r["id"]: (r["source"], r["supersedes"]) for r in conn.execute("SELECT id, source, supersedes FROM tree WHERE source != 'profile'")}
         trunk = conn.execute("SELECT COUNT(*) FROM tree WHERE source = 'profile'").fetchone()[0]
@@ -118,17 +179,21 @@ def snapshot() -> dict:
     for b in reversed(branches):  # 先序倒过来走：小枝先算完，再加到上一级
         if b["parent"] in total:
             total[b["parent"]] += total[b["name"]]
+    days = message_days({int(r["message"]) for r in rows if str(r["message"] or "").isdigit()}) if prov else {}
     leaves = []
     for r in rows:
         origin = origin_of(r["id"], links)
         leaves.append({"id": r["id"], "text": r["text"], "kind": r["kind"], "source": r["source"], "sourceName": source_name(r["source"], agents),
-                       "origin": origin, "originName": source_name(origin, agents), "agent": agent_of(origin),
+                       "origin": origin, "originName": source_name(origin, agents), "agent": agent_of(origin, agents),
                        "status": r["status"], "branch": r["branch"] if r["branch"] in names else mt.TRUNK,
-                       "tags": [t for t in (r["tags"] or "").split(",") if t], "observedAt": r["observed_at"], "createdAt": r["created_at"]})
+                       "tags": [t for t in (r["tags"] or "").split(",") if t], "observedAt": r["observed_at"], "createdAt": r["created_at"],
+                       "tier": tier_of(r["source"], r["quote"] if prov else "", r["platform"] if prov else ""),
+                       **({"quote": r["quote"] or "", "cues": [c for c in (r["cues"] or "").split("\n") if c],
+                           "said": said_of(r, agents, days)} if prov else {})})
     per: dict[str, int] = {}
     for x in leaves:  # 按最早记下它的平台数（修剪过的算回原来的平台）
         per[x["origin"]] = per.get(x["origin"], 0) + 1
-    by_source = [{"source": s, "name": source_name(s, agents), "agent": agent_of(s), "count": n}
+    by_source = [{"source": s, "name": source_name(s, agents), "agent": agent_of(s, agents), "count": n}
                  for s, n in sorted(per.items(), key=lambda kv: -kv[1])]
     return {
         "ok": True,
@@ -157,8 +222,12 @@ async def get_tree():
 # 世界树给每个平台一个令牌：令牌在地址里（/t/<令牌>/mcp，Claude.ai、ChatGPT 这类不带认证的连接器），或者放请求头（/m/mcp，Notion 这类）。
 # 令牌就是平台名的钥匙：树按令牌知道是谁写的，叶子的 source 就是平台名。加 / 删平台要重启世界树服务（路由按令牌在启动时建好）。
 
-INSTRUCTION = ("对话开始先调 profile 和 recall 了解我；我说出关于自己的新事实、偏好、决定、近况时调 remember。",
-               "Call profile and recall at the start of a conversation to know me; when I state a new fact, preference, decision or update about myself, call remember.")
+# 要贴进各平台自定义指令的那句（tree/README*.md 里是同一句）
+INSTRUCTION = ("对话开始先调 profile，读我的档案和世界树的规则，照规则记。我说出关于自己、身边的人或长期约定的新信息时，先 recall 查有没有："
+               "有就用 supersedes 取代旧的，没有再 remember，挂到合适的枝上。",
+               "At the start of a conversation, call profile to read my profile and the memory tree's rules, and follow them. When I share something "
+               "new about myself, the people around me or a standing commitment, recall first: if it's already there, supersede the old entry; "
+               "otherwise remember it on the right branch.")
 PRESETS = ("claude", "chatgpt", "gemini", "notion", "claude-code", "deepseek", "qwen", "kimi")
 
 
@@ -336,11 +405,13 @@ async def remove_platform(pid: str):
 
 class TreeAction(BaseModel):
     action: str
-    branch: str | None = None  # move：枝名（或别名）；「档案」= 直接挂主干
+    branch: str | None = None  # move：枝名（或别名）；主干的名字 = 直接挂主干
+    alsoProfile: bool = False  # forget：档案里从这片叶子来的句子也一起删
 
 
-def act(mid: str, action: str, branch: str, actor: str) -> dict | None:
-    """确认 / 忘记 / 挪枝（在线程里跑）。叶子不存在、是档案要点、已经不是当前的 → None。"""
+def act(mid: str, action: str, branch: str, actor: str, also_profile: bool = False) -> dict | None:
+    """确认 / 忘记 / 挪枝（在线程里跑）。叶子不存在、是档案要点、已经不是当前的 → None。
+    忘记：开源版世界树回 profileLines（档案里从它来的句子，每周修剪并进去的），also_profile 就一起删掉（profileRemoved）。"""
     mt = sources.memory_tree
     with contextlib.closing(mt.connect()) as conn:
         branch_col = "branch" if getattr(mt, "HAS_BRANCHES", True) else "NULL AS branch"
@@ -352,8 +423,18 @@ def act(mid: str, action: str, branch: str, actor: str) -> dict | None:
                 return {"changed": False}
             return {"changed": True} if mt.set_status(conn, mid, "active", actor) else None
         if action == "forget":
-            return {"changed": True} if mt.set_status(conn, mid, "retracted", actor) else None
-        where = mt.set_branch(conn, mid, branch, actor)  # 枝对不上抛 ValueError
+            if not mt.set_status(conn, mid, "retracted", actor):
+                return None
+            if not hasattr(mt, "derived_profile"):
+                return {"changed": True}
+            if also_profile:
+                return {"changed": True, "profileRemoved": mt.drop_derived(conn, mid, actor)}
+            return {"changed": True, "profileLines": [{"id": x["id"], "section": x["section"], "text": x["text"]}
+                                                      for x in mt.derived_profile(conn, mid)]}
+        try:
+            where = mt.set_branch(conn, mid, branch, actor)  # 枝对不上抛 ValueError
+        except LookupError:  # 叶子刚在别处改了
+            return None
         return {"changed": where != (row["branch"] or mt.TRUNK), "branch": where}
 
 
@@ -368,7 +449,7 @@ async def tree_action(mid: str, body: TreeAction):
     if not ID_RE.fullmatch(mid):
         raise HTTPException(404, L("没有这片叶子", "No such leaf"))
     try:
-        res = await asyncio.to_thread(act, mid, body.action, branch, L("你 · 世界树", "You · Memory tree"))
+        res = await asyncio.to_thread(act, mid, body.action, branch, L("你 · 世界树", "You · Memory tree"), body.alsoProfile)
     except ValueError as exc:  # 枝对不上：刚在 Obsidian 里改了名或删了
         raise HTTPException(409, L("没有这根枝了，刷新再挪", "That branch is gone. Refresh and try again.")) from exc
     except (OSError, RuntimeError, sqlite3.Error) as exc:

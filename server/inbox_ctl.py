@@ -14,6 +14,8 @@ kind：task 任务 / write 写进外部系统 / send 发给别人 / spend 花钱
       / skill 新技能 / agent 新 Agent / block 看板 / code 改代码、配置、凭证 / other。
 add 成功打印 id；--dedupe 相同、还在等的那条会原地更新（同一个 id）。30 天内被拒绝过的同一件事：退出码 3，别再提。
 不给 --source：当前目录在哪个 Agent 的工作区里就算它的，否则是 main。
+一张卡多条：add / update 加 --items-file 文件|-（JSON：[{"id": "1", "text": "一句话", "detail": "…", "default": "approve|reject"}, …]），
+用户逐条同意、修改、拒绝，最后提交；同意之后 get 看每条的 decision，只做 approve 的那几条。
 """
 from __future__ import annotations
 
@@ -50,6 +52,8 @@ kind: task / write (to an outside system) / send (to other people) / spend (mone
       / calendar / skill (new skill) / agent (new Agent) / block (board block) / code (code, config, credentials) / other.
 add prints the id; with the same --dedupe, a pending item is updated in place (same id). Rejected in the last 30 days: exit code 3, don't propose it again.
 Without --source: the Agent whose workspace contains the current directory, otherwise main.
+One card, several items: add / update take --items-file FILE|- (JSON: [{"id": "1", "text": "one line", "detail": "…", "default": "approve|reject"}, …]);
+the user approves, revises or declines each one, then submits; once approved, get shows each item's decision: do only the approved ones.
 """)
 
 
@@ -62,6 +66,8 @@ def call(method: str, path: str, body: dict | None = None) -> dict:
     token = settings.api_token()
     if token:  # 本机跑，用第一把能走 /api 的令牌（mcp、sentinel 那几把不行）；没令牌时靠 Tailscale 白名单 / trust_loopback
         headers["Authorization"] = f"Bearer {token}"
+    if os.environ.get("MOUSSE_VIA"):  # 经 /mcp、内核的工具跑的（project_ctl 的转交也走这里）：服务据此认能不能花 ChatGPT 套餐（bridges.py）
+        headers["X-Mousse-Via"] = os.environ["MOUSSE_VIA"]
     req = urllib.request.Request(url, data=data, headers=headers, method=method)
     try:
         with urllib.request.urlopen(req, timeout=60) as r:  # noqa: S310
@@ -124,11 +130,27 @@ def content_args(p: argparse.ArgumentParser, required: bool) -> None:
     p.add_argument("--board-file", help=L('建 Agent 的方案卡（kind agent）：起步看板文件 {"tables": [...], "blocks": [...]}，卡片里画出预览；表可以带 rows 示例行',
                                           'for a new-Agent card (kind agent): the starter board file {"tables": [...], "blocks": [...]}; the card shows a preview; '
                                           'tables may carry sample rows'))
+    p.add_argument("--items-file", help=L("一张卡多条：条目的 JSON 从这个文件读（- 表示标准输入），用户逐条点",
+                                          "one card, several items: the items JSON from this file (- for stdin); the user decides each one"))
+
+
+def read_items(src: str | None) -> list | None:
+    if src is None:
+        return None
+    try:
+        v = json.loads(sys.stdin.read() if src == "-" else Path(src).expanduser().read_text(encoding="utf8"))
+    except (OSError, ValueError) as e:
+        sys.exit(L(f"--items-file 读不了：{e}", f"Can't read --items-file: {e}"))
+    if not isinstance(v, list):
+        sys.exit(L("--items-file 要是一个 JSON 数组", "--items-file must be a JSON array"))
+    return v
 
 
 def content_body(a: argparse.Namespace) -> dict:
+    if a.detail_file == "-" and a.items_file == "-":
+        sys.exit(L("--detail-file 和 --items-file 不能都用标准输入", "--detail-file and --items-file can't both read standard input"))
     body = {"title": a.title, "why": a.why, "changes": a.change, "detail": read_detail(a.detail_file), "approveLabel": a.approve_label,
-            "level": a.level, "expiresAt": a.expires}
+            "level": a.level, "expiresAt": a.expires, "items": read_items(a.items_file)}
     return {k: v for k, v in body.items() if v is not None}
 
 
@@ -159,6 +181,7 @@ def main() -> None:
     add.add_argument("--dedupe", default="", help=L("同一件事的固定键（比如 diet:xunji:lunch:2026-09-26）", "a stable key for the same thing"))
     add.add_argument("--source", help=L("你是谁：main 或你的 Agent id", "who you are: main or your Agent id"))
     add.add_argument("--thread", help=L("同意后在哪个线程里接着做，默认 = source", "the thread to continue in after approval (default: source)"))
+    add.add_argument("--items-kind", help=L("条目是什么（服务器按它重出用户要改的那一条），比如 tree-prune", "what the items are (how the server redoes one), e.g. tree-prune"))
     up = sub.add_parser("update", help=L("改好重新提交（同一个 id）", "resubmit a revised item (same id)"))
     up.add_argument("id")
     content_args(up, required=False)
@@ -180,6 +203,8 @@ def main() -> None:
         body = {"kind": a.kind, "source": a.source or guess_source(), "dedupe": a.dedupe, **content_body(a)}
         if a.thread:
             body["thread"] = a.thread
+        if a.items_kind:
+            body["itemsKind"] = a.items_kind
         r = call("POST", "/api/inbox", body)
         if r.get("updated"):
             print(L("（原地更新了还在等的同一件事）", "(updated the pending item with the same dedupe key)"), file=sys.stderr)

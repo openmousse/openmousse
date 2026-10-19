@@ -455,7 +455,7 @@ async def pick(kind: str, friend: str | None = None, days: int = 7, limit: int =
     if kind == "chat":
         # 主对话、Agent、项目、Zen 主题里你说的（学习台出页那种程序发的线程不算）
         with _lock, db() as conn:
-            rows = conn.execute("SELECT id, thread, role, text, ts FROM messages WHERE role='user' AND ts>=? AND status='ok' "
+            rows = conn.execute("SELECT id, thread, role, text, ts FROM messages WHERE role='user' AND julianday(ts)>=julianday(?) AND status='ok' "
                                 "AND text NOT LIKE '【%' AND (thread='main' OR thread LIKE 'sc-%' OR thread LIKE 'tp-%' "
                                 "OR thread IN (SELECT id FROM groups)) ORDER BY id DESC LIMIT ?", (since, limit)).fetchall()
         names: dict[str, str] = {}

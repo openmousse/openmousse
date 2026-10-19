@@ -8,6 +8,8 @@
   - 前缀：会话只往后补（session.py）；再带上 thinking.block_binding = drop_block（beta），万一前缀变了只丢掉对不上的思考，
     不至于每轮都 400（pi 也这么做）。
   - 对话中间的规矩用 role=system 的消息（支持的型号）；不支持的折成 <system-reminder> 文字块放进前面那条 user。
+  - 工具结果里的图（⑫b，engine/images.py 已经读回 base64）：tool_result 的 content 里放 image 块；只有图没有字的前面垫一句
+    「(see attached image)」（pi 的 anthropic-messages.ts，earendil-works/pi commit 8efd314f，MIT，见 THIRD_PARTY_NOTICES）。
   - 缓存：开头的 system 打一个断点 + 顶层自动缓存对话尾巴；主人、赛博回合隔几分钟才一句，用 1 小时（两处都写）。
   - 拒答：stop_reason = refusal；Opus 5.5 / Fable 5.1 / Opus 5 / Sonnet 5.5 默认带服务端的 fallbacks: "default"（拒答时接口自己换型号）。
     换过型号的回复：分界之前的思考、工具调用不再发回去，fallback 块本身也不留（官方说可留可删）。
@@ -118,7 +120,10 @@ def to_anthropic(messages: list[dict], caps: dict, strip_thinking: bool = False)
                 pending = []
             out.append({"role": "user", "content": blocks})
         elif role == "tool":
-            block: dict = {"type": "tool_result", "tool_use_id": _tid(m.get("id") or ""), "content": _media(m.get("content") or []) or "(empty)"}
+            media = _media(m.get("content") or [])
+            if media and all(b["type"] == "image" for b in media):  # 只有图没有字：前面垫一句（pi 的做法）
+                media.insert(0, {"type": "text", "text": "(see attached image)"})
+            block: dict = {"type": "tool_result", "tool_use_id": _tid(m.get("id") or ""), "content": media or "(empty)"}
             if m.get("error"):
                 block["is_error"] = True
             last = out[-1] if out else None
@@ -154,7 +159,9 @@ def build(model_id: str, req, p: dict, strip_thinking: bool = False) -> tuple[di
     caps = models.anthropic_caps(model_id)
     cache: dict = {"type": "ephemeral", **({"ttl": "1h"} if req.cache_ttl == "1h" else {})}
     params: dict = {"model": model_id, "max_tokens": int(req.max_tokens or DEFAULT_MAX_TOKENS),
-                    "messages": to_anthropic(req.messages, caps, strip_thinking), "cache_control": cache}
+                    "messages": to_anthropic(req.messages, caps, strip_thinking)}
+    if getattr(req, "cache_tail", True):  # 一次性的问答不缓存尾巴：资料每次都不一样，写进去也读不到，白付写入的钱
+        params["cache_control"] = cache
     betas: list[str] = []
     if req.system:
         params["system"] = [{"type": "text", "text": req.system, "cache_control": cache}]
@@ -236,6 +243,8 @@ async def stream(p: dict, model_id: str, req) -> AsyncIterator[dict]:
     """流式：{"type": "text" | "thinking", "text"}、{"type": "tool_start", "id", "name"}，最后 {"type": "done", "message"}。出错抛 EngineError。"""
     anthropic = await sdk()
     client = make_client(p)
+    if getattr(req, "quick", False):  # 备用链里还有能换的：SDK 自己不重试，交给 loop 的重试和备用链（providers.Request.quick）
+        client = client.with_options(max_retries=0)
     strip = False
     while True:
         params, betas = build(model_id, req, p, strip)
@@ -263,6 +272,7 @@ async def stream(p: dict, model_id: str, req) -> AsyncIterator[dict]:
             msg = str(getattr(e, "message", "") or e)[:240]
             if st == 400 and "signature" in msg and not strip and _has_thinking(params):
                 strip = True  # 思考签名被拒：拿掉全部思考块再试一次（官方的一次性补救；400 在任何输出之前，不会重复吐字）
+                print(f"[engine] Claude 拒了思考签名（多半是前缀变了），这一次去掉思考块重发：{msg[:160]}")
                 continue
             overloaded = "overloaded" in msg.lower() or st == 200  # HTTP 200 之后流里来的错（多半是 overloaded_error）
             raise EngineError(f"Claude HTTP {st}: {msg}", status=st, retryable=overloaded or st in (408, 409, 429, 529) or st >= 500,

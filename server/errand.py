@@ -17,6 +17,8 @@
   对主机只开 172.30.99.1:3128（Doorman）。
 - 代理：user 服务 openmousse-sentinel（sentinel_run.py 把 egress_proxy.py 挂进 mitmproxy，自己的 venv），听 172.30.99.1:3128，用令牌 sentinel 问服务端。
 - 收件箱：Doorman 扣下的请求是 kind egress 的卡（响铃），见 egress.py。
+- claw 选自己的内核（builtin，2026-10-16 第 8 项）时：代办由内核跑，容器由内核自己起、管、收（engine/sandbox.py，工具在 engine/hands.py），
+  不经 OpenClaw。setup 跳过 openclaw.json 的两步（全局工具禁用单、agents.entries.errand），其余（CA、镜像、网络、防火墙、Doorman）一样要。
 """
 from __future__ import annotations
 
@@ -218,7 +220,9 @@ def build_workspace(name: str, purpose: str) -> Path:
                                       f"# USER.md\n\n- Name: {settings.user_name or '(not set)'}\n- Timezone: {settings.tz}\n"
                                       "- Personal details an errand needs (name, address, email…) come with the task; there are none elsewhere.\n"),
                                     encoding="utf8")
-    (settings.openclaw_home / "shared/digest" / AGENT).mkdir(parents=True, exist_ok=True)
+    import claw
+    if not claw.is_builtin():  # OpenClaw 的 Agent 把日结写在这里；自己的内核写在 <data_dir>/digest/<对话>/
+        (settings.openclaw_home / "shared/digest" / AGENT).mkdir(parents=True, exist_ok=True)
     return ws
 
 
@@ -430,8 +434,11 @@ def ensure_agent() -> list[str]:
     purpose = L("替你在外面办事：查、比价、填表、发信、订东西。在沙箱里跑，提交、发送、花钱的都要你点头。",
                 "Runs errands outside for you: research, compare, fill in forms, send mail, book. Works in a sandbox; anything that submits, sends or spends waits for your OK.")
     ws = build_workspace(name, purpose)
-    with agents.edit_lock:
-        agents.write_entry(AGENT, entry(ws), f"agent-{AGENT}")
+    import claw
+    builtin = claw.is_builtin()
+    if not builtin:  # 自己的内核不经 OpenClaw：容器、工具都在内核里（engine/sandbox.py、hands.py）
+        with agents.edit_lock:
+            agents.write_entry(AGENT, entry(ws), f"agent-{AGENT}")
     settings.set_agent_workspace(AGENT, ws)
     with _lock, db() as conn:
         have = conn.execute("SELECT id FROM groups WHERE id=?", (AGENT,)).fetchone()
@@ -440,8 +447,9 @@ def ensure_agent() -> list[str]:
                          (AGENT, name, "globe", "orange", purpose, now_iso()))
     if not have:
         log_activity(L("新建 Agent「代办」（沙箱里跑，只能经 Doorman 出网）", 'Created agent "Errand" (sandboxed, online only through Doorman)'), "edit")
-    return [L(f"OpenClaw 里的 {AGENT}：沙箱 + Doorman；app 里的「{name}」：{'已有' if have else '建好了'}",
-              f"{AGENT} in OpenClaw: sandbox + Doorman; \"{name}\" in the app: {'present' if have else 'created'}")]
+    where = L("自己的内核", "the built-in engine") if builtin else "OpenClaw"
+    return [L(f"{where}里的 {AGENT}：沙箱 + Doorman；app 里的「{name}」：{'已有' if have else '建好了'}",
+              f"{AGENT} on {where}: sandbox + Doorman; \"{name}\" in the app: {'present' if have else 'created'}")]
 
 
 def check_images() -> list[str]:
@@ -453,8 +461,11 @@ def check_images() -> list[str]:
 
 
 def setup() -> int:
+    import claw
     steps = [("CA", ensure_ca), ("proxy config", ensure_proxy_config), ("images", check_images), ("network", ensure_network),
              ("firewall", ensure_firewall), ("proxy", ensure_proxy_service), ("browser policy", ensure_browser_policy), ("agent", ensure_agent)]
+    if claw.is_builtin():  # openclaw.json 的全局工具禁用单只管 OpenClaw 的 Agent
+        steps = [x for x in steps if x[0] != "browser policy"]
     for label, fn in steps:
         try:
             for line in fn():
@@ -483,7 +494,9 @@ def status() -> list[tuple[bool, str, str]]:
     out.append((fw == "active", L("主机防火墙规则", "Host firewall rules"), f"{ROOT_UNIT}.service: {fw}"))
     pu = proxy_up()
     out.append((pu, L("代理在听", "Proxy listening"), f"{GATEWAY}:{PORT}"))
-    out.append((enabled(), L("OpenClaw 里的 errand", "errand in OpenClaw"), str(settings.agent_workspaces.get(AGENT) or "-")))
+    import claw
+    out.append((enabled(), L("自己的内核里的 errand（engine/sandbox.py）", "errand on the built-in engine (engine/sandbox.py)") if claw.is_builtin()
+                else L("OpenClaw 里的 errand", "errand in OpenClaw"), str(settings.agent_workspaces.get(AGENT) or "-")))
     try:
         sec = json.loads((d / "secrets.json").read_text())
         names = sorted(sec)

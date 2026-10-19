@@ -605,7 +605,7 @@ def needs_context(thread: str) -> bool:
     """这个线程今天（逻辑日）还没说过话 → 会话是新的，要带前情。"""
     lo, _ = chat.day_bounds(chat.day_of(chat.now_iso()))
     with chat._lock, chat.db() as conn:
-        return conn.execute("SELECT 1 FROM messages WHERE thread=? AND ts>=? LIMIT 1", (thread, lo)).fetchone() is None
+        return conn.execute("SELECT 1 FROM messages WHERE thread=? AND julianday(ts)>=julianday(?) LIMIT 1", (thread, lo)).fetchone() is None
 
 
 # —— 页面与只读接口 ——

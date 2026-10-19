@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+from datetime import date, datetime, timedelta, timezone
 
 import pytest
 
@@ -75,7 +76,9 @@ def test_plain_turn_records_turn_and_steps(fake):
     assert [e["text"] for e in seen if e["type"] == "text"] == ["你", "好"]
     assert [m["role"] for m in res.messages] == ["user", "assistant"]
     t = events.turns("t-plain")[0]
-    assert t["status"] == "done" and t["steps"] == 1 and t["usage"]["in"] == 10 and t["usage"]["cost"] is None  # 价目里没有 DeepSeek
+    assert t["status"] == "done" and t["steps"] == 1 and t["usage"]["in"] == 10
+    peak, quiet = (models.cost("deepseek/deepseek-flash", {"in": 10, "out": 5}, at=datetime(2026, 10, 14, h, tzinfo=timezone.utc)) for h in (2, 12))
+    assert t["usage"]["cost"] in (peak, quiet)  # 按价目算（DeepSeek 分峰谷）
     assert [s["type"] for s in events.steps(t["id"])] == ["model"]
 
 
@@ -300,6 +303,49 @@ def test_routes_and_providers(server_json, monkeypatch):
     assert not models.anthropic_caps("claude-haiku-4-5-20251001")["adaptive"] and models.anthropic_caps("claude-opus-6")["adaptive"]
 
 
+def test_prices_for_deepseek_and_kimi_follow_their_pricing_pages():
+    """DeepSeek、Kimi 的价（官方价目页 2026-10-17 核对）：缓存命中、没命中、输出各算各的；DeepSeek 峰时（UTC 工作日 01–04、06–10 点）
+    全价，别的时候和周末半价。"""
+    m = 1_000_000
+    peak = datetime(2026, 10, 14, 2, 30, tzinfo=timezone.utc)                  # 周三 02:30 UTC：峰时
+    quiet = datetime(2026, 10, 14, 12, tzinfo=timezone.utc)                    # 周三 12:00 UTC：闲时
+    weekend = datetime(2026, 10, 17, 8, tzinfo=timezone.utc)                   # 周六 08:00 UTC：周末全天闲时
+    flash = {"in": m, "out": m, "cache_read": m}
+    assert models.cost("deepseek/deepseek-flash", flash, at=peak) == round(0.30 + 1.20 + 0.006, 6)
+    assert models.cost("deepseek/deepseek-flash", flash, at=quiet) == models.cost("deepseek/deepseek-flash", flash, at=weekend) == round((0.30 + 1.20 + 0.006) / 2, 6)
+    assert models.cost("deepseek/deepseek-v4-pro", {"in": m, "out": m, "cache_read": m}, at=peak) == round(1.32 + 3.96 + 0.044, 6)
+    assert models.cost("deepseek/deepseek-flash", {"in": m}, at=datetime(2026, 10, 14, 10, tzinfo=timezone.utc)) == 0.15  # 10:00 已经过了峰时
+    kimi = {"in": m, "out": m, "cache_read": m, "cache_write": m}
+    assert models.cost("moonshot/kimi-k3", kimi, at=peak) == models.cost("moonshot/kimi-k3", kimi, at=quiet) == 3.00 + 15.00 + 0.30 + 3.00
+    assert models.cost("moonshot/kimi-k2.6", kimi) == round(0.95 + 4.00 + 0.16 + 0.95, 6)  # K2 那张表 10/19 核对：没有缓存写入价，按没命中算
+    assert models.cost("moonshot/kimi-unlisted", kimi) is None  # 没核对过的不算钱
+    from engine import usage
+    old = usage.priced("moonshot/kimi-k2.6", {"in": m, "out": m, "cost": None}, "2026-10-18T09:00:00+00:00")  # 以前记成没价的：按那天的价补上
+    assert old["cost"] == round(0.95 + 4.00, 6) and usage.billing_of("moonshot/kimi-k2.6", old) == "metered"
+
+
+def test_prices_change_on_the_day_the_pricing_page_says(monkeypatch):
+    """Gemini 4 Argon（Google 价目页 2026-10-19 核对）：2026-11-30 以前每百万 token 输入 $2、输出 $10（思考算输出）、缓存读 $0.10，
+    12-01 起翻倍。哪天起按 UTC 的日子算；PRICES 里没有、只写了哪天起的，那天以前不算钱。"""
+    m = 1_000_000
+    u = {"in": m, "out": m, "cache_read": m}
+    last_old = datetime(2026, 11, 30, 23, 59, tzinfo=timezone.utc)
+    first_new = datetime(2026, 12, 1, 0, 0, tzinfo=timezone.utc)
+    assert models.cost("google/gemini-4-argon", u, at=last_old) == round(2.00 + 10.00 + 0.10, 6)
+    assert models.cost("google/gemini-4-argon", u, at=first_new) == round(4.00 + 20.00 + 0.20, 6)
+    assert models.price("google/gemini-4-argon", datetime(2026, 12, 1, 7, tzinfo=timezone(timedelta(hours=8)))) == (2.00, 10.00, 0.10, 2.00)  # = UTC 11-30 23:00
+    assert models.price("google/gemini-4-argon", datetime(2027, 6, 1, tzinfo=timezone.utc)) == (4.00, 20.00, 0.20, 4.00)
+    assert models.price("google/gemini-3.5-flash-lite") is None and models.cost("google/gemini-3.5-flash-lite", u) is None
+    for ref, changes in models.PRICES_FROM.items():
+        days = [d for d, _ in changes]
+        assert days == sorted(days) and all(len(p) == 4 for _, p in changes), ref
+        assert all(date.fromisoformat(d) for d in days), ref
+    monkeypatch.setitem(models.PRICES_FROM, "fake/later", (("2026-11-01", (1.0, 2.0, 0.0, 1.0)), ("2027-01-01", (3.0, 6.0, 0.0, 3.0))))
+    assert models.cost("fake/later", u, at=datetime(2026, 10, 31, 12, tzinfo=timezone.utc)) is None
+    assert models.cost("fake/later", u, at=datetime(2026, 11, 1, tzinfo=timezone.utc)) == 3.0
+    assert models.cost("fake/later", u, at=datetime(2027, 1, 1, tzinfo=timezone.utc)) == 9.0
+
+
 def test_llmjson_uses_engine_then_falls_back(server_json, fake, monkeypatch):
     import llmjson
     server_json({"engine": {"model": "deepseek/deepseek-flash", "use": {"json": True}}})
@@ -336,10 +382,10 @@ def test_card_agent_and_doorman_backends(server_json):
 def test_card_agent_think_via_engine(server_json, fake):
     import cardagent
     server_json({"engine": {"model": "deepseek/deepseek-flash", "use": {"card": True}}, "card": {"sentinel": False}})
-    fake([{"text": '{"reply": "Leo is free on Friday evening.", "used": ["cal"], "ask_owner": null, "declined": []}'}])
+    fake([{"text": '{"reply": "Mia is free on Friday evening.", "used": ["cal"], "ask_owner": null, "declined": []}'}])
     out, via = run(cardagent.think({"name": "Ann", "tier": "friend"}, [{"id": "cal", "label": "calendar", "text": "Fri evening free"}], [],
-                                   "Is Leo free Friday?", "en"))
-    assert via == "builtin:deepseek/deepseek-flash" and out["reply"].startswith("Leo is free")
+                                   "Is Mia free Friday?", "en"))
+    assert via == "builtin:deepseek/deepseek-flash" and out["reply"].startswith("Mia is free")
 
 
 def test_claw_builtin_skeleton(server_json, fake, monkeypatch):
@@ -347,7 +393,8 @@ def test_claw_builtin_skeleton(server_json, fake, monkeypatch):
     server_json({"claw": {"kind": "builtin"}, "engine": {"model": "deepseek/deepseek-flash", "models": ["deepseek/deepseek-flash", "moonshot/kimi-k3"]}})
     assert claw.is_builtin() and not claw.is_openclaw()
     assert claw.model() == "deepseek/deepseek-flash" and claw.models() == ["deepseek/deepseek-flash", "moonshot/kimi-k3"]
-    assert claw.session_mode()[0] == "history" and claw.caps()["modelSwitch"] and not claw.caps()["steer"]
+    assert claw.session_mode()[0] == "history" and claw.caps()["modelSwitch"] and claw.caps()["steer"]  # 第 3 项起能插话
+    assert claw.caps()["tasks"] and claw.caps()["agentWorkspaces"]  # 第 5 项的后台任务、Agent 的工作区（10/19 起 app 的任务页、删 Agent 的说明靠它）
     f = fake([{"chunks": ["Hel", "lo"]}])
     parts: list = []
     run(claw.stream([{"role": "user", "content": "earlier"}, {"role": "assistant", "content": "ok"}, {"role": "user", "content": "hi"}],

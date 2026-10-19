@@ -1259,9 +1259,11 @@ def cards_for(thread: str, lo: str, hi: str) -> list[dict]:
     """给 /api/chat/cards：这个对话这一天发起的会议卡 + 纪要通知下面的纪要卡（kind minutes：待办、确认 / 查看会议；确认过的是回执）。"""
     with _lock, mdb() as conn:
         ag = agent_rows(conn)
-        out = [meeting_card(r, ag) for r in conn.execute("SELECT * FROM meetings WHERE from_thread=? AND created_at>=? AND created_at<? ORDER BY created_at",
-                                                         (thread, lo, hi))]
-        notes = conn.execute("SELECT id, ts, meta FROM messages WHERE thread=? AND origin='meeting' AND ts>=? AND ts<? ORDER BY id", (thread, lo, hi)).fetchall()
+        # 按真时间比（时区改过偏移就不一样，见 chat.day_bounds）
+        out = [meeting_card(r, ag) for r in conn.execute("SELECT * FROM meetings WHERE from_thread=? AND julianday(created_at)>=julianday(?) "
+                                                         "AND julianday(created_at)<julianday(?) ORDER BY julianday(created_at)", (thread, lo, hi))]
+        notes = conn.execute("SELECT id, ts, meta FROM messages WHERE thread=? AND origin='meeting' AND julianday(ts)>=julianday(?) "
+                             "AND julianday(ts)<julianday(?) ORDER BY id", (thread, lo, hi)).fetchall()
         for n in notes:
             meta = loads(n["meta"], {}) or {}
             mid, rnd = meta.get("meeting"), meta.get("round")

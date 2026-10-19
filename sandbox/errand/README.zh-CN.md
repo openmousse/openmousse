@@ -58,6 +58,15 @@ python3 errand.py secret rm BOOKING_PASSWORD
 
 代办在请求里写 `MOUSSE_SECRET_BOOKING_PASSWORD`，Doorman 只在发往 `www.example.com` 时换成真值（发往别处直接挡）；对方把真值原样回显的话，回来时换回占位符。带凭证的写请求一律扣下等你点头。代办的 AGENTS.md 里「能用的凭证」一节会自动列出名字和网站。
 
+## 在自己的内核上
+
+claw 选 OpenMousse 自己的内核（`"claw": {"kind": "builtin"}`）时，代办完全不经 OpenClaw：内核自己起、管、收它的容器（`server/engine/sandbox.py`），只给它沙箱里的工具（`server/engine/hands.py`）：`exec`（bash，有超时、输出截头尾，点了停连它起的进程一起收）、`process`（后台命令）、`read` / `write` / `edit` / `ls`（沙箱里的文件）、`browser`（无界面的 Chromium，走 CDP：打开、带 ref 的页面大纲、点、填、选、按键、多页）。主机上的工具（OpenMousse 的命令行工具、记忆检索、定时任务、后台任务、skills）一个都不给。别的照上面：一样的镜像、一样不做 NAT 的 `mousse-errand` 网络、一样的主机防火墙、一样的 Doorman。
+
+- 容器：`mousse-sbx-<实例>-errand`（shell）和 `…-errand-browser`（用到浏览器才起），标签 `org.openmousse.sandbox.*`。加固：一个 capability 都没有、`no-new-privileges`、只读根 + tmpfs（`/tmp`、草稿区 `/workspace`、家目录）、内存 / CPU / 进程数上限、不发布端口、不挂主机的任何东西。
+- 起容器之前先查：网络在、不做 NAT、不是 `host` / `bridge`；是 `mousse-errand` 就要防火墙单元在跑；Doorman 在听；镜像建好了。哪一样不对就不起（fail closed）。
+- 闲了 `engine.sandbox.idle_minutes`（默认 120）分钟收掉（`/workspace` 跟着没）；同时最多 `max_containers` 个。重启后认回在跑的、收掉别的。`GET /api/engine/sandbox` 看，`POST /api/engine/sandbox/reset {"agent": "errand"}` 收掉。
+- 内核上 `errand.py setup` 跳过 `openclaw.json` 那两步，别的一样。
+
 ## 查、看、回滚
 
 - `python3 errand.py status`：每一样 ✓ / ✗

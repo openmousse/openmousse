@@ -23,7 +23,8 @@
   出错、超时一律扣下。
 - 扣下 = 收件箱卡（kind egress，响铃，Agent 列不出、读不到）：在办什么、发到哪、带了什么。「放行这一次」= 这一个请求（方法 + 网址 + 内容
   一模一样）grant_minutes 分钟内可以发，代理正在等的马上放；「不放行」/「改一下」= 代理回 403 带着你的话，代办照着改。同时最多
-  MAX_PENDING 张没点的，再多的直接挡（「先处理前面的」）。
+  MAX_PENDING 张没点的，再多的直接挡（「先处理前面的」）。claw 是自己的内核时，点了以后还给发请求的那个 Agent 的对话说一声
+  （tell_agent：放行了就原样再发，没放行就别换个办法再试）。
 - 每个请求记 egress_log（留 14 天）；挡下的、扣下的另记活动记录。
 
 server.json（都可以不写）：
@@ -48,7 +49,7 @@ import engine
 import inbox
 from chat import _lock, db, log_activity, now_iso
 from config import TZ, raw, settings
-from i18n import L
+from i18n import L, LS
 
 router = APIRouter()
 
@@ -117,6 +118,8 @@ def edb() -> sqlite3.Connection:
         decided_at TEXT, grant_until TEXT)""")
     conn.execute("CREATE INDEX IF NOT EXISTS egress_holds_sha ON egress_holds(sha, status)")
     conn.execute("CREATE INDEX IF NOT EXISTS egress_holds_inbox ON egress_holds(inbox_id)")
+    if "thread" not in {r[1] for r in conn.execute("PRAGMA table_info(egress_holds)")}:  # 请求是哪个对话里发的（内核的网页工具才知道）
+        conn.execute("ALTER TABLE egress_holds ADD COLUMN thread TEXT")
     conn.execute("""CREATE TABLE IF NOT EXISTS egress_verdicts (key TEXT PRIMARY KEY, verdict TEXT NOT NULL, reason TEXT NOT NULL DEFAULT '',
         created_at TEXT NOT NULL, expires_at TEXT NOT NULL)""")
     conn.execute("""CREATE TABLE IF NOT EXISTS egress_log (id INTEGER PRIMARY KEY AUTOINCREMENT, ts TEXT NOT NULL, agent TEXT NOT NULL,
@@ -221,14 +224,28 @@ def looks_encoded(path: str, host: str = "") -> bool:
     return False
 
 
-def errand_task() -> str:
-    """你交代的这件事：代办对话里最近一条你发的（role user），或主对话转过去的（role auto、以【主对话转来】开头）。
-    它自己的回复、系统的【自动触发】都不算。"""
+def agent_of(client: str) -> str:
+    """发这个请求的是哪个 Agent 的沙箱（⑫ 起普通 Agent 也有沙箱：按容器的地址认）；认不出来 = 代办（以前只有它）。"""
+    try:
+        from engine import sandbox
+        return sandbox.agent_by_ip(client) or AGENT
+    except Exception:  # noqa: BLE001
+        return AGENT
+
+
+def name_of(agent: str) -> str | None:
+    """卡上、给模型看的「谁」：代办 → None（照旧写「代办」）；别的 Agent（⑫）→ 它的名字（用到时才查）。"""
+    return None if agent == AGENT else inbox.source_name(agent, inbox.names())
+
+
+def errand_task(thread: str = AGENT) -> str:
+    """你交代的这件事：代办对话里（thread：⑫ 起别的 Agent 的对话也用）最近一条你发的（role user），或主对话转过去的
+    （role auto、以【主对话转来】开头）。它自己的回复、系统的【自动触发】都不算。"""
     import chat
     try:
         with _lock, db() as conn:
             r = conn.execute("SELECT text FROM messages WHERE thread=? AND (role='user' OR (role='auto' AND text LIKE ?)) "
-                             "ORDER BY id DESC LIMIT 1", (AGENT, chat.PREFIX_RELAY + "%")).fetchone()
+                             "ORDER BY id DESC LIMIT 1", (thread, chat.PREFIX_RELAY + "%")).fetchone()
     except sqlite3.Error:
         return ""
     if not r:
@@ -263,8 +280,9 @@ JUDGE_PER_HOUR = 60
 _judged: list[float] = []
 
 
-async def judge(req: CheckIn, task: str) -> tuple[str, str]:
-    """→ (allow / hold, 一句理由)。纯模型、零工具；出错按 hold。一小时最多 JUDGE_PER_HOUR 次（网页疯狂发请求刷不爆额度），超了按 hold。"""
+async def judge(req: CheckIn, task: str, agent_name: str | None = None) -> tuple[str, str]:
+    """→ (allow / hold, 一句理由)。纯模型、零工具；出错按 hold。一小时最多 JUDGE_PER_HOUR 次（网页疯狂发请求刷不爆额度），超了按 hold。
+    agent_name：发请求的是谁（不写 = 代办；⑫ 的网页工具、普通 Agent 的沙箱写它自己的名字）。"""
     import cardagent
     now = time.time()
     _judged[:] = [t for t in _judged if now - t < 3600]
@@ -273,7 +291,7 @@ async def judge(req: CheckIn, task: str) -> tuple[str, str]:
     _judged.append(now)
     c = cfg()
     owner = settings.user_name or L("用户", "the user")
-    prompt = JUDGE_PROMPT.format(agent=L("代办", "Errand"), owner=owner, lang=L("Chinese (简体中文)", "English"))
+    prompt = JUDGE_PROMPT.format(agent=agent_name or L("代办", "Errand"), owner=owner, lang=L("Chinese (简体中文)", "English"))
     inp = {"errand": task or "", "request": {k: v for k, v in summary_of(req).items() if k != "headers"},
            "fetch": {k: v for k, v in req.headers.items() if k.startswith("sec-fetch")}}
     timeout = float(c.get("timeout") or 30)
@@ -331,15 +349,22 @@ def granted(sha: str) -> str | None:
     return None
 
 
+def waiting(sha: str) -> dict | None:
+    """这个请求已经扣下、还在等你点头（⑫ 的网页工具用：同一个请求不再请模型看一遍）→ {"hold", "inbox"}。"""
+    with _lock, edb() as conn:
+        r = conn.execute("SELECT id, inbox_id FROM egress_holds WHERE sha=? AND status='pending'", (sha,)).fetchone()
+    return {"hold": r["id"], "inbox": r["inbox_id"]} if r else None
+
+
 def pending_count() -> int:
     with _lock, edb() as conn:
         return conn.execute("SELECT COUNT(*) FROM egress_holds WHERE status='pending'").fetchone()[0]
 
 
-def card_of(req: CheckIn, reason: str, private: list[str], task: str) -> dict:
-    """收件箱卡：一件事一句话，细节点开。"""
+def card_of(req: CheckIn, reason: str, private: list[str], task: str, name: str | None = None) -> dict:
+    """收件箱卡：一件事一句话，细节点开。name：发请求的是谁（不写 = 代办）。"""
     host = req.host
-    title = L(f"代办要{verb_of(req)}", f"Errand wants to {verb_of(req)}")
+    title = L(f"{name}要{verb_of(req)}", f"{name} wants to {verb_of(req)}") if name else L(f"代办要{verb_of(req)}", f"Errand wants to {verb_of(req)}")
     why = (L(f"在办：{task[:60]}", f"Working on: {task[:60]}") if task else L("代办在办的事", "An errand")) + (f"\n{reason}" if reason else "")
     if req.bodyType == "email":  # 一封信：会改什么 = 发给谁、主题、附件；细节 = 整封信
         changes = [L("收件人：", "To: ") + (field_of(req, "To") or "-")[:80]]
@@ -379,8 +404,12 @@ def card_of(req: CheckIn, reason: str, private: list[str], task: str) -> dict:
     return {"title": title, "why": why, "changes": changes[:4], "detail": "\n".join(lines)}
 
 
-async def make_hold(req: CheckIn, reason: str, private: list[str]) -> dict:
-    """扣下：同一个请求还在等的就接着等那张；不然建一行 + 一张收件箱卡。"""
+async def make_hold(req: CheckIn, reason: str, private: list[str], agent: str | None = None, task: str | None = None,
+                    thread: str | None = None) -> dict:
+    """扣下：同一个请求还在等的就接着等那张；不然建一行 + 一张收件箱卡。agent：谁的请求（不写 = 按发请求的容器认，认不出来是代办；
+    ⑫ 的网页工具写它自己），task：它在办的事（不写 = 照它的对话找），thread：在哪个对话里发的（⑫ 的网页工具写；点了以后的那句发到这里，
+    不写 = 那个 Agent 自己的对话，见 tell_agent）。"""
+    agent = agent or agent_of(req.client)
     with _lock, edb() as conn:
         r = conn.execute("SELECT id, inbox_id FROM egress_holds WHERE sha=? AND status='pending'", (req.sha,)).fetchone()
     if r:
@@ -388,14 +417,14 @@ async def make_hold(req: CheckIn, reason: str, private: list[str]) -> dict:
     if pending_count() >= MAX_PENDING:
         return {"decision": "deny", "reason": L(f"已经有 {MAX_PENDING} 个请求在等你点头，先处理前面的",
                                                 f"{MAX_PENDING} requests are already waiting for your OK; deal with those first")}
-    task = errand_task()
-    card = card_of(req, reason, private, task)
+    task = errand_task(agent) if task is None else task
+    card = card_of(req, reason, private, task, name_of(agent))
     hid = f"eh-{uuid.uuid4().hex[:10]}"
     with _lock, edb() as conn:
-        conn.execute("""INSERT INTO egress_holds(id, agent, sha, method, host, path, summary, reason, status, created_at)
-            VALUES(?,?,?,?,?,?,?,?,'pending',?)""", (hid, AGENT, req.sha, req.method, req.host, req.path[:500],
-                                                     json.dumps(summary_of(req), ensure_ascii=False), reason, now_iso()))
-    res = await inbox.add(inbox.ItemIn(kind="egress", title=card["title"], source=AGENT, thread=THREAD, why=card["why"],
+        conn.execute("""INSERT INTO egress_holds(id, agent, sha, method, host, path, summary, reason, status, created_at, thread)
+            VALUES(?,?,?,?,?,?,?,?,'pending',?,?)""", (hid, agent, req.sha, req.method, req.host, req.path[:500],
+                                                       json.dumps(summary_of(req), ensure_ascii=False), reason, now_iso(), thread or None))
+    res = await inbox.add(inbox.ItemIn(kind="egress", title=card["title"], source=agent, thread=THREAD, why=card["why"],
                                        changes=card["changes"], detail=card["detail"], approveLabel=L("放行这一次", "Let it through"),
                                        dedupe=f"egress:{req.sha[:24]}", expiresAt=iso_in(12 * 3600)))
     if not isinstance(res, dict) or not res.get("ok"):  # 409：你拒过一模一样的请求
@@ -415,6 +444,7 @@ async def decide(req: CheckIn) -> dict:
     req.method, req.host = method, host
     path = req.path.split("?", 1)[0]
     c = cfg()
+    who = agent_of(req.client)  # 谁的沙箱发的（⑫）：在办的事、卡上的名字按它
     if suffix_in(host, DROP_HOSTS, path):
         return {"decision": "drop", "reason": L("追踪、统计或浏览器后台请求", "Tracking, analytics or browser background traffic")}
     if suffix_in(host, tuple(c.get("block_hosts") or ())) or host == own_public_host():
@@ -430,7 +460,7 @@ async def decide(req: CheckIn) -> dict:
         if looks_encoded(req.path, host):
             key = f"r:{host}:{path_shape(path)}"
             hit = cached(key)
-            verdict, reason = hit if hit else await judge(req, errand_task())
+            verdict, reason = hit if hit else await judge(req, errand_task(who), name_of(who))
             if verdict == "allow":
                 if not hit:
                     remember(key, verdict, reason)
@@ -453,7 +483,7 @@ async def decide(req: CheckIn) -> dict:
     hit = cached(key)
     if hit and hit[0] == "allow":
         return {"decision": "allow", "reason": hit[1]}
-    verdict, reason = await judge(req, errand_task())
+    verdict, reason = await judge(req, errand_task(who), name_of(who))
     if verdict == "allow":
         remember(key, verdict, reason)
         return {"decision": "allow", "reason": reason}
@@ -470,7 +500,7 @@ def log_decision(req: CheckIn, out: dict) -> None:
     d = out.get("decision", "")
     with _lock, edb() as conn:
         conn.execute("INSERT INTO egress_log(ts, agent, method, host, path, decision, reason, hold) VALUES(?,?,?,?,?,?,?,?)",
-                     (now_iso(), AGENT, req.method, req.host, req.path.split("?", 1)[0][:300], d, str(out.get("reason") or "")[:200],
+                     (now_iso(), agent_of(req.client), req.method, req.host, req.path.split("?", 1)[0][:300], d, str(out.get("reason") or "")[:200],
                       out.get("hold")))
         if int(time.time()) % 50 == 0:  # 偶尔清一次旧的
             conn.execute("DELETE FROM egress_log WHERE ts < ?", (iso_in(-LOG_DAYS * 86400),))
@@ -516,16 +546,18 @@ def hold_status(hid: str, request: Request):
 # —— 收件箱：你点了之后 ————————————————————————————————————————————————————————
 
 async def on_decided(it: dict, action: str) -> dict:
-    """inbox.HOOKS["egress"]：放行 / 不放行 / 改一下。都不往任何对话里发话（silent）：代理那边正等着，它会把结果交给代办。"""
+    """inbox.HOOKS["egress"]：放行 / 不放行 / 改一下。收件箱自己不往对话里发话（silent）：代理那边正等着，它会把结果交给代办。
+    claw 是自己的内核时另外给发请求的那个 Agent 的对话说一声（tell_agent），它才知道能重发了、或者别再试。"""
+    cols = "id, status, agent, method, host, path, thread"
     with _lock, edb() as conn:
-        r = conn.execute("SELECT id, status FROM egress_holds WHERE inbox_id=?", (it["id"],)).fetchone()
+        r = conn.execute(f"SELECT {cols} FROM egress_holds WHERE inbox_id=?", (it["id"],)).fetchone()  # noqa: S608 — 列名是常量
         if not r:
             # 卡片刚建好、推送刚发出去，make_hold 还没来得及把卡号写回扣留记录（你点得比它快）：按卡片的去重键（请求的指纹）找回来
             d = conn.execute("SELECT dedupe FROM inbox WHERE id=?", (it["id"],)).fetchone()
             sha = (d["dedupe"] if d else "").removeprefix("egress:")
             if sha:
-                r = conn.execute("SELECT id, status FROM egress_holds WHERE sha LIKE ? AND status='pending' ORDER BY created_at DESC LIMIT 1",
-                                 (sha + "%",)).fetchone()
+                r = conn.execute(f"SELECT {cols} FROM egress_holds WHERE sha LIKE ? AND status='pending' "  # noqa: S608
+                                 "ORDER BY created_at DESC LIMIT 1", (sha + "%",)).fetchone()
                 if r:
                     conn.execute("UPDATE egress_holds SET inbox_id=? WHERE id=?", (it["id"], r["id"]))
     if not r:
@@ -536,20 +568,63 @@ async def on_decided(it: dict, action: str) -> dict:
         with _lock, edb() as conn:
             conn.execute("UPDATE egress_holds SET status='approved', decided_at=?, grant_until=?, note=? WHERE id=?",
                          (ts, iso_in(grant_minutes() * 60), note, r["id"]))
+        await tell_agent(r, it, action, note)
         return {"silent": True, "result": L("放行了：代办那边接着发", "Let through: the errand carries on")}
     if action == "revise":
         with _lock, edb() as conn:
             conn.execute("UPDATE egress_holds SET status='rejected', decided_at=?, note=? WHERE id=?",
                          (ts, L(f"你说要改：{note}", f"You asked for a change: {note}"), r["id"]))
+        await tell_agent(r, it, action, note)
         return {"silent": True, "status": "done", "result": L(f"没发，告诉代办：{note}", f"Not sent; told the errand: {note}")}
     if action == "reject":
         with _lock, edb() as conn:
             conn.execute("UPDATE egress_holds SET status='rejected', decided_at=?, note=? WHERE id=?",
                          (ts, note or L("你没放行", "You didn't let it through"), r["id"]))
+        await tell_agent(r, it, action, note)
         return {"silent": True, "result": L("没放行", "Not let through")}
     with _lock, edb() as conn:  # withdraw 之类：结束
         conn.execute("UPDATE egress_holds SET status='expired', decided_at=? WHERE id=? AND status='pending'", (ts, r["id"]))
     return {"silent": True}
+
+
+async def tell_agent(r: sqlite3.Row, it: dict, action: str, note: str) -> None:
+    """claw 是自己的内核时：你点了以后，给发请求的那个 Agent 的对话说一声（origin auto 的【收件箱】消息，和内核工具卡「做完了」
+    那句一个写法）。放行 = 放了什么、grant_minutes 分钟内原样再发就行；不放行 / 改一下 = 别再发、别换个办法绕过去（要改的照你写的改）。
+    发到扣下时记的那个对话（⑫ 的网页工具：工具当场就回了「扣下了」，放行后要它自己再调一次）；没记的（沙箱里经代理发的）发到那个 Agent
+    自己的对话，放行那句另说一声：代理当时还在等的话，那次请求已经直接发出去了，别再发第二遍。对外接口的会话（api:…）交回那个会话。
+    OpenClaw 那条路照旧什么都不说（代办在它的 Docker 沙箱里，代理把结果直接交给它）。"""
+    import claw
+    if not claw.is_builtin():
+        return
+    thread = r["thread"] or r["agent"] or "main"  # Agent 自己的对话就是它的 id
+    t, i, gm = it["title"], it["id"], grant_minutes()
+    what = f"{r['method']} {r['host']}{str(r['path']).split('?', 1)[0][:80]}"
+    n = " ".join(note.split()).rstrip("。.")[:200]
+    if action == "approve" and r["thread"]:
+        msg = LS(f"已放行「{t}」（{i}）：{what}。{gm} 分钟内原样再调一次就行（一模一样的输入），不用再等用户点头。",
+                 f'Let through "{t}" ({i}): {what}. Call again with exactly the same input within {gm} minutes; no need to wait for the user.')
+    elif action == "approve":
+        msg = LS(f"已放行「{t}」（{i}）：{what}。Doorman 当时还在等的话，那次请求已经直接发出去了（命令拿到了结果），就别再发；"
+                 f"拿到的是「还在等用户点头」的 403，就在 {gm} 分钟内原样再发一次（方法、网址、内容一模一样）。",
+                 f'Let through "{t}" ({i}): {what}. If Doorman was still holding it, that request has already gone out (your command got its '
+                 f"result): don't send it again. If you got the 403 saying it was held for the user's OK, send exactly the same request "
+                 f"again within {gm} minutes (same method, URL and body).")
+    elif action == "revise":
+        msg = LS(f"「{t}」（{i}）用户没放行，要改一下：{n}。照他说的改好再发（会重新过 Doorman），别换个办法绕过去。",
+                 f'The user did not let "{t}" ({i}) through and wants a change: {n}. Redo it as they say (it goes through Doorman '
+                 "again); don't work around it.")
+    else:
+        msg = LS(f"「{t}」（{i}）用户没放行" + (f"（{n}）" if n else "") + "。别再发，也别换个办法做，除非他又让你做。",
+                 f'The user did not let "{t}" ({i}) through' + (f" ({n})" if n else "") + ". Don't send it again or do it another way "
+                 "unless they ask again.")
+    try:
+        if thread.startswith("api:"):  # 对外接口的会话（engine/openai_api.py）：app 里没有这个对话，下一句带给它
+            from engine import openai_api
+            await openai_api.tell(thread, i, msg)
+        else:
+            inbox.kick(thread, inbox.MARK + msg)
+    except Exception as e:  # noqa: BLE001 — 说不上只是 Agent 少知道一句，卡照样定了
+        print(f"[egress] {i} 的结果没告诉 {thread}：{type(e).__name__}: {str(e)[:120]}")
 
 
 def needs_note(iid: str) -> bool:

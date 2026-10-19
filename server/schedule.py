@@ -704,7 +704,8 @@ def announce(log_id: int, run: chat.Run | None, actor: str) -> dict | None:
 def changes_for(thread: str, lo: str, hi: str) -> list[dict]:
     """这个线程这一天（lo–hi）里 Agent 在回复中改的日程（给 /api/chat/cards）。"""
     with _lock, sdb() as conn:
-        rows = conn.execute("SELECT * FROM schedule_log WHERE thread=? AND at>=? AND at<? ORDER BY id", (thread, lo, hi)).fetchall()
+        rows = conn.execute("SELECT * FROM schedule_log WHERE thread=? AND julianday(at)>=julianday(?) AND julianday(at)<julianday(?) ORDER BY id",
+                            (thread, lo, hi)).fetchall()
     return [change_json(r) for r in rows]
 
 

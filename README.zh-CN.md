@@ -30,6 +30,7 @@
 - 发给你在 OpenClaw 里配置的模型服务商的消息；
 - 经 Expo 和 Apple 的推送通知（标题和一段简短预览）；
 - 语音发给 `server.json` 里配置的转写服务（默认 OpenAI；把 `transcribe_url` 指向你自己的 Whisper 服务就不出门）；
+- 只有你给自带内核打开了按意思搜（`engine.recall.embeddings`，默认关）：记忆文件、日结、对话和世界树叶子的文字发给你选的向量服务（Gemini、OpenAI，或者本机的 Ollama，那样就不出门）；
 - 如果你把 Claude.ai / ChatGPT / Gemini / Notion 接到世界树，它们会通过你暴露的地址读写它。
 
 详见[隐私政策](https://openmousse.ai/privacy.html)和 [SECURITY.md](SECURITY.md)。

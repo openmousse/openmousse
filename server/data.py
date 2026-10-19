@@ -17,7 +17,7 @@
 | 活动记录 | app 的 activity_log + Gateway 审计（`audit.activity.list`，只有元数据）+ 定时任务的运行记录 |
 | 基础档案 | L0 `~/.openclaw/shared/profile/USER.md`：改一条就写回，旧版本存 `grava/profile-history.md`（不在检索路径里） |
 | 记忆 | L1 各 agent 工作区的 `MEMORY.md`：忘记 = 删掉这一条，活动记录只留一行、不含内容 |
-| 世界树（我 → 世界树） | workspace 的 `scripts/memory_tree.py`（可选数据源 tree）：真身是 Obsidian 库 `世界树/` 里一条一篇的笔记，索引 `grava/tree_index.db`；确认 / 忘记 / 挪枝都经它做，活动记录由它写、不含内容（见 memtree.py） |
+| 世界树（我 → 世界树） | workspace 的 `scripts/memory_tree.py`（可选数据源 tree）：真身是 Obsidian 库 `世界树/` 里一条一篇的笔记，索引 `grava/tree_index.db`；没有它就用开源版世界树（`~/.mousse-tree`，treelib.py：tree.db 或笔记文件夹，有枝、规则和每周修剪，修剪的卡在 treeprune.py / grava.db `tree_prune`）；确认 / 忘记 / 挪枝都经它做，活动记录由它写、不含内容（见 memtree.py） |
 | 连接（我 → 连接） | 服务器上的实测：密钥的名字在不在、缓存文件的时间、grava.db 里的健康同步时间和推送登记、systemd user 单元的状态、`openclaw channels status`（2 分钟缓存）；整份缓存 60 秒，不返回任何密钥或配置的值（见 connectors.py） |
 | 思考（想法、主题、想完了的笔记） | 库的收件箱里一条一篇的 Markdown 笔记（server.json `think.vault`，没配放 `<data_dir>/think/`），主题和草稿在 grava.db `think_topics`，想完了写进库的 笔记/ 或 写作/，要记的经 workspace 的 `memory_tree.py` 进世界树（见 think.py） |
 | 冥想时间 | grava.db `think_focus` + `think_focus_held`（期间 push.send_push 不推、记下来，结束时给小结；见 think.py） |
@@ -144,7 +144,7 @@ async def openclaw_cli(*args: str, timeout: float = 30) -> Any:
     return json.loads(out)
 
 
-def london(ms: float | None) -> datetime | None:
+def from_ms(ms: float | None) -> datetime | None:
     return datetime.fromtimestamp(ms / 1000, TZ) if ms else None
 
 
@@ -320,6 +320,8 @@ def create_group(body: GroupIn):
         conn.execute("INSERT INTO groups(id, name, icon, color, purpose, created_at) VALUES(?,?,?,?,?,?)", (gid, name, icon, color, body.purpose.strip(), ts))
         conn.execute("INSERT INTO threads(id, model, updated_at) VALUES(?,?,?) ON CONFLICT(id) DO UPDATE SET model=excluded.model", (gid, body.model, ts))
     log_activity(L(f"新建 Agent「{name}」", f'Created agent "{name}"'), "edit")
+    import treelib  # 开源版世界树：给它长一根小枝（agents 填它的 id）；作者那份世界树、没装世界树的什么都不做，出错也不影响建 Agent
+    treelib.agent_created(gid, name, body.purpose.strip())
     if template == "study":
         import studyapp  # 延迟导入：studyapp 依赖本模块
         studyapp.adopt_template(gid)
@@ -400,13 +402,14 @@ def edit_group(gid: str, body: GroupPatch) -> dict:
 
 @router.delete("/api/groups/{gid}")
 def delete_group(gid: str):
-    """删 Agent：OpenClaw 里的 agent 条目去掉，workspace 整个移到 archive/（记忆不删），groups / threads 行删掉；对话记录、日志、卡片留着当历史。"""
+    """删 Agent：OpenClaw 里的 agent 条目去掉，workspace 整个移到 archive/（记忆不删），groups / threads 行删掉；对话记录、日志、卡片留着当历史。
+    builtin（自己的内核）：不碰 openclaw.json，有自己工作区的照样归档、去掉路由（agents.archive；app 照 caps.agentWorkspaces 这么说）。"""
     with _lock, ddb() as conn:
         r = conn.execute("SELECT name FROM groups WHERE id=?", (gid,)).fetchone()
     if not r:
         raise HTTPException(404, L("没有这个 Agent", "No such agent"))
     try:
-        archived = agents.remove(gid) if claw.is_openclaw() else None
+        archived = agents.remove(gid) if claw.is_openclaw() else agents.archive(gid) if claw.is_builtin() else None
     except agents.ProvisionError as e:
         raise HTTPException(502, str(e)) from e
     with _lock, ddb() as conn:
@@ -637,7 +640,7 @@ def tz_names() -> dict[str, str]:
 
 
 def cron_words(expr: str, hm: str, tz: str | None) -> str:
-    """把常见的 cron 表达式说成人话；认不出来就原样给。hm 是按下次运行算出的伦敦时间，停用的任务没有。"""
+    """把常见的 cron 表达式说成人话；认不出来就原样给。hm 是按下次运行算出的（server.json 时区的）时间，停用的任务没有。"""
     f = expr.split()
     if len(f) != 5:
         return expr or L("定时", "Scheduled")
@@ -666,15 +669,15 @@ async def cron_jobs() -> list[dict]:
     out = []
     for j in data.get("jobs", []):
         st = j.get("state") or {}
-        nxt = london(st.get("nextRunAtMs")) if j.get("enabled") else None
+        nxt = from_ms(st.get("nextRunAtMs")) if j.get("enabled") else None
         name = j.get("displayName") or j.get("name") or j["id"]
         payload = j.get("payload") or {}
         last_status = st.get("lastRunStatus") or st.get("lastStatus")
         out.append({"id": j["id"], "source": "cron", "title": titles.get(slug(j.get("name") or name)) or titles.get(slug(name)) or name,
                     "rawName": name, "agent": agent_label(j.get("agentId")), "modelId": payload.get("model"),
-                    "when": when(nxt) if nxt else "", "repeat": repeat_of(j.get("schedule") or {}, nxt or london(st.get("nextRunAtMs"))),
+                    "when": when(nxt) if nxt else "", "repeat": repeat_of(j.get("schedule") or {}, nxt or from_ms(st.get("nextRunAtMs"))),
                     "enabled": bool(j.get("enabled")), "toggleable": True, "nextAt": st.get("nextRunAtMs") or 0,
-                    "last": ({"status": last_status, "when": when(london(st.get("lastRunAtMs")))} if st.get("lastRunAtMs") else None)})
+                    "last": ({"status": last_status, "when": when(from_ms(st.get("lastRunAtMs")))} if st.get("lastRunAtMs") else None)})
     return out
 
 
@@ -764,7 +767,7 @@ async def approvals():
         created = e["created"]
         out.append({"id": e["id"], "kind": e["kind"], "action": short(e["command"] or a.get("kind") or L("一个待审批的动作", "An action awaiting approval"), 80),
                     "detail": e["reason"], "fields": e["fields"], "groupId": None,
-                    "requestedAt": when(london(created)) if isinstance(created, (int, float)) else ""})
+                    "requestedAt": when(from_ms(created)) if isinstance(created, (int, float)) else ""})
     return {"ok": True, "approvals": out}
 
 
@@ -786,7 +789,7 @@ async def decide(aid: str, body: Decision):
     return {"ok": True}
 
 
-# —— 任务：OpenClaw 子会话 ————————————————————————————————————————
+# —— 任务：OpenClaw 子会话；claw 选 builtin 时是自己内核的后台任务（engine/ledger.py、engine/tasks.py，第 5 项）——————
 
 # 状态值是给 app 比较的枚举，不翻译（app 按语言显示）
 TASK_STATUS = {"completed": "完成", "succeeded": "完成", "failed": "失败", "timed_out": "失败", "lost": "失败",
@@ -801,7 +804,7 @@ def origin_of(key: str) -> str:
 
 
 def hm(ms: float | None) -> str:
-    dt = london(ms)
+    dt = from_ms(ms)
     return dt.strftime("%H:%M") if dt else ""
 
 
@@ -818,7 +821,11 @@ def ledger_task(r: dict) -> dict:
 
 
 async def task_rows() -> list[dict]:
-    """子会话任务。先读 OpenClaw 的任务台账（SQLite，几毫秒，见 cards.py）；读不到再走 tasks.list（起 node 进程，约 2 秒，缓存 10 秒）。"""
+    """子会话任务。先读 OpenClaw 的任务台账（SQLite，几毫秒，见 cards.py）；读不到再走 tasks.list（起 node 进程，约 2 秒，缓存 10 秒）。
+    builtin：自己内核的台账（engine/ledger.py，形状照 OpenClaw 的台账，ledger_task 两边通用）。"""
+    if claw.is_builtin():
+        from engine import ledger as engine_ledger  # 延迟导入：内核只在 builtin 时用
+        return [ledger_task(r) for r in await asyncio.to_thread(engine_ledger.tasks, limit=60)]
     if not claw.is_openclaw():  # 后台任务是 OpenClaw 的子会话；别的 claw 没有这本台账
         return []
     rows = await asyncio.to_thread(cards.ledger, "1", (), 60)
@@ -835,7 +842,7 @@ def task_summary(t: dict, detail: dict | None) -> dict:
     start, end = t.get("startedAt") or t.get("createdAt"), t.get("endedAt")
     minutes = max(0, round(((end if end and status != "进行中" else time.time() * 1000) - start) / 60000)) if start else None
     return {"id": t["id"], "title": t.get("title") or L("子会话任务", "Sub-session task"), "status": status, "origin": origin_of(t.get("ownerKey") or t.get("sessionKey") or ""),
-            "sessionKey": t.get("childSessionKey") or "", "modelId": model, "createdAt": when(london(t.get("createdAt"))),
+            "sessionKey": t.get("childSessionKey") or "", "modelId": model, "createdAt": when(from_ms(t.get("createdAt"))),
             "startedAt": hm(t.get("startedAt")), "finishedAt": hm(t.get("endedAt")), "summary": t.get("progressSummary") or t.get("terminalSummary") or "",
             "error": t.get("error"), "toolUseCount": t.get("toolUseCount") or 0, "lastTool": t.get("lastToolName"),
             "tokens": info.get("totalTokens") or 0, "costUsd": info.get("estimatedCostUsd"), "updatedAt": t.get("updatedAt") or 0,
@@ -858,6 +865,9 @@ def brief_of(text: str) -> str:
 
 
 async def task_detail(t: dict) -> dict:
+    if claw.is_builtin():  # 自己内核的任务：子会话和事件表就在本机（engine/ledger.detail），不用起 node 进程读 chat.history
+        from engine import ledger as engine_ledger
+        return await asyncio.to_thread(engine_ledger.detail, t["id"])
     key = t.get("childSessionKey")
     done = (t.get("execution") or {}).get("state") == "finished"
     ck = (key, lang())
@@ -936,7 +946,11 @@ async def cancel_task(tid: str):
     t = next((x for x in await task_rows() if x["id"] == tid), None)
     if not t:
         raise HTTPException(404, L("找不到这个任务", "Task not found"))
-    await gateway_call("tasks.cancel", {"taskId": tid}, timeout=30)
+    if claw.is_builtin():  # 自己内核的：停下子 Agent（连它派的子任务一起），已经做的留着
+        from engine import tasks as engine_tasks
+        await engine_tasks.stop(tid, by="user")
+    else:
+        await gateway_call("tasks.cancel", {"taskId": tid}, timeout=30)
     forget_cache("tasks")
     log_activity(L(f"取消了任务「{t.get('title')}」", f'Cancelled task "{t.get("title")}"'), "denied")
     return {"ok": True}
@@ -952,6 +966,16 @@ async def revise_task(tid: str, body: Revise):
     t = next((x for x in await task_rows() if x["id"] == tid), None)
     if not t or not t.get("childSessionKey"):
         raise HTTPException(404, L("找不到这个任务的子会话", "Can't find this task's sub-session"))
+    if claw.is_builtin():  # 自己内核的：在同一个子会话里接着做一轮（engine/tasks.followup → app 线程 task:<id>，回完 cards.after_run 静默推）
+        from engine import tasks as engine_tasks
+        try:
+            engine_tasks.followup(tid, body.note.strip(), by="user")
+        except engine_tasks.ToolFailure as e:
+            raise HTTPException(409, str(e)) from e
+        cards.forget(tid)
+        forget_cache("tasks")
+        log_activity(L(f"给任务「{t.get('title')}」发了修改意见", f'Sent revision notes for task "{t.get("title")}"'), "edit")
+        return {"ok": True}
     d = await task_detail(t)
     info = d.get("info") or {}
     model = f"{info['modelProvider']}/{info['model']}" if info.get("model") and info.get("modelProvider") else t.get("model")
@@ -963,6 +987,21 @@ async def revise_task(tid: str, body: Revise):
     forget_cache("tasks")
     log_activity(L(f"给任务「{t.get('title')}」发了修改意见", f'Sent revision notes for task "{t.get("title")}"'), "edit")
     return {"ok": True}
+
+
+@router.post("/api/tasks/{tid}/retry")
+async def retry_task(tid: str):
+    """重派（只有自己的内核有）：被重启打断的、没做成的、到点停的、停掉的，照原来的说明再派一个新的（算今天的额度，超了一样要你点头）。"""
+    if not claw.is_builtin():
+        raise HTTPException(404, L("只有自己的内核能重派", "Only the built-in engine can retry a task"))
+    from engine import tasks as engine_tasks
+    try:
+        row = await engine_tasks.retry_by_user(tid)
+    except engine_tasks.ToolFailure as e:
+        raise HTTPException(409, str(e)) from e
+    forget_cache("tasks")
+    log_activity(L(f"重派了任务「{row['label']}」", f'Retried task "{row["label"]}"'), "edit")
+    return {"ok": True, "id": row["id"]}
 
 
 # —— 活动记录 ————————————————————————————————————————————————————
@@ -1007,7 +1046,7 @@ async def activity(limit: int = 80):
             tool_text = L(f"，用了工具 {'、'.join(counts)}", f", used tools: {', '.join(counts)}") if used else ""
             ok = e.get("status") == "succeeded"
             who = agent_label(e.get("agentId"))
-            items.append((e["occurredAt"] / 1000, {"id": e["eventId"], "time": when(london(e["occurredAt"])), "actor": f"{who} · {where}" if where else who,
+            items.append((e["occurredAt"] / 1000, {"id": e["eventId"], "time": when(from_ms(e["occurredAt"])), "actor": f"{who} · {where}" if where else who,
                                                    "text": (L("回复了一次", "Replied") if ok else L("一次回复失败了", "A reply failed")) + tool_text,
                                                    "kind": "reply" if ok else "failed"}))
     # 3) 定时任务的运行结果
@@ -1022,7 +1061,7 @@ async def activity(limit: int = 80):
                 text = L(f"「{title}」跑完了", f'"{title}" finished')
             else:
                 text = L(f"「{title}」没跑成：{short(t.get('error') or '失败', 60)}", f'"{title}" failed: {short(t.get("error") or "unknown error", 60)}')
-            items.append((t["endedAt"] / 1000, {"id": t["id"], "time": when(london(t["endedAt"])), "actor": L("定时任务", "Scheduled job"),
+            items.append((t["endedAt"] / 1000, {"id": t["id"], "time": when(from_ms(t["endedAt"])), "actor": L("定时任务", "Scheduled job"),
                                                 "text": text, "kind": "cron" if ok else "failed"}))
     items.sort(key=lambda x: x[0], reverse=True)
     return {"ok": True, "activity": [x for _, x in items[:limit]]}

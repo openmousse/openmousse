@@ -2,8 +2,9 @@
 
 server.json 的 claw 段（没有这一段 = OpenClaw，和以前完全一样）：
   kind      "openclaw"（默认）| "openai"：任何有 OpenAI 兼容对话接口（POST <url>/chat/completions，SSE 流式）的 claw 或 agent
-            | "builtin"：OpenMousse 自己的内核（engine/，模型和密钥在 server.json 的 engine 段）。内核第 0 步的骨架：
-              只会对话和停止（history 模式，零工具），工具、关卡、备料在后面几步
+            | "builtin"：OpenMousse 自己的内核（engine/，模型和密钥在 server.json 的 engine 段）。app 的每个对话每个逻辑日一条会话
+              （engine/owner.py），带这个 Agent 的工具和关卡（engine/tools.py：撤得回直接做，撤不回进收件箱），
+              开头备好规矩文件、档案、记忆、世界树、日结（engine/context.py），太长了压缩（engine/compact.py）
   name      界面上怎么叫它（默认 OpenClaw / "your claw"）
   url       openai：接口的根，一直写到 /v1，比如 http://127.0.0.1:8642/v1
   token     openai：Bearer 令牌；也可以写 token_env = 环境变量名（先看进程环境，再看 claw 段的 env_file，再看 server.json 的 env_file）
@@ -25,6 +26,9 @@ OpenClaw 以外的 claw 能做的（caps()，/api/health 带给 app，做不到�
   对话、停止、排队（回复进行中发的回完合成一轮）、附件、推送、看板 / 目标 / 日程 / Zen / 收藏 / 世界树（都是 OpenMousse 自己的）；
   Agent = 同一个 claw 的一个单独会话，每天第一句话前面带上它的名字和职责（见 role_context）。
   做不到：插话（steer）、Agent 各自独立的工作区和 skills、后台任务 / 执行审批 / 定时任务 / 模型计费这些读 OpenClaw 的页面。
+  builtin（自己的内核）另外能插话（第 3 项，chat.steer_engine）、显示「在想 / 在做」（chat.note_engine）、有后台任务（第 5 项：任务页、
+  项目卡上「在跑的任务」读内核的台账 engine/ledger.py）、Agent 有自己的工作区（删 Agent 时工作区和记忆归档，agents.archive）：
+  caps 的 steer / tasks / agentWorkspaces 回 true（app 的任务页、删 Agent 的说明靠它）。
 """
 from __future__ import annotations
 
@@ -110,7 +114,7 @@ def session_cfg() -> dict:
 
 def session_mode() -> tuple[str, str, int]:
     """(mode, name, turns)。mode：history（默认）| header | body | user；name = 请求头名（header）或请求体字段名（body）。
-    builtin 一律 history（会话树接主对话是后面几步的事）。"""
+    builtin 照旧报 history（caps 的 rewind 跟着它）：它的会话在内核里（engine/owner.py），app 的对话不走这里。"""
     s = {} if is_builtin() else session_cfg()
     mode = str(s.get("mode") or "history").lower()
     if mode not in ("history", "header", "body", "user"):
@@ -132,12 +136,15 @@ def day_key(key: str, day: str) -> str:
 
 
 def env_value(name_: str) -> str:
-    """环境变量的值：先看进程环境，再看 server.json 的 env_file（每次读，改了不用重启；没写就是 settings.env_file），KEY=VALUE 一行一个。
-    读不到 = 空。不打印、不记日志。"""
+    """环境变量的值：先看进程环境，再看 app 里存的 secrets.env（secretstore.py），再看 claw 段的 env_file，再看 server.json 的 env_file
+    （每次读，改了不用重启；没写就是 settings.env_file），KEY=VALUE 一行一个。读不到 = 空。不打印、不记日志。"""
     if not name_:
         return ""
     if os.environ.get(name_):
         return os.environ[name_]
+    import secretstore
+    if v := secretstore.get(name_):
+        return v
     files = [Path(str(cfg()["env_file"])).expanduser()] if cfg().get("env_file") else []  # 比如 Hermes 的 ~/.hermes/.env
     files.append(Path(str(raw().get("env_file"))).expanduser() if raw().get("env_file") else settings.env_file)
     for env_file in files:
@@ -172,8 +179,9 @@ def caps() -> dict:
         return {"steer": True, "agentWorkspaces": True, "tasks": True, "approvals": True, "cron": True, "billing": True,
                 "channels": True, "rewind": True, "modelSwitch": True}
     mode, _, _ = session_mode()
-    return {"steer": False, "agentWorkspaces": False, "tasks": False, "approvals": False, "cron": False, "billing": False,
-            "channels": False, "rewind": mode == "history", "modelSwitch": len(models()) > 1}  # builtin 第 0 步也只有这些
+    own = is_builtin()  # 自己的内核：插话、后台任务（任务页读内核的台账）、Agent 的工作区（删的时候归档），见文件开头
+    return {"steer": own, "agentWorkspaces": own, "tasks": own, "approvals": False, "cron": False, "billing": False,
+            "channels": False, "rewind": mode == "history", "modelSwitch": len(models()) > 1}
 
 
 def info() -> dict:
@@ -187,7 +195,8 @@ def history(conn: sqlite3.Connection, thread: str, before_id: int, since: str, t
     用户那边发给模型的原文（gw_text：带了附件抽出的字、前情）优先；回复里没拿到的、停了的照样带（模型知道上一轮怎么了）；
     自动触发的（role auto）算用户说的。"""
     rows = conn.execute(
-        "SELECT role, text, gw_text FROM messages WHERE thread=? AND id<? AND ts>=? AND role IN ('user','auto','grava') ORDER BY id DESC LIMIT ?",
+        "SELECT role, text, gw_text FROM messages WHERE thread=? AND id<? AND julianday(ts)>=julianday(?) AND role IN ('user','auto','grava') "
+        "ORDER BY id DESC LIMIT ?",
         (thread, before_id, since, turns * 2)).fetchall()
     out: list[dict] = []
     for r in reversed(rows):
@@ -219,7 +228,7 @@ def request_body(messages: list[dict], key: str, model_: str | None, stream: boo
 
 async def stream(messages: list[dict], key: str, model_: str | None, on_delta: Callable[[str], None], timeout: float = 600) -> None:
     """发给 claw、流式把回复一段段交给 on_delta。接口不支持流式、直接回整段 JSON 的也认。出错抛 ClawError / httpx.HTTPError。
-    builtin：交给自己的内核跑一轮主人回合（engine/owner.py）。"""
+    builtin：一问一答交给自己的内核（engine/owner.stream，零工具、不存会话）；app 的对话不走这里，见 chat.claw_stream。"""
     if is_builtin():
         from engine import EngineError, owner
         try:
@@ -276,6 +285,12 @@ async def probe(timeout: float = 5) -> tuple[bool, str]:
     if is_builtin():
         from engine import models as engine_models
         ref = model()
+        if engine_models.subscription(ref) == "chatgpt":  # 默认模型是用户自己的 ChatGPT 套餐（内核第 11b 项）
+            return (True, f"built-in engine · {ref} (your ChatGPT plan)") if engine_models.subscription_ready(ref) else \
+                (False, "your ChatGPT plan isn't connected (Settings → Continue with ChatGPT)")
+        if engine_models.subscription(ref):  # 默认模型就是本机用户自己登录的 Claude Code（内核第 11 项）
+            return (True, f"built-in engine · {ref} (your own Claude Code)") if engine_models.subscription_ready(ref) else \
+                (False, "Claude Code isn't installed or logged in on this computer")
         if not engine_models.valid_ref(ref):
             return False, "engine.model is not set in server.json"
         return (True, f"built-in engine · {ref}") if engine_models.has_key(ref) else (False, f"no API key for {ref}")

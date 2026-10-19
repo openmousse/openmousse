@@ -1,0 +1,260 @@
+Third-party notices
+===================
+
+OpenMousse is licensed under the GNU Affero General Public License v3.0 (see LICENSE).
+Some parts are adapted from other open-source projects under their own licenses,
+listed below with the files they appear in. Their copyright notices and license
+texts are kept here as those licenses require.
+
+
+Hermes Agent (NousResearch/hermes-agent)
+----------------------------------------
+
+Source:  https://github.com/NousResearch/hermes-agent
+Commit:  848fc0ad8be766b9dc10fe42bd80b5fc2d45d95c
+Used in: server/engine/tools.py — wrap_untrusted(), adapted from
+         agent/tool_dispatch_helpers.py (_maybe_wrap_untrusted, _neutralize_delimiters)
+         server/evals/fakemodel.py — the fake model server, adapted from
+         tests/fakes/fake_llm_provider.py and tests/fakes/providers/anthropic_messages.py
+         server/engine/session.py — SUMMARY_PREFIX, the framing of a compaction summary,
+         adapted from agent/context_compressor.py (SUMMARY_PREFIX)
+         server/engine/compact.py — summarizer rules (the conversation is data, credentials
+         become [REDACTED], language, dated past tense, the open request), the summary
+         budget and the ineffective-compaction hold, adapted from agent/context_compressor.py
+         (_build_summary_prompt, _SECTION_INSTRUCTIONS, the summary budget constants, anti-thrash)
+         server/engine/recall.py — CJK detection, query splitting with AND / OR / NOT,
+         the any-word retry, LIKE escaping and relative time bounds, adapted from
+         hermes_state_search.py (_CJK_RANGES, _has_lone_cjk_run, _LIKE_TOKEN_RE,
+         _compile_like_boolean_query, _or_relaxed_query), hermes_state_common.py
+         (escape_like) and tools/session_search_tool.py (_RELATIVE_BOUND_RE, _parse_iso_bound)
+         server/engine/when.py — schedule parsing (durations, clock times, day phrases, the
+         "every" / "in" forms), the catch-up window and the DST fold handling for wall-clock
+         schedules, adapted from cron/jobs.py (parse_duration, _parse_clock_time,
+         _natural_every_to_cron, parse_schedule, _compute_grace_seconds, compute_next_run)
+         server/engine/jobs.py — advance-before-run, the late / catch-up / missed one-shot
+         policy and the scheduled-run hint (deliver by replying, [SILENT], no new jobs from a
+         job run), adapted from cron/jobs.py (advance_next_run, get_due_jobs and helpers) and
+         cron/scheduler_prompt.py (_CRON_HINT)
+         server/engine/unattended.py — the silence markers, adapted from
+         gateway/response_filters.py (LIVE_GATEWAY_SILENT_MARKERS, _strip_edge_silence_punctuation,
+         is_intentional_silence_response, is_autonomous_silence_response); the inactivity
+         watchdog and the delivery mirror, after cron/scheduler_liveness.py and gateway/mirror.py
+         server/engine/sandbox.py (read at commit 219c6d2ac1cbecaea84c822f292c1e325dee06a0) —
+         the container hardening flags and tmpfs mounts, removing a half-created container
+         when docker create fails, and the proxy environment for the sandbox (both letter
+         cases, NO_PROXY for loopback only), adapted from tools/environments/docker.py
+         (_BASE_SECURITY_ARGS, _build_security_args, _docker_run) and
+         tools/environments/docker_egress.py (_egress_proxy_args_for_docker)
+         server/engine/host_exec.py (read at commit f6e272304e7224da88ca6e70e1c6ce4a67154f8e) —
+         the dangerous-command patterns (the Unix ones: recursive deletes, world-writable
+         permissions, disk formatting, download-and-execute, credential uploads, shell and
+         system config writes, destructive git, …) and the command normalization before
+         matching (ANSI escapes, NUL bytes, line continuations, quote and backslash tricks,
+         $IFS, lowercasing that keeps flags), adapted from tools/approval_detection.py
+         (HARDLINE_PATTERNS, DANGEROUS_PATTERNS, _normalize_command_for_detection,
+         _lower_preserving_flags) and tools/ansi_strip.py (strip_ansi)
+
+MIT License
+
+Copyright (c) 2025 Nous Research
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+
+
+Hermes Agent (NousResearch/hermes-agent), later commit
+-------------------------------------------------------
+
+Source:  https://github.com/NousResearch/hermes-agent
+Commit:  e4635a16a6367f63003feb9c0447c5e6375fbd04
+Used in: server/engine/acp.py — the ACP permission options (allow once / allow for this
+         session / deny) and their ACP kinds, and reading the answer (only a selected,
+         offered option counts), adapted from acp_adapter/permissions.py
+         (_OPTION_ID_TO_HERMES, _build_permission_options, _map_outcome_to_hermes); one
+         messageId per streamed reply and failing the tool calls still open when a turn
+         ends, adapted from acp_adapter/events.py (AssistantMessageIdAllocator,
+         flush_open_tool_calls) and acp_adapter/tools.py (TOOL_KIND_MAP, build_tool_abandoned)
+
+MIT License
+
+Copyright (c) 2025 Nous Research
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+
+
+Hermes Agent (NousResearch/hermes-agent), later commit
+------------------------------------------------------
+
+Source:  https://github.com/NousResearch/hermes-agent
+Commit:  cf71b1aa3059ff95b68ea3e19471ad69afa690b4
+Used in: server/engine/skill_write.py — the content check for skills the agent writes itself: a subset
+         of the threat patterns (exfiltration, prompt injection, hiding things from the user, secrets,
+         destructive commands), the invisible-character table and the line-by-line scan, adapted
+         from tools/skills_guard.py (THREAT_PATTERNS, _INVISIBLE_CHAR_NAMES, scan_file)
+         server/engine/mcp_client.py — the minimal environment given to stdio MCP servers, after
+         tools/mcp_tool_config.py (_SAFE_ENV_KEYS, _build_safe_env)
+         server/engine/provider_openai.py — the single-space reasoning_content pad for providers
+         that want it on every assistant message, after agent/message_sanitization.py
+         (apply_reasoning_content_policy)
+
+MIT License
+
+Copyright (c) 2025 Nous Research
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+
+
+Hermes Agent (NousResearch/hermes-agent), later commit
+------------------------------------------------------
+
+Source:  https://github.com/NousResearch/hermes-agent
+Commit:  17c691fd7b95c605639c41a37aeb86be576ac7a5
+Used in: server/engine/todo.py — the to-do list: replacing the whole list or merging items by
+         id, item validation (statuses, a content cap with a truncation marker), keeping the
+         last of duplicate ids, moving the in-progress item ahead of earlier pending ones, and
+         the list of open items carried into a fresh context, adapted from tools/todo_tool.py
+         (TodoStore.write, _merge, _validate, _cap_content, _dedupe_by_id, _normalize_order,
+         format_for_injection)
+
+MIT License
+
+Copyright (c) 2025 Nous Research
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+
+
+pi (earendil-works/pi)
+----------------------
+
+Source:  https://github.com/earendil-works/pi
+Commit:  8efd314fa3d3232ce197d8d7a6a5660530b9d83e
+Used in: server/engine/images.py — the image limits and the resize strategy (2000 x 2000 pixels,
+         4.5 MB of base64, PNG first, then JPEG at quality 80 / 85 / 70 / 55 / 40, then
+         scaling by 0.75 and trying again), the coordinate note for a resized image and the
+         message when it can't be made small enough, adapted from
+         packages/coding-agent/src/utils/image-resize-core.ts (resizeImageInProcess),
+         image-resize.ts (formatDimensionNote) and image-process.ts
+         server/engine/provider_openai.py and server/engine/provider_anthropic.py — moving
+         tool-result images into a user message right after the tool results (with an
+         optional bridging assistant message) and the "(see attached image)" placeholder,
+         adapted from packages/ai/src/api/openai-completions.ts (convertMessages) and
+         packages/ai/src/api/anthropic-messages.ts
+
+MIT License
+
+Copyright (c) 2025 Mario Zechner
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+
+
+OpenClaw (openclaw/openclaw)
+----------------------------
+
+Source:  https://github.com/openclaw/openclaw
+Commit:  6552b30f56da4568cd4ba464bfd6cef4ac4f62f1
+Used in: server/engine/semantic.py — mmr(), the MMR re-ranking of hybrid search results
+         (scores scaled to 0–1, each candidate's running highest token-Jaccard similarity
+         to what is already picked, ties broken by the raw score), adapted from
+         extensions/memory-core/src/memory/mmr.ts (applyMMRToHybridResults) and
+         extensions/memory-core/src/memory/tokenize.ts (jaccardSimilarity)
+
+MIT License
+
+Copyright (c) 2026 OpenClaw Foundation
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.

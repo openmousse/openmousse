@@ -635,7 +635,8 @@ def changes_for(thread: str, lo: str, hi: str) -> list[dict]:
     with _lock, pdb() as conn:
         rows = conn.execute("SELECT v.page, v.version, v.note, v.caps, v.thread, v.message_id, v.created_at, p.title, p.summary, p.agent, "
                             "p.version AS latest, p.deleted_at FROM page_versions v JOIN pages p ON p.id=v.page "
-                            "WHERE v.thread=? AND v.message_id IS NOT NULL AND v.created_at>=? AND v.created_at<? ORDER BY v.created_at",
+                            "WHERE v.thread=? AND v.message_id IS NOT NULL AND julianday(v.created_at)>=julianday(?) "
+                            "AND julianday(v.created_at)<julianday(?) ORDER BY julianday(v.created_at)",
                             (thread, lo, hi)).fetchall()
         out = []
         for r in rows:

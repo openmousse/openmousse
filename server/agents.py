@@ -11,6 +11,7 @@
     手写的 IDENTITY.md、agent 自己写进去的内容都留着。先备份到 backup_dir。
   - 模型 → openclaw.json 的 agents.entries.<id>.model（set_model），和第 2 步同一套备份 + 校验 + 失败恢复。
 删除（remove）反过来：条目去掉、agent_workspaces 去掉、workspace 整个移到 <openclaw_home>/archive/（记忆永远不删）。
+claw 选 builtin 时删 Agent 走 archive：不碰 openclaw.json，路由去掉、有自己工作区的照样归档（app 的删除说明照 caps.agentWorkspaces 说）。
 """
 from __future__ import annotations
 
@@ -502,5 +503,23 @@ def remove(agent_id: str) -> Path | None:
     archive = settings.openclaw_home / "archive"
     archive.mkdir(parents=True, exist_ok=True)
     dst = archive / f"workspace-{agent_id}-{datetime.now().strftime('%Y%m%d-%H%M%S')}"
+    shutil.move(str(ws), str(dst))
+    return dst
+
+
+def archive(agent_id: str) -> Path | None:
+    """claw 选 builtin（自己的内核）时删 Agent：openclaw.json 一个字不碰（可能根本没装 OpenClaw），只去掉路由（agent_workspaces），
+    它的工作区（连记忆）整个移到 archive/，同 remove，app 照 caps.agentWorkspaces 说的「工作区和记忆移入归档」。返回归档路径；
+    没有自己工作区的（builtin 里新建的 Agent 只在 groups 表里）→ None。指到主工作区的不动（配错了也不能把主对话的搬走）。"""
+    if agent_id == "main":
+        raise ProvisionError(L("main 不能删", "main can't be deleted"))
+    ws = settings.agent_workspaces.get(agent_id) or workspace_path(agent_id)
+    if agent_id in settings.agent_workspaces:
+        settings.set_agent_workspace(agent_id, None)
+    if not ws.is_dir() or ws.resolve() == settings.workspace.resolve():
+        return None
+    folder = settings.openclaw_home / "archive"
+    folder.mkdir(parents=True, exist_ok=True)
+    dst = folder / f"workspace-{agent_id}-{datetime.now().strftime('%Y%m%d-%H%M%S')}"
     shutil.move(str(ws), str(dst))
     return dst

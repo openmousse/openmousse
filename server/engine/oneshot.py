@@ -2,6 +2,8 @@
 
 替代 OpenClaw 的 llm-task，多了一样：能换模型（llm-task 不许覆盖模型）。名片 Agent（含 A2A）、Doorman、llmjson.ask 按
 server.json 的 engine.use 改走这里；出错时照旧退回原来的路（engine.fallback）。
+备用链（第 13 步，engine/fallback.py）：engine.use.<这件事> 写成列表就用它自己的链，否则按模型找（engine.fallbacks）；外人回合的字
+没人在看，流到一半断了也能换。链走完了还是不行才抛错，调用方（llmjson、名片 Agent、Doorman）这时才退回原来的路。
 
 JSON 只卡最外层（是对象 / 数组、need 那个键是字符串、required 的键都在）：和 llm-task 那时一样，严格校验整个 schema
 会因为模型多带一个键就整句作废。回的不像样就再问一次。
@@ -14,7 +16,7 @@ import re
 import time
 from typing import Any
 
-from . import models
+from . import fallback, models
 from .errors import EngineError
 from .loop import Spec, run_turn
 from .session import MemorySession, user
@@ -52,17 +54,19 @@ def check(v: Any, need: str | None, required: tuple[str, ...] | list[str]) -> No
 async def ask_json(prompt: str, input_: Any, *, model: str, purpose: str = "json", need: str | None = None,
                    required: tuple[str, ...] | list[str] = (), timeout: float = 90, effort: str | None = None,
                    max_tokens: int | None = None, conversation: str | None = None, origin: str | None = None) -> tuple[Any, str]:
-    """→ (JSON, "builtin:<模型>")。timeout 是这一问的总时间（含再问一次）。失败抛 EngineError。"""
+    """→ (JSON, "builtin:<真正回答的模型>")。timeout 是这一问的总时间（含再问一次）。失败抛 EngineError。"""
     spec = Spec(kind="outsider", model=model, system=prompt.rstrip() + JSON_RULE, conversation=conversation or purpose,
-                origin=origin or purpose, effort=effort or models.effort(purpose), max_tokens=max_tokens, json=True, max_steps=1)
+                origin=origin or purpose, effort=effort or models.effort(purpose), max_tokens=max_tokens, json=True, max_steps=1,
+                cache_tail=False, fallbacks=models.purpose_chain(purpose, model))
     text = "INPUT_JSON:\n" + json.dumps(input_, ensure_ascii=False, indent=1)
     deadline = time.monotonic() + timeout
     last: EngineError | None = None
+    spare = len(fallback.chain(spec)) > 1
     for _attempt in (1, 2):
         left = deadline - time.monotonic()
         if left < 3:
             break
-        spec.timeout = left
+        spec.timeout = left / 2 if spare else left  # 有备用链：一个模型最多等剩下的一半，不回话也来得及换下一个
         try:
             res = await asyncio.wait_for(run_turn(spec, MemorySession(), user(text)), left)
         except asyncio.TimeoutError as e:
@@ -78,7 +82,7 @@ async def ask_json(prompt: str, input_: Any, *, model: str, purpose: str = "json
         try:
             v = parse(res.text)
             check(v, need, required)
-            return v, f"builtin:{model}"
+            return v, f"builtin:{res.model}"
         except EngineError as e:
             last = e
     raise last or EngineError(f"{model} ran out of time", kind="timeout", retryable=True)

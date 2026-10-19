@@ -56,7 +56,8 @@ def test_outer_cancel_mid_tool_leaves_a_valid_session(fake):
     run(go())
     msgs = DbSession.get(s.id).messages()
     assert [m["role"] for m in msgs] == ["user", "assistant", "tool", "tool"]  # 两个调用都有结果，下一轮发得出去
-    assert all("Not run" in text_of(m) for m in msgs[2:])
+    # 跑到一半被取消的那个不说「没做」（可能做了一半，第 3 项改的），没轮到的才是「没做」
+    assert text_of(msgs[2]) == loop.CANCELLED_MID_CALL and "Not run" in text_of(msgs[3])
 
 
 def test_outer_cancel_mid_stream_keeps_the_partial_reply(fake):
@@ -314,3 +315,12 @@ def test_unknown_provider_settings_default_safely():
     p = models.provider("deepseek")
     assert p["reasoning_replay"] == "all" and p["images"] is False
     assert models.provider("ollama")["require_finish"] is False
+
+
+def test_claude_one_shot_caches_only_the_rules(claude):
+    claude["responses"] = [(200, sse([msg_start(), *block(0, {"type": "text", "text": ""}), delta(0, {"type": "text_delta", "text": '{"verdict": "pass"}'}),
+                                      stop(0), *finish("end_turn")], named=True))]
+    v, _ = run(engine.ask_json("judge it", {"draft": "hi"}, model="anthropic/claude-opus-5-5", need="verdict"))
+    body = claude["seen"][0]
+    assert v == {"verdict": "pass"} and "cache_control" not in body  # 资料每次都不一样：不缓存尾巴
+    assert body["system"][0]["cache_control"] == {"type": "ephemeral"}  # 开头的规矩照样缓存

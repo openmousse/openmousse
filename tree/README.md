@@ -10,7 +10,7 @@ No LLM calls, so no model cost of its own; the model cost is whatever your platf
 
 ## The problem it solves
 
-Every AI platform has its own "memory", none of them talk to each other, and you cannot take it with you. The memory tree turns that around: **memory is the trunk, platforms are branches**. Whatever any platform learns about you goes back to the tree; before any platform speaks, it reads the tree.
+Every AI platform has its own "memory", none of them talk to each other, and you cannot take it with you. The memory tree turns that around: one tree that every platform reads and grows. **The trunk is your profile, branches are areas of your life (and one per agent), leaves are individual memories.** Whatever any platform learns about you, or about the people around you, goes back to the tree; before any platform speaks, it reads the tree and its rules. Once a week the tree is pruned, and only with your OK.
 
 ## Install (Python 3.11+)
 
@@ -42,7 +42,8 @@ systemctl --user restart mousse-tree
 
 On a new install: `mousse-tree init --storage markdown --notes ~/vault/Memory`.
 
-- Each note's properties (front matter) hold `id`, `kind`, `source`, `observed_at`, `status`, `tags`, `supersedes`, `created_at` and `updated_at`; the body is the sentence. The file name is the date plus the start of the sentence.
+- Each note's properties (front matter) hold `id`, `kind`, `source`, `observed_at`, `status`, `branch` (`"[[People]]"`; `"[[Profile]]"` = straight on the trunk), `tags`, `supersedes`, `created_at` and `updated_at`, and optionally (0.4) `quote`, `platform`, `thread`, `message` (where it was said) and `cues` ("useful when"); the body is the sentence. The file name is the date plus the start of the sentence. Properties you add yourself in Obsidian are kept as they are whenever the tree rewrites a note (confirming, superseding, moving it).
+- Branches are notes too, one per branch in `branches/` (see below), and the rules live in `rules.md` at the folder root; neither counts as a memory.
 - The folder root holds only current memories. Superseded ones move to `Archive/` (`归档/` in Chinese), and anything you move there stops counting. Forgetting turns the note into an empty shell (properties only, renamed to its id) in `Archive/`, drops it from the index and logs one line without the content. If a sync service (Obsidian Sync, iCloud, git…) carries the folder, its version history may still hold old copies for a while.
 - The notes are the source of truth. SQLite (`index.db`) is only the search index plus the activity log, rebuilt from the notes whenever the folder changes; the service looks every 5 seconds, so a note you edit on your phone shows up in the next recall. `mousse-tree rebuild` rebuilds it by hand.
 - Notes you create by hand without properties count too (id from the path, source `owner`). A note with broken properties is skipped while everything else keeps working, and the admin page lists the problem (so does `mousse-tree check`). Symlinks and hidden files are ignored, so the MCP tools never reach outside the folder.
@@ -80,17 +81,28 @@ One token per platform, so the server knows who wrote what without asking the mo
 
 Then add one line to each platform's custom instructions, and switch off the platform's built-in memory:
 
-> Call profile and recall at the start of a conversation to know me; when I state a new fact, preference, decision or update about myself, call remember.
+> At the start of a conversation, call profile to read my profile and the memory tree's rules, and follow them. When I share something new about myself, the people around me or a standing commitment, recall first: if it's already there, supersede the old entry; otherwise remember it on the right branch.
 
 ## Tools
 
 | Tool | Purpose |
 |---|---|
-| `profile()` | The whole profile, read once at the start |
-| `recall(query, limit)` | Keyword search (FTS5 trigram, works for Chinese and English) |
-| `remember(text, kind, tags, observed_at, supersedes)` | Write one entry; kind = fact / preference / decision / event |
+| `profile()` | The profile, the tree's rules and the list of branches, read once at the start |
+| `recall(query, limit)` | Keyword search (FTS5 trigram, works for Chinese and English); pending entries are included and marked |
+| `remember(text, kind, tags, observed_at, supersedes, branch, quote, conversation, cues)` | Write one entry; kind = fact / preference / decision / event; branch is optional (see below); quote, conversation and cues are optional (see below) |
 | `recent(days)` | What each platform wrote in the last few days |
-| `forget(memory_id)` | Forget: clears the text, keeps id and date |
+| `forget(memory_id, also_profile)` | Forget: clears the text, keeps id and date; lists profile lines that came from it (see below) |
+
+## Branches, rules and weekly pruning
+
+- **Shape**: the trunk is the profile (`Profile`, or `档案` in Chinese; the name is fixed on first run). Branches follow areas of life (large branches) and functions (small branches, one per OpenMousse agent); each leaf hangs on one branch. A fresh tree has the trunk and one branch, **People** (aliases: family, partner, friends, classmates, colleagues, commitments). OpenMousse grows a small branch for each agent you create; everything else grows at pruning time. Upgrading from 0.2 leaves every existing memory where it was (no branch = the trunk) and adds People on first run.
+- **Where branches live**: SQLite storage keeps them in the `branch` table of `tree.db`. Markdown storage keeps one note per branch in `branches/`: the file name is the branch name, the properties are `parent` (`"[[Profile]]"` for a large branch), `aliases`, `agents` (agent ids that write here by default) and `order`, and the first line of the body says what the branch covers. Edit them in Obsidian like any note.
+- **Where a new leaf goes**: the branch the writer names (`branch`, a name or an alias) > the branch of the leaf it supersedes > the writing agent's own branch (the one listing it in `agents`; the CLI reads the agent from `MOUSSE_AGENT` and records it as the source) > a branch whose name or alias matches one of the tags > the trunk.
+- **Duplicates**: before writing, the tree compares the sentence (without markup and dates) with current leaves and profile points. 0.9 or more similar is not written; the reply points at the existing one so the writer can supersede it. 0.6 or more is written, and the reply lists the near ones.
+- **Rules**: `rules.md` in the tree folder (the notes folder for Markdown storage, `~/.mousse-tree` for SQLite), written once in your language with your name in it, never overwritten afterwards. `profile` hands it to every platform together with the profile and the branches, so edit it to change how every AI remembers. Empty it to have no rules; delete it to get the default back.
+- **Weekly pruning**: `mousse-tree prune-context` lists what could be pruned: leaves that held for two weeks (they can move into the matching profile section), recent-life leaves older than 30 days, near-duplicates, misplaced leaves and branches with more than 30 leaves. A model writes a plan (`merge`, `rewrite`, `archive`, `promote` into the profile, `branch` to move, `sprout` a new branch) and `mousse-tree prune-plan --file plan.json` checks and stores it; `mousse-tree prune-apply` carries it out, skipping steps already done. OpenMousse runs this every Sunday evening: its main chat writes the plan, the plan arrives as an inbox card, and nothing changes until you tap *Prune as planned*.
+- **Sources and "useful when"** (0.4): a leaf can carry the user's own words (`quote`) and the conversation it came from (`conversation` over MCP; `--thread` / `--message` / `--platform` on the CLI, which OpenMousse fills in from `MOUSSE_THREAD` / `MOUSSE_MESSAGE`). `recall` shows the quote. `cues` are two to five ways the user might ask about it later; they are searched together with the text and tags and go into the export, so a differently worded question still finds the leaf. Weekly pruning checks merges, rewrites and profile lines against what the user actually said (when the conversation is on the same server, i.e. OpenMousse) and leaves the ones that don't match out by default. Old databases gain the new columns the first time they are opened; no leaf changes.
+- **Where things came from**: merged and rewritten leaves keep the ids of the leaves they came from, and every line pruning adds to the profile remembers its leaf (`~/.mousse-tree/origins.json`). Forgetting a leaf lists the profile lines that came from it, so you can remove them too (`forget --with-profile`, `also_profile`, or the admin page asks).
 
 ## Admin page
 
@@ -101,7 +113,13 @@ Open the admin link printed by `mousse-tree urls` (`http://127.0.0.1:8787/ui#key
 ```bash
 mousse-tree recall --q breakfast
 mousse-tree recent --days 7
-mousse-tree add --source myclaw --kind decision --text "…"    # your own agents can write too
+mousse-tree add --source myclaw --kind decision --text "…"    # your own agents can write too (--branch NAME to pick a branch)
+mousse-tree profile                                           # the profile, the rules and the branches, as platforms see them
+mousse-tree branches                                          # the branches
+mousse-tree sprout Fitness --about "Training and recovery" --agent fitness   # grow a branch by hand
+mousse-tree move <id> People                                  # move a leaf to another branch
+mousse-tree forget <id> [--with-profile]                      # forget; --with-profile also removes profile lines that came from it
+mousse-tree prune-context | prune-plan --file plan.json | prune-apply   # weekly pruning by hand
 mousse-tree stats
 mousse-tree check      # Markdown storage: notes with format problems
 mousse-tree rebuild    # Markdown storage: rebuild the index from the notes
@@ -109,12 +127,12 @@ mousse-tree rebuild    # Markdown storage: rebuild the index from the notes
 
 ## Design
 
-- One memory = one sentence + kind + tags + source + observed_at + status. A change `supersedes` the old entry instead of appending a contradiction.
+- One memory = one sentence + kind + tags + source + observed_at + status + branch. A change `supersedes` the old entry instead of appending a contradiction; near-duplicates are caught before they are written.
 - Forgetting clears the text and keeps the skeleton, so it stays auditable.
 - Storage is a SQLite file or a folder of Markdown notes (see Storage); the tools, the export and the admin page are the same either way.
-- The profile (USER.md) is read-only into the tree; edit it in the admin page or the file.
+- The profile (USER.md) is read-only into the tree; edit it in the admin page or the file. The one exception is weekly pruning, which appends a line to a section after you approve the plan.
 - The export `TREE.md` serves agents that do not speak MCP (such as OpenClaw's memory_search).
-- Not there yet: semantic recall (embeddings), conflict detection, multi-user. PRs welcome.
+- Not there yet: semantic recall (embeddings), multi-user, a pruning screen in the admin page (OpenMousse shows the plan as an inbox card). PRs welcome.
 
 ## License
 

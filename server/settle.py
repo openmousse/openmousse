@@ -17,6 +17,11 @@ OpenClaw 在那边回，这里不管。这一轮的 runId 有两种（OpenClaw a
   就只记一笔，不再找。
 - 表 settle_replies（runId, 任务）记下处理过的，两条路不重复写。
 - 不另推送：任务做完已经有一条静默推送（cards.push_done）。这条回复算进未读（origin user：是用户要的活）。
+
+上面这些都是 OpenClaw 的（start() 只在 claw 是 OpenClaw 时挂上，catch_up 别的 claw 直接不做）。claw 选 builtin（自己的内核）时
+不用从别人的会话记录里捞：任务在内核里跑，做完时内核自己知道（第 5 项，engine/tasks.py 的 settle / hand_back，照 OpenClaw 的
+subagent-announce）：派它的对话正在回复就插进这一轮（Control.steer，这一批工具做完它就看到；没赶上就变成下一轮），没在回复就开一轮；
+都先记一行 line() 的灰字（add_line，origin auto），记进 settle_replies（run_id = engine:<那一行的 id>）防重复。台账的样子见 engine/ledger.py。
 """
 from __future__ import annotations
 
@@ -202,7 +207,9 @@ def save(thread: str, rows: list[dict], text: str, model: str | None, t0: float 
 
 
 async def catch_up() -> int:
-    """最近做完、已经投递、还没记下的 app 任务：去派它的会话的 chat.history 里找结算它的那一轮。返回补了几条回复。"""
+    """最近做完、已经投递、还没记下的 app 任务：去派它的会话的 chat.history 里找结算它的那一轮。返回补了几条回复。只给 OpenClaw。"""
+    if not chat.claw.is_openclaw():
+        return 0
     now = time.time() * 1000
     rows = await asyncio.to_thread(cards.ledger, "status NOT IN ('running','queued','pending') AND IFNULL(ended_at, created_at)>=?",
                                    (int(now - CATCH_UP_WINDOW * 1000),), 50)

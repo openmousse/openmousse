@@ -596,7 +596,9 @@ def check_tree(state: dict[str, dict]) -> dict | None:
     for p in shown:
         wrote = parse_ts(last.get(p))
         facts.append((PLATFORMS.get(p, p), L(f"最近写过 {at(wrote)}", f"Last wrote {at(wrote)}") if wrote else L("还没写过", "Hasn't written yet")))
-    grava = latest(*(parse_ts(v) for k, v in last.items() if k == "grava" or k.startswith("grava-")))
+    import memtree  # 自己的 Agent 写的：grava-<id>（作者的实例）、openclaw-<id>，或者内核 / tree 工具经 MOUSSE_AGENT 记的 Agent id 本身
+    agents = memtree.agent_names()
+    grava = latest(*(parse_ts(v) for k, v in last.items() if k == "grava" or k.startswith("grava-") or memtree.agent_of(k, agents)))
     facts.append((L(f"{app()} 的 Agent", f"{app()}'s agents"), L(f"最近写过 {at(grava)}", f"Last wrote {at(grava)}") if grava else L("还没写过", "Haven't written yet")))
     uses = L(f"Claude、ChatGPT、Gemini、Claude Code 和 {app()} 共用的记忆：在一个平台说过的，别的平台也知道。",
              f"Memory shared by Claude, ChatGPT, Gemini, Claude Code and {app()}: what you tell one, the others know too.")

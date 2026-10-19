@@ -7,8 +7,18 @@
   images            不认图的（DeepSeek）换成一句「这里有张图」
   tool_id           工具调用 id 的写法：mistral9 = 9 位字母数字；tool_id_max = 最长几位（OpenAI 40）
   schema_fix        Kimi：每个 object 都要 required、每个属性都要 type
+  reasoning_pad     每条 assistant 都得带 reasoning_content（DeepSeek V4、Kimi K3 的思考模式，少了 400）：别的模型的回复（备用链换过来的、
+                    app 里换过模型的）没有思考字段，补一个空格；同一型号自己的回复照原样发回（照 Hermes 的 agent/message_sanitization.py
+                    apply_reasoning_content_policy 的 must-echo pad：DeepSeek V4 不收空字符串；OpenClaw 补 ""。NousResearch/hermes-agent
+                    commit cf71b1aa，MIT，Copyright (c) 2025 Nous Research，许可全文见 THIRD_PARTY_NOTICES）
   require_finish    流必须以 finish_reason 收尾，不然算断流（本机的模型服务有的不发，设 false）
   reasoning_effort / effort_map   思考档位发不发、怎么换名字
+  assistant_after_tool  严格的对话模板（tool 后面不许直接跟 user）：工具结果里的图挪到后面那条 user 之前，先垫一句 assistant（pi 的
+                    requiresAssistantAfterToolResult，默认不垫）
+工具结果里的图（⑫b，engine/images.py 已经读回 base64、或者换成了一句话）：tool 消息只能放字，挪到这一批工具结果后面紧跟着的一条
+user 里，每一段前面写明是哪个工具、哪一次调用的结果；tool 消息里只有图的写「(see attached image)」（改写自 pi 的
+packages/ai/src/api/openai-completions.ts 的 convertMessages，earendil-works/pi commit 8efd314f，MIT，Copyright (c) 2025 Mario Zechner，
+许可全文见 THIRD_PARTY_NOTICES）。
 另外通用的：先 repair（补没结果的工具调用……），连着两条 user 并成一条，工具结果后面直接跟 user 时补一句占位的 assistant
 （严格的对话模板会报错）；流里的工具调用按 index 拼，同一个 index 换了 id 算新的一个（Ollama）；Gemini 的 extra_content、
 OpenRouter 的 reasoning_details 原样存下、发回给同一型号；<think>…</think> 开头的回复把思考拆出去（本机的 Qwen、R1 一类）；
@@ -86,6 +96,15 @@ def to_openai(system: str, messages: list[dict], p: dict, model_id: str) -> list
     out: list[dict] = [{"role": "system", "content": system}] if system else []
     last_user = max((i for i, m in enumerate(msgs) if m.get("role") == "user"), default=-1)
     held: list[str] = []  # 折不进前面那条 user 的 system：并进下一条 user
+    shown: list[dict] = []  # 这一批工具结果里的图（⑫b）：这一批完了放进紧跟着的一条 user
+
+    def flush_images() -> None:
+        if not shown:
+            return
+        if p.get("assistant_after_tool"):
+            out.append({"role": "assistant", "content": "I have processed the tool results."})
+        out.append({"role": "user", "content": list(shown)})
+        shown.clear()
 
     def add_user(content) -> None:
         if held:
@@ -103,6 +122,8 @@ def to_openai(system: str, messages: list[dict], p: dict, model_id: str) -> list
 
     for i, m in enumerate(msgs):
         role = m.get("role")
+        if role != "tool":
+            flush_images()
         if role == "user":
             add_user(_user(m, p))
         elif role == "assistant":
@@ -124,13 +145,21 @@ def to_openai(system: str, messages: list[dict], p: dict, model_id: str) -> list
             if not text.strip() and not calls:
                 continue
             msg: dict = {"role": "assistant", "content": text}
+            if p.get("reasoning_pad"):  # 别的模型的回复：这几家每条 assistant 都要带思考字段（见文件开头）；自己的回复照原样
+                msg["reasoning_content"] = " "
             if calls:
                 msg["tool_calls"] = [{"id": _oid(c.get("id") or "", p), "type": "function",
                                       "function": {"name": c.get("name") or "", "arguments": json.dumps(c.get("args") or {}, ensure_ascii=False)}}
                                      for c in calls]
             out.append(msg)
         elif role == "tool":
-            out.append({"role": "tool", "tool_call_id": _oid(m.get("id") or "", p), "content": text_of(m) or "(empty)"})
+            cid = _oid(m.get("id") or "", p)
+            pics = [b for b in m.get("content") or [] if b.get("type") == "image" and b.get("data")]
+            out.append({"role": "tool", "tool_call_id": cid, "content": text_of(m) or ("(see attached image)" if pics else "(empty)")})
+            if pics:
+                shown.append({"type": "text", "text": f"Attached image{'s' if len(pics) > 1 else ''} from the result of {m.get('name') or 'a tool'} "
+                                                      f"(call {cid}):"})
+                shown.extend({"type": "image_url", "image_url": {"url": f"data:{b.get('mime') or 'image/png'};base64,{b['data']}"}} for b in pics)
         elif role == "system":
             t = text_of(m).strip()
             if not t:
@@ -143,6 +172,7 @@ def to_openai(system: str, messages: list[dict], p: dict, model_id: str) -> list
                 _merge_user(last, note)
             else:
                 held.append(t)
+    flush_images()
     if held:
         add_user("")
         last = out[-1]
@@ -295,6 +325,7 @@ async def stream(p: dict, model_id: str, req) -> AsyncIterator[dict]:
     require_finish = p.get("require_finish", True) is not False
     dropped: set[str] = set()
     attempt = 0
+    retries = 0 if getattr(req, "quick", False) else len(RETRY_DELAYS)  # 备用链里还有能换的：这一层不重试（providers.Request.quick）
     while True:
         started = False
         text: list[str] = []
@@ -419,19 +450,19 @@ async def stream(p: dict, model_id: str, req) -> AsyncIterator[dict]:
             if finish is None and require_finish:
                 raise EngineError(f"{p['name']}: the stream ended before the model finished", kind="output", retryable=not started)
         except httpx.TimeoutException as e:
-            if not started and attempt < len(RETRY_DELAYS):
+            if not started and attempt < retries:
                 await asyncio.sleep(RETRY_DELAYS[attempt])
                 attempt += 1
                 continue
             raise EngineError(f"{p['name']} timed out", kind="timeout", retryable=True) from e
         except httpx.HTTPError as e:
-            if not started and attempt < len(RETRY_DELAYS):
+            if not started and attempt < retries:
                 await asyncio.sleep(RETRY_DELAYS[attempt])
                 attempt += 1
                 continue
             raise EngineError(f"can't reach {p['name']}: {type(e).__name__}", retryable=True) from e
         except EngineError as e:
-            if e.retryable and not started and attempt < len(RETRY_DELAYS):
+            if e.retryable and not started and attempt < retries:
                 await asyncio.sleep(RETRY_DELAYS[attempt])
                 attempt += 1
                 continue

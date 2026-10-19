@@ -154,13 +154,13 @@ async def pair(request: Request):
 
 
 # —— 设备（2026-09-29，app「设置 → claw → 能连它的设备」）——————————————————————————————
-# 设备 = auth.tokens 里给人用的令牌（手填的、配对换来的 device-…）；给程序用的（mcp、mcp-<id>、sentinel）不算，这里看不到也删不了。
+# 设备 = auth.tokens 里给人用的令牌（手填的、配对换来的 device-…）；给程序用的（mcp、mcp-<id>、sentinel、api、api-<id>）不算，这里看不到也删不了。
 
-PROGRAM_TOKENS = ("mcp", "sentinel")
+PROGRAM_TOKENS = ("mcp", "sentinel", "api")
 
 
 def program_token(name: str) -> bool:
-    return name in PROGRAM_TOKENS or name.startswith("mcp-")
+    return name in PROGRAM_TOKENS or name.startswith(("mcp-", "api-"))
 
 
 def device_label(name: str) -> str:

@@ -30,6 +30,7 @@ Conversations, memory and health data stay on your server. By design, these go o
 - messages to the model providers you configure in OpenClaw;
 - push notifications through Expo and Apple (a title and a short preview);
 - voice notes to the transcription service in `server.json` (OpenAI by default; point `transcribe_url` at your own Whisper server to keep them local);
+- only if you turn on search by meaning for the built-in engine (`engine.recall.embeddings`, off by default): the text of your memory files, digests, chats and memory-tree leaves goes to the embedding service you pick (Gemini, OpenAI, or a local Ollama that keeps it on your machine);
 - if you connect Claude.ai / ChatGPT / Gemini / Notion to the memory tree, they read and write it through the endpoint you expose.
 
 More in the [privacy policy](https://openmousse.ai/privacy.html) and [SECURITY.md](SECURITY.md).

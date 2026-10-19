@@ -5,9 +5,14 @@
   mousse-tree urls [--base https://xxx.ts.net]                          各平台接入地址（含令牌）
   mousse-tree install-openclaw [--openclaw-home DIR]                   给 OpenClaw 的 openclaw.json 加导出目录的检索路径（先备份，后校验，不过就恢复）
   mousse-tree install-service                                           装开机自启的服务并启动（Linux：systemd user 服务；macOS：launchd）
-  mousse-tree add --source myclaw --text "..." [--kind ...] [--tags ...]
+  mousse-tree add --source myclaw --text "..." [--kind ...] [--tags ...] [--branch 枝名]   环境变量 MOUSSE_AGENT 有值时 source 记成那个 Agent，自动挂到它的枝
+      [--quote "用户的原话"] [--thread 对话 id] [--message 消息 id] [--platform 平台] [--cue "平时会说的话"]…（或 --cues "a；b；c"）
+      出处和「用得上的时候」都可选；OpenMousse 经环境变量 MOUSSE_THREAD / MOUSSE_MESSAGE 告诉这是哪次对话的哪条消息
   mousse-tree recall --q 关键词 | recent [--days 7] | stats | export
-  mousse-tree confirm <id> | forget <id>
+  mousse-tree profile | branches                                        档案 + 规则 + 枝（给模型看的那份）/ 有哪些枝
+  mousse-tree confirm <id> | forget <id> [--with-profile]               忘掉时列出档案里从它来的句子；--with-profile 一起删
+  mousse-tree sprout <枝名> [--parent 上一级] [--about 管什么] [--alias 别名] [--agent Agent id] | move <id> <枝名>
+  mousse-tree prune-context [--json] | prune-plan --file 计划.json | prune-apply [--week 周日] [--only 1,3]   每周修剪：看可剪的 / 交计划 / 照计划做
   mousse-tree rotate <平台> | revoke <平台>                               给某个平台换令牌 / 删令牌（令牌泄露时用）
   mousse-tree migrate markdown --notes DIR [--profile-note 档案.md]      换成 Markdown 存储：记忆导成一条一篇笔记（可以放进 Obsidian 库）
   mousse-tree migrate sqlite                                            换回 SQLite 存储（笔记写回 tree.db）
@@ -36,9 +41,14 @@ USAGE_EN = """mousse-tree command line.
   mousse-tree urls [--base https://xxx.ts.net]                          each platform's connection URL (with its token)
   mousse-tree install-openclaw [--openclaw-home DIR]                   add the export directory to OpenClaw's openclaw.json search paths (backup first, validate after, restore if it fails)
   mousse-tree install-service                                           install and start the service (Linux: a systemd user service; macOS: launchd)
-  mousse-tree add --source myclaw --text "..." [--kind ...] [--tags ...]
+  mousse-tree add --source myclaw --text "..." [--kind ...] [--tags ...] [--branch NAME]   with MOUSSE_AGENT set, the source is that agent and it lands on its branch
+      [--quote "the user's own words"] [--thread CONVERSATION] [--message MESSAGE] [--platform P] [--cue "how they'd ask"]… (or --cues "a; b; c")
+      the source and the "useful when" phrases are optional; OpenMousse passes the conversation and message in MOUSSE_THREAD / MOUSSE_MESSAGE
   mousse-tree recall --q keyword | recent [--days 7] | stats | export
-  mousse-tree confirm <id> | forget <id>
+  mousse-tree profile | branches                                        profile + rules + branches (what models read) / the branches
+  mousse-tree confirm <id> | forget <id> [--with-profile]               forgetting lists profile lines that came from it; --with-profile removes them too
+  mousse-tree sprout <name> [--parent P] [--about TEXT] [--alias A] [--agent ID] | move <id> <branch>
+  mousse-tree prune-context [--json] | prune-plan --file PLAN.json | prune-apply [--week SUNDAY] [--only 1,3]   weekly pruning: candidates / submit a plan / apply it
   mousse-tree rotate <platform> | revoke <platform>                    issue a new token for a platform / delete its token (if one leaked)
   mousse-tree migrate markdown --notes DIR [--profile-note Profile.md]  switch to Markdown storage: one note per memory (can live in an Obsidian vault)
   mousse-tree migrate sqlite                                            switch back to SQLite storage (notes are written back to tree.db)
@@ -312,11 +322,31 @@ def cmd_install_service(_: argparse.Namespace) -> None:
     print(C.L(f"已装 {unit}；状态：systemctl --user status mousse-tree", f"Installed {unit}; status: systemctl --user status mousse-tree"))
 
 
+def agent_env() -> str:
+    """OpenMousse 的内核和 /mcp 起这个命令时，经环境变量 MOUSSE_AGENT 说是哪个 Agent（main = 主对话）。"""
+    return os.environ.get("MOUSSE_AGENT", "").strip()
+
+
+def said_env(a: argparse.Namespace) -> dict:
+    """出处：命令行写了用命令行的；没写对话的，OpenMousse 经 MOUSSE_THREAD / MOUSSE_MESSAGE 告诉是哪次对话、哪条消息（平台就是 openmousse）。"""
+    thread, message, platform = a.thread or "", a.message or "", a.platform or ""
+    if not thread and (env := os.environ.get("MOUSSE_THREAD", "").strip()):
+        thread, message, platform = env, message or os.environ.get("MOUSSE_MESSAGE", "").strip(), platform or "openmousse"
+    return {"quote": a.quote or "", "thread": thread, "message": message, "platform": platform,
+            "cues": [*(a.cue or []), *S.cue_list(a.cues or "")]}
+
+
 def cmd_add(a: argparse.Namespace) -> None:
     text = sys.stdin.read() if a.stdin else (a.text or "")
     conn = S.connect()
-    status = "pending" if C.load().get("require_confirm") and a.source != "owner" else "active"
-    r = S.add(conn, text=text, source=a.source, kind=a.kind, tags=a.tags, observed_at=a.observed, status=status, supersedes=a.supersedes)
+    agent = agent_env()
+    source = agent or a.source  # 是哪个 Agent 写的就记成它（--source 写别的也不算）
+    status = "pending" if C.load().get("require_confirm") and source != "owner" else "active"
+    try:
+        r = S.add(conn, text=text, source=source, kind=a.kind, tags=a.tags, observed_at=a.observed, status=status, supersedes=a.supersedes,
+                  branch=a.branch, agent=agent or None, **said_env(a))
+    except ValueError as e:
+        sys.exit(str(e))
     S.export(conn)
     print(json.dumps(r, ensure_ascii=False))
 
@@ -334,10 +364,97 @@ def cmd_recent(a: argparse.Namespace) -> None:
 def cmd_status(status: str):
     def run(a: argparse.Namespace) -> None:
         conn = S.connect()
-        ok = S.set_status(conn, a.id, status, "owner")
+        actor = agent_env() or "owner"
+        ok = S.set_status(conn, a.id, status, actor)
         S.export(conn)
         print("ok" if ok else "not found")
+        if ok and status == "retracted":
+            if getattr(a, "with_profile", False):
+                gone = S.drop_derived(conn, a.id, actor)
+                if gone:
+                    print(C.L(f"档案里一起删了 {len(gone)} 句：", f"Also removed {len(gone)} line(s) from the profile:"))
+                    print("\n".join(f"- {x}" for x in gone))
+            elif lines := S.derived_profile(conn, a.id):
+                print(C.L(f"档案里有 {len(lines)} 句是从它来的（每周修剪并进去的）：", f"{len(lines)} line(s) in the profile came from it (added by weekly pruning):"))
+                print("\n".join(f"- [{x['section']}] {x['text']}" for x in lines))
+                print(C.L(f"要一起删就问一下用户；要删：mousse-tree forget {a.id} --with-profile",
+                          f"Ask the user whether to remove them too; to remove: mousse-tree forget {a.id} --with-profile"))
     return run
+
+
+def cmd_profile(_: argparse.Namespace) -> None:
+    conn = S.connect()
+    S.sync_profile(conn)
+    print(S.profile_bundle(conn))
+
+
+def cmd_branches(_: argparse.Namespace) -> None:
+    from . import branches as B
+    zh = C.lang() == "zh"
+    print(f"- {S.trunk()}" + C.L("：主干", ": the trunk"))
+    for b in B.tree(S.connect()):
+        print("  " * b["depth"] + f"- {b['name']}" + (("：" if zh else ": ") + b["about"] if b["about"] else ""))
+
+
+def cmd_sprout(a: argparse.Namespace) -> None:
+    from . import branches as B
+    try:
+        name = B.create(S.connect(), a.name, parent=a.parent or "", about=a.about or "", aliases=a.alias or (), agents=a.agent or (),
+                        actor=agent_env() or "owner")
+    except (ValueError, RuntimeError) as e:
+        sys.exit(str(e))
+    print(json.dumps({"ok": True, "branch": name}, ensure_ascii=False))
+
+
+def cmd_move(a: argparse.Namespace) -> None:
+    try:
+        where = S.set_branch(S.connect(), a.id, a.branch, agent_env() or "owner")
+    except ValueError as e:
+        sys.exit(str(e))
+    except LookupError:
+        sys.exit("not found")
+    print(json.dumps({"ok": True, "branch": where}, ensure_ascii=False))
+
+
+def cmd_prune_context(a: argparse.Namespace) -> None:
+    from datetime import date
+
+    from . import prune as P
+    conn = S.connect()
+    S.sync_profile(conn)
+    ctx = P.context(conn, date.fromisoformat(a.today) if a.today else None)
+    print(json.dumps(ctx, ensure_ascii=False, indent=1) if a.json else P.context_text(ctx))
+
+
+def cmd_prune_plan(a: argparse.Namespace) -> None:
+    from . import prune as P
+    try:
+        raw = sys.stdin.read() if a.file == "-" else Path(a.file).read_text(encoding="utf8")
+    except OSError as e:
+        sys.exit(C.L(f"--file 读不了：{e}", f"Can't read --file: {e}"))
+    try:
+        data = json.loads(raw)
+    except ValueError as e:
+        sys.exit(C.L(f"计划不是合法的 JSON：{e}", f"The plan isn't valid JSON: {e}"))
+    if a.week and isinstance(data, dict):
+        data["week"] = a.week
+    try:
+        r = P.plan(S.connect(), data, source=agent_env() or "owner")
+    except P.PlanError as e:
+        print(C.L("计划没收下，改好再交：", "The plan wasn't accepted; fix these and submit again:"), file=sys.stderr)
+        print("\n".join(f"- {x}" for x in e.problems), file=sys.stderr)
+        sys.exit(2)
+    print(json.dumps({"ok": True, **r}, ensure_ascii=False))
+
+
+def cmd_prune_apply(a: argparse.Namespace) -> None:
+    from . import prune as P
+    only = {int(x) for x in a.only.replace("，", ",").split(",") if x.strip().isdigit()} if a.only else None
+    try:
+        r = P.apply(S.connect(), a.week, digest=a.digest, actor=agent_env() or "owner", only=only)
+    except P.PlanError as e:
+        sys.exit("\n".join(e.problems))
+    print(json.dumps({"ok": True, **r}, ensure_ascii=False))
 
 
 def cmd_export(_: argparse.Namespace) -> None:
@@ -393,11 +510,21 @@ def main() -> None:
     q = sp.add_parser("add")
     q.add_argument("--source", default="owner"); q.add_argument("--text"); q.add_argument("--stdin", action="store_true")
     q.add_argument("--kind", default="fact", choices=S.KINDS[:-1]); q.add_argument("--tags", default=""); q.add_argument("--observed"); q.add_argument("--supersedes")
-    q.set_defaults(fn=cmd_add)
+    q.add_argument("--branch"); q.add_argument("--quote"); q.add_argument("--thread"); q.add_argument("--message"); q.add_argument("--platform")
+    q.add_argument("--cue", action="append"); q.add_argument("--cues"); q.set_defaults(fn=cmd_add)
     q = sp.add_parser("recall"); q.add_argument("--q", required=True); q.add_argument("--limit", type=int, default=8); q.set_defaults(fn=cmd_recall)
     q = sp.add_parser("recent"); q.add_argument("--days", type=int, default=7); q.set_defaults(fn=cmd_recent)
-    for name, st in (("confirm", "active"), ("forget", "retracted")):
-        q = sp.add_parser(name); q.add_argument("id"); q.set_defaults(fn=cmd_status(st))
+    q = sp.add_parser("confirm"); q.add_argument("id"); q.set_defaults(fn=cmd_status("active"))
+    q = sp.add_parser("forget"); q.add_argument("id"); q.add_argument("--with-profile", action="store_true"); q.set_defaults(fn=cmd_status("retracted"))
+    sp.add_parser("profile").set_defaults(fn=cmd_profile)
+    sp.add_parser("branches").set_defaults(fn=cmd_branches)
+    q = sp.add_parser("sprout"); q.add_argument("name"); q.add_argument("--parent"); q.add_argument("--about")
+    q.add_argument("--alias", action="append"); q.add_argument("--agent", action="append"); q.set_defaults(fn=cmd_sprout)
+    q = sp.add_parser("move"); q.add_argument("id"); q.add_argument("branch"); q.set_defaults(fn=cmd_move)
+    q = sp.add_parser("prune-context"); q.add_argument("--json", action="store_true"); q.add_argument("--today"); q.set_defaults(fn=cmd_prune_context)
+    q = sp.add_parser("prune-plan"); q.add_argument("--file", required=True); q.add_argument("--week"); q.set_defaults(fn=cmd_prune_plan)
+    q = sp.add_parser("prune-apply"); q.add_argument("--week"); q.add_argument("--digest"); q.add_argument("--only")
+    q.set_defaults(fn=cmd_prune_apply)
     sp.add_parser("export").set_defaults(fn=cmd_export)
     sp.add_parser("stats").set_defaults(fn=cmd_stats)
     for action in ("rotate", "revoke"):

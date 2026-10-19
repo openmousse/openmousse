@@ -22,7 +22,9 @@ Zen 首页（2026-10-13）
 - 只记下：聊的时候记一句不给它看 = 一条碎片（note: true，挂在这个主题上），对话里显示一行虚线气泡（messages 里 role=auto、
   【只记下】开头，不发给 Gateway），context_for 不带它；想完了时一起用。
 - 想完了：后台让模型整理成笔记草稿（JSON），存 think_topics.draft；用户改完「存进库」= 写进 笔记/ 或 写作/，碎片挪进已想完，
-  要记的写一片世界树叶子（workspace 的 memory_tree.py），要做的加进日程（app 直接调 /api/schedule）。
+  要记的写一片世界树叶子（sources.py 选中的那一份：workspace 的 memory_tree.py，或开源版世界树），要做的加进日程（app 直接调 /api/schedule）。
+  叶子带出处（2026-10-19，zen_said）：platform zen、thread 主题 id、message 原话出自哪条想法、quote 那段原话；每周修剪核对原话时回这里找
+  （find_said）。
 
 搜索和历史
 - 想法、收藏、聊过的主题、存进库的笔记一起搜：内存里按字面找（量小；中文两个字也能搜），不调模型。结果里给高亮的分段。
@@ -998,7 +1000,17 @@ DRAFT_KEYS = ("title", "oneLine", "points", "open", "next", "keywords", "suggest
 
 
 def branches() -> list[str]:
-    script = settings.scripts / "memory_tree.py"
+    """世界树的枝名（主干在最前面），给模型挑 branch。跟 sources.py 选中的那一份走：作者实例的 scripts/memory_tree.py 起子进程跑，
+    开源版直接调 treelib；没接世界树 = []。"""
+    import sources
+    if sources.memory_tree is None:
+        return []
+    script = sources.tree_script()
+    if script is None:  # 开源版世界树
+        try:
+            return sources.memory_tree.branch_names()[:30]
+        except Exception:  # noqa: BLE001 — 世界树读不了：不给枝的列表，草稿照样能写
+            return []
     if not script.is_file():
         return []
     try:
@@ -1223,7 +1235,8 @@ def save_sync(tid: str, body: SaveIn) -> dict:
             pass
     tree = None
     if body.tree and body.tree.strip():
-        tree = remember_tree(body.tree.strip()[:300], body.branch, kws)
+        line = body.tree.strip()[:300]
+        tree = remember_tree(line, body.branch, kws, said=zen_said(tid, frags, line))
     with _lock, tdb() as conn:
         conn.execute("UPDATE think_topics SET status='done', note_path=?, done_at=?, updated_at=?, rev=rev+1 WHERE id=?",
                      (rel(path), now_iso(), now_iso(), tid))
@@ -1231,21 +1244,123 @@ def save_sync(tid: str, body: SaveIn) -> dict:
     return {"ok": True, "path": rel(path), "tree": tree, "moved": len(moved)}
 
 
-def remember_tree(text: str, branch: str | None, tags: list[str]) -> dict | None:
-    script = settings.scripts / "memory_tree.py"
+def remember_tree(text: str, branch: str | None, tags: list[str], said: dict | None = None) -> dict | None:
+    """要记的写一片世界树叶子（来源记成主对话）。said = 出处（zen_said：platform zen、thread 主题 id、message、quote）。没接世界树 = None。
+    过记性的闸（engine/memgate.py）：你自己的想法 → 叶子直接长，记一笔进事件流。"""
+    import sources
+    if sources.memory_tree is None:
+        return None
+    said = {k: str(v) for k, v in (said or {}).items() if k in ("quote", "platform", "thread", "message") and v}
+    from engine import memgate
+    gate = memgate.gate("leaf", "add", turn="owner", conversation=said.get("thread", ""), author="main", agent="main")
+    script = sources.tree_script()
+    if script is None:  # 开源版世界树：查重、挂枝都在包里
+        try:
+            out = sources.memory_tree.remember(text, source="main", kind="fact", tags=",".join(tags[:6]), branch=branch, **said)
+        except Exception as e:  # noqa: BLE001 — 没写进去：草稿照样存进库
+            memgate.done(gate, f"{type(e).__name__}", ok=False)
+            return {"ok": False}
+        memgate.done(gate, str(out.get("id") or ""), ok=not out.get("duplicate"), target=f"tree:{out.get('id') or ''}")
+        return out
     if not script.is_file():
         return None
     cmd = ["python3", str(script), "add", "--source", "grava", "--kind", "fact", "--text", text, "--tags", ",".join(tags[:6])]
     if branch:
         cmd += ["--branch", branch]
+    for k, v in said.items():
+        cmd += [f"--{k}", v]
     try:
         p = subprocess.run(cmd, capture_output=True, text=True, timeout=60)
     except (OSError, subprocess.TimeoutExpired):
+        memgate.done(gate, "timeout", ok=False)
         return {"ok": False}
     try:
-        return json.loads(p.stdout.strip().splitlines()[-1])
+        out = json.loads(p.stdout.strip().splitlines()[-1])
     except (ValueError, IndexError):
-        return {"ok": p.returncode == 0}
+        out = {"ok": p.returncode == 0}
+    memgate.done(gate, str(out.get("id") or ""), ok=bool(out.get("id")) and not out.get("duplicate"), target=f"tree:{out.get('id') or ''}")
+    return out
+
+
+# —— 想完写的叶子带出处（2026-10-19）—————————————————————————————————————————————————
+# 想法不在 messages 表里：platform 记成 zen（memtree.ZEN），thread = 那个主题的 id（tp-…），message = 原话出自哪条想法（th-…）或聊聊里
+# 用户那条消息的 id，quote = 那段原话（最多 QUOTE_MAX 字）。每周修剪核对原话时 find_said 回这里找（treeprune.find_said 的 Zen 分支）。
+
+QUOTE_MAX = 200
+_SENT = re.compile(r"(?<=[。！？!?；;\n])")
+
+
+def _grams(s: str) -> set[str]:
+    t = re.sub(r"[\W_]+", "", (s or "").casefold())
+    return {t[i:i + 2] for i in range(len(t) - 1)} or ({t} if t else set())
+
+
+def _excerpt(text: str, want: set[str]) -> str:
+    """一段话里和要记的那句最像的那一截（按句子切，最多 QUOTE_MAX 字）。"""
+    flat = " ".join(text.split())
+    if len(flat) <= QUOTE_MAX:
+        return flat
+    parts = [p.strip() for p in _SENT.split(text) if p.strip()]
+    best, score = flat[:QUOTE_MAX], -1.0
+    for i in range(len(parts)):
+        cut = ""
+        for j in range(i, len(parts)):  # 从这一句往后拼，拼到快满
+            nxt = (cut + " " + " ".join(parts[j].split())).strip()
+            if len(nxt) > QUOTE_MAX:
+                break
+            cut = nxt
+            g = _grams(cut)
+            sc = len(g & want) / (len(g) ** 0.5 or 1)
+            if sc > score:
+                best, score = cut, sc
+    return best[:QUOTE_MAX]
+
+
+def zen_said(tid: str, frags: list[dict], line: str) -> dict:
+    """想完写的那片叶子的出处：这个主题里用户自己写的（想法碎片、聊聊里他说的话）和要记的那句最像的那一段。
+    一条都没有（没有碎片、没聊过）→ 只记 platform 和 thread（没有原话）。"""
+    want = _grams(line)
+    cands = [(f["id"], f["text"]) for f in frags if (f.get("text") or "").strip()]
+    try:
+        with _lock, db() as conn:
+            cands += [(str(r["id"]), r["text"]) for r in conn.execute(
+                "SELECT id, text FROM messages WHERE thread=? AND role='user' ORDER BY id", (tid,)) if (r["text"] or "").strip()]
+    except sqlite3.Error:
+        pass
+    cands = [(k, t) for k, t in cands if not t.startswith((MARK_TALK, MARK_NOTE))]
+    out = {"platform": "zen", "thread": tid}
+    if not cands:
+        return out
+    key, text = max(cands, key=lambda kt: len(_grams(kt[1]) & want) / (len(_grams(kt[1])) ** 0.5 or 1))
+    return {**out, "message": key, "quote": _excerpt(text, want)}
+
+
+def find_said(row: dict) -> dict | None:
+    """treeprune.find_said 的 Zen 分支（openmousse_tree.provenance 的 find 的样子）：原话回这个主题的想法碎片（库里的笔记）和聊聊里
+    用户说的话里找。记了出自哪条想法（th-…）就只看那一条，记的是聊聊里的消息 id 就只看那一条；都找不到 → 记录没了（record False，
+    核对结果 missing）；找到了但原话不在里面 → found False（mismatch）。"""
+    from openmousse_tree import provenance as V
+    th, q, mid = str(row.get("thread") or ""), str(row.get("quote") or ""), str(row.get("message") or "")
+    where, texts = L("Zen 的一个主题", "a Zen topic"), []
+    try:
+        with _lock, tdb() as conn:
+            t = conn.execute("SELECT title, fragments FROM think_topics WHERE id=?", (th,)).fetchone()
+            talk = conn.execute("SELECT id, text FROM messages WHERE thread=? AND role='user' ORDER BY id", (th,)).fetchall()
+    except sqlite3.Error:
+        t, talk = None, []
+    ids = set(json.loads(t["fragments"] or "[]")) if t is not None else set()
+    if t is not None:
+        where = L(f"Zen「{t['title']}」", f'Zen "{t["title"]}"')
+    if mid.isdigit():
+        texts = [r["text"] for r in talk if str(r["id"]) == mid]
+    else:
+        ids = {mid} if mid.startswith("th-") else ids
+        texts = [f["text"] for f in scan() if f["id"] in ids] + ([] if mid.startswith("th-") else [r["text"] for r in talk])
+    if not texts:
+        return {"record": False, "where": where}
+    if not any(V.found_in(q, x) for x in texts):
+        return {"record": True, "found": False, "where": where, "said": texts[0] if len(texts) == 1 else ""}
+    return {"record": True, "found": True, "where": where}
 
 
 @router.post("/api/think/topics/{tid}/save")

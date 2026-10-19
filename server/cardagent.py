@@ -14,7 +14,7 @@
 - 要你表态（定时间、花钱、答应什么）、问你私事的：出收件箱卡（kind social，默认不推送，server.json 的 social.push 开了才静音推）。
   你点了以后，服务端自己告诉对方（经注册的渠道 DELIVER：a2a / chat），同意的约会进日程。这类卡的钩子不往主 agent 的线程里发任何话。
 - 说出去的每一句都记下来（card_log + activity_log），每个人每天有条数上限、每条有长度上限。
-- 发出去之前还过 Doorman（sentinel.py，第 9 步安全底座）：规则 + 另起一次的独立复查，觉得不妥就扣下（对方先听到「我确认一下」，
+- 发出去之前还过 Doorman（sentinel.py，第 9 步安全底座）：规则 + 另起一次的独立复查，觉得不妥就扣下（对方先听到「正在确认，稍后回复。」，
   你收到一张 kind review 的卡：照发 / 改一下 / 不发），复查不了就换成固定句子。
 - 陌生人（不在好友表里的、签名认不出的、删掉的朋友）默认一律不理：server.json 的 card.strangers 是 true 才答（只有固定句子、不出卡）。
 
@@ -591,23 +591,23 @@ def say(key: str, lang: str, **kw) -> str:
     who = owner()
     when = kw.get("when", "")
     lead = f"{when}，" if when else ""
-    zh = {"ask": f"这个得{who}本人定，我去问一下。", "cant": f"这个我答不了，得问{who}本人。",
-          "limit": "今天先聊到这儿吧，明天再说。", "free": f"{who}这几天晚上有空：{kw.get('days', '')}。",
+    zh = {"ask": f"需要{who}本人确认，已转达。", "cant": f"这个问题需要{who}本人回答。",
+          "limit": "今天的对话次数已用完，明天可以继续。", "free": f"{who}这几天晚上有空：{kw.get('days', '')}。",
           "busy": f"{who}这几天晚上都有安排。", "accepted": f"{who}同意了：{when}。",
           "declined": f"{who}这次去不了。", "counter_note": f"{lead}{who}不行。{who}说：「{kw.get('note', '')}」",
           "counter": f"{lead}{who}不行，{kw.get('alts', '')}可以吗？", "counter_none": f"{lead}{who}不行，改天再约吧。",
-          "ack": f"{who}看到了，会自己回你。", "private_declined": f"这个{who}不方便说。",
+          "ack": f"{who}已看到，会亲自回复。", "private_declined": "这项信息不便提供。",
           "rejected_before": f"这件事{who}之前已经说过不行了。", "friends_only": f"这个得先加{who}为朋友。",
-          "hold": "我先确认一下，稍后回你。"}
-    en = {"ask": f"That's {who}'s call — I'll ask.", "cant": f"I can't answer that — you'd need to ask {who} directly.",
-          "limit": "Let's leave it here for today.", "free": f"{who} is free these evenings: {kw.get('days', '')}.",
+          "hold": "正在确认，稍后回复。"}
+    en = {"ask": f"This needs {who}'s confirmation. It has been passed on.", "cant": f"This question needs an answer from {who}.",
+          "limit": "Today's message limit has been reached. The conversation can continue tomorrow.", "free": f"{who} is free these evenings: {kw.get('days', '')}.",
           "busy": f"{who}'s evenings are all taken for now.", "accepted": f"{who} is in: {kw.get('when', '')}.",
           "declined": f"{who} can't make it this time.", "counter_note": f"{kw.get('when', '')} doesn't work for {who}. {who} says: \"{kw.get('note', '')}\"",
           "counter": f"{kw.get('when', '')} doesn't work for {who} — how about {kw.get('alts', '')}?",
           "counter_none": f"{kw.get('when', '')} doesn't work for {who}; let's find another time.",
-          "ack": f"{who} has seen it and will reply personally.", "private_declined": f"{who} would rather not say.",
+          "ack": f"{who} has seen this and will reply personally.", "private_declined": "This information can't be shared.",
           "rejected_before": f"{who} has already said no to this.", "friends_only": f"You'd need to be {who}'s friend for that.",
-          "hold": "Let me check on that and get back to you."}
+          "hold": "Checking. A reply will follow shortly."}
     return spaced(zh[key]) if lang == "zh" else en[key]
 
 
@@ -650,9 +650,11 @@ def leaks(reply: str, mats: list[dict], used: list[str]) -> list[str]:
     given = " ".join(m["text"] for m in mats)
     for h in share.find_private(reply):
         frag = reply[h["start"]:h["end"]]
-        if h["kind"] == "address" and "address" in [m["id"] for m in mats] and frag in given:
+        core = frag.rstrip(".。,，;；!！ ")  # 街道的规则会把句末的句号一起吞进来（「27 Wren Lane.」）：比对时去掉，资料里照样得有原文
+        if h["kind"] == "address" and "address" in [m["id"] for m in mats] and (frag in given or (core and core in given)):
             continue
-        if h["kind"] in ("address", "contact") and frag in " ".join(m["text"] for m in mats if m["id"].startswith("share:")):
+        snap = " ".join(m["text"] for m in mats if m["id"].startswith("share:"))
+        if h["kind"] in ("address", "contact") and (frag in snap or (core and core in snap)):
             continue  # 分享快照里本来就有（挡过私事的快照里剩下的是你放出来的）
         bad.append(h["kind"])
     said = {w.lower() for w in HEALTH.findall(reply)}
@@ -808,7 +810,7 @@ async def answer(friend: dict | None, question: str, *, channel: str = "chat", m
         elif review_cards_today(peer) >= REVIEW_CARDS_PER_DAY:
             out["reply"] = say("cant", lang)  # 这个人今天已经让 Doorman 扣下好几句了：不再出卡（免得被刷屏），原话只记下来给你看
         else:
-            out["reply"] = say("hold", lang)  # 先说「我确认一下」，你在卡上决定照发 / 改一下 / 不发
+            out["reply"] = say("hold", lang)  # 先说「正在确认，稍后回复。」，你在卡上决定照发 / 改一下 / 不发
             out["ask_owner"] = {"kind": "review", "summary": sentinel.reasons_line(sv), "proposal": None, "original": held["reply"],
                                 "used": held["used"], "usedNames": [next((m["label"] for m in mats if m["id"] == u), u) for u in held["used"]],
                                 "reasons": sv["reasons"]}

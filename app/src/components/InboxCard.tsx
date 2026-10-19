@@ -23,12 +23,12 @@ export const kindLabel = (k: InboxKind | string): string => ({
   exec: L('执行命令', 'Run command'), task: L('后台任务', 'Task'), write: L('写入', 'Write'), send: L('发送', 'Send'), spend: L('支出', 'Spend'),
   schedule: L('定时任务', 'Schedule'), push: L('推送', 'Notification'), skill: L('新 skill', 'New skill'), agent: L('新 Agent', 'New Agent'),
   block: L('看板功能块', 'Board block'), project: L('项目', 'Project'), code: L('代码改动', 'Code change'), calendar: L('日程', 'Calendar'),
-  social: L('好友', 'Friends'), egress: L('代办', 'Errand'), app: L('连接器', 'Connector'), other: L('其他', 'Other'),
+  social: L('好友', 'Friends'), egress: L('代办', 'Errand'), app: L('连接器', 'Connector'), tool: L('操作', 'Action'), other: L('其他', 'Other'),
 } as Record<string, string>)[k] ?? L('其他', 'Other');
 
 /** 动到外面的（写、发、花钱、日程、派活）用警示色；提案类用金色（助手自己想做的）；执行命令中性。 */
 const kindTone = (k: InboxKind): 'warn' | 'gold' | 'neutral' =>
-  (['write', 'send', 'spend', 'calendar', 'task', 'social', 'egress', 'app'].includes(k) ? 'warn' : k === 'exec' ? 'neutral' : 'gold');
+  (['write', 'send', 'spend', 'calendar', 'task', 'social', 'egress', 'app', 'tool'].includes(k) ? 'warn' : k === 'exec' ? 'neutral' : 'gold');
 
 const pad = (n: number) => String(n).padStart(2, '0');
 /** 刚刚 / 5 分钟前 / 14:05 / 昨天 14:05 / 9月24日 */

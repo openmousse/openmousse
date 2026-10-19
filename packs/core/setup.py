@@ -2,7 +2,10 @@
 """OpenMousse 安装器的第二段（第一段是仓库根目录的 install.sh：装依赖、建 venv、问四个问题 + 两个可以跳过的，然后调这里）。
 
 把一台已经跑着 claw 的机器配成能跑 OpenMousse。默认是 OpenClaw（下面 1–6）；--claw-url 给了别的 claw / agent 的 OpenAI 兼容接口，
-就不碰 openclaw.json（没有 4），server.json 写 claw 段（见 server/claw.py），skills 和规矩装到 --claw-skills / --claw-rules 给的位置（没给就跳过）：
+就不碰 openclaw.json（没有 4），server.json 写 claw 段（见 server/claw.py），skills 和规矩装到 --claw-skills / --claw-rules 给的位置（没给就跳过）。
+--builtin（内核第 9 步）：不要 OpenClaw，用 OpenMousse 自带的内核（server.json 的 claw = {"kind": "builtin"}）：不碰 openclaw.json、
+不链 skill（内核自己读 packs/core/skills）、不追加规矩（内核自己备开头），档案放 ~/.openmousse/workspace；模型、搜索、记忆装完以后选：
+打开 app 按引导选，或者在终端里走同样的三步（server/setup_ctl.py，有终端时最后问一句要不要现在就走）：
   1. ~/.openmousse/repo → 仓库（skills 里的命令都走这个固定路径）
   2. ~/.openmousse/server.json：名字、时区、语言、监听地址、OpenClaw 的位置、令牌（phone 给手机，local 给本机脚本）；
      --vault（服务器上已经在同步的 Obsidian 库）：think.vault = 库的文件夹、think.obsidian_vault = 库名（文件夹名），没设过才写
@@ -34,6 +37,7 @@
 用法：setup.py --repo PATH --venv PATH [--openclaw-home ~/.openclaw] [--tz Asia/Shanghai] [--name Mousse] [--lang zh|en] [--bind auto|127.0.0.1|<ip>]
                [--vault PATH] [--tree-public] [--no-systemd] [--no-tree]
                [--claw-url http://…/v1 --claw-name NAME --claw-model MODEL [--claw-skills DIR] [--claw-rules FILE]]（令牌走环境变量 MOUSSE_CLAW_TOKEN）
+               [--builtin]（自带的内核，不要 OpenClaw）
 """
 from __future__ import annotations
 
@@ -1052,8 +1056,9 @@ def probe_gateway(url: str, oc_path: Path, wait: float = 0) -> tuple[bool, str]:
             time.sleep(2)
 
 
-def setup_tree(venv: Path, cfg: dict, home: Path, no_systemd: bool, vault: Path | None = None, public: bool = False, openclaw: bool = True) -> list[str] | None:
-    """→ --tree-public 还要用户手动跑的命令（[] = 都好了；None = 没要公网，或世界树没装）。"""
+def setup_tree(venv: Path, cfg: dict, home: Path, no_systemd: bool, vault: Path | None = None, public: bool = False, openclaw: bool = True,
+               builtin: bool = False) -> list[str] | None:
+    """→ --tree-public 还要用户手动跑的命令（[] = 都好了；None = 没要公网，或世界树没装）。builtin：自带的内核直接用世界树，不用另外接。"""
     exe = venv / "bin/mousse-tree"
     tag = L("世界树：", "Memory tree: ")
     if not exe.exists():
@@ -1076,6 +1081,10 @@ def setup_tree(venv: Path, cfg: dict, home: Path, no_systemd: bool, vault: Path 
             say(tag + (r.stdout.strip().splitlines() or [""])[0].strip())
         else:
             say(L("世界树 install-openclaw 失败：", "Memory tree: install-openclaw failed: ") + (r.stderr or r.stdout).strip()[-300:])
+    elif builtin:  # 自带的内核：tree 工具、记忆检索直接用这棵树（engine/recall_tree.py），不用另外接
+        say(tag + L("自带的内核直接用这棵树（tree 工具、记忆检索），不用另外接；想放进 Markdown 文件夹（Obsidian 库），趁还没有记忆时在 app 的引导里换",
+                    "the built-in engine uses this tree directly (the tree tool, memory search), nothing else to connect; to keep it in a Markdown "
+                    "folder (an Obsidian vault) instead, switch in the app's guide while it's still empty"))
     else:  # 别的 claw：它能连远程 MCP 的话，自己接上世界树（和 Claude.ai、ChatGPT 一样一个平台一个令牌）
         say(tag + L("你的 claw 能连 MCP 服务的话，让它也接上世界树：`~/.openmousse/venv/bin/mousse-tree rotate myclaw` 给它一个令牌，"
                     "地址见 `mousse-tree urls` 里 myclaw 那一行（本机用 http://127.0.0.1 开头的就行）",
@@ -1180,6 +1189,7 @@ def main() -> None:
     ap.add_argument("--claw-model")
     ap.add_argument("--claw-skills", help="that claw's skills folder: OpenMousse's skills get linked in")
     ap.add_argument("--claw-rules", help="the rules file that claw reads every turn: OpenMousse's rules get appended")
+    ap.add_argument("--builtin", action="store_true", help="OpenMousse's own engine, no OpenClaw: choose models in the app (or setup_ctl.py) afterwards")
     a = ap.parse_args()
     try:
         saved_lang = load_json(SERVER_JSON).get("language")
@@ -1190,8 +1200,16 @@ def main() -> None:
     home = Path(a.openclaw_home).expanduser()
     oc_path = home / "openclaw.json"
     generic = bool(a.claw_url)  # 别的 claw（OpenAI 兼容接口）：不碰 openclaw.json
+    builtin = bool(a.builtin) and not generic  # 自带的内核（第 9 步）：也不碰 openclaw.json
     claw = None
-    if generic:
+    if builtin:
+        claw = {"kind": "builtin"}
+        oc = {}
+        workspace = MOUSSE_HOME / "workspace"  # 档案 USER.md、记忆页读的 MEMORY.md、主对话的文件工具都在这里
+        workspace.mkdir(parents=True, exist_ok=True)
+        if not (workspace / "USER.md").exists():
+            (workspace / "USER.md").write_text(L("# USER.md\n\n## 基本信息\n", "# USER.md\n\n## Basics\n"), encoding="utf8")
+    elif generic:
         sys.path.insert(0, str(repo / "server"))
         import claw_presets  # 只用标准库
         claw = {**claw_presets.preset(a.claw_preset or ""), "kind": "openai", "url": a.claw_url.strip().rstrip("/")}
@@ -1224,7 +1242,10 @@ def main() -> None:
     cfg, new_tokens = write_server_json(a, oc, home, workspace, repo, vault, claw)
     print("skills")
     restart = False
-    if generic:
+    if builtin:
+        say(L("自带的内核直接读 packs/core/skills、自己备每一轮的规矩，不用链 skill、不用改规则文件",
+              "The built-in engine reads packs/core/skills directly and writes its own rules: no skill links, no rules file to change"))
+    elif generic:
         install_skills(Path(claw["skills"]) if claw.get("skills") else None, Path(claw["rules"]) if claw.get("rules") else None, repo, home,
                        GENERIC_SKILLS, (GENERIC_RULES_ZH, GENERIC_RULES_EN))
     else:
@@ -1239,9 +1260,10 @@ def main() -> None:
     public = None
     if not a.no_tree:
         print(L("世界树", "Memory tree"))
-        oc_before = oc_path.read_bytes() if not generic and oc_path.exists() else b""
-        public = setup_tree(venv, cfg, home, a.no_systemd, vault, a.tree_public, openclaw=not generic)
-        if not generic and oc_path.exists() and oc_path.read_bytes() != oc_before:
+        uses_openclaw = not generic and not builtin
+        oc_before = oc_path.read_bytes() if uses_openclaw and oc_path.exists() else b""
+        public = setup_tree(venv, cfg, home, a.no_systemd, vault, a.tree_public, openclaw=uses_openclaw, builtin=builtin)
+        if uses_openclaw and oc_path.exists() and oc_path.read_bytes() != oc_before:
             restart = True  # 世界树往 extraPaths 里加了导出的文件夹
     social = None
     print(L("分享和好友", "Sharing and friends"))
@@ -1274,7 +1296,7 @@ def main() -> None:
     elif restart:
         say(L("openclaw.json 改了，重启你的 Gateway 生效", "openclaw.json changed: restart your Gateway to apply it"))
     gw_line = ""
-    if not generic:  # app 的对话走 Gateway：这里就试一下连不连得上，别等手机上才发现
+    if not generic and not builtin:  # app 的对话走 Gateway：这里就试一下连不连得上，别等手机上才发现
         sys.path.insert(0, str(repo / "server"))
         from config import gateway_default  # 只用标准库；和服务端同一个算法（server.json 没写 gateway 就按 openclaw.json 的端口）
         gw = str(cfg.get("gateway") or gateway_default(oc_path))
@@ -1299,7 +1321,10 @@ def main() -> None:
     head = subprocess.run(["git", "-C", str(repo), "rev-parse", "--short=7", "HEAD"], capture_output=True, text=True).stdout.strip()
     if vm:
         print(f"OpenMousse {vm.group(1)}" + (L(f"（{head}）", f" ({head})") if head else ""))
-    if generic:
+    no_model = False
+    if builtin:
+        no_model = builtin_status(venv, repo)
+    elif generic:
         ok, detail = probe_claw(cfg.get("claw") or {})
         print(L(f"你的 claw：{cfg['claw'].get('name')}（{cfg['claw'].get('url')}）" + ("，接口连得上 ✓" if ok else f"，接口现在连不上 ✗（{detail}）：看它在不在跑、地址和令牌对不对，改 server.json 的 claw 段不用重启"),
                 f"Your claw: {cfg['claw'].get('name')} ({cfg['claw'].get('url')})" + (", API reachable ✓" if ok else f", API not reachable right now ✗ ({detail}): check it's running and the URL / token are right; editing the claw section of server.json needs no restart")))
@@ -1370,6 +1395,59 @@ def main() -> None:
         print(L(f"  bash {repo}/check.sh   # 自检：每一块通不通、怎么修；输出里没有令牌，可以整段发给帮你的人",
                 f"  bash {repo}/check.sh   # self-check: what works, what doesn't and how to fix it; no tokens in the output, so you can send all of it to whoever helps"))
     print(L("再跑一遍安装器是安全的，只补缺的。", "Rerunning the installer is safe; it only fills in what is missing."))
+    if builtin:
+        offer_wizard(venv, repo, no_model)
+
+
+# —— 自带的内核（第 9 步）：模型、搜索、记忆装完以后选 ——
+
+def setup_ctl(venv: Path, repo: Path, *args: str, capture: bool = True) -> subprocess.CompletedProcess:
+    """跑 server/setup_ctl.py（三步引导 / status）。用这个 venv 的 python：它要 server 的依赖。"""
+    cmd = [str(venv / "bin/python"), str(repo / "server/setup_ctl.py"), *args]
+    if capture:
+        return run(cmd, cwd=str(repo / "server"))
+    return subprocess.run(cmd, cwd=str(repo / "server"), check=False)  # noqa: S603 — 问答要接着这个终端
+
+
+def builtin_status(venv: Path, repo: Path) -> bool:
+    """装完的小结里那几行：每一层现在怎么样（setup_ctl.py status）。→ 是不是还没有能用的模型（它的退出码 3）。"""
+    r = setup_ctl(venv, repo, "status")
+    lines = [x for x in (r.stdout or "").splitlines() if x.strip()]
+    print(L("自带的内核（不用 OpenClaw）：", "The built-in engine (no OpenClaw):"))
+    for x in lines:
+        print(x)
+    if r.returncode not in (0, 3) and not lines:
+        print("  " + (r.stderr or "").strip()[-300:])
+    return r.returncode == 3
+
+
+def tty_yes(prompt: str) -> bool:
+    """有终端、不是替人装（MOUSSE_NONINTERACTIVE）才问；管道里跑（curl | bash）从 /dev/tty 读。回车 = 是。"""
+    if os.environ.get("MOUSSE_NONINTERACTIVE"):
+        return False
+    try:
+        with open("/dev/tty", encoding="utf8") as t:
+            print(f"{prompt} [Y/n]: ", end="", flush=True)
+            ans = t.readline().strip().lower()
+    except OSError:
+        return False
+    return ans in ("", "y", "yes", "是", "1")
+
+
+def offer_wizard(venv: Path, repo: Path, no_model: bool) -> None:
+    """装完了：模型还没选的，问一句要不要现在就在终端里走三步；不走就说在 app 里怎么选。选过的只说以后在哪改。"""
+    cmd = "~/.openmousse/venv/bin/python ~/.openmousse/repo/server/setup_ctl.py"
+    print()
+    if not no_model:
+        print(L(f"模型、搜索、记忆随时能换：app 的设置里，或者 {cmd}", f"Models, web search and memory can be changed any time: in the app's settings, or {cmd}"))
+        return
+    hint = L("打开 app 按引导选模型（选模型 → 搜网页 → 记忆）；没有 app 的话在服务器上跑：",
+             "Open the app and follow the guide to choose a model (model → web search → memory); without the app, run this on the server:")
+    if tty_yes(L("现在就在终端里选模型、搜索和记忆吗？", "Choose the model, web search and memory in this terminal now?")):
+        setup_ctl(venv, repo, capture=False)
+        return
+    print(hint)
+    print(f"  {cmd}")
 
 
 if __name__ == "__main__":
