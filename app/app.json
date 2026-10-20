@@ -58,15 +58,16 @@
       [
         "expo-audio",
         {
-          "microphonePermission": "{name} 需要用麦克风，把你说的话转成文字、录播客。",
+          "microphonePermission": "{name} 需要用麦克风，把你说的话转成文字、录播客，以及拍视频时录下声音。",
           "enableBackgroundRecording": true
         }
       ],
       [
         "expo-image-picker",
         {
-          "photosPermission": "{name} 需要访问相册，把你选的照片发给它看。",
-          "cameraPermission": "{name} 需要用相机拍照发给它看，以及扫描配对码和好友邀请码。"
+          "photosPermission": "{name} 需要访问相册：把你选的照片发给它看，或在你要求时让它看最近拍的照片。",
+          "cameraPermission": "{name} 需要用相机拍照、拍视频发给它看，以及扫描配对码和好友邀请码。",
+          "microphonePermission": "{name} 需要用麦克风，把你说的话转成文字、录播客，以及拍视频时录下声音。"
         }
       ],
       "expo-asset",
@@ -76,7 +77,12 @@
           "color": "#D9AE62"
         }
       ],
-      "expo-secure-store",
+      [
+        "expo-secure-store",
+        {
+          "faceIDPermission": "{name} 用面容 ID 确认是你本人，比如在你批准它替你做重要的事之前。"
+        }
+      ],
       "@bacons/apple-targets",
       "./plugins/withExtensionVersions",
       [
@@ -90,8 +96,8 @@
       [
         "expo-camera",
         {
-          "cameraPermission": "{name} 需要用相机拍照发给它看，以及扫描配对码和好友邀请码。",
-          "microphonePermission": "{name} 需要用麦克风，把你说的话转成文字、录播客。",
+          "cameraPermission": "{name} 需要用相机拍照、拍视频发给它看，以及扫描配对码和好友邀请码。",
+          "microphonePermission": "{name} 需要用麦克风，把你说的话转成文字、录播客，以及拍视频时录下声音。",
           "recordAudioAndroid": false,
           "barcodeScannerEnabled": true
         }
@@ -120,10 +126,55 @@
           "locationWhenInUsePermission": "{name} 在你打开「这台手机 → 定位」后，只在 app 开着时读取位置，用来回答你让它查的事。",
           "locationAlwaysAndWhenInUsePermission": "{name} 只在 app 开着时读取位置，不在后台定位。",
           "locationAlwaysPermission": false,
-          "motionUsagePermission": "{name} 不读取运动状态；这一项是定位组件要求附带的说明。",
+          "motionUsagePermission": "{name} 在你要求时读取步数和运动数据，用于活动记录和训练建议。",
           "isIosBackgroundLocationEnabled": false,
           "isAndroidBackgroundLocationEnabled": false,
           "isAndroidForegroundServiceEnabled": false
+        }
+      ],
+      [
+        "expo-speech-recognition",
+        {
+          "microphonePermission": "{name} 需要用麦克风，把你说的话转成文字、录播客，以及拍视频时录下声音。",
+          "speechRecognitionPermission": "{name} 用系统的语音识别把你说的话转成文字，用在听写和对讲里。"
+        }
+      ],
+      [
+        "expo-media-library",
+        {
+          "photosPermission": "{name} 需要访问相册：把你选的照片发给它看，或在你要求时让它看最近拍的照片。",
+          "savePhotosPermission": "{name} 把你要保存的图片和视频存进相册，比如它做的图和分享卡片。",
+          "isAccessMediaLocationEnabled": false,
+          "preventAutomaticLimitedAccessAlert": true,
+          "granularPermissions": [
+            "photo",
+            "video"
+          ]
+        }
+      ],
+      [
+        "expo-calendar",
+        {
+          "calendarPermission": "{name} 在你要求时查看或添加日历里的日程，比如安排今天、把约好的事记进日历。",
+          "remindersPermission": "{name} 在你要求时查看或添加提醒事项，比如把要做的事记成提醒。"
+        }
+      ],
+      [
+        "expo-contacts",
+        {
+          "contactsPermission": "{name} 在你要求时查找或添加联系人，比如查某人的电话、把名片存进通讯录。"
+        }
+      ],
+      [
+        "expo-sensors",
+        {
+          "motionPermission": "{name} 在你要求时读取步数和运动数据，用于活动记录和训练建议。"
+        }
+      ],
+      [
+        "expo-local-authentication",
+        {
+          "faceIDPermission": "{name} 用面容 ID 确认是你本人，比如在你批准它替你做重要的事之前。"
         }
       ]
     ]
