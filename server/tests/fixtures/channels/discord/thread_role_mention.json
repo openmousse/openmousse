@@ -1,0 +1,26 @@
+{
+ "id": "5000014",
+ "channel_id": "9300001",
+ "author": {
+  "id": "8100001",
+  "username": "alex.rivers",
+  "global_name": "Alex Rivers",
+  "discriminator": "0",
+  "avatar": null
+ },
+ "content": "<@&9400001> is the launch on track?",
+ "timestamp": "2030-10-19T09:12:03.000000+00:00",
+ "edited_timestamp": null,
+ "tts": false,
+ "mention_everyone": false,
+ "mentions": [],
+ "mention_roles": [
+  "9400001"
+ ],
+ "attachments": [],
+ "embeds": [],
+ "pinned": false,
+ "type": 0,
+ "flags": 0,
+ "guild_id": "9100001"
+}

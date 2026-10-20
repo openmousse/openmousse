@@ -1,7 +1,7 @@
 """对外的小服务：server.json 的 share.public_port 配了，run.py 就在 127.0.0.1:<端口> 上起它，给 Tailscale Funnel / 反向代理指过去。
 
 这里只有 /s/<令牌>（分享的链接页和预览图，见 share.py）、/f/…（朋友之间：名片、邀请、签名消息，见 social.py、friends.py，
-协议见 docs/social-protocol.zh-CN.md）和 robots.txt：没有 /api，也不认任何令牌或 Tailscale 设备，所以从外网进来的请求碰不到主服务。
+协议见 docs/social-protocol.zh-CN.md）、/webhooks/<名字>（只认 public: true 的，engine/webhooks.py）和 robots.txt：没有 /api，也不认任何令牌或 Tailscale 设备，所以从外网进来的请求碰不到主服务。
 公网上 /s 和 /f 各是一条 Funnel 路径，开哪条由你定。没有公网入口时，/f 经中继进来（relay.py 进程内调这个 app，不需要它监听端口）。
 """
 from __future__ import annotations
@@ -16,12 +16,14 @@ import friends
 import a2a
 import share
 import social
+from engine import webhooks
 
 app = FastAPI(docs_url=None, redoc_url=None, openapi_url=None)
 app.include_router(share.public_router)
 app.include_router(social.public_router)  # /f/card、/f/jwks.json（社交第二层）
 app.include_router(friends.public_router)  # /f/i/…（邀请落地页）、/f/hello、/f/msg
 app.include_router(a2a.public_router)  # /f/a2a、/f/a2a/agent-card.json、/f/a2a/push（第三层，名片 agent 之间）
+app.include_router(webhooks.public_router)  # 第 4 批：/webhooks/<名字>：只认配了 public: true 的（engine/webhooks.py，自己验签）
 
 
 @app.middleware("http")

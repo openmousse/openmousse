@@ -5,7 +5,8 @@
 改完服务端代码要重启时用它，不要直接 systemctl restart——尤其是后台子任务：主对话可能正在回你。
 
 用法：python3 safe_restart.py [--unit 服务名] [--wait 秒] [--dry-run]
-  --unit     systemd user 服务名，默认环境变量 MOUSSE_SERVICE，没有就 openmousse-server
+  --unit     systemd user 服务名，默认环境变量 MOUSSE_SERVICE，没有就 openmousse-server（macOS 的 launchd 上重启 ai.openmousse.server，
+             同 mousse update：ops/common.py，10/19 第 7 批）
   --wait     最多等多久（默认 600 秒）；到点还有回复在跑就不重启，退出码 3
   --dry-run  只看现在忙不忙，不重启
 服务地址和令牌从 server.json（MOUSSE_SERVER_CONFIG，默认 ~/.openmousse/server.json）读，不打印。
@@ -61,7 +62,14 @@ def main() -> None:
     if a.dry_run:
         print("空闲 / idle")
         return
-    subprocess.run(["systemctl", "--user", "restart", a.unit], check=True)
+    from ops import common as ops_common
+    if ops_common.manager() == "launchd" and a.unit == "openmousse-server":  # macOS：launchctl kickstart -k（同 mousse update）
+        ok, err = ops_common.control(ops_common.SERVER, "restart")
+        if not ok:
+            print(f"重启没成 / restart failed: {err}")
+            sys.exit(1)
+    else:
+        subprocess.run(["systemctl", "--user", "restart", a.unit], check=True)
     print(f"重启了 {a.unit} / restarted {a.unit}")
 
 

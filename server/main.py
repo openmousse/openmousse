@@ -86,6 +86,7 @@ from boards import router as boards_router  # noqa: E402
 from views import router as views_router  # noqa: E402  — 集合块（一张表、几种视图）：import 时把 collection 接进 boards.EXTRA
 from pages import router as pages_router  # noqa: E402 — 页面（Agent 写的网页，app 放进盒子里显示）：import 时把 page 接进 boards.EXTRA
 from pairing import router as pairing_router  # noqa: E402
+from nodes import router as nodes_router  # noqa: E402 — 设备节点（第 8 批）：/api/nodes/…，顺带挂上收件箱 kind node 的钩子（nodes.py）
 from projects import router as projects_router  # noqa: E402 — 顺带把 kind=project 的收件箱钩子挂上
 from goals import router as goals_router  # noqa: E402
 import alerts  # noqa: E402
@@ -96,6 +97,7 @@ from proposals import router as proposals_router  # noqa: E402 — 顺带挂上 
 from memtree import router as tree_router  # noqa: E402
 import treeprune  # noqa: E402 — 世界树的每周修剪：/api/tree/prune…，顺带挂上收件箱 kind tree 的钩子和 tree 工具交计划后出卡（bridges.AFTER）
 import memhold  # noqa: E402 — 待定（别人说的要记的先放这里）：/api/memory/held…，顺带把待定接上每周修剪卡（inbox 的 EXTEND_ITEMS / AFTER_ITEMS）
+import naming  # noqa: E402 — 第一次打开时给助手起名字：/api/naming（naming.py，自带的内核）
 from connectors import router as connectors_router  # noqa: E402
 from think import router as think_router  # noqa: E402 — 思考空间、冥想时间
 from saves import router as saves_router  # noqa: E402 — 收藏
@@ -115,8 +117,12 @@ from engine.api import router as engine_router  # noqa: E402 — 自己的内核
 from engine import setup_api as engine_setup  # noqa: E402 — 第 9 步「通用的选择层」：出错的样子、/api/health 的 no_model
 from engine import tools as engine_tools  # noqa: E402 — 内核的工具和关卡：收件箱 kind tool / schedule 的钩子（重启后点同意也照样跑）
 from engine import jobs as engine_jobs  # noqa: E402 — 内核的定时任务和心跳（claw 选 builtin 时才跑，engine/jobs.py、heartbeat.py）
+from engine import triggers as engine_triggers  # noqa: E402 — 第 4 批：从外面进来的触发（engine/triggers.py、webhooks.py）
 from engine import openai_api as engine_api  # noqa: E402 — 对外接口 /v1（OpenAI 兼容；server.json 的 engine.api 开了才挂）
+import channels  # noqa: E402 — 第 6 批的渠道层（server/channels）：Telegram、Discord、邮件；claw 选 builtin、server.json 的 channels 开了才起
+from channels.api import router as channels_router  # noqa: E402 — /api/setup/channels…（只认主人的设备）
 engine_tools.install_hooks()
+channels.install()  # 收件箱新卡发到主人的渠道、名片 Agent 的 DELIVER（telegram / discord / email）、配对卡、message 工具同意后的跑法
 
 DIST = settings.dist
 settings.db.parent.mkdir(parents=True, exist_ok=True)  # 新实例第一次启动：数据目录还不存在
@@ -142,32 +148,50 @@ async def lifespan(_app: FastAPI):
     asyncio.create_task(chat.resume_ws())  # 走对话通道的：重启前发出去、还没拿到回复的，接回来或补回回复
     alerts.start()  # Agent 的提醒：到点查表，有东西就推
     engine_jobs.start()  # 内核的定时任务和心跳：到点跑一轮主人回合（claw 不是 builtin 时只转不跑）
+    engine_triggers.start()  # 第 4 批：从外面进来的触发（webhook……）：记下服务的事件循环、挂上收件箱的钩子（claw 不是 builtin 时什么都不收）
     treeprune.start()  # 开源版世界树：老 Agent 补上枝；builtin 时建好每周修剪的定时任务（server.json tree.prune 能关）
     memhold.start()  # 待定：周日晚上这一周还没有带待定的修剪卡，就出一张只有待定的卡
     if claw.is_builtin():  # 13b：对话结束时的写回（闲了一阵、跨过 04:00、攒够了轮数）：挑几条长成叶子，别人说的进待定（engine/writeback.py）
         from engine import writeback as engine_writeback
         engine_writeback.start()
+    if claw.is_builtin():  # 每周整理技能：每个 Agent 自己的技能当一整套看一遍，一张卡逐条定（engine/skill_review.py；engine.skills.weekly，默认关）
+        from engine import skill_review as engine_skill_review
+        engine_skill_review.start()
     coursegen.start()  # 学习台：生成学习页的队列用服务的事件循环
     friends.start()  # 朋友聊天的投递循环：发出去的消息排队发、失败重试；名片变了告诉朋友
     relay.start()  # 往外连中继：没有公网入口时朋友经它找到这台服务器（server.json "relay": false 关掉）
+    if claw.is_builtin():  # 第 6 批的渠道层：开着的 Telegram、Discord、邮件账号收发（OpenClaw 有它自己的渠道，那条路不起这个）
+        channels.start()
     if claw.is_builtin():  # 关服务时先停自己内核正在跑的回合（像点了停），别等 app 那条连接、别让工具对着关掉的端口一直连不上
         chat.watch_shutdown()
     if claw.is_builtin():  # 内核的沙箱（第 8 项）：认回 / 收掉上次留下的容器，之后闲了收掉
         from engine import sandbox as engine_sandbox
         engine_sandbox.start()
+    if claw.is_builtin():  # 第 3 批：上次重启停下的主机后台命令（engine/host_process.py）：还活着的收掉，往起它们的对话里说一声
+        from engine import host_process as engine_host_process
+        engine_host_process.start()
     if claw.is_builtin():  # 记忆检索按意思搜（配了 engine.recall.embeddings 才有）：后台慢慢补向量，不卡主人回合
         from engine import semantic as engine_semantic
         engine_semantic.start()
+    if claw.is_builtin():  # 第 5 批：先载开着的插件（默认没有；engine/plugins.py），再 startup 的钩子、自带的 boot-md（默认关；engine/user_hooks.py）
+        from engine import plugins as engine_plugins, user_hooks as engine_hooks
+        await engine_plugins.start()
+        engine_hooks.start()
     if mcp_bridge is None:
         yield
     else:
         async with mcp_bridge.server.session_manager.run():  # /mcp 要它（无状态：每个请求一个传输）
             yield
     await chat.engine_shutdown()  # 关的时候还有内核的回合在跑：停下，等它们收完尾、回复入库（最多几秒；没有就马上过）
+    await channels.stop()  # 渠道的收发停下（排着没发的、等回复的都在库里，下次启动接着发）
     if (engine_semantic := sys.modules.get("engine.semantic")) is not None:  # 补向量的后台线程：叫它停（没导入过就不导入）
         await asyncio.to_thread(engine_semantic.stop, 2.0)
     from engine import mcp_client as engine_mcp  # 第 13 步：你配的 stdio MCP 服务连进程组一起收（没起过就什么都不做）
     await engine_mcp.shutdown()
+    if (engine_hp := sys.modules.get("engine.host_process")) is not None:  # 第 3 批：主机上的后台命令整组收掉，下次起来说一声
+        await engine_hp.shutdown()
+    if (engine_mg := sys.modules.get("engine.mediagen")) is not None:  # 第 3 批第 14 项：正在生成的视频、音乐收掉，往那个对话说一声
+        await engine_mg.shutdown()
 
 
 app = FastAPI(title=f"{settings.app_name} API", docs_url=None, redoc_url=None, openapi_url=None, lifespan=lifespan)
@@ -175,6 +199,7 @@ if mcp_bridge is not None:  # 放最前面：/mcp 不走 /api 的令牌检查，
     app.router.routes[:0] = [Route("/mcp", endpoint=mcp_bridge.gate, methods=["GET", "POST", "DELETE"]), Mount("/mcp", app=mcp_bridge.gate)]
 app.include_router(chat_router)
 app.include_router(pairing_router)
+app.include_router(nodes_router)
 app.include_router(cards_router)  # 在 data 之前：/api/tasks/quota 不能被 /api/tasks/{tid} 先接走
 app.include_router(health_router)
 app.include_router(data_router)
@@ -202,6 +227,7 @@ app.include_router(goals_router)
 app.include_router(treeprune.router)  # 在 tree_router 之前：/api/tree/prune… 是 GET，和 POST /api/tree/{id} 不打架，放前面好找
 app.include_router(tree_router)
 app.include_router(memhold.router)  # /api/memory/held…：待定（记忆页的「待定」）
+app.include_router(naming.router)  # /api/naming：助手的名字和一句性格（naming.py）
 app.include_router(connectors_router)
 app.include_router(saves_router)  # 在 think 之前：/api/think/saves/… 不能被 think 的路由先接走
 app.include_router(live_router)
@@ -218,6 +244,7 @@ app.include_router(diet_router)
 app.include_router(outputs_router)
 app.include_router(meetings_router)  # /api/meetings/suggest 在 /api/meetings/{mid} 之前定义（同一个 router 里按顺序）
 app.include_router(engine_router)
+app.include_router(channels_router)  # 在网页版的静态文件之前（第 6 批）
 if apps is not None:
     app.include_router(apps.router)
 app.add_exception_handler(sources.NoSource, sources.no_source_handler)
@@ -294,6 +321,10 @@ async def guard(request: Request, call_next):
             # 对外接口的令牌（api、api-<agent id>）同理只给 /v1（engine/openai_api.py）
             if who == "token:api" or who.startswith("token:api-"):
                 return JSONResponse({"ok": False, "error": L("API 令牌只能用在 /v1 上", "The API token only works on /v1")}, status_code=403)
+            # 节点的令牌（node-<设备>，第 8 批）只给 /api/nodes/*（nodes.py）：当节点的那台电脑拿着它，读不了你的对话、替你点不了头
+            if who.startswith("token:node-") and not request.url.path.startswith("/api/nodes/"):
+                return JSONResponse({"ok": False, "error": L("节点令牌只能用在 /api/nodes/ 上", "The node token only works on /api/nodes/")},
+                                    status_code=403)
         resp = await call_next(request)
     finally:
         i18n.reset(lang_token)

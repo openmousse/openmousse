@@ -33,7 +33,7 @@ OpenClaw 以外的 claw 能做的（caps()，/api/health 带给 app，做不到�
     cron       内核的定时任务（engine/jobs.py）：/api/upcoming 列出来、下一次什么时候跑，/api/upcoming/{id} 暂停 / 恢复
     approvals  内核的关卡（撤不回的、对外的、主机上名单外的命令交 kind tool 的卡）：收件箱里点；老 app 的 /api/approvals 也列、也能点
     billing    /api/models 的 providers 说每一家是套餐还是按量、连没连上，usage 是这 30 天花了多少（engine/usage.py）
-  channels 还是 false：内核没有 Telegram、Discord 这些渠道。
+  channels：10/19 第 6 批起内核有自己的渠道层（server/channels：Telegram、Discord、邮件），有开着的渠道才回 true。
 """
 from __future__ import annotations
 
@@ -186,7 +186,13 @@ def caps() -> dict:
     mode, _, _ = session_mode()
     own = is_builtin()  # 自己的内核：插话、后台任务、Agent 的工作区，定时任务、关卡的卡、用量（都读内核），见文件开头
     return {"steer": own, "agentWorkspaces": own, "tasks": own, "approvals": own, "cron": own, "billing": own,
-            "channels": False, "rewind": mode == "history", "modelSwitch": len(models()) > 1}
+            "channels": own and channels_on(), "rewind": mode == "history", "modelSwitch": len(models()) > 1}
+
+
+def channels_on() -> bool:
+    """builtin 下有开着的渠道吗（第 6 批的渠道层，server/channels：server.json 的 channels.<渠道>.enabled）。"""
+    import channels
+    return channels.any_enabled()
 
 
 def info() -> dict:

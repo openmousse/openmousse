@@ -219,7 +219,7 @@ def test_command_jobs_do_not_use_up_the_daily_model_limit(cmd, monkeypatch):
     assert runs(j["id"])[-1]["status"] == "ok" and runs(m["id"])[-1]["status"] == "limit"
     start = when.iso(when.now().replace(hour=0, minute=0, second=0, microsecond=0))
     q = ("SELECT COUNT(*) FROM engine_job_runs r JOIN engine_jobs j ON j.id=r.job WHERE julianday(r.started_at)>=julianday(?) "
-         "AND r.kind!='heartbeat' AND r.status NOT IN ('skipped','missed','limit')")
+         "AND r.kind!='heartbeat' AND r.status NOT IN ('skipped','missed','limit','estop','unchanged','gated')")  # 第 4 批：急停、没变、pre 没叫醒的也不算
     with store.read() as conn:
         everything = conn.execute(q, (start,)).fetchone()[0]
         commands = conn.execute(q + " AND j.command IS NOT NULL", (start,)).fetchone()[0]
@@ -318,6 +318,52 @@ def test_settle_waits_for_command_runs(cmd):
         return jobs.get(j["id"])
     k = asyncio.run(go())
     assert not k["running"] and k["last_status"] == "ok"
+
+
+# —— 活动页：到点跑成了的那次不列（engine/appdata.py engine_items）——————————————————————————————
+
+def test_quiet_runs_stay_off_the_activity_page_but_stay_in_the_log(cmd):
+    from engine import appdata
+    aid = agent("g-cmd14", "Practice")
+    bad = user_cmd_job(aid, {"tool": "board", "args": ["show", "--fail"]})
+    due_fire(bad["id"])  # 没跑成的
+    jobs.pause(bad["id"])  # 别跟着下面的 tick 再跑
+    quiet = user_cmd_job(aid, {"tool": "board", "args": ["show"]})
+    for _ in range(3):
+        due_fire(quiet["id"])  # 到点跑成了，什么也没说
+
+    async def by_hand():
+        assert (await jobs.api_action(quiet["id"], "run"))["ok"]
+        await jobs.settle()
+    run(by_hand())
+    assert sorted((r["kind"], r["status"]) for r in runs(quiet["id"])) == [("manual", "ok")] + [("on_time", "ok")] * 3  # 运行记录里一次不少
+    shown = [x for _, x in appdata.engine_items(200, {}) if x.get("job") in (quiet["id"], bad["id"])]
+    assert [(x["job"], x["run"], x["kind"]) for x in shown] == [(quiet["id"], "manual", "cron"), (bad["id"], "on_time", "failed")]
+    assert "failed: exit code 3: boom" in shown[1]["text"]
+    newest = [x["job"] for _, x in appdata.engine_items(2, {}) if x.get("source") == "job"]
+    assert newest == [quiet["id"], bad["id"]]  # 不列的不占 limit：没跑成的那次后面又跑成了 3 次，它还在最新的两条里
+
+
+def test_the_activity_page_reads_an_old_library_before_the_job_loop_does(tmp_path, monkeypatch):
+    """10/19 以前建的库，服务刚起、jobs.loop 还没补上 command 那一栏，活动页先被问到：照样读得出来（engine_items 先 ready()）。"""
+    import sqlite3
+
+    import config
+    from engine import appdata
+    db = tmp_path / "old.db"
+    conn = sqlite3.connect(db)
+    conn.executescript(jobs.SCHEMA.replace(",\n  command TEXT);", ");").replace(", usage TEXT, output TEXT);", ", usage TEXT);"))
+    conn.execute("INSERT INTO engine_job_runs(id, job, agent, started_at, ended_at, kind, status, error) VALUES(?,?,?,?,?,?,?,?)",
+                 ("jr-old", "job-old", "main", "2026-10-18T09:00:00+00:00", "2026-10-18T09:00:05+00:00", "on_time", "error", "exit code 1"))
+    conn.commit()
+    conn.close()
+    monkeypatch.setattr(config.settings, "db", db)
+    with store.tx():
+        pass  # 内核别的表（engine_turns……）：用过内核的库都有
+    assert [x["id"] for _, x in appdata.engine_items(10, {})] == ["jr-old"]
+    conn = sqlite3.connect(db)
+    assert "command" in {r[1] for r in conn.execute("PRAGMA table_info(engine_jobs)")}
+    conn.close()
 
 
 # —— README 里的例子：开练前一小时问一句 ——————————————————————————————————————————————————

@@ -1,0 +1,52 @@
+{
+ "message": {
+  "message_id": 31,
+  "message_thread_id": 42,
+  "is_topic_message": true,
+  "date": 1760860800,
+  "chat": {
+   "id": -1001000002,
+   "type": "supergroup",
+   "title": "Project Room",
+   "is_forum": true
+  },
+  "from": {
+   "id": 1000001,
+   "is_bot": false,
+   "first_name": "Alex",
+   "last_name": "Rivers",
+   "username": "alex_rivers_example",
+   "language_code": "en"
+  },
+  "text": "@mousse_test_bot status of the launch?",
+  "entities": [
+   {
+    "type": "mention",
+    "offset": 0,
+    "length": 16
+   }
+  ],
+  "reply_to_message": {
+   "message_id": 42,
+   "date": 1760857200,
+   "chat": {
+    "id": -1001000002,
+    "type": "supergroup",
+    "title": "Project Room",
+    "is_forum": true
+   },
+   "from": {
+    "id": 1000001,
+    "is_bot": false,
+    "first_name": "Alex",
+    "last_name": "Rivers",
+    "username": "alex_rivers_example",
+    "language_code": "en"
+   },
+   "forum_topic_created": {
+    "name": "Launch",
+    "icon_color": 7322096
+   }
+  }
+ }
+}

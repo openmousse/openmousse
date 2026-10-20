@@ -376,7 +376,7 @@ export function ChatScreen() {
 export function ThreadScreen() {
   const nav = useNavigation<any>();
   const { id = 'main', at = 0, quote, focus } = (useRoute<any>().params ?? {}) as { id?: string; at?: number; quote?: ChatQuote; focus?: string };
-  const { connected, booting, sideChats, avatar, sharedChannels, firstRun, send } = useStore();
+  const { connected, booting, sideChats, avatar, sharedChannels, firstRun, send, claw } = useStore();
   const list = useChatList();
   const state = list.rows.find((r) => r.id === id)?.state ?? null;
   const side = sideChats.find((c) => c.id === id);
@@ -396,7 +396,8 @@ export function ThreadScreen() {
       <ChatHeader title={isMain ? agentName() : side?.title ?? L('项目', 'Project')} sub={sub} subTone={isMain && !connected && !booting ? 'warn' : undefined}
         onSub={isMain && !connected && !booting ? () => nav.navigate('Connect') : undefined}
         face={<StateFace size={36} state={state}>{isMain ? <LensAvatar size={36} config={avatar} /> : <ProjectFace size={36} archived={side?.archived} />}</StateFace>}
-        onBack={() => nav.goBack()} onInfo={() => nav.navigate('Info', { kind: isMain ? 'main' : 'project', id })} />
+        onBack={() => nav.goBack()} onInfo={() => nav.navigate('Info', { kind: isMain ? 'main' : 'project', id })}
+        onTalk={isMain && connected && Platform.OS !== 'web' && claw.kind === 'builtin' && supports('talk') ? () => nav.navigate('Talk', { thread: id }) : undefined} />
       {side ? <ProjectPanel key={`p-${id}`} id={id} /> : null}
       <ChatView key={id} threadId={id} quote={quote} quoteAt={quote ? at : 0} focus={focus} focusAt={focus ? at : 0}
         placeholder={side ? L(`给「${side.title}」发消息`, `Message "${side.title}"`) : L(`给 ${agentName()} 发消息`, `Message ${agentName()}`)}

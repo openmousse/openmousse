@@ -73,9 +73,23 @@ def _user(m: dict, p: dict):
                 out.append({"type": "text", "text": "[An image was attached here, but this model can't read images.]"})
             else:
                 out.append({"type": "image_url", "image_url": {"url": f"data:{b.get('mime') or 'image/png'};base64,{b['data']}"}})
+        elif b.get("type") == "document" and b.get("data"):  # 第 3 批：PDF（收 PDF 的才原样发：engine/media.pdf_chat）
+            out.append(_file_part(b) if _takes_pdf(p) else {"type": "text", "text": "[A PDF was attached here, but this model can't read PDFs directly.]"})
     if out and all(x["type"] == "text" for x in out):
         return "\n\n".join(x["text"] for x in out)
     return out or "…"
+
+
+def _takes_pdf(p: dict) -> bool:
+    from .media import pdf_chat
+    return pdf_chat(p)
+
+
+def _file_part(b: dict) -> dict:
+    """中立格式的 document 块 → /chat/completions 的 file 块（OpenAI 文件输入的写法：file_data 是 data: 地址）。"""
+    name = str(b.get("title") or "document.pdf")[:120]
+    return {"type": "file", "file": {"filename": name if name.lower().endswith(".pdf") else name + ".pdf",
+                                     "file_data": f"data:application/pdf;base64,{b['data']}"}}
 
 
 def _merge_user(prev: dict, content) -> None:
@@ -160,6 +174,11 @@ def to_openai(system: str, messages: list[dict], p: dict, model_id: str) -> list
                 shown.append({"type": "text", "text": f"Attached image{'s' if len(pics) > 1 else ''} from the result of {m.get('name') or 'a tool'} "
                                                       f"(call {cid}):"})
                 shown.extend({"type": "image_url", "image_url": {"url": f"data:{b.get('mime') or 'image/png'};base64,{b['data']}"}} for b in pics)
+            docs = [b for b in m.get("content") or [] if b.get("type") == "document" and b.get("data")]
+            if docs and _takes_pdf(p):  # 第 3 批：工具结果里的 PDF（engine/pdf.py；不收 PDF 的那里已经换成一句话）：和图一样挪到紧跟着的 user 里
+                shown.append({"type": "text", "text": f"Attached PDF{'s' if len(docs) > 1 else ''} from the result of {m.get('name') or 'a tool'} "
+                                                      f"(call {cid}):"})
+                shown.extend(_file_part(b) for b in docs)
         elif role == "system":
             t = text_of(m).strip()
             if not t:

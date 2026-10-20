@@ -450,6 +450,8 @@ export interface Message {
   replyTo?: { id: string; role: 'user' | 'grava'; text: string };
   /** 合并转发给这个 Agent 的：气泡上面画转发卡（server/forward.py） */
   forward?: ForwardCard;
+  /** 斜杠命令的回答（server/engine/commands.py）：不是模型的回复，流里的字不进正在跑的那条回复 */
+  command?: boolean;
 }
 
 /** Grava 的建议（起床报告、主动提醒，第 8 步起才有）。 */

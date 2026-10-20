@@ -13,6 +13,8 @@ evaluate（在页面里跑一段 JS）。ref 记在页面里（data-mref），�
 ⑫：普通 Agent 的浏览器多一个 screenshot（act 的 extra）：Page.captureScreenshot 看得到的那一屏，PNG 存在
 <data_dir>/engine/screenshots/<Agent>/（只留最近 SHOT_KEEP 张），回路径和页面大纲；⑫b 起原图交给 act 的 pictures，hands.py 放进工具结果给模型看
 （engine/images.py：卡大小、存进图库）。代办的照旧没有。
+第 3 批：普通 Agent 的浏览器再多一个 pdf（act 的 extra）：Page.printToPDF 把这一页存成 PDF，原样交给 act 的 pdfs（hands.py 存成这个对话的附件）；
+用户自己的 Chrome（engine/chrome.py）用同一套 CDP、页面大纲和动作（_act）。沙箱浏览器的登录配置档（engine.sandbox.agents.<id>.profile）见 sandbox.py。
 弹窗（alert / confirm / prompt）自动关：alert 点确定，confirm / prompt 点取消（提交、确认这类事交给 Doorman 和用户），下一次结果里说一声。
 导航、点了以后最多等 NAV_WAIT 秒：Doorman 扣下的请求会一直挂着（等用户点头，最多 10 分钟），等不到先回「还在加载」，hands.py 再附上
 Doorman 扣下了什么。
@@ -597,13 +599,14 @@ def _dialogs(tab: Tab) -> str:
 ACTIONS = ("open", "snapshot", "text", "click", "type", "press", "select", "scroll", "back", "forward", "reload", "tabs", "tab", "close",
            "wait", "evaluate")
 READS = ("snapshot", "text", "tabs", "wait")   # 只看、不动页面
-EXTRA = ("screenshot",)   # ⑫：只给普通 Agent 的浏览器（代办的照旧）；也只看、不动页面
+EXTRA = ("screenshot", "pdf")   # ⑫：只给普通 Agent 的浏览器（代办的照旧）；也只看、不动页面（pdf：第 3 批）
 SHOT_KEEP = 50            # 每个 Agent 最多留多少张截图（旧的删）
 
 
-async def act(agent: str, args: dict, extra: tuple[str, ...] = (), pictures: list | None = None) -> tuple[str, str | None]:
+async def act(agent: str, args: dict, extra: tuple[str, ...] = (), pictures: list | None = None, pdfs: list | None = None) -> tuple[str, str | None]:
     """做一个动作 → (给模型的话, 页面上来的字（要包成资料的那段，没有就 None）)。出错抛 BrowserError / SandboxError。
-    extra：这个 Agent 多给的动作（EXTRA 里的）。pictures：给一个列表，截图的原图 (PNG 字节, 是什么) 放进去（⑫b，hands.py 交给模型看）。"""
+    extra：这个 Agent 多给的动作（EXTRA 里的）。pictures：给一个列表，截图的原图 (PNG 字节, 是什么) 放进去（⑫b，hands.py 交给模型看）。
+    pdfs：给一个列表，pdf 存下的 (PDF 字节, 这一页的标题或网址) 放进去（第 3 批，hands.py 存成附件）。"""
     action = str(args.get("action") or "").strip().lower()
     names = ACTIONS + tuple(x for x in extra if x in EXTRA)
     if action not in names:
@@ -612,7 +615,26 @@ async def act(agent: str, args: dict, extra: tuple[str, ...] = (), pictures: lis
         b = await connect(agent, live)
         if action == "screenshot":
             return await _shot(b, agent, pictures)
+        if action == "pdf":
+            return await save_pdf(b, pdfs)
         return await _act(b, action, args)
+
+
+async def save_pdf(b: Browser, pdfs: list | None) -> tuple[str, str | None]:
+    """第 3 批：这一页存成 PDF（Page.printToPDF，带背景）：字节交给 pdfs（调用方存）。"""
+    tab = await current(b)
+    assert tab is not None
+    res = await b.cdp.send("Page.printToPDF", {"printBackground": True, "preferCSSPageSize": True}, session=tab.session, timeout=90)
+    try:
+        data = base64.b64decode(str(res.get("data") or ""), validate=True)
+    except ValueError:
+        data = b""
+    if not data.startswith(b"%PDF"):
+        raise BrowserError(L("浏览器没给出 PDF", "The browser didn't return a PDF"))
+    title = str(await evaluate(b, tab, "document.title") or "") or str(await evaluate(b, tab, "location.href") or "")
+    if pdfs is not None:
+        pdfs.append((data, title))
+    return f"Saved the page as a PDF ({len(data)} bytes).", None
 
 
 def shots_dir(agent: str) -> Path:

@@ -4,6 +4,8 @@
 - 图片：原图存盘，给模型的是缩到 1600px 的 JPEG（省 token），app 里的缩略图 512px 按需生成。
 - 文档：PDF / Word / Excel / PowerPoint / 文本 / 代码在服务端抽成文字，每个最多 60k 字、一条消息合计 150k 字，塞进发给 Grava 的消息里。
 - 音频：OpenAI 转写（gpt-4o-transcribe，失败退 whisper-1），转写文字塞进消息；语音输入也走这条路（/api/chat/transcribe）。
+  第 3 批：server.json 配了 engine.use.stt 就改走内核选的那一家（engine/stt.py：OpenAI、Groq、Gemini、Deepgram、ElevenLabs、本机 whisper.cpp）。
+- 视频：只存盘；第 3 批：开了 engine.media.describe_video（配了 engine.use.video）就先让看视频的模型看一遍，描述塞进消息（engine/video.py）。
 - 其它类型：只存盘，消息里给路径，Grava 需要时用工具读。
 - 在 app 里点开看（页图、Word / Excel 转好的内容）：preview.py。
 - 文件存 ~/.openclaw/grava/uploads/<thread>/，记录在 grava.db 的 attachments 表；消息行的 attachments 列存给 app 显示的摘要。
@@ -12,6 +14,7 @@ from __future__ import annotations
 
 import base64
 import io
+import json
 import mimetypes
 import re
 import sqlite3
@@ -159,8 +162,33 @@ def extract_text(path: Path, kind: str, mime: str) -> tuple[str, str]:
     return "", ""
 
 
+def _engine_stt() -> bool:
+    """第 3 批：server.json 配了 engine.use.stt（内核的转写，engine/stt.py）。没配 = False（照旧走下面的 OpenAI）。"""
+    try:
+        from engine import media
+        return media.choice("stt") is not None
+    except Exception:  # noqa: BLE001 — 内核导入不了：照旧
+        return False
+
+
+def _engine_video() -> bool:
+    """第 3 批：用户发来的视频要不要先看一遍（engine.media.describe_video，还要配了 engine.use.video）。没开 = False（照旧只存盘）。"""
+    try:
+        from engine import video
+        return video.describe_uploads()
+    except Exception:  # noqa: BLE001
+        return False
+
+
 def transcribe(path: Path, mime: str | None = None) -> str:
-    """OpenAI 转写。中英混说没问题；失败抛 RuntimeError。"""
+    """OpenAI 转写。中英混说没问题；失败抛 RuntimeError。
+    第 3 批：配了 engine.use.stt 就交给内核选的那一家（同一个词表提示 transcribe_prompt）；不配一个字不变。"""
+    if _engine_stt():
+        from engine import stt
+        try:
+            return stt.transcribe_sync(path, mime=mime, prompt=TRANSCRIBE_PROMPT or None).text
+        except Exception as exc:  # noqa: BLE001 — MediaError 这类：照原来的说法往外报
+            raise RuntimeError(L(f"转写失败：{exc}", f"Transcription failed: {exc}")) from None
     key = env_key("OPENAI_API_KEY")
     last = None
     for model in TRANSCRIBE_MODELS:
@@ -291,6 +319,9 @@ async def upload(thread: str = Form("main"), files: list[UploadFile] = File(...)
                 note = L("已转写", "Transcribed")
             except RuntimeError as exc:
                 note, status = str(exc)[:160], "warn"
+        elif kind == "video" and _engine_video():  # 第 3 批：开了 engine.media.describe_video（配了 engine.use.video）就先看一遍，描述放进消息
+            from engine import video
+            text, note, status = await video.describe_upload(path, mime)
         elif kind == "image":
             note = L("图片", "Image") if image_for_model(path) else L("图片（打不开，只存了文件）", "Image (couldn't open it, file saved only)")
         text = text[:TEXT_CHARS_PER_FILE]
@@ -301,6 +332,39 @@ async def upload(thread: str = Form("main"), files: list[UploadFile] = File(...)
         out.append({"id": fid, "name": name, "mime": mime, "size": size, "kind": kind, "chars": len(text) if text else None, "note": note or None,
                     "status": status, "url": f"/api/files/{fid}", "text": text if kind == "audio" else None})
     return {"ok": True, "attachments": out}
+
+
+def save_bytes(thread: str, name: str, mime: str | None, data: bytes, *, extract: bool = True) -> dict:
+    """把这些字节存成一个附件（渠道层收到的主人的图、文件、语音，第 6 批）：和 /api/chat/upload 一样存盘、抽文字 / 转写，记进 attachments，
+    等 /api/chat/send 带上它的 id。extract=False 不抽字、不转写（语音由调用方自己转写，转写的字放进正文）。
+    → 和 upload 回的一样的一项（id、name、mime、size、kind、chars、note、status、url），多一个 path。超过 MAX_BYTES 抛 ValueError。"""
+    if len(data) > MAX_BYTES:
+        raise ValueError(L(f"超过 {MAX_BYTES // 1024 // 1024} MB", f"over {MAX_BYTES // 1024 // 1024} MB"))
+    name = safe_name(name or "file")
+    mime = (mime or mimetypes.guess_type(name)[0] or "application/octet-stream").lower()
+    fid = uuid.uuid4().hex[:12]
+    folder = UPLOAD_DIR / re.sub(r"[^A-Za-z0-9_-]", "_", thread)[:40]
+    folder.mkdir(parents=True, exist_ok=True)
+    path = folder / f"{fid}-{name}"
+    path.write_bytes(data)
+    kind = kind_of(name, mime)
+    text, note, status = "", "", "ok"
+    if extract and kind == "doc":
+        text, note = extract_text(path, kind, mime)
+    elif extract and kind == "audio":
+        try:
+            text = transcribe(path, mime)
+            note = L("已转写", "Transcribed")
+        except RuntimeError as exc:
+            note, status = str(exc)[:160], "warn"
+    elif kind == "image":
+        note = L("图片", "Image") if image_for_model(path) else L("图片（打不开，只存了文件）", "Image (couldn't open it, file saved only)")
+    text = text[:TEXT_CHARS_PER_FILE]
+    with _lock, adb() as conn:
+        conn.execute("INSERT INTO attachments(id, thread, name, mime, size, kind, path, text, chars, note, status, created_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)",
+                     (fid, thread, name, mime, len(data), kind, str(path), text or None, len(text) if text else None, note or None, status, now_iso()))
+    return {"id": fid, "name": name, "mime": mime, "size": len(data), "kind": kind, "chars": len(text) if text else None, "note": note or None,
+            "status": status, "url": f"/api/files/{fid}", "path": str(path)}
 
 
 @router.post("/api/chat/transcribe")
@@ -325,6 +389,26 @@ async def transcribe_endpoint(file: UploadFile = File(...)):
     finally:
         path.unlink(missing_ok=True)
     return {"ok": True, "text": text, "seconds_hint": round(size / 16000, 1)}
+
+
+@router.get("/api/chat/transcribe")
+def transcribe_ready():
+    """对讲页（app，第 8 批）进来先问一声：语音转写配好了没有。只看有没有 transcribe 要的 OPENAI_API_KEY，不转写、不花钱、不连外面。
+    配了 engine.use.stt（第 3 批）的转写走内核选的那一家（上面的 transcribe）：看那一家能不能用（engine/stt.py；密钥调的时候才查）。"""
+    if _engine_stt():
+        from engine import media, stt
+        why = media.problem("stt")
+        ready = why is None and stt.on()
+        if not ready and why is None:
+            why = L("server.json 的 engine.use.stt 配的转写现在用不了（本机的转写命令找不到）。",
+                    "The transcription set in engine.use.stt (server.json) can't be used right now (the local transcription command wasn't found).")
+        return {"ok": True, "ready": ready, "why": why}
+    import secretstore
+    ready = bool(secretstore.lookup("OPENAI_API_KEY")[0])
+    why = None if ready else L("服务器没有配置语音转写：在服务器上设置 OPENAI_API_KEY（用自建的 Whisper 服务时另填 server.json 的 transcribe_url）。",
+                               "The server has no speech transcription set up: set OPENAI_API_KEY on the server "
+                               "(for a self-hosted Whisper service, also set transcribe_url in server.json).")
+    return {"ok": True, "ready": ready, "why": why}
 
 
 @router.get("/api/files/{fid}")
@@ -415,3 +499,75 @@ def bind(rows: list[sqlite3.Row], message_id: int) -> list[dict]:
         for r in rows:
             conn.execute("UPDATE attachments SET message_id=? WHERE id=?", (message_id, r["id"]))
     return [summary(r) for r in rows]
+
+
+# —— 生成的附件（第 3 批：朗读的语音、生成的图，engine/tts.py、imagegen.py）——
+
+GENERATED = "generated"  # attachments.status：内核的工具生成的（不是用户上传的）
+
+
+def save_generated(thread: str, data: bytes, name: str, mime: str, *, kind: str, text: str | None = None, note: str | None = None,
+                   message_id: int | None = None) -> dict:
+    """内核的工具生成的一个文件（语音、图）存成这个对话的附件：和上传的同一个目录、同一张表，status = generated。
+    message_id 不给 = 这一轮回完由 link_generated 挂到回复上（app 在回复下面显示附件，点开能放、能看）。→ 附件的摘要（同 summary）。"""
+    name = safe_name(name)
+    fid = uuid.uuid4().hex[:12]
+    folder = UPLOAD_DIR / re.sub(r"[^A-Za-z0-9_-]", "_", thread)[:40]
+    folder.mkdir(parents=True, exist_ok=True)
+    path = folder / f"{fid}-{name}"
+    tmp = path.with_name(f".{path.name}.tmp")
+    tmp.write_bytes(data)
+    tmp.replace(path)
+    clip = (text or "")[:TEXT_CHARS_PER_FILE] or None
+    with _lock, adb() as conn:
+        conn.execute("INSERT INTO attachments(id, thread, message_id, name, mime, size, kind, path, text, chars, note, status, created_at) "
+                     "VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                     (fid, thread, message_id, name, mime, len(data), kind, str(path), clip, len(clip) if clip else None, note, GENERATED, now_iso()))
+        r = conn.execute("SELECT * FROM attachments WHERE id=?", (fid,)).fetchone()
+        if message_id is not None:
+            _show(conn, message_id, [summary(r)])
+    return {**summary(r), "path": str(path)}
+
+
+def _show(conn: sqlite3.Connection, message_id: int, items: list[dict]) -> None:
+    """把附件摘要加到这条消息的 attachments 列（app 显示的那份）后面。"""
+    row = conn.execute("SELECT attachments FROM messages WHERE id=?", (message_id,)).fetchone()
+    if row is None:
+        return
+    try:
+        cur = json.loads(row["attachments"] or "[]")
+    except ValueError:
+        cur = []
+    have = {a.get("id") for a in cur if isinstance(a, dict)}
+    cur += [a for a in items if a["id"] not in have]
+    conn.execute("UPDATE messages SET attachments=? WHERE id=?", (json.dumps(cur, ensure_ascii=False), message_id))
+
+
+def link_generated(thread: str, since: str, message_id: int) -> list[dict]:
+    """一轮回完（chat.py 的 run_gateway，自己的内核）：这一轮里工具生成、还没挂到消息上的附件挂到这条回复下面。→ 挂上的那几个的摘要。"""
+    with _lock, adb() as conn:
+        rows = conn.execute("SELECT * FROM attachments WHERE thread=? AND status=? AND message_id IS NULL AND julianday(created_at) >= julianday(?) "
+                            "ORDER BY created_at, rowid", (thread, GENERATED, since)).fetchall()
+        if not rows:
+            return []
+        for r in rows:
+            conn.execute("UPDATE attachments SET message_id=? WHERE id=?", (message_id, r["id"]))
+        out = [summary(r) for r in rows]
+        _show(conn, message_id, out)
+    return out
+
+
+def after_reply(thread: str, since: str, message_id: int | None, text: str, status: str) -> None:
+    """chat.py 回复入库以后调（只在自己的内核）：挂上这一轮生成的附件；这个对话开了「用语音回」（engine/tts.py）就在后台合成一条语音挂上。
+    出什么错都不往外抛（回复照常结束）。"""
+    if message_id is None:
+        return
+    try:
+        link_generated(thread, since, message_id)
+    except Exception as exc:  # noqa: BLE001
+        print(f"[files] 生成的附件没挂上：{type(exc).__name__}: {str(exc)[:120]}")
+    try:
+        from engine import tts
+        tts.after_reply_soon(thread, message_id, text, status)
+    except Exception as exc:  # noqa: BLE001
+        print(f"[files] 语音回复没起来：{type(exc).__name__}: {str(exc)[:120]}")

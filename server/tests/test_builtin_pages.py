@@ -134,67 +134,66 @@ def test_caps_open_cron_approvals_and_billing_only_under_builtin(env):
 
 # —— 活动记录 ——————————————————————————————————————————————————————————————————————————
 
-def test_activity_reads_the_engine_turns_and_job_runs_without_the_gateway(env, no_gateway):
+def test_activity_reads_the_engine_turns_and_job_runs_without_the_gateway(env, no_gateway, monkeypatch):
+    db = env.dir / "mousse.db"  # 只看这个测试自己那几行：它的行记在 1 到 9 分钟以前，跟别的测试共用一个库的话，前面刚写的几百行都比它新，把它挤出前 200 条
+    monkeypatch.setattr(config.settings, "db", db)  # 内核的表
+    monkeypatch.setattr(chat, "DB", db)  # app 自己的表（activity_log、groups）：跟线上一样放在同一个库里
     group("g-actv", "Garden")
     water = make_job("Water", "on")
     jid = water["id"]
-    try:
-        ok = turn("main", usage={"in": 1200, "out": 300, "cost": 0.0123}, tools=["board", "board", "inbox"], ago=9)
-        bad = turn("g-actv", agent="g-actv", status="error", error="DeepSeek HTTP 500: upstream exploded", ago=8)
-        stopped = turn("main", status="aborted", error="cancelled", usage={"in": 10, "out": 2, "cost": 0.0001}, ago=7)
-        plan = turn("main", model="claude-code/sonnet", usage={"in": 900, "out": 80, "notional_cost_usd": 0.4}, ago=6)
-        switched = turn("main", model="moonshot/kimi-k3", models=["moonshot/kimi-k3", "deepseek/deepseek-flash"],
-                        usage={"in": 100, "out": 10, "cost": 0.0004}, ago=5)
-        door = turn("doorman", kind="outsider", agent=None, model="ollama/llama-test", origin="doorman", usage={"in": 50, "out": 5}, ago=4)
-        reboot = turn("main", status="aborted", error="server restarted", ago=3.5)
-        iso_turn = turn(f"cron:{jid}", origin="auto", usage={"in": 400, "out": 40, "cost": 0.002}, ago=3)
-        chat_turn = turn("main", origin="auto", usage={"in": 400, "out": 40, "cost": 0.002}, ago=2.5)  # session chat：在对话里跑的那一轮
-        hb_turn = turn("heartbeat:main", origin="auto", usage={"in": 20, "out": 2, "cost": 0.00002}, ago=2)
-        runs = {"ok": ("jr-" + uuid.uuid4().hex[:10], jid, "cron", "ok", iso_turn, None, 3),
-                "chat": ("jr-" + uuid.uuid4().hex[:10], jid, "cron", "ok", chat_turn, None, 2.5),
-                "beat": ("jr-" + uuid.uuid4().hex[:10], "heartbeat:main", "heartbeat", "silent", hb_turn, None, 2),
-                "miss": ("jr-" + uuid.uuid4().hex[:10], jid, "missed", "missed", None, None, 1.5),
-                "err": ("jr-" + uuid.uuid4().hex[:10], jid, "on_time", "error", None, "No activity for 600s; stopped", 1)}
-        with store.tx() as conn:
-            for rid, job, kind, status, t, err, ago in runs.values():
-                conn.execute("INSERT INTO engine_job_runs(id, job, agent, due, started_at, ended_at, kind, status, turn, error) VALUES(?,?,?,?,?,?,?,?,?,?)",
-                             (rid, job, "main", iso(ago), iso(ago), iso(ago), kind, status, t, err))
-        chat.log_activity("Created agent \"Garden\"", "edit")
-        r = env.client.get("/api/activity?limit=200", headers=H)
-        assert r.status_code == 200 and no_gateway == []  # 一次都没问 Gateway
-        rows = r.json()["activity"]
-        assert all({"id", "time", "actor", "text", "kind"} <= set(x) for x in rows)
-        assert all(x["kind"] in ("reply", "cron", "failed") for x in rows if x.get("source") in ("turn", "job", "heartbeat"))  # app 认得的那几种
-        got = by_id(rows)
-        a = got[ok]
-        assert a["kind"] == "reply" and a["actor"] == "TestMousse · Main chat" and re.fullmatch(CLOCK, a["time"])
-        assert a["text"] == "Replied (deepseek/deepseek-flash · $0.0123), used tools: board ×2, inbox"
-        assert a["cost"] == 0.0123 and a["billing"] == "metered" and a["tokens"] == 1500 and a["model"] == "deepseek/deepseek-flash"
-        assert a["tools"] == {"board": 2, "inbox": 1} and a["turn"] == ok and a["conversation"] == "main"
-        b = got[bad]
-        assert b["kind"] == "failed" and b["actor"] == "TestMousse · Garden" and "A reply failed" in b["text"] and "upstream exploded" in b["text"]
-        assert got[stopped]["kind"] == "reply" and "stopped partway" in got[stopped]["text"]
-        assert got[reboot]["kind"] == "failed" and got[reboot]["text"].endswith(": the server restarted")
-        p = got[plan]
-        assert p["billing"] == "plan" and p["cost"] is None and "(claude-code/sonnet · your plan)" in p["text"]
-        assert "deepseek/deepseek-flash · $0.0004" in got[switched]["text"] and "switched from moonshot/kimi-k3" in got[switched]["text"]
-        d = got[door]
-        assert d["actor"] == "TestMousse" and d["text"].startswith("Doorman reviewed a line") and "55 tokens" in d["text"]  # 价目里没有：只有 token
-        assert iso_turn not in got and chat_turn not in got and hb_turn not in got  # 定时任务那一轮算在它跑的那一次里
-        assert got[runs["ok"][0]]["text"] == '"Water" finished (deepseek/deepseek-flash · $0.002)' and got[runs["ok"][0]]["kind"] == "cron"
-        assert got[runs["ok"][0]]["actor"] == "Scheduled job · TestMousse" and got[runs["chat"][0]]["turn"] == chat_turn
-        assert got[runs["beat"][0]]["text"].startswith('"Heartbeat (Main chat)" finished; nothing to say this time')
-        assert got[runs["miss"][0]]["kind"] == "failed" and "was missed" in got[runs["miss"][0]]["text"]
-        assert got[runs["err"][0]]["kind"] == "failed" and got[runs["err"][0]]["text"] == '"Water" failed: No activity for 600s; stopped'
-        assert any(x["text"] == 'Created agent "Garden"' and x["id"].startswith("a") for x in rows)  # app 自己的动作照旧
-        order = [x["id"] for x in rows]
-        assert order.index(runs["err"][0]) < order.index(ok)  # 新的在前
-        zh = env.client.get("/api/activity?limit=200", headers={**H, "Accept-Language": "zh-CN"}).json()["activity"]
-        assert by_id(zh)[ok]["text"] == "回复了一次（deepseek/deepseek-flash · $0.0123），用了工具 board ×2、inbox"
-        assert len(env.client.get("/api/activity?limit=3", headers=H).json()["activity"]) == 3
-    finally:
-        drop_group("g-actv")
-        jobs._write(jid, state="deleted", next_run=None)
+    ok = turn("main", usage={"in": 1200, "out": 300, "cost": 0.0123}, tools=["board", "board", "inbox"], ago=9)
+    bad = turn("g-actv", agent="g-actv", status="error", error="DeepSeek HTTP 500: upstream exploded", ago=8)
+    stopped = turn("main", status="aborted", error="cancelled", usage={"in": 10, "out": 2, "cost": 0.0001}, ago=7)
+    plan = turn("main", model="claude-code/sonnet", usage={"in": 900, "out": 80, "notional_cost_usd": 0.4}, ago=6)
+    switched = turn("main", model="moonshot/kimi-k3", models=["moonshot/kimi-k3", "deepseek/deepseek-flash"],
+                    usage={"in": 100, "out": 10, "cost": 0.0004}, ago=5)
+    door = turn("doorman", kind="outsider", agent=None, model="ollama/llama-test", origin="doorman", usage={"in": 50, "out": 5}, ago=4)
+    reboot = turn("main", status="aborted", error="server restarted", ago=3.5)
+    iso_turn = turn(f"cron:{jid}", origin="auto", usage={"in": 400, "out": 40, "cost": 0.002}, ago=3)
+    chat_turn = turn("main", origin="auto", usage={"in": 400, "out": 40, "cost": 0.002}, ago=2.5)  # session chat：在对话里跑的那一轮
+    hb_turn = turn("heartbeat:main", origin="auto", usage={"in": 20, "out": 2, "cost": 0.00002}, ago=2)
+    runs = {"ok": ("jr-" + uuid.uuid4().hex[:10], jid, "cron", "ok", iso_turn, None, 3),
+            "chat": ("jr-" + uuid.uuid4().hex[:10], jid, "cron", "ok", chat_turn, None, 2.5),
+            "beat": ("jr-" + uuid.uuid4().hex[:10], "heartbeat:main", "heartbeat", "silent", hb_turn, None, 2),
+            "miss": ("jr-" + uuid.uuid4().hex[:10], jid, "missed", "missed", None, None, 1.5),
+            "err": ("jr-" + uuid.uuid4().hex[:10], jid, "on_time", "error", None, "No activity for 600s; stopped", 1)}
+    with store.tx() as conn:
+        for rid, job, kind, status, t, err, ago in runs.values():
+            conn.execute("INSERT INTO engine_job_runs(id, job, agent, due, started_at, ended_at, kind, status, turn, error) VALUES(?,?,?,?,?,?,?,?,?,?)",
+                         (rid, job, "main", iso(ago), iso(ago), iso(ago), kind, status, t, err))
+    chat.log_activity("Created agent \"Garden\"", "edit")
+    r = env.client.get("/api/activity?limit=200", headers=H)
+    assert r.status_code == 200 and no_gateway == []  # 一次都没问 Gateway
+    rows = r.json()["activity"]
+    assert all({"id", "time", "actor", "text", "kind"} <= set(x) for x in rows)
+    assert all(x["kind"] in ("reply", "cron", "failed") for x in rows if x.get("source") in ("turn", "job", "heartbeat"))  # app 认得的那几种
+    got = by_id(rows)
+    a = got[ok]
+    assert a["kind"] == "reply" and a["actor"] == "TestMousse · Main chat" and re.fullmatch(CLOCK, a["time"])
+    assert a["text"] == "Replied (deepseek/deepseek-flash · $0.0123), used tools: board ×2, inbox"
+    assert a["cost"] == 0.0123 and a["billing"] == "metered" and a["tokens"] == 1500 and a["model"] == "deepseek/deepseek-flash"
+    assert a["tools"] == {"board": 2, "inbox": 1} and a["turn"] == ok and a["conversation"] == "main"
+    b = got[bad]
+    assert b["kind"] == "failed" and b["actor"] == "TestMousse · Garden" and "A reply failed" in b["text"] and "upstream exploded" in b["text"]
+    assert got[stopped]["kind"] == "reply" and "stopped partway" in got[stopped]["text"]
+    assert got[reboot]["kind"] == "failed" and got[reboot]["text"].endswith(": the server restarted")
+    p = got[plan]
+    assert p["billing"] == "plan" and p["cost"] is None and "(claude-code/sonnet · your plan)" in p["text"]
+    assert "deepseek/deepseek-flash · $0.0004" in got[switched]["text"] and "switched from moonshot/kimi-k3" in got[switched]["text"]
+    d = got[door]
+    assert d["actor"] == "TestMousse" and d["text"].startswith("Doorman reviewed a line") and "55 tokens" in d["text"]  # 价目里没有：只有 token
+    assert iso_turn not in got and chat_turn not in got and hb_turn not in got  # 定时任务那一轮算在它跑的那一次里
+    assert got[runs["ok"][0]]["text"] == '"Water" finished (deepseek/deepseek-flash · $0.002)' and got[runs["ok"][0]]["kind"] == "cron"
+    assert got[runs["ok"][0]]["actor"] == "Scheduled job · TestMousse" and got[runs["chat"][0]]["turn"] == chat_turn
+    assert got[runs["beat"][0]]["text"].startswith('"Heartbeat (Main chat)" finished; nothing to say this time')
+    assert got[runs["miss"][0]]["kind"] == "failed" and "was missed" in got[runs["miss"][0]]["text"]
+    assert got[runs["err"][0]]["kind"] == "failed" and got[runs["err"][0]]["text"] == '"Water" failed: No activity for 600s; stopped'
+    assert any(x["text"] == 'Created agent "Garden"' and x["id"].startswith("a") for x in rows)  # app 自己的动作照旧
+    order = [x["id"] for x in rows]
+    assert order.index(runs["err"][0]) < order.index(ok)  # 新的在前
+    zh = env.client.get("/api/activity?limit=200", headers={**H, "Accept-Language": "zh-CN"}).json()["activity"]
+    assert by_id(zh)[ok]["text"] == "回复了一次（deepseek/deepseek-flash · $0.0123），用了工具 board ×2、inbox"
+    assert len(env.client.get("/api/activity?limit=3", headers=H).json()["activity"]) == 3
 
 
 def test_activity_under_openclaw_still_reads_the_gateway_audit(env, monkeypatch):

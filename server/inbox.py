@@ -62,7 +62,7 @@ from i18n import L, LS
 
 router = APIRouter()
 KINDS = ("task", "write", "send", "spend", "schedule", "push", "skill", "agent", "block", "project", "code", "calendar", "social", "egress", "app",
-         "tool", "tree", "other")
+         "tool", "tree", "trigger", "flow", "other", "node")  # node：设备节点报上来的命令面，服务器自己出、钩子批（nodes.py，第 8 批）
 RING_KINDS = {"task", "write", "send", "spend", "calendar", "egress", "app", "tool"}  # 你让它做、它要动外面的东西：响铃；它自己的提议：静默
 OPEN = ("pending", "revising")  # 还没定下来的
 CTL = Path(__file__).resolve().parent / "inbox_ctl.py"
@@ -77,7 +77,7 @@ _tasks: set[asyncio.Task] = set()  # 后台等待中的任务（留个引用，�
 HOOKS: dict[str, Callable[[dict, str], Awaitable[dict | None]]] = {}
 # 这些 kind 的「改一下」也交给钩子（hook(it, "revise")，你写的话在 it["note"]），不往线程里发话。钩子回 {"silent": True}（可以带 result）
 # = 不往线程里发任何话：同意后不发「【收件箱】已同意…」，改一下直接算处理完。
-REVISE_BY_HOOK = {"social", "egress", "app", "tool"}
+REVISE_BY_HOOK = {"social", "egress", "app", "tool", "trigger", "flow"}  # trigger：从外面进来的事（engine/triggers.py），卡的标题是外来的字，不发进对话；flow：工作流要点头的那一步（engine/flows.py）
 # 「改一下」必须写话的卡（别的 social 卡可以空着，比如「换个时间」）：fn(iid) -> bool，在锁外调。cardagent 注册：Doorman 扣下的那句（kind review）。
 NEEDS_NOTE: list[Callable[[str], bool]] = []
 PRIVATE_KINDS = {"social", "egress"}  # 线程是虚拟的、Agent 读不到的
@@ -89,6 +89,7 @@ EXTRAS: dict[str, Callable[[str], dict | None]] = {}
 # 内核的定时任务（engine/jobs.py）注册 schedule：它的卡要用 cron 工具改，不是改卡上的字。REPLY_TEXT 同理，是在对话里引用这张卡回复时的前情。
 REVISE_TEXT: dict[str, Callable[[dict, str], str | None]] = {}
 REPLY_TEXT: dict[str, Callable[[dict], str | None]] = {}
+FOLLOW_TEXT: dict[str, Callable[[dict], str | None]] = {}  # 同 REPLY_TEXT：「已处理」里点「跟进」时的前情（第 4 批：trigger 卡不叫 Agent 去 get）
 # 一张卡多条：itemsKind → 「修改」时按你写的那句重出那一条（fn(卡, 那一条, 你写的话) → 新的那一条：text / detail / data / check / default）。
 # 不对的抛 ReviseError（一句给用户看的原因）。没登记的 itemsKind 用 revise_generic（只改 text、detail；带 data 的条目改不了）。
 # treeprune.py 登记 tree-prune：每周修剪的一步，重出以后照计划再校验。
@@ -100,6 +101,9 @@ EXTEND_ITEMS: list[Callable[[str, list | None], list | None]] = []
 # 一张卡定下来以后、kind 的钩子之后再看一遍条目的（fn(卡, action)，所有 kind 都调）：memhold.py 登记，卡上待定的那几条照决定长成叶子 / 不要。
 # 卡的 JSON 多一个 decidedBy：items（新 app 逐条「提交」的）| card（老 app 一下子点整张卡的）
 AFTER_ITEMS: list[Callable[[dict, str], None]] = []
+# 新卡出来时（交进来的、改好重新交的）还要告诉谁（fn(卡, revised)，推送之后调，出错不影响交卡）：渠道层（server/channels/cards.py，第 6 批）
+# 登记，把卡发到主人的 Telegram，在聊天里点
+NEW_HOOKS: list[Callable[[dict, bool], Awaitable[None]]] = []
 ITEMS_MAX, ITEM_TEXT_MAX, ITEM_DETAIL_MAX, ITEM_DATA_MAX, CHANGES_MAX = 40, 300, 4000, 16000, 12
 ITEM_ID = re.compile(r"[\w.-]{1,40}")
 DECISIONS = ("approve", "reject")
@@ -142,7 +146,7 @@ def kind_label(kind: str) -> str:
             "agent": L("新 Agent", "New agent"), "block": L("看板", "Board"), "project": L("项目", "Project"), "code": L("改代码", "Code change"),
             "calendar": L("日历", "Calendar"), "social": L("朋友", "Friends"), "exec": L("运行命令", "Run a command"),
             "egress": L("代办", "Errand"), "app": L("连接器", "Connector"), "tool": L("操作", "Action"), "tree": L("世界树", "Memory tree"),
-            "other": L("其他", "Other")}.get(kind, kind)
+            "other": L("其他", "Other"), "node": L("设备节点", "Device node")}.get(kind, kind)
 
 
 def names() -> dict[str, str]:
@@ -576,6 +580,8 @@ def follow_context(iid: str) -> tuple[dict, str] | None:
     if not r or r["status"] not in FOLLOWABLE or r["kind"] in PRIVATE_KINDS:
         return None
     it = item_json(r, names())
+    if (fn := FOLLOW_TEXT.get(it["kind"])) and (custom := fn(it)):
+        return it, custom
     t, i, st, res = it["title"], it["id"], it["status"], it["result"]
     zh_st = {"approved": "同意了、还没报结果", "done": "报过做完了", "failed": "报过没做成", "rejected": "他当时没要",
              "withdrawn": "你撤回了", "expired": "等太久作废了"}[st]
@@ -774,7 +780,17 @@ async def add(body: ItemIn):
     log_activity(L(f"{'改了' if cur else '想做'}「{title}」，等你点头", f'{"Updated" if cur else "Wants to do"} "{title}", waiting for your OK'),
                  "inbox", actor=actor_label(source))
     await push_new(it, revised=bool(cur and cur["status"] == "revising"))
+    await notify_new(it, revised=bool(cur and cur["status"] == "revising"))
     return {"ok": True, "id": iid, **({"updated": True} if cur else {})}
+
+
+async def notify_new(it: dict, revised: bool = False) -> None:
+    """新卡告诉 NEW_HOOKS 里登记的（渠道层）。谁出错都不影响交卡。"""
+    for fn in NEW_HOOKS:
+        try:
+            await fn(it, revised)
+        except Exception as e:  # noqa: BLE001
+            print(f"[inbox] 新卡的钩子没办成：{type(e).__name__}: {str(e)[:120]}")
 
 
 class ActIn(BaseModel):
@@ -938,6 +954,7 @@ async def update(iid: str, body: ItemPatch):
     it = item(iid)
     log_activity(L(f"改了「{it['title']}」，等你点头", f'Updated "{it["title"]}", waiting for your OK'), "inbox", actor=data.agent_label(it["source"]))
     await push_new(it, revised=r["status"] == "revising")
+    await notify_new(it, revised=r["status"] == "revising")
     return {"ok": True, "item": it}
 
 

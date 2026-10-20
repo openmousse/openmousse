@@ -1,5 +1,6 @@
 """按模型引用找到哪一家、怎么接：anthropic → provider_anthropic（官方 SDK），openai → provider_openai（兼容接口），
 openai-responses → provider_responses（OpenAI 的 Responses API）。
+codex/…、copilot/…（第 7 批）：用户自己登录的 Codex / Copilot 命令行，整次交给 engine/provider_cli.py（不经密钥、图那一套）。
 chatgpt/…（用户自己的 ChatGPT 套餐，engine/chatgpt_plan.py）：也走 provider_responses；每次调之前现取访问令牌（快过期先刷新，排队），
 回 401 就强制刷新一次再试，刷新过了还是 401 标「要重连」（用户在 ChatGPT 里断开不会通知我们）；别的错记成套餐最近一次的错（状态里给 app 看）。
 谁能用它不在这里管：loop.run_turn 先问过 models.may_spend。
@@ -14,6 +15,8 @@ chatgpt/…（用户自己的 ChatGPT 套餐，engine/chatgpt_plan.py）：也�
 工具结果里的图（⑫b）：发之前按这一家收不收图（PROVIDERS 的 images）现读回来、换成一句话、只留最近几张（engine/images.py 的 for_model）；
 每家各算一次（备用链换到不收图的那家也对），会话里的记录不动。那一家因为图回 400 / 413（还没出字）：图都换成一句话再发一次，
 这个模型 NO_IMAGES_FOR 秒内直接发字（自己加的兼容接口没写 images = false 时，不至于这个对话之后每一句都报错）。
+第 3 批（2026-10-19，_more）：工具结果里的 PDF（engine/pdf.py）照这一家收不收 PDF 读回来或者换成一句话；不收图的模型、配了看图
+（engine.use.vision）：用户发的图、工具结果里的图先交给看图模型描述，描述代替那句「这里有张图」（engine/vision.py）。都没有 = 原样。
 """
 from __future__ import annotations
 
@@ -55,7 +58,17 @@ class Request:
 
 
 async def stream(ref: str, req: Request) -> AsyncIterator[dict]:
+    from . import auto
+    if (cheap := auto.choose(ref, req)) is not None:  # 第 7 批：自动选模型（engine/auto.py，engine.auto 不写 = 关）：这一句交给便宜的那个
+        async for ev in auto.run(cheap, ref, req):
+            yield ev
+        return
     name, model_id = models.parse_ref(ref)
+    if name in models.CLI_PLANS:  # 第 7 批：用户自己登录的命令行（codex/…、copilot/…，engine/provider_cli.py）：没有密钥、没有地址，整次交给它
+        from . import provider_cli
+        async for ev in provider_cli.stream(models.provider(name), model_id, req):
+            yield ev
+        return
     p = fallback.choose_key(models.provider(name), model_id)
     plan = models.subscription(ref) == "chatgpt"
     if plan:  # 用户自己的 ChatGPT 套餐：key 换成现在能用的访问令牌（choose_key 填的只是记号）
@@ -72,12 +85,16 @@ async def stream(ref: str, req: Request) -> AsyncIterator[dict]:
     if images.tool_images(req.messages):  # 有工具结果里的图：这一家的样子另做一份（读文件放进线程；原来的 req 换模型时还要用）
         pictures = p.get("images", True) is not False and time.monotonic() - _no_images.get(ref, float("-inf")) > NO_IMAGES_FOR
         sent = dataclasses.replace(req, messages=await asyncio.to_thread(images.for_model, req.messages, pictures))
+    sent = await _more(ref, p, req, sent, pictures)
     reauthed = False
     while True:
         started = False
         try:
             async for ev in mod.stream(p, model_id, sent):
                 started = True
+                if ev.get("type") == "done":  # 第 7 批：提示缓存保温（engine/warming.py，engine.cache_warming 不写 = 关）记下这一次
+                    from . import warming
+                    warming.remember(ref, req, p["api"])
                 yield ev
             if plan:
                 chatgpt_plan.note_ok()
@@ -90,6 +107,7 @@ async def stream(ref: str, req: Request) -> AsyncIterator[dict]:
                 _no_images[ref] = time.monotonic()
                 pictures = False
                 sent = dataclasses.replace(req, messages=await asyncio.to_thread(images.for_model, req.messages, False))
+                sent = await _more(ref, p, req, sent, False)
                 continue
             if plan and not started and e.status == 401 and not reauthed:  # 套餐的令牌被拒：强制刷新一次再试
                 reauthed = True
@@ -105,3 +123,13 @@ async def stream(ref: str, req: Request) -> AsyncIterator[dict]:
                 chatgpt_plan.note_error(getattr(e, "code", None), str(e))
             e.provider, e.key = name, p.get("key_id")
             raise
+
+
+async def _more(ref: str, p: dict, req: Request, sent: Request, pictures: bool) -> Request:
+    """第 3 批（见文件开头）。pictures = 这一次带着工具结果里的图（收图的模型）：那样不用描述。"""
+    from . import pdf, vision
+    if not pictures and vision.wanted(ref, p, req.messages):
+        sent = dataclasses.replace(req, messages=await vision.substitute(req.messages))
+    if pdf.tool_docs(sent.messages):
+        sent = dataclasses.replace(sent, messages=await asyncio.to_thread(pdf.for_model, sent.messages, pdf.reads(p)))
+    return sent

@@ -1,18 +1,21 @@
 """OpenAI 的 Responses API 后端（engine/provider_responses.py）：普通密钥写 api = "openai-responses" 就走它，ChatGPT 套餐也走它。
 模型是 evals/fakemodel.py 的假服务（真的走 HTTP 的 /v1/responses），不连网、不花钱。
 重点：流里的字 / 思考摘要 / 函数调用拼回来；store = false 时思考项带加密内容原样发回（不带 id）、换了型号不发；加密的思考被拒去掉再来；
-不认的可选字段去掉再来；错误按状态码和错误码分（备用链要的 kind / retryable / status）；没写 api 的照旧走 /chat/completions。"""
+不认的可选字段去掉再来；错误按状态码和错误码分（备用链要的 kind / retryable / status）；没写 api 的照旧走 /chat/completions。
+最后几个是 ChatGPT 套餐线上回包的回放（chatgpt_plan_stream.sse：照 10/20 录到的事件、字段和头的样子，值都是编的）：不标 Content-Type 的流。"""
 from __future__ import annotations
 
 import asyncio
 import json
+from pathlib import Path
 
+import httpx
 import pytest
 
 import engine
 from engine import loop, provider_responses, providers
 from engine.errors import EngineError
-from engine.session import MemorySession, system_note, user
+from engine.session import MemorySession, system_note, text_of, user
 from evals.fakemodel import Broken, Fail, FakeModelServer, Raw, Refusal, Reply
 
 
@@ -202,3 +205,78 @@ def test_providers_without_the_api_field_still_use_chat_completions(oa):
     oa.push(Reply(text="old path"))
     res = run(engine.run_turn(engine.Spec(kind="owner", model="plain/m"), MemorySession(), user("x")))
     assert res.text == "old path" and oa.of("openai") and not oa.of("responses")
+
+
+# —— ChatGPT 套餐线上的回包（回放）——————————————————————————————————————————————————
+
+PLAN_STREAM = (Path(__file__).parent / "chatgpt_plan_stream.sse").read_bytes()
+PLAN_TEXT = "Hi there — from the fake plan ☕."
+# 套餐 /responses 回包的头：名字是 10/20 录到的那些，值是编的。没有 Content-Type；请求 id 只在 x-oai-request-id
+PLAN_HEADERS = {"date": "Tue, 20 Oct 2026 00:00:00 GMT", "connection": "keep-alive", "server": "cloudflare", "cf-cache-status": "DYNAMIC",
+                "x-content-type-options": "nosniff", "x-oai-request-id": "00000000-0000-4000-8000-0000000fa4e0",
+                "x-codex-turn-state": "fake-turn-state"}
+PLAN_P = {"name": "chatgpt", "api": "openai-responses", "url": "https://plan.invalid/v1", "key": "fake-access-token-0001", "plan": True}
+
+
+def replay(monkeypatch, body: bytes, *, chunk: int = 0, headers: dict | None = None) -> list[httpx.Request]:
+    """回包原样交给 provider_responses（httpx.MockTransport，不经网络），分块发（chunked，和线上一样）；chunk 写了就切成这么多字节一块。
+    → 收到的请求。"""
+    seen: list[httpx.Request] = []
+
+    async def pieces():
+        step = chunk or max(len(body), 1)
+        for i in range(0, len(body), step):
+            yield body[i:i + step]
+
+    def handle(request: httpx.Request) -> httpx.Response:
+        seen.append(request)
+        return httpx.Response(200, headers=PLAN_HEADERS if headers is None else headers, content=pieces())
+
+    monkeypatch.setattr(provider_responses, "TRANSPORT", httpx.MockTransport(handle))
+    return seen
+
+
+async def _events(p: dict = PLAN_P) -> list[dict]:
+    return [ev async for ev in provider_responses.stream(p, "gpt-fake-plan", providers.Request(messages=[user("hi")]))]
+
+
+def test_the_plan_stream_without_a_content_type_is_read_as_a_stream(monkeypatch):
+    """10/20 线上：套餐回的流不标 Content-Type，原来当整段 JSON 读 → JSONDecodeError → mousse agent 找 Astra 是 502。"""
+    for body, chunk in ((PLAN_STREAM, 0), (PLAN_STREAM, 7), (b": keep-alive\n\n" + PLAN_STREAM, 0), (b"\xef\xbb\xbf" + PLAN_STREAM, 5)):
+        seen = replay(monkeypatch, body, chunk=chunk)  # 一整块；7 字节一块（行、多字节的字都从中间断开）；注释开头；带 BOM
+        evs = run(_events())
+        assert "".join(e["text"] for e in evs if e["type"] == "text") == PLAN_TEXT
+        msg = evs[-1]["message"]
+        # response.completed 的 output 是空的（线上就这样）：字和输出项从 output_item.done 里拿
+        assert evs[-1]["type"] == "done" and text_of(msg) == PLAN_TEXT and msg["stop"] == "end" and msg["raw"][0]["id"] == "msg_fake_plan_0001"
+        assert msg["usage"] == {"in": 176, "out": 9, "cache_read": 1024, "cache_write": 0}
+        assert seen[0].url.path == "/v1/responses" and seen[0].headers["authorization"] == "Bearer fake-access-token-0001"
+
+
+def test_a_plan_stream_error_names_the_oai_request_id(monkeypatch):
+    err = {"type": "error", "error": {"type": "invalid_request_error", "code": "subscription_sharing_usage_limit_exceeded",
+                                      "message": "You have reached your usage limit.", "param": None}, "sequence_number": 1}
+    created = PLAN_STREAM.split(b"\n\n")[0] + b"\n\n"
+    replay(monkeypatch, created + f"event: error\ndata: {json.dumps(err)}\n\n".encode())
+    with pytest.raises(EngineError) as ei:
+        run(_events())
+    assert ei.value.status == 429 and not ei.value.retryable and "(request 00000000-0000-4000-8000-0000000fa4e0)" in str(ei.value)
+
+
+def test_unlabelled_whole_json_still_works_and_junk_is_a_clear_error(monkeypatch):
+    whole = {"id": "resp_2", "object": "response", "status": "completed", "model": "gpt-fake-plan",
+             "output": [{"type": "message", "id": "m2", "role": "assistant", "content": [{"type": "output_text", "text": "Whole, unlabelled."}]}]}
+    replay(monkeypatch, json.dumps(whole, indent=1).encode(), chunk=9)
+    assert text_of(run(_events())[-1]["message"]) == "Whole, unlabelled."
+    errors = []
+    for headers, page in ((PLAN_HEADERS, b"<html>\n<body>Bad gateway sk-proj-abcdefgh12345678 fake-access-token-0001</body>\n</html>\n"),
+                          ({"content-type": "text/html; charset=utf-8"}, b"<!doctype html><title>Sign in</title>")):
+        replay(monkeypatch, page, headers=headers)
+        with pytest.raises(EngineError) as ei:  # 不再是 JSONDecodeError 漏出去
+            run(_events())
+        assert ei.value.kind == "output" and not ei.value.retryable
+        errors.append(str(ei.value))
+    assert errors == ["chatgpt: the reply is neither an event stream nor JSON (content-type: none): <html> <body>Bad gateway *** ***</body> </html> "
+                      "(request 00000000-0000-4000-8000-0000000fa4e0)",
+                      "chatgpt: the reply is neither an event stream nor JSON (content-type: text/html; charset=utf-8): "
+                      "<!doctype html><title>Sign in</title>"]

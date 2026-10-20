@@ -2,7 +2,8 @@
 
 provider = 谁家的接口、地址、密钥放哪。三处按顺序叠（后面的盖前面的）：
   1. 内置的常见几家（PROVIDERS）
-  2. openclaw.json 的 models.providers（这台机器装着 OpenClaw 时：地址、接口类型、apiKey 写成 ${VAR} 就认这个变量名）
+  2. openclaw.json 的 models.providers（这台机器装着 OpenClaw 时：地址、接口类型、apiKey 写成 ${VAR} 就认这个变量名；
+     Google 官方的地址 OpenClaw 写的是 Gemini 自己的接口 …/v1beta，换成目录里 OpenAI 兼容的那个，见 _openclaw_url）
   3. server.json 的 engine.providers：{"名字": {"api": "openai" | "anthropic" | "openai-responses", "url": ".../v1", "key_env": "变量名",
      "headers": {…}, "json_mode": true, "reasoning_effort": false, "fallbacks": true, "block_binding": "drop_block", …各家脾气见 PROVIDERS}}，
      可以加新的（本机的 Ollama、公司的代理），也可以只改一项（比如 moonshot 换成国内地址 https://api.moonshot.cn/v1）
@@ -43,6 +44,9 @@ server.json 的 engine 段（不写这一段 = 内核不接管任何事，全部
                                                写成列表 ["anthropic/claude-sonnet-5-5", "moonshot/kimi-k3"] = 第一个是主模型、后面是它自己的链
                                                （盖过默认链；只写一个 = 这件事不换模型；["claude-code/sonnet", "deepseek/deepseek-flash"] = 套餐
                                                跑不了、这一轮不能花套餐时用后面的）。赛博自己的 model 也能写成列表（engine/cyber.py）
+                                               第 3 批（MEDIA_PURPOSES）：vision 看图 / pdf 看文档 / video 看视频 / stt 转写 / tts 朗读 /
+                                               image 生图 / video_gen 生成视频 / music 生成音乐：写「服务商/型号」或 {"model": …, 选项}，engine/media.py 解析（不走 route、不进备用链、
+                                               不能是套餐：都是按量花钱的）；不写 = 没有这一样
     "fallback": true,                          内核这条路出错时退回原来的路（默认 true；false = 不退，直接报错）。外人回合的一次性 JSON
                                                先走完备用链，链走完了才退回原来的路（llmjson、名片 Agent、Doorman）
     "effort": "low",                           外人回合的思考档位（low / medium / high；只给支持的模型）
@@ -108,6 +112,7 @@ import json
 import re
 from datetime import datetime, timezone
 from pathlib import Path
+from urllib.parse import urlsplit
 
 import secretstore
 from config import raw, settings
@@ -177,10 +182,32 @@ def cfg() -> dict:
     return e if isinstance(e, dict) else {}
 
 
+ALIAS = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$")  # 别名：不带斜杠，撞不上 provider/model
+
+
+def aliases() -> dict[str, str]:
+    """engine.aliases（第 7 批，2.11）：{"fast": "deepseek/deepseek-flash", "smart": "moonshot/kimi-k3"}，别名 → 真的引用。写错的不要：
+    别名得是不带斜杠的名字，值得是 provider/model（别名指别名不认，只认一层）。"""
+    v = cfg().get("aliases")
+    if not isinstance(v, dict):
+        return {}
+    return {str(k): str(t).strip() for k, t in v.items() if ALIAS.match(str(k)) and isinstance(t, str) and REF.match(t.strip())}
+
+
+def resolve(ref: str | None) -> str:
+    """别名 → 真的引用；不是别名的原样（去掉两头的空白）。解析引用的地方都先过它（parse_ref、subscription……），所以哪儿写别名都认，
+    判能不能花套餐（may_spend）看的也是解析完的那个：别名绕不过它。"""
+    s = str(ref or "").strip()
+    if not s or "/" in s:
+        return s
+    return aliases().get(s, s)
+
+
 def parse_ref(ref: str) -> tuple[str, str]:
     """「provider/model」→ (provider, model)。model 里可以再有斜杠（openrouter/anthropic/claude-…）。不像样的抛 EngineError(config)。
-    model 是规范的写法：目录里那家列出来带前缀的（Google 的 models/<型号>，catalog.bare）去掉前缀，老配置里带着的照样能调。"""
-    m = REF.match(str(ref or "").strip())
+    model 是规范的写法：目录里那家列出来带前缀的（Google 的 models/<型号>，catalog.bare）去掉前缀，老配置里带着的照样能调。
+    别名（engine.aliases）先换成真的引用（resolve）。"""
+    m = REF.match(resolve(ref))
     if not m:
         raise EngineError(f"model should look like provider/model, got {str(ref)[:60]!r}", kind="config")
     return m.group(1), catalog.bare(m.group(1), m.group(2))
@@ -201,7 +228,8 @@ def valid_ref(ref: str | None) -> bool:
         name, _ = parse_ref(ref or "")
     except EngineError:
         return False
-    return name not in SUBSCRIPTIONS and (name in PROVIDERS or name in _openclaw_providers() or name in (cfg().get("providers") or {}))
+    return name not in SUBSCRIPTIONS and (name in PROVIDERS or name in CLI_PLANS or name in _openclaw_providers()
+                                          or name in (cfg().get("providers") or {}))  # CLI_PLANS：第 7 批，engine/provider_cli.py 跑
 
 
 def _first(v) -> str:
@@ -218,7 +246,7 @@ def chain_of(v) -> list[str] | None:
     out: list[str] = []
     for x in v:
         r = canonical(str(x).strip()) if isinstance(x, str) else ""
-        if r and valid_ref(r) and r not in out:
+        if r and valid_ref(r) and not subscription(r) and r not in out:  # 命令行的套餐（CLI_PLANS）同 claude-code：不进链
             out.append(r)
     return out
 
@@ -229,17 +257,21 @@ def default_model() -> str:
 
 def models() -> list[str]:
     """claw 选 builtin 时 app 里能切换的：engine.models 里合法的（写成列表的那一项取第一个；没写就只有 engine.model），加上这台电脑上有用户自己登录的 Claude Code
-    时的 claude-code/…（没有就一个都不列，写在 engine.models 里的也不列）。"""
-    ms = [m for m in (_first(x) for x in cfg().get("models") or []) if valid_ref(m) or subscription_ready(m)]
+    时的 claude-code/…（没有就一个都不列，写在 engine.models 里的也不列），再加上 engine.aliases 里指到按量模型的别名（第 7 批）。"""
+    ms = [m for m in (_first(x) for x in cfg().get("models") or []) if (valid_ref(m) and not subscription(m)) or subscription_ready(m)]
     d = default_model()
     if not ms and d and (not subscription(d) or subscription_ready(d)):
         ms = [d]
-    return ms + [m for m in subscription_models() if m not in ms]
+    ms += [m for m in subscription_models() if m not in ms]
+    # 别名（engine.aliases）：指到我们的接口能跑的模型的，app 里也能选（选了记的是别名，指的模型改了跟着变）；指到套餐的不列
+    return ms + [a for a, t in aliases().items() if a not in ms and valid_ref(t) and not subscription(t)]
 
 
 # 能配成用户自己套餐的那几件事（route 照 may_spend 放不放）：writing 写作；json 一次性 JSON（llmjson.ask、/api/engine/oneshot）；
 # compact 压缩的摘要（engine/compact.py）。10/19 起后两样也能：主人自己的一问一答、主人回合的压缩交给他自己登录的 Claude Code
 PLAN_PURPOSES = frozenset({"writing", "json", "compact"})
+# 第 3 批：媒体那几样（看图、看文档、看视频、转写、朗读、生图、生成视频、生成音乐），engine/media.py 解析 engine.use.<这一样>
+MEDIA_PURPOSES = ("vision", "pdf", "video", "stt", "tts", "image", "video_gen", "music")
 
 
 def route(purpose: str, override: str | None = None, *, kind: str = "outsider", origin: str | None = None,
@@ -255,17 +287,17 @@ def route(purpose: str, override: str | None = None, *, kind: str = "outsider", 
         return None
     plan = purpose in PLAN_PURPOSES
 
-    def spend(ref: str) -> bool:
-        return plan and may_spend(ref, kind=kind, origin=origin, via=via)
+    def spend(ref: str) -> bool:  # 命令行的套餐（CLI_PLANS）不接这几件一次性的事：那几条路只会把它当外人跑（第 7 批）
+        return plan and subscription(ref) not in CLI_PLANS.values() and may_spend(ref, kind=kind, origin=origin, via=via)
 
-    if override and (valid_ref(override) or subscription(override) and spend(override)):
+    if override and ((valid_ref(override) and not subscription(override)) or subscription(override) and spend(override)):
         return canonical(override)
     if isinstance(v, list):
         head, c = _first(v), chain_of(v)
         if subscription(head) and spend(head):
             return head
         return c[0] if c else outside() if plan and subscription(head) else None
-    if isinstance(v, str) and valid_ref(v):
+    if isinstance(v, str) and valid_ref(v) and not subscription(v):
         return canonical(v)
     d = default_model()
     want = canonical(v) if isinstance(v, str) else d if v is True else ""
@@ -306,6 +338,7 @@ def purpose_chain(purpose: str, primary: str) -> list[str] | None:
 
 def own_chain(ref: str) -> list[str] | None:
     """这个模型自己写了链吗：engine.model 或 engine.models 里写成列表、第一个就是它的那一项 → 后面那几个；没写 → None。"""
+    ref = canonical(ref)  # 别名：照它指的那个找
     for v in [cfg().get("model"), *(cfg().get("models") or [])]:
         c = chain_of(v)
         if c and c[0] == ref:
@@ -317,6 +350,7 @@ def chain_after(ref: str) -> list[str]:
     """ref 跑不了时往下换的那几个（不含它自己）：它自己写的链，没写用 engine.fallbacks（同 fallback.chain）。套餐模型（claude-code/…）
     自己写的链也认：["claude-code/opus", "deepseek/deepseek-flash"]（own_chain 认不出：chain_of 先把套餐去掉了，第一个对不上）。
     只有我们的接口跑得了的（chain_of 去掉了套餐和写错的）。"""
+    ref = canonical(ref)
     own = own_chain(ref)
     if own is None and subscription(ref):
         own = next((chain_of(v) or [] for v in [cfg().get("model"), *(cfg().get("models") or [])] if isinstance(v, list) and _first(v) == ref),
@@ -327,6 +361,9 @@ def chain_after(ref: str) -> list[str]:
 # —— 用户自己的套餐（第 11 项）——————————————————————————————————————————————————————
 
 SUBSCRIPTIONS = {"claude-code": "claude-code", "chatgpt": "chatgpt"}  # provider → 哪家的套餐（chatgpt：第 11b 项，engine/chatgpt_plan.py）
+# 第 7 批：用户自己登录的官方命令行当模型（engine/provider_cli.py：codex/…、copilot/…）。和上面两家不同，它们是 valid_ref（经
+# providers.stream 跑），可还是用户自己的套餐：subscription 照样认出来，may_spend 照套餐的规矩，outside / route / fallback.chain 都不把它们当按量的
+CLI_PLANS = {"codex": "codex", "copilot": "copilot"}
 # 主人回合里能花套餐的来路：用户自己说的（user）、他自己的定时任务和心跳、收件箱和后台任务替他接着做的（auto）、主对话转给 Agent 的（relay）。
 # 别的（赛博、外人回合、对外接口 openai / acp ……）一律不行：只认名单里的，新加的来路默认不能花。
 OWNER_ORIGINS = frozenset({"user", "auto", "relay"})
@@ -339,14 +376,17 @@ NAME = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:\[\]-]{0,79}$")  # 交给 --model �
 
 def subscription(ref: str | None) -> str | None:
     """这个模型花不花用户自己的套餐：claude-code/<型号> → "claude-code"；chatgpt/<型号> → "chatgpt"；别的 → None。所有「花用户套餐」的
-    判断都用它。"""
-    m = REF.match(str(ref or "").strip())
+    判断都用它。别名先解析（resolve）：指到套餐的别名一样算套餐。"""
+    m = REF.match(resolve(ref))
+    if m and m.group(1) in CLI_PLANS:  # codex/…、copilot/… 是 valid_ref：型号写得怪（codex/a/b、codex/-c…）也算套餐，免得绕过 may_spend
+        return CLI_PLANS[m.group(1)]
     return SUBSCRIPTIONS.get(m.group(1)) if m and NAME.match(m.group(2)) else None
 
 
 def known(ref: str | None) -> bool:
-    """设置里写的模型认不认（定时任务、心跳）：我们的接口能跑的，或者用户自己的套餐（到点时这台电脑上没有就报错）。"""
-    return valid_ref(ref) or subscription(ref) is not None
+    """设置里写的模型认不认（定时任务、心跳）：我们的接口能跑的，或者用户自己的套餐（到点时这台电脑上没有就报错）。套餐要写真的引用：
+    指到套餐的别名在这儿不认（定时任务、心跳把模型名原样交给 Claude Code，别名它不认得）。"""
+    return valid_ref(ref) or (subscription(ref) is not None and "/" in str(ref or ""))
 
 
 def _rank(o: str | None) -> int:
@@ -371,11 +411,17 @@ def may_spend(ref: str | None, *, kind: str, origin: str | None, via: str | None
         return True
     if kind != "owner":
         return False
-    if sub == "chatgpt":
+    if sub in ("chatgpt", "codex"):  # codex/…（第 7 批）：Codex 用 ChatGPT 登录花的就是 ChatGPT 套餐，同一条规矩、同一个后台同意
         how = plan_class(origin, via)
         if how == "background":
             from . import chatgpt_plan
             return chatgpt_plan.background_allowed()
+        return how == "foreground"
+    if sub == "copilot":  # copilot/…（第 7 批）：Copilot 的 AI 额度；后台的要 engine.copilot.background = true（engine/provider_cli.py）
+        how = plan_class(origin, via)
+        if how == "background":
+            from . import provider_cli
+            return provider_cli.background_allowed("copilot")
         return how == "foreground"
     return origin in OWNER_ORIGINS
 
@@ -383,10 +429,10 @@ def may_spend(ref: str | None, *, kind: str, origin: str | None, via: str | None
 def outside(ref: str | None = None) -> str | None:
     """不能花套餐的那些（赛博、外人回合、对外接口、不是主人自己引出来的一问一答）用哪个模型：ref 是我们的接口能跑的就用它；否则（是套餐的、没给的）
     用默认模型，默认的也是套餐就挑 engine.models 里第一个能跑的；都没有 → None（调用方照自己的退路：llm-task、不做……）。"""
-    if ref and valid_ref(ref):
-        return ref
+    if ref and valid_ref(ref) and not subscription(ref):  # 命令行的套餐（CLI_PLANS）也是 valid_ref：不给外面
+        return resolve(ref)
     for m in (default_model(), *(_first(x) for x in cfg().get("models") or [])):
-        if m and valid_ref(m):
+        if m and valid_ref(m) and not subscription(m):
             return m
     return None
 
@@ -404,6 +450,9 @@ def subscription_ready(ref: str | None) -> bool:
     if sub == "chatgpt":
         from . import chatgpt_plan
         return chatgpt_plan.usable()
+    if sub in CLI_PLANS.values():  # 第 7 批：装了、登录着（engine/provider_cli.py：只看 login status 那一行字）
+        from . import provider_cli
+        return provider_cli.ready(ref)
     if sub != "claude-code" or claude_code_cfg().get("enabled") is False:
         return False
     from . import runners
@@ -422,9 +471,10 @@ def claude_code_models() -> list[str]:
 
 def subscription_models() -> list[str]:
     """app 里多出来的套餐模型：claude-code/…（同上）+ chatgpt/…（连上了、开了用套餐才有，chatgpt_plan.model_ids）。都没有 = []。"""
-    from . import chatgpt_plan
+    from . import chatgpt_plan, provider_cli
     out = claude_code_models()
-    return out + [m for m in chatgpt_plan.model_ids() if m not in out]
+    out += [m for m in chatgpt_plan.model_ids() if m not in out]
+    return out + [m for m in provider_cli.offered() if m not in out]  # 第 7 批：codex/…、copilot/…（开了、登录着才有）
 
 
 def fallback_allowed() -> bool:
@@ -459,6 +509,19 @@ def _openclaw_providers() -> dict:
     return _oc_cache[1]
 
 
+def _openclaw_url(url: str) -> str:
+    """openclaw.json 的 baseUrl → 内核用的地址。Google 官方的那个，OpenClaw 写的是 Gemini 自己的接口（…/v1beta；光写域名它也当成
+    /v1beta），内核跟 Google 只说 OpenAI 兼容的那套：照原样带过来，请求就发到 Gemini 自己的接口上，回 401。官方域名、路径是空的
+    或者 /v1beta、/v1、/v1alpha 的，换成目录里的（…/v1beta/openai；?key= 之类的不带过来）；代理、本来就是兼容的，照原样。"""
+    try:
+        u = urlsplit(url.strip())
+    except ValueError:
+        return url
+    if u.hostname == "generativelanguage.googleapis.com" and u.path.rstrip("/") in ("", "/v1beta", "/v1", "/v1alpha"):
+        return str((PROVIDERS.get("google") or {}).get("url") or url)
+    return url
+
+
 def provider(name: str) -> dict:
     """{"name", "api", "url", "key", "headers", …其余设置}。不认识的 provider 抛 EngineError(config)。key 可能是空的（本机模型不要密钥）。
     另有 keys = [(哪一把, 值)…]（key_env 写成列表时有好几把）和 key_name（key 是哪一把）：用哪一把由 engine/fallback.py 挑。
@@ -466,11 +529,14 @@ def provider(name: str) -> dict:
     if name == "chatgpt":
         from . import chatgpt_plan
         return chatgpt_plan.provider_stub()
+    if name in CLI_PLANS:  # 第 7 批：命令行自己存的登录，没有地址、没有密钥（engine/provider_cli.py）
+        from . import provider_cli
+        return provider_cli.stub(name)
     p: dict = dict(PROVIDERS.get(name) or {})
     oc = _openclaw_providers().get(name)
     if isinstance(oc, dict):
         if oc.get("baseUrl"):
-            p["url"] = str(oc["baseUrl"])
+            p["url"] = _openclaw_url(str(oc["baseUrl"]))
         if not p.get("api") and OPENCLAW_API.get(str(oc.get("api") or "")):
             p["api"] = OPENCLAW_API[str(oc["api"])]
         if not p.get("api") and oc.get("baseUrl"):
@@ -507,7 +573,7 @@ def env_value(name: str) -> str:
 
 def has_key(ref: str) -> bool:
     """这个模型能不能用：provider 认得、要密钥的有密钥（本机的 Ollama 这类不要密钥）。chatgpt/…：套餐连着、开了用套餐。"""
-    if subscription(ref) == "chatgpt":
+    if subscription(ref) in ("chatgpt", *CLI_PLANS.values()):
         return subscription_ready(ref)
     try:
         name, _ = parse_ref(ref)

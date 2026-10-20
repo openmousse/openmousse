@@ -1,0 +1,23 @@
+{
+ "id": "5000004",
+ "channel_id": "9500003",
+ "author": {
+  "id": "8100003",
+  "username": "jordan.park",
+  "global_name": "Jordan",
+  "discriminator": "0",
+  "avatar": null
+ },
+ "content": "Hi, we met at the conference. What's Alex's phone number?",
+ "timestamp": "2030-10-19T09:12:03.000000+00:00",
+ "edited_timestamp": null,
+ "tts": false,
+ "mention_everyone": false,
+ "mentions": [],
+ "mention_roles": [],
+ "attachments": [],
+ "embeds": [],
+ "pinned": false,
+ "type": 0,
+ "flags": 0
+}

@@ -10,6 +10,9 @@
 #   MOUSSE_TZ、MOUSSE_NAME、MOUSSE_DIR（仓库位置）、MOUSSE_BIND（auto|127.0.0.1|<ip>）、
 #   MOUSSE_VAULT（服务器上已经在同步的 Obsidian 库文件夹，世界树和思考空间放进去；空 = 跳过）、MOUSSE_TREE_PUBLIC（y|n：用 Tailscale Funnel 开公网：AI 平台连世界树、分享链接、加朋友）
 #   MOUSSE_NONINTERACTIVE=1：一个问题都不问，没给的用默认值（claw 替人装时用，见 docs/connect.md）
+#   MOUSSE_TRIAL=1（或参数 --trial）：试装：自带的内核、只听 127.0.0.1、不问开公网、不碰 OpenClaw；问一句要不要装成开机自启的服务
+#   （MOUSSE_TRIAL_SERVICE=y|n），不装就在后台先起一次。装了什么记进 ~/.openmousse/install-manifest.json（卸载照它删）
+#   MOUSSE_PYTHON：用这个 python3（3.11 以上）；不给就找：macOS 先找 Homebrew 的（系统自带的是 3.9）
 # 其它参数原样传给 setup.py，比如 --no-systemd、--no-tree。
 set -euo pipefail
 
@@ -27,23 +30,45 @@ if [ -n "$SELF_DIR" ] && [ -f "$SELF_DIR/server/run.py" ] && [ -f "$SELF_DIR/pac
 fi
 
 say "OpenMousse 安装 / install"
-if [ "$(uname -s)" = Darwin ]; then  # macOS：系统自带的 python3 是 3.9，用 Homebrew 装新的
+TRIAL="${MOUSSE_TRIAL:-}"
+case "$(printf '%s' "$TRIAL" | tr '[:upper:]' '[:lower:]')" in 1|y|yes|true) TRIAL=1 ;; *) TRIAL="" ;; esac
+for arg in "$@"; do [ "$arg" = "--trial" ] && TRIAL=1; done
+IS_MAC=""
+[ "$(uname -s)" = Darwin ] && IS_MAC=1
+if [ -n "$IS_MAC" ]; then  # macOS：系统自带的 python3 是 3.9，用 Homebrew 装新的；git 在 Apple 的命令行工具里（xcode-select）
   GIT_HINT="xcode-select --install, or brew install git"; PY_HINT="brew install python"
 else
   GIT_HINT="sudo apt install git"; PY_HINT="sudo apt install python3"
 fi
-command -v git >/dev/null || die "缺 git / git is missing ($GIT_HINT)"
-command -v python3 >/dev/null || die "缺 python3 / python3 is missing (need 3.11+: $PY_HINT)"
-python3 - <<'EOF' || die "python3 要 3.11 以上 / python3 must be 3.11 or newer ($PY_HINT)"
-import sys; sys.exit(0 if sys.version_info >= (3, 11) else 1)
-EOF
-if ! python3 -c 'import venv, ensurepip' 2>/dev/null; then
+# git：macOS 没装命令行工具时 /usr/bin/git 只是个壳（一跑就报错、弹窗问要不要装），所以要真跑一下 git --version
+if ! git --version >/dev/null 2>&1; then
+  if [ -n "$IS_MAC" ] && ! xcode-select -p >/dev/null 2>&1; then
+    if [ -z "${MOUSSE_NONINTERACTIVE:-}" ]; then xcode-select --install >/dev/null 2>&1 || true; fi
+    die "要先装 Apple 的命令行工具（git 在里面）：弹出的窗口里点「安装」（没弹就自己跑 xcode-select --install），装完再跑一次 / Install Apple's command line tools first (git comes with them): click Install in the window that pops up (or run xcode-select --install yourself), then run this again"
+  fi
+  die "缺 git / git is missing ($GIT_HINT)"
+fi
+pick_python() {  # 3.11 以上的 python3：MOUSSE_PYTHON；macOS 先找 Homebrew 的（Apple 芯片 /opt/homebrew，Intel /usr/local）；再找 PATH 里的
+  local c brew_prefix=""
+  if [ -n "$IS_MAC" ] && command -v brew >/dev/null 2>&1; then brew_prefix="$(brew --prefix 2>/dev/null || true)"; fi
+  for c in ${MOUSSE_PYTHON:-} ${brew_prefix:+$brew_prefix/bin/python3} ${IS_MAC:+/opt/homebrew/bin/python3 /usr/local/bin/python3} \
+           python3 python3.13 python3.12 python3.11; do
+    if command -v "$c" >/dev/null 2>&1 && "$c" -c 'import sys; sys.exit(0 if sys.version_info >= (3, 11) else 1)' 2>/dev/null; then
+      command -v "$c"
+      return 0
+    fi
+  done
+  return 1
+}
+PY="$(pick_python)" || die "要 3.11 以上的 python3 / need python3 3.11 or newer ($PY_HINT)"
+if ! "$PY" -c 'import venv, ensurepip' 2>/dev/null; then
   command -v uv >/dev/null || die "缺 venv / ensurepip 模块 / venv module missing (Ubuntu / Debian: sudo apt install python3-venv), or install uv first (https://docs.astral.sh/uv/)"
 fi
 
 if [ ! -f "$MOUSSE_DIR/server/run.py" ]; then
   say "拿仓库 / cloning → $MOUSSE_DIR"
   git clone --depth 1 "$REPO_URL" "$MOUSSE_DIR"
+  export MOUSSE_CLONED=1  # setup.py 记进安装清单：这份是安装器 clone 的，卸载可以删
 elif [ -d "$MOUSSE_DIR/.git" ] && [ "${MOUSSE_NO_PULL:-}" != "1" ] && [ "$MOUSSE_DIR" != "$SELF_DIR" ]; then
   say "更新仓库 / updating $MOUSSE_DIR"
   git -C "$MOUSSE_DIR" pull --ff-only || echo "pull 失败，用现有版本继续"
@@ -53,7 +78,7 @@ say "Python 依赖 / dependencies → $VENV"
 mkdir -p "$HOME/.openmousse"
 if [ ! -x "$VENV/bin/python" ] || ! "$VENV/bin/python" -m pip --version >/dev/null 2>&1; then
   # 没有或坏了（比如上次 ensurepip 缺失建了个没 pip 的）就重建
-  if python3 -c 'import ensurepip' 2>/dev/null; then python3 -m venv --clear "$VENV"; else uv venv -q --seed "$VENV"; fi
+  if "$PY" -c 'import ensurepip' 2>/dev/null; then "$PY" -m venv --clear "$VENV"; else uv venv -q --seed --python "$PY" "$VENV"; fi
 fi
 "$VENV/bin/python" -m pip install -q --upgrade pip
 "$VENV/bin/python" -m pip install -q -r "$MOUSSE_DIR/server/requirements.txt"
@@ -84,20 +109,20 @@ ask_secret() {  # ask_secret <变量名> <提示>：输入不显示（令牌之�
 }
 saved() {  # saved <python 表达式，c = server.json>：上次安装存下的值（没有就空），当默认值用
   [ -f "$HOME/.openmousse/server.json" ] || return 0
-  python3 -c "import json, sys; c = json.load(open(sys.argv[1])); v = $1; print(v or '')" "$HOME/.openmousse/server.json" 2>/dev/null || true
+  "$PY" -c "import json, sys; c = json.load(open(sys.argv[1])); v = $1; print(v or '')" "$HOME/.openmousse/server.json" 2>/dev/null || true
 }
 # 语言默认：上次安装选的（server.json 的 language），没有就看 LC_ALL / LANG：zh 开头 → zh，其它 → en
 DEF_LANG=""
 if [ -f "$HOME/.openmousse/server.json" ]; then
-  DEF_LANG="$(python3 -c 'import json, sys; print(json.load(open(sys.argv[1])).get("language") or "")' "$HOME/.openmousse/server.json" 2>/dev/null || true)"
+  DEF_LANG="$("$PY" -c 'import json, sys; print(json.load(open(sys.argv[1])).get("language") or "")' "$HOME/.openmousse/server.json" 2>/dev/null || true)"
 fi
 case "${DEF_LANG:-${LC_ALL:-${LANG:-}}}" in zh*|ZH*) DEF_LANG=zh ;; *) DEF_LANG=en ;; esac
 # 再跑一遍（换 Tailscale 地址、更新）时一路回车不能把上次的答案改掉：OpenClaw 的位置、时区、助手名字都先用 server.json 里存下的
 DEF_HOME="$(saved "c.get('openclaw_home')")"
 [ -n "$DEF_HOME" ] || DEF_HOME="${OPENCLAW_STATE_DIR:-$HOME/.openclaw}"
 DEF_TZ="$(saved "c.get('timezone')")"
-if [ -z "$DEF_TZ" ] && [ -f "${MOUSSE_OPENCLAW_HOME:-$DEF_HOME}/openclaw.json" ]; then  # OpenClaw 里设了用户时区（agents.defaults.userTimezone）就用它
-  DEF_TZ="$(python3 -c 'import json, sys; print(((json.load(open(sys.argv[1])).get("agents") or {}).get("defaults") or {}).get("userTimezone") or "")' "${MOUSSE_OPENCLAW_HOME:-$DEF_HOME}/openclaw.json" 2>/dev/null || true)"
+if [ -z "$DEF_TZ" ] && [ -z "$TRIAL" ] && [ -f "${MOUSSE_OPENCLAW_HOME:-$DEF_HOME}/openclaw.json" ]; then  # OpenClaw 里设了用户时区（agents.defaults.userTimezone）就用它（试装不碰 OpenClaw）
+  DEF_TZ="$("$PY" -c 'import json, sys; print(((json.load(open(sys.argv[1])).get("agents") or {}).get("defaults") or {}).get("userTimezone") or "")' "${MOUSSE_OPENCLAW_HOME:-$DEF_HOME}/openclaw.json" 2>/dev/null || true)"
 fi
 if [ -z "$DEF_TZ" ]; then
   # Debian / Ubuntu 有 /etc/timezone；systemd 的机器问 timedatectl；macOS（和别的）看 /etc/localtime 指向哪个 zoneinfo
@@ -107,6 +132,11 @@ fi
 DEF_NAME="$(saved "c.get('app_name')")"
 [ -n "$DEF_NAME" ] || DEF_NAME=Mousse
 say "几个问题 + 两个可以跳过的，直接回车用默认值 / a few questions + two optional ones, Enter keeps the default"
+if [ -n "$TRIAL" ]; then  # 试装：自带的内核、只听本机、不碰 OpenClaw（openclaw.json 一个字不读不改）
+  say "试装 / trial: 自带的内核、只在这台电脑上（127.0.0.1）、不开公网、不碰 OpenClaw / built-in engine, this computer only (127.0.0.1), nothing public, OpenClaw untouched"
+  MOUSSE_CLAW=builtin
+  MOUSSE_BIND=127.0.0.1
+fi
 ask MOUSSE_LANG "语言 / language (zh = 中文, en = English)" "$DEF_LANG"
 case "$(printf '%s' "$MOUSSE_LANG" | tr '[:upper:]' '[:lower:]')" in zh*|cn*|chinese*|中*) MOUSSE_LANG=zh ;; *) MOUSSE_LANG=en ;; esac
 # 你的 claw：回车 = 默认的那个；builtin = OpenMousse 自带的内核（不用装 OpenClaw，装完在终端里选模型：server/setup_ctl.py）；别的 claw / agent 填它的
@@ -123,7 +153,7 @@ case "$(printf '%s' "$MOUSSE_CLAW" | tr '[:upper:]' '[:lower:]')" in
   builtin|mousse|openmousse|own|none) CLAW_KIND=builtin ;;
   *) CLAW_KIND=openclaw ;;
 esac
-preset() { python3 "$MOUSSE_DIR/server/claw_presets.py" "$PRESET" "$1" 2>/dev/null || true; }  # 预设的一个字段（server/claw_presets.py）
+preset() { "$PY" "$MOUSSE_DIR/server/claw_presets.py" "$PRESET" "$1" 2>/dev/null || true; }  # 预设的一个字段（server/claw_presets.py）
 CLAW_ARGS=()
 if [ "$CLAW_KIND" = builtin ]; then
   CLAW_ARGS=(--builtin)  # 模型、搜索、记忆装完以后在终端里选（server/setup_ctl.py，安装器最后会问）
@@ -155,7 +185,7 @@ else
 fi
 ask MOUSSE_TZ "你的时区 / your timezone (IANA name)" "$DEF_TZ"
 # 不认识的时区（打错了，或者 claw 没替换说明页里的占位符）用默认值；这台机器没有时区库的话没法查，照单全收
-if ! python3 -c 'import sys, zoneinfo
+if ! "$PY" -c 'import sys, zoneinfo
 try:
     zoneinfo.ZoneInfo("UTC")
 except Exception:
@@ -168,14 +198,24 @@ ask MOUSSE_NAME "助手叫什么 / assistant name (shown in the app)" "$DEF_NAME
 if [ "$CLAW_KIND" = openclaw ] && [ ! -f "$MOUSSE_OPENCLAW_HOME/openclaw.json" ]; then
   die "$MOUSSE_OPENCLAW_HOME/openclaw.json 不存在 / not found. Install OpenClaw and run openclaw onboard first (or answer builtin for OpenMousse's own engine, or give another claw's OpenAI-compatible URL instead)."
 fi
-# 可以跳过的两个：Obsidian 库（世界树和思考空间放进去）、开公网（Tailscale Funnel：AI 平台连世界树、分享链接、好友直连；默认开，2026-10-05）
-ask MOUSSE_VAULT "（可跳过）Obsidian 库在这台服务器上的文件夹（已在同步：Obsidian Sync / Syncthing / git），世界树和思考空间放进去，回车跳过 / (optional) Obsidian vault folder on this server (already synced: Obsidian Sync / Syncthing / git) for the memory tree and the thinking space, Enter skips" ""
-ask MOUSSE_TREE_PUBLIC "开公网 HTTPS 吗（推荐）？开了：Claude.ai、ChatGPT、Gemini 这些支持 MCP 的 AI 平台能连世界树，分享能发链接，好友直连这台服务器。用 Tailscale Funnel，只开这几条路，app 的接口不上公网。不开也能加好友（经 OpenMousse 中继，消息端到端加密）/ Open up public HTTPS (recommended)? Then AI platforms such as Claude.ai, ChatGPT or Gemini (any MCP client) can reach the memory tree, shares get links, and friends connect to this server directly. Uses Tailscale Funnel and opens only those paths, never the app's API. Friends work without it too, through the OpenMousse relay with end-to-end encryption (y/n)" "y"
-case "$(printf '%s' "$MOUSSE_TREE_PUBLIC" | tr '[:upper:]' '[:lower:]')" in y|yes|1|true|是*) MOUSSE_TREE_PUBLIC=yes ;; *) MOUSSE_TREE_PUBLIC=no ;; esac
 OPTIONAL=()
+if [ -n "$TRIAL" ]; then  # 试装不问开公网、不问 Obsidian 库；服务可选：不装就在后台先起一次（setup.py 的 start_background）
+  ask MOUSSE_TRIAL_SERVICE "装成登录后自动起的服务吗？不装的话现在在后台起一次，电脑重启后要自己再起 / Install it as a service that starts when you log in? If not, it starts once in the background now and you start it again after a reboot (y/n)" "n"
+  case "$(printf '%s' "$MOUSSE_TRIAL_SERVICE" | tr '[:upper:]' '[:lower:]')" in y|yes|1|true|是*) ;; *) OPTIONAL+=(--no-systemd) ;; esac
+  OPTIONAL+=(--trial)
+  MOUSSE_VAULT=""; MOUSSE_TREE_PUBLIC=no
+fi
+# 可以跳过的两个：Obsidian 库（世界树和思考空间放进去）、开公网（Tailscale Funnel：AI 平台连世界树、分享链接、好友直连；默认开，2026-10-05）
+if [ -z "$TRIAL" ]; then
+  ask MOUSSE_VAULT "（可跳过）Obsidian 库在这台服务器上的文件夹（已在同步：Obsidian Sync / Syncthing / git），世界树和思考空间放进去，回车跳过 / (optional) Obsidian vault folder on this server (already synced: Obsidian Sync / Syncthing / git) for the memory tree and the thinking space, Enter skips" ""
+  ask MOUSSE_TREE_PUBLIC "开公网 HTTPS 吗（推荐）？开了：Claude.ai、ChatGPT、Gemini 这些支持 MCP 的 AI 平台能连世界树，分享能发链接，好友直连这台服务器。用 Tailscale Funnel，只开这几条路，app 的接口不上公网。不开也能加好友（经 OpenMousse 中继，消息端到端加密）/ Open up public HTTPS (recommended)? Then AI platforms such as Claude.ai, ChatGPT or Gemini (any MCP client) can reach the memory tree, shares get links, and friends connect to this server directly. Uses Tailscale Funnel and opens only those paths, never the app's API. Friends work without it too, through the OpenMousse relay with end-to-end encryption (y/n)" "y"
+  case "$(printf '%s' "$MOUSSE_TREE_PUBLIC" | tr '[:upper:]' '[:lower:]')" in y|yes|1|true|是*) MOUSSE_TREE_PUBLIC=yes ;; *) MOUSSE_TREE_PUBLIC=no ;; esac
+fi
 if [ -n "$MOUSSE_VAULT" ]; then OPTIONAL+=("--vault=$MOUSSE_VAULT"); fi
 if [ "$MOUSSE_TREE_PUBLIC" = yes ]; then OPTIONAL+=(--tree-public); fi
 
+REST=()
+for arg in "$@"; do [ "$arg" = "--trial" ] || REST+=("$arg"); done
 exec "$VENV/bin/python" "$MOUSSE_DIR/packs/core/setup.py" --repo "$MOUSSE_DIR" --venv "$VENV" \
   --openclaw-home "${MOUSSE_OPENCLAW_HOME:-$DEF_HOME}" --tz "$MOUSSE_TZ" --name "$MOUSSE_NAME" --lang "$MOUSSE_LANG" --bind "${MOUSSE_BIND:-auto}" \
-  ${CLAW_ARGS[@]+"${CLAW_ARGS[@]}"} ${OPTIONAL[@]+"${OPTIONAL[@]}"} "$@"
+  ${CLAW_ARGS[@]+"${CLAW_ARGS[@]}"} ${OPTIONAL[@]+"${OPTIONAL[@]}"} ${REST[@]+"${REST[@]}"}

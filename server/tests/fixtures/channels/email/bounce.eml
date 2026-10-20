@@ -1,0 +1,13 @@
+Return-Path: <>
+Delivered-To: agent@example.org
+Authentication-Results: mx.example.org; dkim=pass header.d=example.org; dmarc=pass header.from=example.org
+From: Mail Delivery System <MAILER-DAEMON@example.org>
+To: agent@example.org
+Subject: Undelivered Mail Returned to Sender
+Date: Sun, 19 Oct 2030 18:06:00 +0000
+Message-ID: <bounce-0501@example.org>
+MIME-Version: 1.0
+Content-Type: text/plain; charset="utf-8"
+
+This is the mail system at host mx.example.org.
+I'm sorry to have to inform you that your message could not be delivered.

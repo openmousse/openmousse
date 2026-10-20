@@ -35,7 +35,7 @@ from i18n import L
 from . import events, store
 
 router = APIRouter()
-KINDS = ("manual", "skill", "guide", "leaf")
+KINDS = ("manual", "skill", "guide", "leaf", "intent")  # intent：第 5 批，要记得的事这一轮对上了（engine/intents.py，名字是它的 id）
 DAY_START_HOUR = 4
 NAME_MAX = 200
 SCHEMA = """
@@ -63,9 +63,10 @@ def ready() -> None:
 
 
 def day_of(at: datetime | None = None) -> str:
-    """逻辑日（04:00 换，和 chat.day_of 一样）。"""
+    """逻辑日（04:00 换，和 chat.day_of 一样；第 2 批起照 engine.reset.at，engine/reset.py）。"""
+    from .reset import day_start
     t = at or datetime.now(settings.tz)
-    return (t - timedelta(hours=DAY_START_HOUR)).date().isoformat()
+    return (t - day_start()).date().isoformat()
 
 
 def event(turn: str, kind: str, names: list[str], via: str) -> dict:

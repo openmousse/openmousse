@@ -1,0 +1,15 @@
+Return-Path: <list-bounces@example.org>
+Delivered-To: agent@example.org
+Authentication-Results: mx.example.org; dkim=pass header.d=example.com; dmarc=pass header.from=example.com
+From: "Sam Lee" <sam@example.com>
+To: hikers@example.org
+Subject: [hikers] Trail is closed this weekend
+Date: Sun, 19 Oct 2030 07:30:00 +0000
+Message-ID: <trail-0401@example.com>
+List-Id: Weekend hikers <hikers.example.org>
+List-Unsubscribe: <mailto:hikers-leave@example.org>
+Precedence: list
+MIME-Version: 1.0
+Content-Type: text/plain; charset="utf-8"
+
+Heads up: the north trail is closed this weekend.

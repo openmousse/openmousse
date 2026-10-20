@@ -1,6 +1,7 @@
 // 硬件（1.0.6，设置 → 应用 → 硬件）：手机经蓝牙连 Flipper Zero。
 // 蓝牙状态和权限 → 搜索附近的 Flipper → 连接 / 忽略 → 设备卡（名字、固件、电量、蜂鸣）→ 红外：遥控器 → 按钮 → 点一下发送一次。
 // 网页版和 1.0.6 以前的安装包没有蓝牙模块，只显示一行说明。连接和动作都在 src/hardware/flipper.ts，这页只画。
+// 第 8 批：最底下一组「设备和节点」（这台手机、配对的电脑和手机，见 src/nodes/）。
 import React, { useCallback, useEffect, useRef, useState, useSyncExternalStore } from 'react';
 import { ActivityIndicator, Alert, AppState, Linking, Platform, Pressable, ScrollView, StyleSheet, View } from 'react-native';
 import { useFocusEffect, useNavigation } from '@react-navigation/native';
@@ -12,6 +13,7 @@ import {
   connect, disconnect, explain, flipperState, forget, irButtons, irRemotes, irSend, onFlipper, ping, remoteName, status, type FlipperStatus,
 } from '../hardware/flipper';
 import { L } from '../i18n';
+import { NodeEntries } from '../nodes/NodeEntries';
 import { radius, space, useTheme } from '../theme';
 
 export function HardwareScreen() {
@@ -38,6 +40,7 @@ function Unavailable() {
           "The web version can't use Bluetooth. Open this page in the phone app to connect a Flipper Zero over Bluetooth, see its status and send saved infrared buttons.")
         : L('当前安装的版本不含蓝牙模块。更新到 1.0.6 或更高版本后，可在此通过蓝牙连接 Flipper Zero。',
           'This installed version has no Bluetooth module. After updating to 1.0.6 or later you can connect a Flipper Zero over Bluetooth here.')}</GroupNote>
+      <NodeEntries />
     </ScrollView>
   );
 }
@@ -192,6 +195,7 @@ function Body() {
       ) : null}
 
       {fl.phase === 'ready' && fl.device ? <Infrared key={fl.device.id} /> : null}
+      <NodeEntries />
     </ScrollView>
   );
 }

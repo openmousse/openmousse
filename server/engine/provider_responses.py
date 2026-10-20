@@ -1,6 +1,7 @@
 """接 OpenAI 的 Responses API（POST <url>/responses）：用户自己的 ChatGPT 套餐（chatgpt/<型号>，令牌由 engine/chatgpt_plan.py 给，
 providers.py 填进 p["key"]）和普通 OpenAI 密钥（server.json 的 engine.providers.<名>.api 写 "openai-responses"；不写 api 的照旧走
-/chat/completions）都走这里。httpx 流式，SSE 自己解析。
+/chat/completions）都走这里。httpx 流式，SSE 自己解析。回包不一定标 content-type（ChatGPT 套餐的 /responses 流就不标，10/20 在线上
+录到的）：没标的看开头，像 SSE 的行（event: / data: / 冒号开头的注释）当流读，不然当一次性的 JSON，两样都不是就报错（不是 JSONDecodeError）。
 
 请求（10/17 对照官方 SIWC 文档 developers.openai.com/siwc 的 models-and-inference、preview-limitations，OpenClaw 4cb8e645 的
 extensions/openai/responses-stream.runtime.ts、packages/ai 的 openai-responses-shared.ts / openai-responses-replay-*.ts，
@@ -24,7 +25,7 @@ Codex 5009a99d 的 codex-rs/core/src/client.rs；只借做法，没拿代码）�
   HTTP 不是 200：错误体可能是 {"error": {"code", "message", "param"}}，也可能是套餐准入那一层的 {"detail": "…"}，两种都认；
   401 / 403 → config；429 → http（套餐的用量到顶 subscription_sharing_usage_limit_exceeded 不重试：官方说先停，去 ChatGPT 设置 → 用量看）；
   408 / 409 / 5xx → 能重试（套餐的 usage_unavailable、user_unavailable 是 503）；别的 400 不重试。流里来的 response.failed / error 按
-  错误码换成状态码（官方 errors-and-recovery 的表）再照上面分。请求 id（x-request-id）记进错误的原话，方便查。
+  错误码换成状态码（官方 errors-and-recovery 的表）再照上面分。请求 id（x-request-id；套餐那条路只给 x-oai-request-id）记进错误的原话，方便查。
 """
 from __future__ import annotations
 
@@ -38,7 +39,7 @@ import httpx
 
 from i18n import L
 
-from .errors import EngineError
+from .errors import EngineError, scrub
 from .session import repair, text_of, tool_calls
 
 API = "openai-responses"
@@ -56,6 +57,7 @@ CODES = {"subscription_sharing_user_not_eligible": 403, "subscription_sharing_us
          "model_not_found": 404, "invalid_api_key": 401, "context_length_exceeded": 400, "invalid_encrypted_content": 400,
          "invalid_prompt": 400, "vector_store_timeout": 504}
 NO_RETRY = {"subscription_sharing_usage_limit_exceeded", "insufficient_quota"}  # 429 里不该马上再试的：额度没了，再试还是没有
+SSE_LINE = ("event:", "data:", "id:", "retry:", ":")  # SSE 的几种行（冒号开头的是注释）：没标 content-type 时拿第一行有字的认
 TRANSPORT: httpx.AsyncBaseTransport | None = None  # 测试时换成 httpx.MockTransport
 
 
@@ -283,6 +285,14 @@ def message_of(p: dict, model_id: str, final: dict, items: list[dict], streamed_
 
 # —— 流 ——————————————————————————————————————————————————————————————————————————
 
+async def _chain(head: list[str], rest: AsyncIterator[str]) -> AsyncIterator[str]:
+    """先给已经读出来的几行，再接着读剩下的（同一个 aiter_lines：httpx 的回包只能读一遍）。"""
+    for ln in head:
+        yield ln
+    async for ln in rest:
+        yield ln
+
+
 async def stream(p: dict, model_id: str, req) -> AsyncIterator[dict]:
     """流式：{"type": "text" | "thinking", "text"}、{"type": "tool_start", "id", "name"}，最后 {"type": "done", "message"}。出错抛 EngineError。"""
     strip = False
@@ -308,7 +318,7 @@ async def stream(p: dict, model_id: str, req) -> AsyncIterator[dict]:
         try:
             async with httpx.AsyncClient(timeout=httpx.Timeout(req.timeout, connect=10), transport=TRANSPORT) as client:
                 async with client.stream("POST", url, headers=headers, json=body) as r:
-                    rid = r.headers.get("x-request-id")
+                    rid = r.headers.get("x-request-id") or r.headers.get("x-oai-request-id")
                     if r.status_code != 200:
                         err = error_of((await r.aread()).decode("utf8", "replace"))
                         if r.status_code in (400, 422) and (bad := _optional_key(err, body, dropped)):  # 不认这个字段：去掉再来
@@ -322,8 +332,24 @@ async def stream(p: dict, model_id: str, req) -> AsyncIterator[dict]:
                             body["input"] = to_input(req.messages, p, model_id, strip=True)
                             continue
                         raise make_error(p, r.status_code, err, request_id=rid)
-                    if "text/event-stream" not in r.headers.get("content-type", ""):  # 一次性的整段 JSON（有的代理、测试服）
-                        j = json.loads((await r.aread()).decode("utf8", "replace") or "{}")
+                    ctype = r.headers.get("content-type", "")
+                    lines = r.aiter_lines()
+                    head: list[str] = []  # 没标成 SSE 时先读出来的几行（到第一行有字的为止）
+                    if "text/event-stream" not in ctype:  # 没标（套餐的流）或者标成了别的：看第一行有字的像不像 SSE
+                        async for ln in lines:
+                            head.append(ln)
+                            if ln.strip():
+                                break
+                    if "text/event-stream" not in ctype and not (head and head[-1].lstrip("\ufeff").startswith(SSE_LINE)):
+                        whole = "\n".join([*head, *[ln async for ln in lines]])  # 一次性的整段 JSON（有的代理、测试服）
+                        try:
+                            j = json.loads(whole.strip() or "{}")
+                        except ValueError:
+                            j = None
+                        if not isinstance(j, dict):  # 网页、坏掉的半截……：说清楚回了什么（打码、截短），不让 JSONDecodeError 漏出去
+                            snippet = scrub(" ".join(whole.split()), str(p.get("key") or ""))[:120]  # 先打码再截：截在令牌中间就抹不掉了
+                            raise EngineError(f"{p['name']}: the reply is neither an event stream nor JSON (content-type: {ctype or 'none'}): "
+                                              f"{snippet or '(empty)'}{f' (request {rid[:80]})' if rid else ''}", kind="output")
                         if isinstance(j.get("error"), dict) or j.get("status") == "failed":
                             raise make_error(p, None, error_of(json.dumps({"error": j.get("error") or {}})), request_id=rid)
                         final = j
@@ -344,7 +370,7 @@ async def stream(p: dict, model_id: str, req) -> AsyncIterator[dict]:
                                 started = True
                                 yield {"type": "tool_start", "id": _cid(it.get("call_id")), "name": str(it["name"])}
                     else:
-                        async for line in r.aiter_lines():
+                        async for line in _chain(head, lines):
                             if not line.startswith("data:"):
                                 continue
                             payload = line[5:].strip()

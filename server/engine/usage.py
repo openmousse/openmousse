@@ -10,9 +10,12 @@
   plan     用户自己的套餐（claude-code/…、chatgpt/…）：记「套餐、不计钱」，cost 不进总数；Claude Code 报的折算价（notional_cost_usd）
            单独列，只给看。Claude Code 用 API 密钥登录的那几轮照记成钱（是用户自己账上的）
 用途（看 kind 和 origin）：chat = 主人自己的对话（user / relay）；background = 定时任务、心跳、后台任务、收件箱接着做的（auto / task），
-  还有一次性 JSON（json）和回看 skill（skill-review）；outsider = 外人回合（名片 Agent、A2A、Doorman）；api = 对外接口（/v1、ACP）；
-  cyber = 赛博；claw = OpenClaw 自己的回合（engine.record_openclaw 开了才有）；别的 = other。
+  还有一次性 JSON（json）和回看 skill（skill-review）；outsider = 外人回合（名片 Agent、A2A、Doorman、第 4 批的触发：外面进来的 webhook、
+  邮件、网页那一次零工具的读）；api = 对外接口（/v1、ACP）；
+  cyber = 赛博；claw = OpenClaw 自己的回合（engine.record_openclaw 开了才有）；warming = 提示缓存保温（engine/warming.py，第 7 批）；
+  别的 = other。
 向量（按意思搜，engine/embeddings.py）不是一轮：另记在 engine_embed_usage，汇总成 embeddings 那一栏（见下面「向量的用量」）。
+看图、看文档、转写、朗读、生图（第 3 批，engine/media.py）也不是一轮：另记在 engine_media_usage，汇总成 media 那一栏（media.summary）。
 不算进来的：OpenClaw 没记下来的回合、这张表建起来以前算的向量（embeddings.recordedSince 是从哪天起记的）。
 天按 server.json 的时区算日历日（不是 04:00 的逻辑日：和各家的账单对得上）。
 """
@@ -32,9 +35,9 @@ from config import settings
 from . import catalog, models, store
 from . import embeddings as E
 
-PURPOSES = ("chat", "background", "outsider", "api", "cyber", "claw", "other")
+PURPOSES = ("chat", "background", "outsider", "api", "cyber", "claw", "warming", "other")
 BACKGROUND_ORIGINS = frozenset({"auto", "task", "json", "skill-review", "skills"})
-OUTSIDER_ORIGINS = frozenset({"card", "a2a", "doorman"})
+OUTSIDER_ORIGINS = frozenset({"card", "a2a", "doorman", "trigger"})  # trigger：第 4 批从外面进来的触发（webhook、邮件、盯的网页）那一次零工具的读
 MAX_DAYS = 366
 
 
@@ -54,6 +57,8 @@ def purpose_of(kind: str | None, origin: str | None) -> str:
             return "background"
         if o == "api":
             return "api"
+        if o == "warming":  # 第 7 批：提示缓存保温（engine/warming.py）
+            return "warming"
     return "other"
 
 
@@ -172,7 +177,56 @@ def summary(days: int = 30, *, now: datetime | None = None) -> dict:
             "byDay": [{"day": d, **_done(a)} for d, a in sorted(by_day.items())],
             "byModel": model_rows,
             "byPurpose": [{"purpose": p, **_done(by_purpose[p])} for p in PURPOSES if p in by_purpose],
-            "embeddings": embeddings_summary(start), "notCounted": []}
+            "embeddings": embeddings_summary(start), "notCounted": [],
+            "media": _media(start)}  # 第 3 批：看图、看文档、转写、朗读、生图……按次的用量（engine/media.py 的 engine_media_usage）
+
+
+def _media(start: datetime) -> dict:
+    from . import media
+    return media.summary(start)
+
+
+def spent_since(start: datetime) -> dict:
+    """花费上限用（第 4 批，engine/spend.py）：start 以来一轮轮算得出钱的（metered，照 billing_of）→ {"total", "agents": {Agent: 美元},
+    "purposes": {用途: 美元}, "unpriced": 轮数, "unpricedModels": [...], "plan": 轮数, "running": [还在跑的那几轮的 id]}。
+    钱用记下的 usage.cost（调的那一刻的价）；还在跑的那几轮 usage 还没写（一轮结束才写），算 0，由 spend 自己记的补上。
+    只读、不建表：没用过内核 = 全是 0。"""
+    out: dict = {"total": 0.0, "agents": {}, "purposes": {}, "unpriced": 0, "unpricedModels": [], "plan": 0, "running": []}
+    if not store.exists():
+        return out
+    with store.read() as conn:
+        rows = conn.execute("SELECT id, kind, origin, agent, status, model, models, usage FROM engine_turns WHERE julianday(started_at) >= julianday(?)",
+                            (start.isoformat(),)).fetchall()
+    for r in rows:
+        if r["status"] == "running":
+            out["running"].append(r["id"])
+            continue
+        try:
+            u = json.loads(r["usage"] or "{}")
+            called = json.loads(r["models"] or "[]")
+        except ValueError:
+            u, called = {}, []
+        u = u if isinstance(u, dict) else {}
+        model = next((m for m in reversed(called) if isinstance(m, str) and m), None) if isinstance(called, list) else None
+        model = models.canonical(model or str(r["model"] or ""))
+        billing = billing_of(model, u)
+        if billing == "plan":
+            out["plan"] += 1
+            continue
+        if billing == "unpriced":
+            if _int(u.get("in")) or _int(u.get("out")):  # 一个 token 都没有的（出错在调模型之前）不算
+                out["unpriced"] += 1
+                if model not in out["unpricedModels"]:
+                    out["unpricedModels"].append(model)
+            continue
+        c = float(u.get("cost") or 0)
+        purpose = purpose_of(r["kind"], r["origin"])
+        out["total"] += c
+        out["purposes"][purpose] = out["purposes"].get(purpose, 0.0) + c
+        agent = str(r["agent"] or "")
+        if agent:
+            out["agents"][agent] = out["agents"].get(agent, 0.0) + c
+    return out
 
 
 # —— 向量的用量 ——————————————————————————————————————————————————————————————————

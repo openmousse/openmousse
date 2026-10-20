@@ -1,0 +1,13 @@
+Return-Path: <owner@example.com>
+Delivered-To: agent@example.org
+Authentication-Results: mx.example.org; dkim=pass header.d=example.com; dmarc=pass header.from=example.com
+From: Alex Rivers <owner@example.com>
+To: agent@example.org
+Subject: =?gb2312?B?t7/X4szh0NE=?=
+Date: Mon, 20 Oct 2030 08:30:00 +0800
+Message-ID: <rent-0701@mail.example.com>
+MIME-Version: 1.0
+Content-Type: text/plain; charset="gb2312"
+Content-Transfer-Encoding: base64
+
+w/fM7NTnyc/M4dDRztK9u7e/1+KjrMuzsePOytK7z8LO79K1y6653LXEysKhow==

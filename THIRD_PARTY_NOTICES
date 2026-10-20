@@ -53,6 +53,10 @@ Used in: server/engine/tools.py — wrap_untrusted(), adapted from
          $IFS, lowercasing that keeps flags), adapted from tools/approval_detection.py
          (HARDLINE_PATTERNS, DANGEROUS_PATTERNS, _normalize_command_for_detection,
          _lower_preserving_flags) and tools/ansi_strip.py (strip_ansi)
+         server/engine/patch.py (read at commit f4ac0bea1ea50bba62886fb0b7e308e4edee8fd3) —
+         the loosest pass when looking for a hunk's lines (the ellipsis made plain, runs of
+         spaces and tabs joined), adapted from tools/fuzzy_match.py (UNICODE_MAP,
+         _strategy_whitespace_normalized)
 
 MIT License
 
@@ -220,6 +224,78 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 
 
+Hermes Agent (NousResearch/hermes-agent), later commit
+------------------------------------------------------
+
+Source:  https://github.com/NousResearch/hermes-agent
+Commit:  f4ac0bea1ea50bba62886fb0b7e308e4edee8fd3
+Used in: server/engine/guard.py — the tool loop thresholds, the three checks and their
+         warning and stop messages, adapted from agent/tool_guardrails.py
+         (ToolCallGuardrails, _DECISION_MESSAGES, _tool_failure_recovery_hint) and the stop
+         message in run_agent.py;
+         server/engine/side.py — the /btw side-question instructions and the transcript it
+         sends, adapted from agent/side_question.py (_ONESHOT_INSTRUCTIONS,
+         render_history_for_side_question);
+         server/engine/think.py — the effort ladder and nearest-lower clamping, from
+         agent/reasoning_effort.py (EFFORT_LADDER, clamp_effort);
+         server/engine/goal.py — the goal judge's verdicts and prompt, the continuation
+         prompt and the default turn budget, adapted from hermes_cli/goals.py
+         (JUDGE_SYSTEM_PROMPT, CONTINUATION_PROMPT_TEMPLATE, DEFAULT_MAX_TURNS);
+         server/engine/estop.py — the emergency stop: one sentinel file that pauses new
+         work only, a corrupt or unreadable file still counting as paused, logging once
+         per engagement, adapted from agent/estop.py (is_engaged, engage, disengage,
+         get_state, check_paused);
+         server/engine/jobs.py — holding a scheduled job while the provider's usage window
+         is closed: the runs inside the window folded into the first one after it, a
+         60-second slack past the reopening time, one catch-up run only for a sparse
+         schedule, and one notice on entering the hold, adapted from cron/quota_hold.py
+         (plan_hold, _recovery_worthwhile, HOLD_SLACK_SECONDS, hold_notice);
+         server/engine/webhooks.py — webhook routes: signature checks (GitHub's
+         X-Hub-Signature-256, an HMAC over "<timestamp>.<body>" with a 5-minute replay
+         window, constant-time comparison), the size cap before reading, declarative
+         payload filters (all / any / not, exists / equals / not_equals / contains / in /
+         regex on dotted fields) and per-key coalescing (debounce to the latest event,
+         bounded by a maximum wait), adapted from gateway/platforms/webhook.py
+         (_validate_signature, _read_authenticated_body), webhook_filters.py
+         (WebhookRouteProcessor.filter_matches, resolve_filter_field) and
+         webhook_coalesce.py (WebhookCoalescer);
+         server/engine/watch.py — watching a scheduled job's source: the exact-output
+         fingerprint, a capped unified diff plus the current output on a change, and
+         waking only on a change, adapted from cron/monitor.py (hash_monitor_output,
+         build_monitor_diff, check_monitor); skipping the model when a pre script's last
+         line is {"wakeAgent": false}, adapted from cron/scheduler_prompt.py
+         (_parse_wake_gate);
+         app/src/talk/text.ts — misheard(), the phrases speech-to-text makes up on silence
+         or near-silence and the repeated-filler pattern, adapted from
+         tools/voice_mode_transcript.py (WHISPER_HALLUCINATIONS, _HALLUCINATION_REPEAT_RE,
+         is_whisper_hallucination);
+         app/src/talk/ears.ts — Barge, the barge-in detector's rolling noise floor (the 90th
+         percentile of recent levels that stayed under the trigger, a floor locked after the
+         first calibration window, a run of loud blocks before it trips), adapted from
+         tools/voice_mode.py (listen_for_speech)
+
+MIT License
+
+Copyright (c) 2025 Nous Research
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+
 pi (earendil-works/pi)
 ----------------------
 
@@ -270,6 +346,13 @@ Used in: server/engine/semantic.py — mmr(), the MMR re-ranking of hybrid searc
          to what is already picked, ties broken by the raw score), adapted from
          extensions/memory-core/src/memory/mmr.ts (applyMMRToHybridResults) and
          extensions/memory-core/src/memory/tokenize.ts (jaccardSimilarity)
+         server/engine/patch.py (read at commit 34f6f1ba01cec96639031a47e736849b14bc072a) —
+         looking for a hunk's lines from where the last one ended with ever looser comparisons
+         (exact, trailing spaces, both ends, plain punctuation), keeping the file's own context
+         lines, taking off a heredoc wrapper and reading a hunk, adapted from
+         src/agents/apply-patch-update.ts (seekSequence, linesMatch, normalizePunctuation,
+         contextOldIndexes) and src/agents/apply-patch-parse.ts (checkPatchBoundaries,
+         parseUpdateFileChunk)
 
 MIT License
 
@@ -305,6 +388,123 @@ Used in: server/engine/sessions.py — the "[Inter-session message] sourceSessio
          followed by a line framing it as inter-session data rather than the user's instruction,
          adapted from src/sessions/input-provenance.ts (INTER_SESSION_PROMPT_PREFIX_BASE,
          buildInterSessionPromptContext)
+         server/engine/skill_market.py — turning ClawHub's moderation and security verdicts
+         for a skill version into install / don't install (blocked, quarantined, revoked or
+         malicious → not installed), adapted from src/infra/clawhub-install-trust.ts; and the
+         skill_market tool's wording ("search before saying a capability is unavailable; a
+         search doesn't authorize an install, install only when the user asks"), from
+         skills/clawhub/SKILL.md
+
+MIT License
+
+Copyright (c) 2026 OpenClaw Foundation
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+
+
+Hermes Agent (NousResearch/hermes-agent), later commit
+------------------------------------------------------
+
+Source:  https://github.com/NousResearch/hermes-agent
+Commit:  cc6b1f299bd3a7c0309f003d97dc32014e71fa80
+Used in: server/engine/skills_guard.py — a copy of tools/skills_guard.py (the threat patterns,
+         structural checks, trust levels and verdicts used to scan skills from the skill
+         market before they're installed), with three unused imports removed
+         server/engine/skill_gate.py — reading a skill's required environment variables
+         (required_environment_variables, setup.collect_secrets, prerequisites.env_vars),
+         its declared settings (metadata.hermes.config) and the "[Skill config …]" and
+         "[Skill setup note: …]" blocks, adapted from tools/skills_tool_setup.py
+         (_get_required_environment_variables, _build_setup_note), agent/skill_utils.py
+         (extract_skill_config_vars) and agent/skill_commands.py (_inject_skill_config)
+         server/engine/user_hooks.py — the shell-hook protocol: the stdin payload, the block
+         and modify directives in their Hermes and Claude Code spellings, exit code 2 as a
+         block, fail-closed handling, the timeout cap and the approval allowlist, adapted
+         from agent/shell_hooks.py (_parse_response, _evaluate_result, the allowlist)
+         server/engine/agent_skills.py — the message a /<skill> command turns into (the
+         "[IMPORTANT: The user has invoked …]" and "The user has provided the following
+         instruction …" wording) and the command-name slug, from agent/skill_commands.py
+         (_build_skill_message, slugify_skill_name)
+         server/engine/skill_market.py — the content digest of an installed skill (SHA-256
+         over each POSIX relative path and its bytes, in path order), from tools/skills_guard.py
+         (_content_digest), and the lock.json record of where each installed skill came
+         from, after tools/skills_hub.py (HubLockFile.record_install)
+         server/channels/email.py — decoding mail without ever raising (charset fallbacks,
+         RFC 2047 headers, the plain-text body with an HTML-only fallback, stripping HTML),
+         taking the sender's address without accepting a second address hidden in the
+         display name, trusting the sender only on the receiving server's
+         Authentication-Results (clauses split outside quotes and comments, properties read
+         per clause, relaxed domain alignment, DMARC pass or aligned DKIM), spotting
+         automated senders, and closing an IMAP connection that has dropped, adapted from
+         plugins/platforms/email/adapter.py (_safe_decode, _decode_header_value,
+         _extract_text_body, _strip_html, _extract_email_address, _ar_clauses, _auth_props,
+         _domains_aligned, _verify_sender_authentication, _is_automated_sender, _close_imap)
+
+MIT License
+
+Copyright (c) 2025 Nous Research
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+
+
+OpenClaw (openclaw/openclaw), later commit
+------------------------------------------
+
+Source:  https://github.com/openclaw/openclaw
+Commit:  1099ccc1713bda550cbbf04b97b3f6d4299b0415
+Used in: server/engine/jobs.py — retrying a scheduled job's failed run: the backoff ladder
+         (30 s, 1 min, 5 min, 15 min, 60 min), at most three retries for a one-off job,
+         retrying only before the run did anything, and which error messages count as
+         transient (an HTTP status needs its context, so numbers in prose don't match),
+         adapted from src/cron/service/jobs-scheduling.ts (DEFAULT_ERROR_BACKOFF_SCHEDULE_MS),
+         src/cron/service/timer-trigger.ts (DEFAULT_MAX_TRANSIENT_RETRIES) and
+         src/cron/retry-hint.ts (TRANSIENT_PATTERNS, SERVER_ERROR_PATTERN, RATE_LIMIT_PATTERN)
+         server/engine/mailwatch.py — watching an IMAP mailbox read-only: the mailbox
+         opened read-only, a UIDVALIDITY + UID cursor whose first value is a baseline (old
+         mail is never read, a changed UIDVALIDITY resets it), exactly one From address,
+         matching a sender against full addresses or @domains (local part exact, domain
+         case-insensitive), and trusting dmarc=pass only from Authentication-Results
+         written by a configured authserv-id, adapted from extensions/imap/src/watcher.ts,
+         state.ts (initializeImapCursor) and sender-gate.ts (matchesImapSender,
+         parseImapAuthResults, mapImapAuthStrength)
+         server/engine/heartbeat.py — the heartbeat_respond tool: offered on every turn of a
+         heartbeat-enabled agent so the tool list stays stable, accepted only in a
+         heartbeat run and only once per turn, notify=false sending nothing and
+         notify=true needing the text to send, adapted from
+         src/agents/tools/heartbeat-response-tool.ts (resolveHeartbeatTools,
+         createHeartbeatResponseTool) and src/auto-reply/heartbeat-tool-response.ts
+         (HEARTBEAT_TOOL_OUTCOMES, normalizeHeartbeatToolResponse)
 
 MIT License
 

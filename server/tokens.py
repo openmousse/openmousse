@@ -5,6 +5,7 @@
   python3 tokens.py list             列出名字（不显示令牌）
   python3 tokens.py remove <名字>
   python3 tokens.py pair [--name 设备名] [--minutes 10] [--json]   一次性配对码：手机扫码或点链接就连上（见 pairing.py）
+  python3 tokens.py pair --node [--name 设备名] [--json]          节点配对码：在要当节点的电脑上跑 node_host.py pair <链接>（见 nodes.py）
 """
 from __future__ import annotations
 
@@ -23,19 +24,23 @@ def usage() -> str:
   python3 tokens.py list             list the names (tokens are not shown)
   python3 tokens.py remove <name>
   python3 tokens.py pair [--name DEVICE] [--minutes 10] [--json]   one-time pairing code: the phone scans it or taps the link (see pairing.py)
+  python3 tokens.py pair --node [--name DEVICE] [--json]          node pairing code: run node_host.py pair <link> on the computer (see nodes.py)
 """)
 
 
 def pair(argv: list[str]) -> int:
-    """tokens.py pair [--name 设备名] [--minutes 10] [--server http://…] [--json]：一次性配对码（见 pairing.py）。"""
+    """tokens.py pair [--name 设备名] [--minutes 10] [--server http://…] [--json] [--node]：一次性配对码（见 pairing.py）。
+    --node：节点配对码（第 8 批，nodes.py）：换来的是只能走 /api/nodes/* 的 node-<设备> 令牌；节点没开（engine.nodes）就不出。"""
     import json
     import pairing
 
     opts = {"--name": "", "--minutes": "10", "--server": ""}
-    as_json, i = False, 0
+    as_json, node, i = False, False, 0
     while i < len(argv):
         if argv[i] == "--json":
             as_json = True
+        elif argv[i] == "--node":
+            node = True
         elif argv[i] in opts and i + 1 < len(argv):
             opts[argv[i]] = argv[i + 1]
             i += 1
@@ -47,9 +52,27 @@ def pair(argv: list[str]) -> int:
         minutes = int(opts["--minutes"])
     except ValueError:
         minutes = 10
-    code, expires = pairing.new_code(opts["--name"], minutes)
+    if node:  # 节点没开（engine.nodes，claw 要是 builtin；同 nodes.on，这里不导入 nodes.py 那一串）：先说怎么开，不出码
+        import claw
+        eng = raw(fresh=True).get("engine")
+        if not claw.is_builtin() or not isinstance(eng, dict) or not (eng.get("nodes") is True or isinstance(eng.get("nodes"), dict)):
+            print(L('节点没开：claw 要是 builtin，并且在 server.json 的 engine 里加上 "nodes": {}（见 server/README.md 的「设备节点」）。',
+                    'Nodes are off: the claw must be builtin, with "nodes": {} under engine in server.json (see "Devices as nodes" in server/README.md).'))
+            return 1
+    code, expires = pairing.new_code(opts["--name"], minutes, node=node)
     server = (opts["--server"] or pairing.server_url()).rstrip("/")
-    url = pairing.link(server, code)
+    url = pairing.link(server, code, node=node)
+    if node:
+        cmd = f"python3 node_host.py pair '{url}'"
+        if as_json:
+            print(json.dumps({"code": code, "link": url, "server": server, "expires": expires, "node": True, "command": cmd}, ensure_ascii=False))
+            return 0
+        print(L(f"在要当节点的那台电脑上跑（node_host.py 在仓库的 server/ 里；装了 OpenMousse 的也可以用 mousse node pair）：\n  {cmd}",
+                f"On the computer that should act as a node, run (node_host.py is in the repo's server/ folder; with OpenMousse installed, "
+                f"mousse node pair works too):\n  {cmd}"))
+        print(L(f"{minutes} 分钟内有效，只能用一次。配上以后它报的命令要你在 app 的收件箱里批准。",
+                f"Valid for {minutes} minutes, once. Once it's paired, approve the commands it reports in the app's inbox."))
+        return 0
     if as_json:
         print(json.dumps({"code": code, "link": url, "server": server, "expires": expires}, ensure_ascii=False))
         return 0

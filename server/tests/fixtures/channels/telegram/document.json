@@ -1,0 +1,27 @@
+{
+ "message": {
+  "message_id": 15,
+  "date": 1760860800,
+  "chat": {
+   "id": 1000001,
+   "type": "private",
+   "first_name": "Alex"
+  },
+  "from": {
+   "id": 1000001,
+   "is_bot": false,
+   "first_name": "Alex",
+   "last_name": "Rivers",
+   "username": "alex_rivers_example",
+   "language_code": "en"
+  },
+  "caption": "Notes from today",
+  "document": {
+   "file_id": "DOC-0001",
+   "file_unique_id": "d1",
+   "file_name": "notes.txt",
+   "mime_type": "text/plain",
+   "file_size": 64
+  }
+ }
+}

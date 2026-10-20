@@ -1,0 +1,19 @@
+Return-Path: <sam@example.com>
+Delivered-To: agent@example.org
+Authentication-Results: mx.example.org; dkim=pass header.d=example.com; dmarc=pass header.from=example.com
+From: "Sam Lee" <sam@example.com>
+To: agent@example.org
+Subject: Re: Dinner next week?
+Date: Sun, 19 Oct 2030 18:40:00 +0000
+Message-ID: <dinner-0102@example.com>
+In-Reply-To: <OUR-REPLY-ID>
+References: <dinner-0101@example.com> <OUR-REPLY-ID>
+MIME-Version: 1.0
+Content-Type: text/plain; charset="utf-8"
+
+Thursday works for me too.
+
+On Sun, 19 Oct 2030 at 18:05, Mousse <agent@example.org> wrote:
+> Alex is free on Thursday evening.
+>
+> Hi! Is Alex free for dinner one evening next week?

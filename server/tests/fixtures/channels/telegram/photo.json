@@ -1,0 +1,36 @@
+{
+ "message": {
+  "message_id": 13,
+  "date": 1760860800,
+  "chat": {
+   "id": 1000001,
+   "type": "private",
+   "first_name": "Alex"
+  },
+  "from": {
+   "id": 1000001,
+   "is_bot": false,
+   "first_name": "Alex",
+   "last_name": "Rivers",
+   "username": "alex_rivers_example",
+   "language_code": "en"
+  },
+  "caption": "What is this plant?",
+  "photo": [
+   {
+    "file_id": "PHOTO-small-0001",
+    "file_unique_id": "ps1",
+    "width": 90,
+    "height": 90,
+    "file_size": 1200
+   },
+   {
+    "file_id": "PHOTO-large-0001",
+    "file_unique_id": "pl1",
+    "width": 1280,
+    "height": 1280,
+    "file_size": 98000
+   }
+  ]
+ }
+}

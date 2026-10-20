@@ -11,6 +11,7 @@ model 是用户自己的套餐时照 may_spend 花：claude-code/… 交给他�
 
 JSON 只卡最外层（是对象 / 数组、need 那个键是字符串、required 的键都在）：和 llm-task 那时一样，严格校验整个 schema
 会因为模型多带一个键就整句作废。回的不像样就再问一次。
+ask_text（第 2 批，/btw 旁问）：同样的一问一答，回一段字、不要 JSON。
 """
 from __future__ import annotations
 
@@ -103,6 +104,51 @@ async def ask_json(prompt: str, input_: Any, *, model: str, purpose: str = "json
         except EngineError as e:
             last = e
     raise last or EngineError(f"{model} ran out of time", kind="timeout", retryable=True)
+
+
+TEXT_RULE = "\n\nYou have no tools and cannot look anything up: answer from what is given here."
+
+
+async def ask_text(prompt: str, text: str, *, model: str, purpose: str = "text", timeout: float = 120, effort: str | None = None,
+                   max_tokens: int | None = None, conversation: str | None = None, origin: str | None = None, kind: str = "outsider",
+                   via: str | None = None, fallbacks: list[str] | None = None) -> tuple[str, str]:
+    """第 2 批（/btw 旁问用，engine/side.py）：同 ask_json，只是回一段字、不要 JSON（零工具、不落会话；kind / origin / via、套餐、
+    备用链的规矩都一样）。→ (回答, "builtin:<真正回答的模型>")。失败抛 EngineError；写到上限被截断的照样回（末尾补一个 …）。"""
+    sub = models.subscription(model)
+    if sub and not models.may_spend(model, kind=kind, origin=origin, via=via):
+        raise EngineError(f"{model} is the user's own plan, which this call can't use", kind="rule")
+    chain = fallbacks if fallbacks is not None else models.purpose_chain(purpose, model)
+    system = prompt.rstrip() + TEXT_RULE
+    deadline = time.monotonic() + timeout
+    if sub == "claude-code":
+        from . import claude_brain
+        spare = fallback.backup(model, kind=kind, origin=origin, via=via, chain=chain)
+        res = await claude_brain.ask(system, text, model=model, origin=origin, conversation=conversation or purpose,
+                                     timeout=timeout / 2 if spare else timeout, effort_=effort, max_tokens=max_tokens)
+        if res.status == "done" and res.text.strip():
+            return res.text.strip(), f"builtin:{model}"
+        last = EngineError(res.error or f"{model} didn't answer", kind=res.error_kind or "http")
+        left = deadline - time.monotonic()
+        if spare and last.kind not in NO_SWITCH and left >= 3:
+            return await ask_text(prompt, text, model=spare[0], purpose=purpose, timeout=left, effort=effort, max_tokens=max_tokens,
+                                  conversation=conversation, origin=origin, kind=kind, via=via, fallbacks=spare[1:])
+        raise last
+    owner = sub == "chatgpt"
+    spec = Spec(kind="owner" if owner else "outsider", model=model, system=system, conversation=conversation or purpose,
+                origin=origin if owner else (None if kind == "owner" else origin) or purpose, via=via if owner else None,
+                effort=effort or models.effort(purpose), max_tokens=max_tokens, max_steps=1, cache_tail=False, fallbacks=chain)
+    spec.timeout = timeout / 2 if len(fallback.chain(spec)) > 1 else timeout
+    try:
+        res = await asyncio.wait_for(run_turn(spec, MemorySession(), user(text)), timeout)
+    except asyncio.TimeoutError as e:
+        raise EngineError(f"{model} took longer than {timeout:.0f}s", kind="timeout", retryable=True) from e
+    if res.status == "refused":
+        raise EngineError(f"{model} declined to answer", kind="refusal")
+    if res.status == "error":
+        raise EngineError(res.error or "model error", kind=res.error_kind or "http", retryable=res.retryable)
+    if res.status not in ("done", "length") or not res.text.strip():
+        raise EngineError(f"turn ended as {res.status}" if res.status not in ("done", "length") else f"{model} gave an empty answer", kind="output")
+    return res.text.strip() + (" …" if res.status == "length" else ""), f"builtin:{res.model}"
 
 
 NO_SWITCH = ("rule", "refusal")  # Claude Code 没做成时不换的（规矩不许、它拒答）；别的（没登录、额度用完、命令坏了、超时、过载、回的不是 JSON）换

@@ -31,6 +31,14 @@ workspace 还是安装器当初写的 ~/.openmousse/workspace 的话，换成 Op
   6. 开机自启：Linux（含 WSL）用 systemd user 服务 openmousse-server、openmousse-daily-close.timer + loginctl enable-linger；
      macOS 用 launchd：~/Library/LaunchAgents 里的 ai.openmousse.server、ai.openmousse.daily-close（日志在 ~/.openmousse/logs）。
      两样都没有的机器跳过，最后说怎么手动跑
+装自带内核时（--builtin，不是试装）这台机器上有 OpenClaw（--openclaw-home 的 openclaw.json）或 Hermes（$HERMES_HOME，默认 ~/.hermes 的
+  config.yaml）：装完、选模型之前先问一句要不要搬过来（照 hermes setup：先问迁移）。先只看报告（mousse migrate，什么都不写），
+  说要才 --apply（先备份 server.json 和数据库；源目录一个字节不改）。MOUSSE_NONINTERACTIVE 时只打印怎么跑（offer_migration）。
+--trial（或环境变量 MOUSSE_TRIAL=1，第 9 批 15.1）：试装。自带的内核、只听 127.0.0.1、不开公网、一个字不碰 OpenClaw；服务可选
+  （install.sh 问一句，不装就给 --no-systemd：这里在后台先起一次，装完就能在浏览器里打开）。装完说网页版在哪、手机怎么连（同一个
+  局域网或 Tailscale）。已经正式装过的机器（server.json 在、安装清单不是试装）不动，退出码 2。
+每次安装把放了什么（服务、软链、目录、改过的文件、后台起的进程）记进 ~/.openmousse/install-manifest.json（record()）：
+  卸载（mousse uninstall）照它删干净。一样东西一条，再装一遍不重复；每放一样就写一次，装到一半停了也记得。
 再跑一遍是安全的：已有的不动，只补缺的。
 语言（这里的输出、server.json 的 language、AGENTS.md 规则、世界树）：--lang；没给就用 server.json 里已有的，
 再没有就看环境变量 LC_ALL / LANG（zh 开头 → 中文，其它 → English）。
@@ -38,7 +46,7 @@ workspace 还是安装器当初写的 ~/.openmousse/workspace 的话，换成 Op
 用法：setup.py --repo PATH --venv PATH [--openclaw-home ~/.openclaw] [--tz Asia/Shanghai] [--name Mousse] [--lang zh|en] [--bind auto|127.0.0.1|<ip>]
                [--vault PATH] [--tree-public] [--no-systemd] [--no-tree]
                [--claw-url http://…/v1 --claw-name NAME --claw-model MODEL [--claw-skills DIR] [--claw-rules FILE]]（令牌走环境变量 MOUSSE_CLAW_TOKEN）
-               [--builtin]（自带的内核，不要 OpenClaw）
+               [--builtin]（自带的内核，不要 OpenClaw） [--trial]（试装，见上）
 """
 from __future__ import annotations
 
@@ -62,6 +70,7 @@ TREE_HOME = Path(os.environ.get("MOUSSE_TREE_HOME", Path.home() / ".mousse-tree"
 IS_MAC = sys.platform == "darwin"
 LAUNCH_AGENTS = Path("~/Library/LaunchAgents").expanduser()
 LOG_DIR = MOUSSE_HOME / "logs"  # macOS：launchd 服务的输出（Linux 走 journald）
+MANIFEST = MOUSSE_HOME / "install-manifest.json"  # 这台机器上装了什么（record()；卸载照它删）
 # 我们的服务在两种系统上的名字：systemd 单元名 → launchd 标签（世界树的标签和 tree/openmousse_tree/cli.py 里的一致）
 LABELS = {"openmousse-server": "ai.openmousse.server", "openmousse-daily-close": "ai.openmousse.daily-close", "mousse-tree": "ai.openmousse.tree"}
 FUNNEL_TIMEOUT = 30  # 秒：tailnet 还没开 Funnel 时 tailscale funnel 会一直等你去后台点开，安装不能卡在那
@@ -163,6 +172,57 @@ def dump_json(p: Path, data: dict, mode: int | None = None) -> None:
     if mode is not None:
         os.chmod(tmp, mode)
     tmp.replace(p)
+
+
+def load_manifest() -> dict:
+    try:
+        data = load_json(MANIFEST)
+    except (OSError, ValueError):
+        data = {}
+    if not isinstance(data, dict):
+        data = {}
+    data.setdefault("version", 1)
+    data["items"] = [x for x in data.get("items") or [] if isinstance(x, dict) and x.get("kind")]
+    data["installs"] = [x for x in data.get("installs") or [] if isinstance(x, dict)]
+    return data
+
+
+def _key(item: dict) -> tuple:
+    return item.get("kind"), item.get("path") or item.get("name")
+
+
+def save_manifest(data: dict) -> None:
+    MOUSSE_HOME.mkdir(parents=True, exist_ok=True)
+    data["updated"] = datetime.now().astimezone().isoformat(timespec="seconds")
+    dump_json(MANIFEST, data, mode=0o600)
+
+
+def record(kind: str, path: Path | str | None = None, **extra) -> None:
+    """记进 install-manifest.json（见文件开头）。kind：dir（建的目录）、file（写的文件）、symlink（软链，target 指到哪）、
+    service（manager launchd / systemd，name 是标签 / 单元名，path 是 plist / 单元文件）、edited（改过的别人的文件，backup 是备份）、
+    process（后台起的进程，stop 是停它的命令）。一样东西（kind + path，没有 path 看 name）只有一条：再记一次换成新的。"""
+    item: dict = {"kind": kind}
+    if path is not None:
+        item["path"] = str(Path(path).expanduser())
+    item.update({k: str(v) if isinstance(v, Path) else v for k, v in extra.items() if v is not None})
+    with contextlib.suppress(OSError):
+        data = load_manifest()
+        data["items"] = [x for x in data["items"] if _key(x) != _key(item)] + [item]
+        save_manifest(data)
+
+
+def begin_manifest(mode: str, repo: Path, venv: Path) -> None:
+    """这次安装开头：记下模式（trial / builtin / openclaw / claw）、从哪个仓库装的（checkout）、venv、什么时候装的。
+    顶层的 repo 只在 install.sh 这次 clone 了仓库时写：mousse uninstall --full 把它当成安装器放的那份（干净时会删）；自己的检出不写。"""
+    with contextlib.suppress(OSError):
+        data = load_manifest()
+        vm = re.search(r'^VERSION = "([^"]+)"', (repo / "server/version.py").read_text(encoding="utf8"), re.M) if (repo / "server/version.py").exists() else None
+        data.update(mode=mode, checkout=str(repo), venv=str(venv))
+        if os.environ.get("MOUSSE_CLONED") == "1":
+            data["repo"] = str(repo)
+        data["installs"] = [*data["installs"], {"at": datetime.now().astimezone().isoformat(timespec="seconds"), "mode": mode,
+                                                 **({"version": vm.group(1)} if vm else {})}][-20:]
+        save_manifest(data)
 
 
 def openclaw_env(home: Path) -> dict[str, str]:
@@ -275,6 +335,9 @@ def launch_agent(label: str, args: list[str], *, workdir: Path | None = None, lo
     data = plistlib.dumps(plist)
     changed = not path.exists() or path.read_bytes() != data
     path.write_bytes(data)
+    record("service", path, manager="launchd", name=label)
+    if log:
+        record("dir", log.parent)
     uid = os.getuid()
     domains = [f"gui/{uid}", f"user/{uid}"]
     loaded = next((d for d in domains if run(["launchctl", "print", f"{d}/{label}"]).returncode == 0), None)
@@ -416,6 +479,7 @@ def think_vault(cfg: dict, vault: Path) -> None:
 def write_server_json(a: argparse.Namespace, oc: dict, home: Path, workspace: Path, repo: Path, vault: Path | None = None,
                       claw: dict | None = None) -> tuple[dict, dict[str, str]]:
     MOUSSE_HOME.mkdir(parents=True, exist_ok=True)
+    record("dir", MOUSSE_HOME)
     link = MOUSSE_HOME / "repo"
     if (link.is_symlink() or link.exists()) and link.resolve() == repo.resolve():
         pass  # 已经指向这个仓库
@@ -427,6 +491,8 @@ def write_server_json(a: argparse.Namespace, oc: dict, home: Path, workspace: Pa
     else:
         say(L("~/.openmousse/repo 已存在且不是软链，没动（skills 里的命令走这个路径，确认它就是这个仓库）",
               "~/.openmousse/repo exists and is not a symlink; left alone (the skills' commands use this path, make sure it is this repository)"))
+    if link.is_symlink():
+        record("symlink", link, target=repo)
 
     cfg = load_json(SERVER_JSON) if SERVER_JSON.exists() else {}
     fresh = not cfg
@@ -517,6 +583,7 @@ def write_server_json(a: argparse.Namespace, oc: dict, home: Path, workspace: Pa
     else:
         dump_json(SERVER_JSON, cfg, mode=0o600)
         say(L(f"{'写了' if fresh else '补全了'} {SERVER_JSON}", f"{'Wrote' if fresh else 'Updated'} {SERVER_JSON}") + summary)
+    record("file", SERVER_JSON)
     return cfg, new_tokens
 
 
@@ -545,6 +612,7 @@ def adopt_fresh_workspace(workspace: Path, name: str) -> None:
         backups.mkdir(parents=True, exist_ok=True)
         dst = backups / f"{p.name}.{stamp}"
         shutil.copy2(p, dst)
+        record("edited", p, backup=dst)
         return dst
 
     boot = workspace / "BOOTSTRAP.md"
@@ -583,6 +651,7 @@ def install_skills(sk: Path | None, agents_md: Path | None, repo: Path, home: Pa
         dst = sk / name
         if dst.is_symlink():
             if dst.resolve() == src.resolve():
+                record("symlink", dst, target=src)
                 continue
             say(L(f"skills/{name} 已是别的软链（{os.readlink(dst)}），没动",
                   f"skills/{name} is already a symlink to something else ({os.readlink(dst)}); left alone"))
@@ -592,6 +661,7 @@ def install_skills(sk: Path | None, agents_md: Path | None, repo: Path, home: Pa
                   f"skills/{name} already exists (not a symlink); left alone. To use the repository's copy, move it away and run this again"))
             continue
         dst.symlink_to(src)
+        record("symlink", dst, target=src)
         changed = True
         say(f"skills/{name} → packs/core")
     text = agents_md.read_text(encoding="utf8") if agents_md and agents_md.exists() else "# AGENTS.md\n"
@@ -603,6 +673,7 @@ def install_skills(sk: Path | None, agents_md: Path | None, repo: Path, home: Pa
         text = text.rstrip("\n") + L(*rules).format(date=datetime.now().strftime("%Y-%m-%d"), digest=digest_root / "main", digest_root=digest_root)
         agents_md.parent.mkdir(parents=True, exist_ok=True)
         agents_md.write_text(text, encoding="utf8")
+        record("edited", agents_md, note=f"appended the {AGENTS_MARK} section")
         changed = True
         say(L(f"{agents_md.name} 末尾追加了「## OpenMousse」规则", f'Appended the "## OpenMousse" rules to the end of {agents_md.name}'))
     if rules[0] == AGENTS_RULES_ZH:
@@ -667,6 +738,7 @@ def patch_openclaw(oc_path: Path, home: Path, openclaw_bin: str) -> bool:
         return False
     for c in changes:
         say(f"openclaw.json{L('：', ': ')}{c}")
+    record("edited", oc_path, backup=backup)
     say(L(f"备份 {backup}；validate 通过", f"Backup {backup}; validate passed"))
     return restart
 
@@ -691,6 +763,7 @@ def allow_skill_links(oc_path: Path, skills_dir: Path, home: Path, openclaw_bin:
         say(L("这个版本的 OpenClaw 不认 skills.load.allowSymlinkTargets，没加（它也不拦 skill 软链）",
               "This OpenClaw doesn't know skills.load.allowSymlinkTargets; left out (it doesn't block skill symlinks either)"))
         return False
+    record("edited", oc_path, backup=backup)
     say(L(f"openclaw.json：skills.load.allowSymlinkTargets + {real}（OpenClaw 才肯加载软链进来的 skill）",
           f"openclaw.json: skills.load.allowSymlinkTargets + {real} (so OpenClaw loads the linked skills)"))
     return True
@@ -746,6 +819,7 @@ def add_mcp_server(oc_path: Path, url: str, home: Path, openclaw_bin: str) -> No
         say(L("这个版本的 OpenClaw 不认 mcp.servers，没加（Agent 照旧用 skills 里的命令）",
               "This OpenClaw doesn't know mcp.servers; left out (Agents keep using the skills' commands)"))
         return
+    record("edited", oc_path, backup=backup)
     say(L("openclaw.json：mcp.servers + openmousse（Agent 经 MCP 用看板、收件箱这些；Gateway 自己热加载）",
           "openclaw.json: mcp.servers + openmousse (Agents reach boards, the inbox and the rest over MCP; the Gateway hot-reloads it)"))
 
@@ -777,6 +851,7 @@ def enable_llm_task(oc_path: Path, home: Path, openclaw_bin: str) -> bool:
         say(L("这个版本的 OpenClaw 不认 llm-task 插件，没开：名片 agent 只用固定句子回朋友",
               "This OpenClaw doesn't know the llm-task plugin; not turned on, so the card agent answers friends with fixed lines only"))
         return False
+    record("edited", oc_path, backup=backup)
     say(L("openclaw.json：开了 llm-task 插件（名片 agent 用它替你回朋友，零工具）",
           "openclaw.json: turned on the llm-task plugin (the card agent answers friends through it, with no tools)"))
     return True
@@ -1113,6 +1188,7 @@ def setup_tree(venv: Path, cfg: dict, home: Path, no_systemd: bool, vault: Path 
     # 不传 --name：树的 owner_name 是「用户」的称呼（写进给模型的说明："这是 X 的个人记忆树"），app_name 是助手的名字，不能混用
     r = run([str(exe), "init", "--tz", cfg["timezone"], "--profile", profile, "--lang", lang])
     say((tag + (r.stdout or r.stderr).strip().splitlines()[0]) if (r.stdout or r.stderr) else L("世界树 init 没输出", "Memory tree: init printed nothing"))
+    record("dir", TREE_HOME)
     changed = tree_to_vault(exe, vault, lang) if vault else False
     todo = None
     if public:
@@ -1140,6 +1216,8 @@ def setup_tree(venv: Path, cfg: dict, home: Path, no_systemd: bool, vault: Path 
         running = run(["systemctl", "--user", "is-active", "mousse-tree.service"]).stdout.strip() == "active"
         r = run([str(exe), "install-service"])
         say(tag + ((r.stdout or r.stderr).strip().splitlines() or [L("install-service 没输出", "install-service printed nothing")])[-1])
+        if r.returncode == 0:
+            record("service", Path("~/.config/systemd/user/mousse-tree.service"), manager="systemd", name="mousse-tree.service")
         if running:
             r = run(["systemctl", "--user", "restart", "mousse-tree.service"])
             say(tag + (L("服务已重启（换上这次的代码和配置）", "restarted the service (picks up this run's code and config)") if r.returncode == 0 else
@@ -1148,6 +1226,8 @@ def setup_tree(venv: Path, cfg: dict, home: Path, no_systemd: bool, vault: Path 
         # macOS：install-service 写 LaunchAgent 并交给 launchd；已经在跑的它会 kickstart -k，换上这次的代码和配置
         r = run([str(exe), "install-service"])
         say(tag + ((r.stdout or r.stderr).strip().splitlines() or [L("install-service 没输出", "install-service printed nothing")])[-1])
+        if r.returncode == 0:
+            record("service", LAUNCH_AGENTS / f"{LABELS['mousse-tree']}.plist", manager="launchd", name=LABELS["mousse-tree"])
     elif not no_systemd:
         say(tag + L("这台机器没有 systemd 也没有 launchd：世界树的服务要自己起（命令在最后）",
                     "no systemd or launchd on this machine: start the memory tree service yourself (the command is at the end)"))
@@ -1215,6 +1295,7 @@ def install_systemd(repo: Path, venv: Path, tz: str) -> bool:
     for fn in ("openmousse-server.service", "openmousse-daily-close.service", "openmousse-daily-close.timer"):
         text = (HERE / "systemd" / fn).read_text(encoding="utf8").replace("{repo}", str(repo)).replace("{venv}", str(venv)).replace("{tz}", tz)
         (unit_dir / fn).write_text(text, encoding="utf8")
+        record("service", unit_dir / fn, manager="systemd", name=fn)
     run(["systemctl", "--user", "daemon-reload"])
     # 服务用 restart：再跑一遍安装器（更新代码、换监听地址）要重启才生效；定时器 enable --now 就够
     started = False
@@ -1230,6 +1311,75 @@ def install_systemd(repo: Path, venv: Path, tz: str) -> bool:
         say(L("loginctl enable-linger 没成功（登出后服务会停）：用 sudo 跑一次 `loginctl enable-linger $USER`",
               "loginctl enable-linger failed (the services stop when you log out): run `sudo loginctl enable-linger $USER` once"))
     return started
+
+
+def start_background(repo: Path, venv: Path) -> bool:
+    """试装、没装成服务（--no-systemd，或者这台没有 launchd / systemd）：在后台先起一次，装完就能打开（先停掉上次自己起的那个）。
+    输出进 ~/.openmousse/logs/server.log。记进安装清单：卸载时照 stop 停掉它。→ 起了没有。"""
+    name = "openmousse-server"
+    run(["sh", "-c", stop_cmd(name)])
+    LOG_DIR.mkdir(parents=True, exist_ok=True)
+    record("dir", LOG_DIR)
+    try:
+        with open(log_file(name), "ab") as log:
+            subprocess.Popen([str(venv / "bin/python"), "run.py"], cwd=str(repo / "server"), stdout=log, stderr=log,  # noqa: S603
+                             stdin=subprocess.DEVNULL, start_new_session=True)
+    except OSError as e:
+        say(L(f"服务没起来：{e}", f"The server didn't start: {e}"))
+        return False
+    record("process", name=name, stop=stop_cmd(name), start=start_cmd(name))
+    say(L("服务在后台起了一次（没装成开机自启）", "Started the server once in the background (not as a login service)"))
+    return True
+
+
+def lan_ip() -> str | None:
+    """这台机器在局域网里的地址：macOS 看 ipconfig getifaddr en0 / en1，别的看 hostname -I 里的第一个私网地址。"""
+    if IS_MAC:
+        for ifc in ("en0", "en1"):
+            r = run(["ipconfig", "getifaddr", ifc]) if shutil.which("ipconfig") else None
+            if r is not None and r.returncode == 0 and r.stdout.strip():
+                return r.stdout.strip()
+        return None
+    r = run(["hostname", "-I"]) if shutil.which("hostname") else None
+    ips = r.stdout.split() if r is not None and r.returncode == 0 else []
+    for pat in (r"192\.168\.[\d.]+", r"10\.[\d.]+", r"172\.(?:1[6-9]|2\d|3[01])\.[\d.]+"):  # 家里的路由器多半是 192.168；172.17 常是 Docker 的网桥
+        if hit := next((x for x in ips if re.fullmatch(pat, x)), None):
+            return hit
+    return None
+
+
+def print_trial(cfg: dict, repo: Path, managed: bool, started: bool) -> None:
+    """试装装完：网页版在哪、服务怎么停和起、手机怎么连（同一个局域网或 Tailscale）、装了什么记在哪。"""
+    port = (cfg.get("bind") or {}).get("port") or 8080
+    dist = Path(str(cfg.get("dist") or repo / "app" / "dist")).expanduser()
+    print(L("试装：只在这台电脑上（127.0.0.1），没开公网，没碰 OpenClaw。", "Trial install: this computer only (127.0.0.1), nothing public, OpenClaw untouched."))
+    if dist.is_dir():
+        print(L(f"  网页版：在浏览器里打开 http://127.0.0.1:{port}", f"  Web version: open http://127.0.0.1:{port} in a browser"))
+    else:
+        print(L(f"  网页版还没构建：装了 Node.js 的话 `cd {tilde(repo)}/app && npm ci && npm run web:build`，之后在浏览器里打开 http://127.0.0.1:{port}",
+                f"  The web version isn't built yet: with Node.js, `cd {tilde(repo)}/app && npm ci && npm run web:build`, then open "
+                f"http://127.0.0.1:{port} in a browser"))
+    if not managed and started:
+        print(L(f"  服务在后台跑着（没装成开机自启）。停：`{stop_cmd('openmousse-server')}`；电脑重启以后再起：`{start_cmd('openmousse-server')}`",
+                f"  The server runs in the background (not as a login service). Stop it: `{stop_cmd('openmousse-server')}`; after a reboot, start it "
+                f"again: `{start_cmd('openmousse-server')}`"))
+    elif not managed:
+        print_manual_start(False)
+    ip = lan_ip()
+    print(L("  手机怎么连：", "  Connecting your phone:"))
+    print(L(f"  · Tailscale（推荐）：这台电脑和手机都装 Tailscale、登同一个账号（{tailscale_install_hint()}），这台上跑 `tailscale serve --bg {port}`，"
+            "app 的连接页填它给的 https://<机器>.<tailnet>.ts.net",
+            f"  · Tailscale (recommended): install Tailscale on this computer and the phone with the same account ({tailscale_install_hint()}), run "
+            f"`tailscale serve --bg {port}` here, and enter the https://<machine>.<tailnet>.ts.net address it gives in the app"))
+    print(L(f"  · 同一个 Wi-Fi：试装只听这台电脑。要让局域网里的手机连，不用试装再装一次：`MOUSSE_BIND={ip or '<这台的局域网地址>'} bash {tilde(repo)}/install.sh`"
+            "（同一个网里的设备都碰得到这个端口，令牌照样要）",
+            f"  · Same Wi-Fi: the trial only listens on this computer. For a phone on your network, install again without the trial: "
+            f"`MOUSSE_BIND={ip or '<this computer LAN address>'} bash {tilde(repo)}/install.sh` (every device on the network can reach that port; "
+            "it still needs a token)"))
+    print(L("  · 配对码（app 连接页用它换一把自己的令牌）：`~/.openmousse/venv/bin/python ~/.openmousse/repo/server/tokens.py pair --server <上面那个地址>`",
+            "  · A pairing code (the app trades it for a token of its own): "
+            "`~/.openmousse/venv/bin/python ~/.openmousse/repo/server/tokens.py pair --server <that address>`"))
+    print(L(f"  装了什么都记在 {tilde(MANIFEST)}（卸载照它删干净）。", f"  Everything this installed is listed in {tilde(MANIFEST)} (uninstalling follows it)."))
 
 
 def main() -> None:
@@ -1253,24 +1403,41 @@ def main() -> None:
     ap.add_argument("--claw-skills", help="that claw's skills folder: OpenMousse's skills get linked in")
     ap.add_argument("--claw-rules", help="the rules file that claw reads every turn: OpenMousse's rules get appended")
     ap.add_argument("--builtin", action="store_true", help="OpenMousse's own engine, no OpenClaw: choose models in the app (or setup_ctl.py) afterwards")
+    ap.add_argument("--trial", action="store_true", help="a trial install: the built-in engine, this computer only (127.0.0.1), nothing public, "
+                    "OpenClaw untouched (also MOUSSE_TRIAL=1)")
     a = ap.parse_args()
+    trial = a.trial or os.environ.get("MOUSSE_TRIAL", "").strip().lower() in ("1", "true", "yes", "y")
+    if trial:  # 试装（见文件开头）：自带的内核、只听本机、不开公网、不碰 OpenClaw
+        a.builtin, a.claw_url, a.bind, a.tree_public = True, None, "127.0.0.1", False
     try:
         saved_lang = load_json(SERVER_JSON).get("language")
     except (OSError, ValueError, AttributeError):
         saved_lang = None
     UI_LANG = a.lang or (norm_lang(saved_lang) if saved_lang else env_lang())
+    if trial and SERVER_JSON.exists() and load_manifest().get("mode") != "trial":
+        # 已经正式装过的（不是试装）：试装会把它换成自带的内核、只听本机，还会停掉后台的服务。一样不动
+        say(L("这台已经装过 OpenMousse（不是试装），没动：试装会把它改成自带的内核、只在这台电脑上用。要重装就去掉 --trial；"
+              "想另外试一下，换一个系统用户装",
+              "OpenMousse is already installed here (not as a trial), so nothing was changed: a trial would switch it to the built-in "
+              "engine on this computer only. To reinstall, drop --trial; to try it separately, install as another system user"))
+        sys.exit(2)
     MANAGED = not a.no_systemd and has_services()
     repo, venv = Path(a.repo).expanduser().resolve(), Path(a.venv).expanduser().resolve()
     home = Path(a.openclaw_home).expanduser()
     oc_path = home / "openclaw.json"
     generic = bool(a.claw_url)  # 别的 claw（OpenAI 兼容接口）：不碰 openclaw.json
     builtin = bool(a.builtin) and not generic  # 自带的内核（第 9 步）：也不碰 openclaw.json
+    begin_manifest("trial" if trial else "builtin" if builtin else "claw" if generic else "openclaw", repo, venv)
+    record("dir", venv)
+    if os.environ.get("MOUSSE_CLONED") == "1":  # install.sh 这次 clone 的仓库（自己的检出不算：卸载不删它）
+        record("dir", repo, what="clone")
     claw = None
     if builtin:
         claw = {"kind": "builtin"}
         oc = {}
         workspace = MOUSSE_HOME / "workspace"  # 档案 USER.md、记忆页读的 MEMORY.md、主对话的文件工具都在这里
         workspace.mkdir(parents=True, exist_ok=True)
+        record("dir", workspace)
         if not (workspace / "USER.md").exists():
             (workspace / "USER.md").write_text(L("# USER.md\n\n## 基本信息\n", "# USER.md\n\n## Basics\n"), encoding="utf8")
     elif generic:
@@ -1292,6 +1459,7 @@ def main() -> None:
         oc = {}
         workspace = MOUSSE_HOME / "workspace"  # OpenMousse 自己的：档案 USER.md、记忆页读的 MEMORY.md
         workspace.mkdir(parents=True, exist_ok=True)
+        record("dir", workspace)
         if not (workspace / "USER.md").exists():
             (workspace / "USER.md").write_text(L("# USER.md\n\n## 基本信息\n", "# USER.md\n\n## Basics\n"), encoding="utf8")
     else:
@@ -1304,6 +1472,7 @@ def main() -> None:
     print(L("配置", "Config"))
     vault = vault_dir(a.vault)
     cfg, new_tokens = write_server_json(a, oc, home, workspace, repo, vault, claw)
+    record("dir", Path(str(cfg["data_dir"])).expanduser())
     print("skills")
     restart = False
     if builtin:
@@ -1339,11 +1508,26 @@ def main() -> None:
               "Friends reach this server through the OpenMousse relay (relay.openmousse.ai), no public address needed; messages are end-to-end encrypted. Set \"relay\": false in server.json to turn it off"))
     restarted = False
     self_apply = restart and gateway_applies_config(oc_path)
+    started = False
     if MANAGED:
         print("launchd" if has_launchd() and not has_systemd() else "systemd")
         MANAGED = install_services(repo, venv, cfg["timezone"])  # 服务没起来：最后给自己起的命令
         if MANAGED:
             wait_server(cfg)
+    if trial and not MANAGED:  # 试装不装服务：先在后台起一次，装完就能打开
+        started = start_background(repo, venv)
+        if started:
+            wait_server(cfg)
+    if builtin and not trial and offer_migration(venv, repo, home):  # 搬过来写了：工作区、模型可能换了，服务重启一下才用上
+        if MANAGED:
+            run(["sh", "-c", restart_cmd("openmousse-server")])
+            wait_server(cfg)
+        else:
+            say(L(f"重启服务让搬过来的设置生效：{restart_cmd('openmousse-server')}", f"Restart the server so the moved settings apply: {restart_cmd('openmousse-server')}"))
+    elif trial and found_homes(home):
+        say(L("试装不碰 OpenClaw、Hermes。想把它们的设置搬过来，正式装以后跑 `~/.openmousse/repo/bin/mousse migrate openclaw`（或 hermes）",
+              "A trial leaves OpenClaw and Hermes alone. To move their settings over, install for real and run "
+              "`~/.openmousse/repo/bin/mousse migrate openclaw` (or hermes)"))
     if self_apply:
         say(L("openclaw.json 改了，Gateway 自己会套用：能热加载的马上生效，要重启的它等手头的对话做完自己重启",
               "openclaw.json changed; the Gateway applies it by itself: hot where it can, otherwise it restarts on its own once the turns in progress finish"))
@@ -1404,12 +1588,17 @@ def main() -> None:
     else:
         print(L("手机令牌之前已生成；要新的：`~/.openmousse/venv/bin/python ~/.openmousse/repo/server/tokens.py add phone2`",
                 "The phone token was generated earlier; for a new one: `~/.openmousse/venv/bin/python ~/.openmousse/repo/server/tokens.py add phone2`"))
-    if not MANAGED:
+    if not MANAGED and not trial:
         print_manual_start(not a.no_tree and (venv / "bin/mousse-tree").exists())
     print()
-    print(L("手机怎么连：", "Connecting the phone:"))
+    if trial:
+        print_trial(cfg, repo, MANAGED, started)
+    else:
+        print(L("手机怎么连：", "Connecting the phone:"))
     tok_zh, tok_en = ("上面的令牌", "the token above") if "phone" in new_tokens and not os.environ.get("MOUSSE_NONINTERACTIVE") else ("手机令牌", "your phone token")
-    if b["host"].startswith("100."):
+    if trial:
+        pass
+    elif b["host"].startswith("100."):
         print(L("  这台机器在 Tailscale 里：手机也装 Tailscale、登同一个账号，装好 OpenMousse app，再用手机相机扫下面的码（或者点码下面的链接）：",
                 "  This machine is on Tailscale: install Tailscale on the phone (same account) and the OpenMousse app, then scan the code below with the phone's camera (or tap the link under it):"))
         r = run([str(venv / "bin/python"), str(repo / "server/tokens.py"), "pair", "--name", "phone", "--minutes", "30"], cwd=str(repo / "server"))
@@ -1468,7 +1657,7 @@ def main() -> None:
                 f"  bash {repo}/check.sh   # self-check: what works, what doesn't and how to fix it; no tokens in the output, so you can send all of it to whoever helps"))
     print(L("再跑一遍安装器是安全的，只补缺的。", "Rerunning the installer is safe; it only fills in what is missing."))
     if builtin:
-        offer_wizard(venv, repo, no_model, running=MANAGED)
+        offer_wizard(venv, repo, no_model, running=MANAGED or started)
 
 
 # —— 自带的内核（第 9 步）：模型、搜索、记忆装完以后选 ——
@@ -1493,17 +1682,64 @@ def builtin_status(venv: Path, repo: Path) -> bool:
     return r.returncode == 3
 
 
-def tty_yes(prompt: str) -> bool:
-    """有终端、不是替人装（MOUSSE_NONINTERACTIVE）才问；管道里跑（curl | bash）从 /dev/tty 读。回车 = 是。"""
+def tty_yes(prompt: str, default: bool = True) -> bool:
+    """有终端、不是替人装（MOUSSE_NONINTERACTIVE）才问；管道里跑（curl | bash）从 /dev/tty 读。回车 = default（默认是）。"""
     if os.environ.get("MOUSSE_NONINTERACTIVE"):
         return False
     try:
         with open("/dev/tty", encoding="utf8") as t:
-            print(f"{prompt} [Y/n]: ", end="", flush=True)
+            print(f"{prompt} {'[Y/n]' if default else '[y/N]'}: ", end="", flush=True)
             ans = t.readline().strip().lower()
     except OSError:
         return False
-    return ans in ("", "y", "yes", "是", "1")
+    return ans in ("y", "yes", "是", "1") or (default and ans == "")
+
+
+def found_homes(home: Path) -> list[tuple[str, Path]]:
+    """这台机器上能搬的：OpenClaw（--openclaw-home 下有 openclaw.json）、Hermes（$HERMES_HOME 或 ~/.hermes 下有 config.yaml）。"""
+    hermes = Path(os.environ.get("HERMES_HOME") or "~/.hermes").expanduser()
+    return [(src, h) for src, h, f in (("openclaw", home, "openclaw.json"), ("hermes", hermes, "config.yaml")) if (h / f).is_file()]
+
+
+def offer_migration(venv: Path, repo: Path, home: Path) -> bool:
+    """装自带内核（不是试装）时，这台机器上有 OpenClaw / Hermes：先问要不要搬（见文件开头）。一家一家来：先只看报告（mousse migrate
+    <家>，什么都不写），用户说要才 --apply。替人装（MOUSSE_NONINTERACTIVE）只打印怎么跑。→ 真的写了没有（写了要重启服务：工作区换了）。"""
+    homes = found_homes(home)
+    if not homes:
+        return False
+    names = {"openclaw": "OpenClaw", "hermes": "Hermes"}
+    mousse = [str(venv / "bin/python"), str(repo / "server/mousse.py"), "migrate"]
+    applied = False
+    print()
+    print(L("搬过来", "Moving over"))
+    for src, h in homes:
+        flag = [f"--{src}-home", str(h)]
+        cmd = f"~/.openmousse/repo/bin/mousse migrate {src} --{src}-home {tilde(h)}"
+        if os.environ.get("MOUSSE_NONINTERACTIVE"):
+            say(L(f"这台机器上有 {names[src]}（{tilde(h)}）。要把它的设置搬过来：`{cmd}` 先看报告（什么都不写），看过再加 --apply",
+                  f"{names[src]} is on this machine ({tilde(h)}). To move its settings over: `{cmd}` shows a report first (nothing is written); add "
+                  "--apply once you've read it"))
+            continue
+        if not tty_yes(L(f"这台机器上有 {names[src]}（{tilde(h)}）。要不要把它的模型、定时任务、记忆这些搬过来？先只看一份报告，什么都不写",
+                         f"{names[src]} is on this machine ({tilde(h)}). Move its models, scheduled jobs, memory and the rest over? First you only see a "
+                         "report; nothing is written")):
+            say(L(f"不搬。以后想搬：`{cmd}`", f"Not moving anything. To do it later: `{cmd}`"))
+            continue
+        r = subprocess.run([*mousse, src, *flag], cwd=str(repo / "server"), check=False)  # noqa: S603 — 报告直接打到终端
+        if r.returncode != 0:
+            say(L(f"报告没出来（退出码 {r.returncode}）：以后自己跑 `{cmd}`", f"The report didn't come out (exit code {r.returncode}): run `{cmd}` later"))
+            continue
+        if not tty_yes(L(f"照这份报告写进来吗？先备份 server.json 和数据库，{names[src]} 那边一个字不改", f"Write it as the report says? server.json and the "
+                         f"database are backed up first, and nothing changes on {names[src]}'s side"), default=False):
+            say(L(f"没写。想写的时候：`{cmd} --apply`", f"Nothing written. When you want it: `{cmd} --apply`"))
+            continue
+        r = subprocess.run([*mousse, src, *flag, "--apply"], cwd=str(repo / "server"), check=False)  # noqa: S603
+        if r.returncode == 0:
+            applied = True
+            record("edited", SERVER_JSON, note=f"mousse migrate {src} --apply")
+        else:
+            say(L(f"没写完（退出码 {r.returncode}）：上面写着做了什么、备份在哪", f"Not finished (exit code {r.returncode}): what was done and where the backups are is above"))
+    return applied
 
 
 def offer_wizard(venv: Path, repo: Path, no_model: bool, running: bool = True) -> None:

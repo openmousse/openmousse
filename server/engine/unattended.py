@@ -39,11 +39,18 @@ from config import settings
 from i18n import L
 
 from . import models
+from .errors import EngineError
 from .loop import Control, Result, Spec, run_turn, wait_idle
 from .session import DbSession, MemorySession, day_key, system_note, time_stamp, user
 
 CRON_TOOL = "cron"          # 定时任务的工具（engine/jobs.py）：没人在看的一轮里不给
-NO_TOOLS = {CRON_TOOL, "tasks", "skill_manage", "ask_user", "todo", "enter_plan_mode", "propose_plan"}
+NO_TOOLS = {CRON_TOOL, "tasks", "skill_manage", "ask_user", "todo", "enter_plan_mode", "propose_plan",
+            "host_process",  # 第 3 批：后台命令做完要交回一个有人的对话（engine/host_process.py）
+            "view_image", "read_pdf", "transcribe", "speak", "image_generate", "video_analyze",
+            "nodes",  # 第 8 批：主人的设备（拍照、定位、截屏、在他电脑上跑命令、写文件，engine/nodes.py）：没人在看的一轮不给
+            "chrome", "llm_task", "execute_code", "video_generate", "music_generate"}  # 第 3 批：媒体那几样、子任务按量花钱（engine/media.py、llm_task.py）；用户自己的 Chrome
+# 带着他的登录（engine/chrome.py）；代码里一连串的调用没人看着（engine/codeexec.py）；
+# 没人在看的一轮不给
 # 后台任务（第 5 项）也不给：结果要交回派它的对话，这种一轮的对话是 cron:<任务> / heartbeat:<Agent>，没人接
 # skill_manage（第 13 步，engine/skill_write.py）：没人在看的一轮不改自己的做法
 # ⑫b 的问用户、待办、计划模式（tools.chat_tools 只给 app 的对话，for_agent 里本来就没有；写在这里防以后挪进去）：没人回答、没人点头
@@ -130,6 +137,8 @@ class Outcome:
     message: int | None = None     # 发进对话的那条回复（app 里的 id）
     served: str = ""               # 备用链换过模型时真正回答的那个（engine/fallback.py）；没换 = 空
     output: str | None = None      # 只跑命令的定时任务（engine/jobs.py）：命令的输出（记进运行记录）
+    kind: str | None = None        # 第 4 批：出错是哪一类（EngineError.kind：budget 花费到了上限、rule、config……；定时任务据此定重不重试、记不记失败）
+    retryable: bool = False        # 第 4 批：EngineError.retryable（429、5xx、连不上、超时）：定时任务据此认临时的错
 
 
 def tools_for(agent: str) -> list:
@@ -167,7 +176,7 @@ async def fresh(agent: str, conversation: str, key: str, prompt: str, *, model: 
         tools = tools_for(agent)
         system = await system_for(agent, conversation, tools, light)
     except Exception as e:  # noqa: BLE001 — 配置不对、备料出错：这一次记成出错
-        return Outcome(status="error", model=model, error=f"{type(e).__name__}: {str(e)[:200]}")
+        return Outcome(status="error", model=model, error=f"{type(e).__name__}: {str(e)[:200]}", kind=getattr(e, "kind", None))
     spec = Spec(kind="owner", model=model, system=system, tools=tools, conversation=key, agent=agent, origin="auto", gate=tools_mod.gate,
                 display="summarized", timeout=min(float(idle), 600.0), cache_ttl="1h")
     control = Control()
@@ -201,13 +210,16 @@ async def fresh(agent: str, conversation: str, key: str, prompt: str, *, model: 
                                           switch=switch)
         else:
             res = await run_turn(spec, MemorySession(), asked, on_event=on_event, control=control)
+    except EngineError as e:  # 第 4 批：Claude Code 开跑前就不行的（花费到了上限这类）：这一次记成出错，带上是哪一类
+        return Outcome(status="error", model=model, error=str(e)[:300], kind=e.kind, retryable=e.retryable)
     finally:
         dog.cancel()
     if timed_out[0]:
         return Outcome(status="timeout", text=res.text, turn=res.turn, model=model, usage=res.usage,
                        error=L(f"{int(idle)} 秒没有动静，停了", f"No activity for {int(idle)}s; stopped"))
     if res.status == "error":
-        return Outcome(status="error", text=res.text, turn=res.turn, model=model, usage=res.usage, error=res.error)
+        return Outcome(status="error", text=res.text, turn=res.turn, model=model, usage=res.usage, error=res.error, kind=res.error_kind,
+                       retryable=res.retryable)
     if res.status == "refused" and not res.text.strip():
         return Outcome(status="refused", turn=res.turn, model=model, usage=res.usage, error="the model declined")
     if not res.text.strip():
@@ -295,8 +307,9 @@ def mirror_note(head: str, text: str) -> str:
 # —— 在对话里跑（chat 模式）——————————————————————————————————————————————————————
 
 async def in_chat(thread: str, label: str, instructions: str, *, level: str, idle: float = IDLE, model: str | None = None,
-                  on_start: Callable[[int], None] | None = None) -> Outcome:
-    """照 chat.trigger 那条路在 thread 里跑一轮（见文件开头）。on_start(灰字那条的 id)：一开跑就告诉调用方（这一轮里认得出是谁）。"""
+                  on_start: Callable[[int], None] | None = None, quiet: Callable[[str | None], bool] | None = None) -> Outcome:
+    """照 chat.trigger 那条路在 thread 里跑一轮（见文件开头）。on_start(灰字那条的 id)：一开跑就告诉调用方（这一轮里认得出是谁）。
+    quiet(这一轮的 id)：跑完问调用方这一轮算不算「没要说的」（第 4 批：心跳用 heartbeat_respond 说了 notify=false），算就和回了记号一样不留。"""
     import chat
     import push
     from fastapi import HTTPException
@@ -331,13 +344,18 @@ async def in_chat(thread: str, label: str, instructions: str, *, level: str, idl
     if timed_out:
         return Outcome(status="timeout", text=run.text, model=model, message=run.reply_id,
                        error=L(f"{int(idle)} 秒没有动静，停了", f"No activity for {int(idle)}s; stopped"), **turn)
-    if run.status == "ok" and silent(run.text):
+    if run.status == "ok" and (silent(run.text) or (quiet is not None and quiet(run.turn))):
         drop(thread, run)
         return Outcome(status="silent", text=run.text, model=model, **turn)
+    if run.status == "stopped" and not timed_out:  # 急停的 stop_running（engine/estop.py）停的：像点了停，不算失败、不推
+        from . import estop
+        if estop.paused():
+            return Outcome(status="interrupted", text=run.text, model=model, message=run.reply_id, error="emergency stop", **turn)
     run.level = level
     await push.notify_run(run)  # 起的时候档位是 none（回的要是「没要说的」就不推）：现在按任务的档位推
-    if run.status != "ok":
-        return Outcome(status="error", text=run.text, model=model, message=run.reply_id, error=run.error or run.status, **turn)
+    if run.status != "ok":  # 一个字都没出就出错的：chat 补的那句「没拿到回复」不算它说的（定时任务据此认能不能重试）
+        said = "" if run.text in (f"（没拿到回复：{run.error}）", f"(Didn't get a reply: {run.error})") else run.text
+        return Outcome(status="error", text=said, model=model, message=run.reply_id, error=run.error or run.status, **turn)
     return Outcome(status="done", text=run.text, model=model, message=run.reply_id, **turn)
 
 

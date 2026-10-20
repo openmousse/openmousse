@@ -1,0 +1,43 @@
+{
+ "id": "9100001",
+ "name": "Weekend Crew",
+ "unavailable": false,
+ "member_count": 4,
+ "channels": [
+  {
+   "id": "9200001",
+   "type": 0,
+   "name": "general",
+   "guild_id": "9100001"
+  },
+  {
+   "id": "9200002",
+   "type": 0,
+   "name": "random",
+   "guild_id": "9100001"
+  }
+ ],
+ "threads": [
+  {
+   "id": "9300001",
+   "type": 11,
+   "name": "Launch plan",
+   "parent_id": "9200001",
+   "guild_id": "9100001"
+  }
+ ],
+ "roles": [
+  {
+   "id": "9100001",
+   "name": "@everyone"
+  },
+  {
+   "id": "9400001",
+   "name": "mousse-test",
+   "managed": true,
+   "tags": {
+    "bot_id": "7100001"
+   }
+  }
+ ]
+}

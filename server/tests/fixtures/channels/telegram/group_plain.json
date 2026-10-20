@@ -1,0 +1,19 @@
+{
+ "message": {
+  "message_id": 20,
+  "date": 1760860800,
+  "chat": {
+   "id": -1001000001,
+   "type": "supergroup",
+   "title": "Weekend Crew"
+  },
+  "from": {
+   "id": 1000002,
+   "is_bot": false,
+   "first_name": "Sam",
+   "username": "sam_example",
+   "language_code": "en"
+  },
+  "text": "Shall we do brunch on Sunday?"
+ }
+}

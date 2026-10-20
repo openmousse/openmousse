@@ -1,0 +1,36 @@
+{
+ "my_chat_member": {
+  "chat": {
+   "id": -1001000001,
+   "type": "supergroup",
+   "title": "Weekend Crew"
+  },
+  "from": {
+   "id": 1000001,
+   "is_bot": false,
+   "first_name": "Alex",
+   "last_name": "Rivers",
+   "username": "alex_rivers_example",
+   "language_code": "en"
+  },
+  "date": 1760860800,
+  "old_chat_member": {
+   "user": {
+    "id": 7000001,
+    "is_bot": true,
+    "first_name": "Mousse Test",
+    "username": "mousse_test_bot"
+   },
+   "status": "left"
+  },
+  "new_chat_member": {
+   "user": {
+    "id": 7000001,
+    "is_bot": true,
+    "first_name": "Mousse Test",
+    "username": "mousse_test_bot"
+   },
+   "status": "member"
+  }
+ }
+}

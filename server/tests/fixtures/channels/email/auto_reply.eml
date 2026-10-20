@@ -1,0 +1,15 @@
+Return-Path: <owner@example.com>
+Delivered-To: agent@example.org
+Authentication-Results: mx.example.org; dkim=pass header.d=example.com; dmarc=pass header.from=example.com
+From: Alex Rivers <owner@example.com>
+To: agent@example.org
+Subject: Out of office: Packing list for Saturday
+Date: Sat, 18 Oct 2030 09:13:00 +0000
+Message-ID: <ooo-0301@mail.example.com>
+In-Reply-To: <hike-0001@mail.example.com>
+Auto-Submitted: auto-replied
+X-Autoreply: yes
+MIME-Version: 1.0
+Content-Type: text/plain; charset="utf-8"
+
+I'm away until Monday and will reply when I'm back.

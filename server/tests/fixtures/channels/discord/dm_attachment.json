@@ -1,0 +1,34 @@
+{
+ "id": "5000002",
+ "channel_id": "9500001",
+ "author": {
+  "id": "8100001",
+  "username": "alex.rivers",
+  "global_name": "Alex Rivers",
+  "discriminator": "0",
+  "avatar": null
+ },
+ "content": "What is this plant?",
+ "timestamp": "2030-10-19T09:12:03.000000+00:00",
+ "edited_timestamp": null,
+ "tts": false,
+ "mention_everyone": false,
+ "mentions": [],
+ "mention_roles": [],
+ "attachments": [
+  {
+   "id": "6000001",
+   "filename": "plant.png",
+   "size": 70,
+   "url": "CDN/plant.png",
+   "proxy_url": "CDN/plant.png",
+   "content_type": "image/png",
+   "width": 4,
+   "height": 4
+  }
+ ],
+ "embeds": [],
+ "pinned": false,
+ "type": 0,
+ "flags": 0
+}

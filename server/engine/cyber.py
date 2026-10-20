@@ -15,7 +15,7 @@ cyber 是一个 dict：{"id", "name", "identity", "model"?, "sources"?: ["card"]
 from __future__ import annotations
 
 import re
-from datetime import datetime, timedelta
+from datetime import datetime
 
 from config import settings
 
@@ -29,8 +29,9 @@ CHANGED = "Your settings were updated. From now on, follow these instead of the 
 
 
 def logical_day(now: datetime | None = None) -> str:
+    from .reset import day_start  # 第 2 批：engine.reset.at 改了换天的钟点就照它（engine/reset.py）
     now = now or datetime.now(settings.tz)
-    return (now - timedelta(hours=DAY_START_HOUR)).date().isoformat()
+    return (now - day_start()).date().isoformat()
 
 
 def cyber_id(cyber: dict) -> str:

@@ -8,7 +8,18 @@ web_search：搜索后端（照 OpenClaw / Hermes 接的那几家）
   perplexity   POST api.perplexity.ai/search（Perplexity 的搜索接口，Bearer），PERPLEXITY_API_KEY
   searxng      GET  <你自己搭的>/search?format=json：写 url（或环境变量 SEARXNG_URL），不要密钥
   duckduckgo   GET  html.duckduckgo.com/html（不要密钥，抽网页里的结果）：只在 provider 写明 duckduckgo 时用
-  选哪家：engine.web.search.provider 写了就用它（不行就是没有，不换别家）；没写按 brave → perplexity → exa → tavily → searxng 的顺序，
+  第 3 批（2026-10-19，照 OpenClaw extensions/google|xai|moonshot|firecrawl 的请求和 autoDetectOrder）：
+  gemini       POST generativelanguage.googleapis.com/v1beta/models/<型号>:generateContent，tools [{google_search: {}}]（Google 搜索接地），
+               GEMINI_API_KEY；回一段带出处的回答（groundingChunks 的 web.uri / title 当结果）。型号默认 gemini-3.6-flash（OpenClaw 的默认）
+  grok         POST api.x.ai/v1/responses（{model, input, tools: [{type: web_search}], store: false}），XAI_API_KEY；回答 + url_citation 当结果，
+               型号默认 grok-4.7（OpenClaw 的默认）
+  kimi         POST api.moonshot.ai/v1/tools/search（{text_query, limit}），MOONSHOT_API_KEY（或 KIMI_API_KEY）；中国大陆的密钥写
+               providers.kimi.url = https://api.moonshot.cn/v1/tools/search
+  firecrawl    POST api.firecrawl.dev/v2/search（{query, limit}），FIRECRAWL_API_KEY
+  这四家每搜一次记一行 engine_media_usage（purpose search，价钱没核对：记 null，只记次数）。它们的密钥多半本来就为模型存着
+  （GEMINI_API_KEY、XAI_API_KEY、MOONSHOT_API_KEY），所以默认不自己选上：provider 写明了才用；engine.web.search.more = true 才按顺序参与挑选。
+  选哪家：engine.web.search.provider 写了就用它（不行就是没有，不换别家）；没写按 brave → gemini → grok → kimi → perplexity → firecrawl → exa →
+  tavily → searxng 的顺序（第 3 批加了四家，顺序照 OpenClaw），
   有密钥（searxng 有地址）的那一家。密钥照 models.env_value：key_env 指的环境变量，先看进程环境、再看 server.json 的 env_file。
   一家都没配：不出这个工具（会话开头说一句「搜索没配，web_fetch 照样能打开网址」）。不自动退到不用密钥的那家（照 OpenClaw：没配就不
   把用户的搜索词发给他没选过的第三方；不要密钥的接口限流、出验证码、说改就改，一半时候失灵的工具只会教模型乱试）。要不用密钥的就写
@@ -20,6 +31,8 @@ web_fetch：在 webfetch.py 上做（check_url：http(s)、80 / 443、不带用�
   网页去掉脚本、样式、导航、页脚和藏起来的字（display:none、aria-hidden……：网页里
   藏给模型看的指令多半在这），有 <main> / <article> 就只要它，转成 Markdown（标题、列表、链接、表格、代码块）；长了分段
   （offset / max_chars，默认一段 2 万字），转好的留 15 分钟，翻页不重新下。
+  第 3 批：engine.web.fetch.render = true 时，HTML 抽出来的字太少（RENDER_MIN 以下：多半是只有脚本的壳）就交给这个 Agent 的沙箱浏览器渲染一次再抽
+  （engine/browser.py；沙箱浏览器只经 Doorman 出网）；这个 Agent 没有沙箱浏览器就照旧。不写 = 照旧。
 出门把关（照 Doorman 的规矩）：普通的读（GET、网址里没带私事）直接放行；网址或搜索词里看得出带着用户的私事（share.find_private：
   住址、邮箱、电话、家人名字、身体数字、用户设的词），或者有一大串像编码过的数据（像在往外带东西），交给 Doorman 的模型判断
   （egress.judge）；它说扣下 → 收件箱 kind egress 的卡（和代办被扣下的同一种，Agent 读不到），用户放行以后 30 分钟内一模一样地再调一次
@@ -73,6 +86,13 @@ PROVIDERS: dict[str, dict] = {
     "exa": {"url": "https://api.exa.ai/search", "key_env": "EXA_API_KEY", "order": 65},
     "tavily": {"url": "https://api.tavily.com/search", "key_env": "TAVILY_API_KEY", "order": 70},
     "searxng": {"url_env": "SEARXNG_URL", "order": 200, "keyless": True},
+    # 第 3 批：照 OpenClaw 的 autoDetectOrder（gemini 20、grok 30、kimi 40、firecrawl 60）
+    "gemini": {"url": "https://generativelanguage.googleapis.com/v1beta", "key_env": "GEMINI_API_KEY", "order": 20, "model": "gemini-3.6-flash",
+               "opt_in": True},
+    "grok": {"url": "https://api.x.ai/v1/responses", "key_env": "XAI_API_KEY", "order": 30, "model": "grok-4.7", "opt_in": True},
+    "kimi": {"url": "https://api.moonshot.ai/v1/tools/search", "key_env": "MOONSHOT_API_KEY", "alt_key_env": "KIMI_API_KEY", "order": 40,
+             "opt_in": True},
+    "firecrawl": {"url": "https://api.firecrawl.dev/v2/search", "key_env": "FIRECRAWL_API_KEY", "order": 60, "opt_in": True},
     "duckduckgo": {"url": "https://html.duckduckgo.com/html/", "keyless": True, "explicit": True},
 }
 
@@ -110,7 +130,8 @@ def settings_of(name: str) -> dict:
 def key_of(name: str) -> str:
     from . import models
     s = settings_of(name)
-    return str(s.get("key") or "") or (models.env_value(str(s["key_env"])) if s.get("key_env") else "")
+    return (str(s.get("key") or "") or (models.env_value(str(s["key_env"])) if s.get("key_env") else "")
+            or (models.env_value(str(s["alt_key_env"])) if s.get("alt_key_env") else ""))  # 第 3 批：Kimi 两个变量名都认
 
 
 def url_of(name: str) -> str:
@@ -134,7 +155,9 @@ def provider() -> str | None:
     if want:
         w = str(want).strip().lower()
         return w if usable(w) else None
-    for name in sorted((n for n, s in PROVIDERS.items() if not s.get("explicit")), key=lambda n: PROVIDERS[n]["order"]):
+    more = _sub("search").get("more") is True  # 第 3 批：新加的四家默认不自己选上（见文件开头）
+    for name in sorted((n for n, s in PROVIDERS.items() if not s.get("explicit") and (more or not s.get("opt_in"))),
+                       key=lambda n: PROVIDERS[n]["order"]):
         if not settings_of(name).get("keyless") and usable(name):
             return name
     return "searxng" if usable("searxng") else None
@@ -149,6 +172,14 @@ class Hit:
     snippet: str = ""
     date: str = ""
 
+
+class Hits(list):
+    """search 回的结果（还是一个 list）；answer = 回答式的搜索（gemini、grok）那一段回答。"""
+    answer: str = ""
+
+
+PAID = ("gemini", "grok", "kimi", "firecrawl")  # 第 3 批加的几家：每搜一次记一行用量
+RENDER_MIN = 300                                # web_fetch 抽出来的字少于这么多（HTML）：可能是只有脚本的壳
 
 def _clean(s: object, n: int = 400) -> str:
     t = " ".join(html.unescape(re.sub(r"<[^>]+>", " ", str(s or ""))).split())
@@ -224,6 +255,39 @@ async def search(name: str, query: str, count: int, *, key: str | None = None, u
                 r = await c.get(url.rstrip("/") + "/search", params={"q": query, "format": "json"}, headers={"Accept": "application/json"})
                 r.raise_for_status()
                 hits = _hits(r.json().get("results"), "title", "url", "content", "publishedDate")
+            elif name == "gemini":  # 第 3 批：Google 搜索接地
+                model = str(settings_of(name).get("model") or "gemini-3.6-flash")
+                r = await c.post(f"{url.rstrip('/')}/models/{model}:generateContent", headers={"x-goog-api-key": key},
+                                 json={"contents": [{"parts": [{"text": query}]}], "tools": [{"google_search": {}}]})
+                r.raise_for_status()
+                cand = ((r.json().get("candidates") or [{}])[0]) or {}
+                answer = "".join(str(p.get("text") or "") for p in ((cand.get("content") or {}).get("parts") or []) if isinstance(p, dict))
+                chunks = (cand.get("groundingMetadata") or {}).get("groundingChunks") or []
+                hits = Hits(_hits([c_.get("web") for c_ in chunks if isinstance(c_, dict)], "title", "uri", "snippet"))
+                hits.answer = _clean(answer, 4000)
+            elif name == "grok":  # 第 3 批：xAI 的 Responses API + web_search
+                model = str(settings_of(name).get("model") or "grok-4.7")
+                r = await c.post(url, headers={"Authorization": f"Bearer {key}"},
+                                 json={"model": model, "input": [{"role": "user", "content": query}], "tools": [{"type": "web_search"}], "store": False})
+                r.raise_for_status()
+                texts, cites = [], []
+                for out in r.json().get("output") or []:
+                    for blk in (out.get("content") or []) if isinstance(out, dict) else []:
+                        if isinstance(blk, dict) and blk.get("type") == "output_text":
+                            texts.append(str(blk.get("text") or ""))
+                            cites += [a for a in blk.get("annotations") or [] if isinstance(a, dict) and a.get("type") == "url_citation"]
+                hits = Hits(_hits(cites, "title", "url", "snippet"))
+                hits.answer = _clean("".join(texts), 4000)
+            elif name == "kimi":  # 第 3 批：Moonshot 的搜索接口
+                r = await c.post(url, headers={"Authorization": f"Bearer {key}"}, json={"text_query": query, "limit": n})
+                r.raise_for_status()
+                hits = _hits(r.json().get("search_results"), "title", "url", "snippet", "date")
+            elif name == "firecrawl":  # 第 3 批
+                r = await c.post(url, headers={"Authorization": f"Bearer {key}"}, json={"query": query, "limit": n})
+                r.raise_for_status()
+                data = r.json().get("data")
+                rows = data if isinstance(data, list) else (data.get("web") or []) if isinstance(data, dict) else []
+                hits = _hits(rows, "title", "url", "description")
             elif name == "duckduckgo":
                 r = await c.get(url, params={"q": query}, headers={"Accept": "text/html"})
                 r.raise_for_status()
@@ -236,12 +300,18 @@ async def search(name: str, query: str, count: int, *, key: str | None = None, u
         raise ToolFailure(L(f"{name} 回了 HTTP {e.response.status_code}", f"{name} answered HTTP {e.response.status_code}")) from None
     except (httpx.HTTPError, ValueError) as e:
         raise ToolFailure(L(f"{name} 没搜成：{type(e).__name__}", f"{name} search failed: {type(e).__name__}")) from None
-    seen, out = set(), []
+    seen, out = set(), Hits()
     for h in hits:
         if h.url not in seen:
             seen.add(h.url)
             out.append(h)
-    return out[:n]
+    out.answer = getattr(hits, "answer", "")
+    if name in PAID:  # 第 3 批：这几家按次花钱，记一行（价钱没核对：null）
+        from . import media
+        media.record("search", media.Choice("search", name, str(settings_of(name).get("model") or name)), units=1, unit="query", unpriced=True)
+    res = Hits(out[:n])
+    res.answer = out.answer
+    return res
 
 
 # —— 只去公网：查过的地址就是连的地址 ————————————————————————————————————————————————
@@ -626,10 +696,13 @@ def search_tool(agent: str) -> Tool | None:
         if held := await door(ctx, f"{url_of(now) or 'https://' + now}?q={quote_plus(q)}", "search"):
             return held
         hits = await search(now, q, int(args.get("count") or _sub("search").get("count") or COUNT))
-        if not hits:
+        answer = getattr(hits, "answer", "")
+        if not hits and not answer:
             return L(f"「{q}」没有搜到结果（{now}）", f'No results for "{q}" ({now})')
         rows = [f"{i}. {h.title}\n   {h.url}" + (f"\n   {h.date}" if h.date else "") + (f"\n   {h.snippet}" if h.snippet else "")
                 for i, h in enumerate(hits, 1)]
+        if answer:  # 第 3 批：回答式的搜索（gemini、grok）先给回答，出处在后面
+            rows.insert(0, f"Answer: {answer}\n\nSources:" if hits else f"Answer: {answer}")
         return f'Results for "{q}" ({now}). Open one with web_fetch.\n' + wrap_untrusted(_source(f"web_search {now}"), "\n".join(rows))
 
     return Tool(name="web_search", kinds=("owner",), run=run, timeout=60, max_output=20_000,
@@ -665,6 +738,8 @@ def fetch_tool(agent: str) -> Tool | None:
             got = await page(url)
         except webfetch.FetchError as e:
             raise ToolFailure(L(f"打不开 {url}：{e}", f"Couldn't open {url}: {e}")) from None
+        if render_on() and thin(got) and (r := await rendered(ctx.agent or "main", got["final"])) is not None:  # 第 3 批：只有脚本的壳
+            got = r
         text = got["text"]
         if not text.strip():
             return L(f"{got['final']} 上没有能读的文字", f"There's no readable text on {got['final']}")
@@ -672,7 +747,8 @@ def fetch_tool(agent: str) -> Tool | None:
         part, nxt = chunk(text, int(args.get("offset") or 0), want)
         start = max(0, min(int(args.get("offset") or 0), len(text)))
         where = (f"[characters {start}–{nxt} of {len(text)}" + (f"; more: call again with offset={nxt}]" if nxt < len(text) else "; that's the end]"))
-        head = f"Source: {got['final']}" + (f" (redirected from {url})" if got["final"] != url else "")
+        head = (f"Source: {got['final']}" + (f" (redirected from {url})" if got["final"] != url else "")
+                + (" (rendered in your sandbox browser)" if got.get("rendered") else ""))
         body = (f"Title: {got['title']}\n\n" if got["title"] and start == 0 else "") + part
         return f"{head}\n{where}\n" + wrap_untrusted(_source(f"web_fetch {got['final']}"), body)
 
@@ -689,6 +765,35 @@ def fetch_tool(agent: str) -> Tool | None:
                     "url": {"type": "string"},
                     "offset": {"type": "integer", "description": L("从第几个字接着读（上一次结果里写着）", "Character to continue from (the last result says)")},
                     "max_chars": {"type": "integer", "description": L(f"这一段最多几个字（默认 {size}，最多 {FETCH_MAX_CHARS}）", f"At most this many characters (default {size}, max {FETCH_MAX_CHARS})")}}})
+
+
+# —— 第 3 批：只有脚本的壳，交沙箱浏览器渲染一次 ——————————————————————————————————————————
+
+def render_on() -> bool:
+    return _sub("fetch").get("render") is True
+
+
+def thin(got: dict) -> bool:
+    """HTML 抽出来的字太少（多半是靠脚本画出来的页面）。"""
+    return "html" in str(got.get("ctype") or "html") and len(str(got.get("text") or "").strip()) < RENDER_MIN
+
+
+async def rendered(agent: str, url: str) -> dict | None:
+    """这个 Agent 的沙箱浏览器打开一次、拿全部文字 → page() 那样的 dict（rendered = True）；没有沙箱浏览器、打不开 → None（照旧）。"""
+    from . import browser, sandbox
+    box = sandbox.box(agent)
+    if box is None or not box.get("browser"):
+        return None
+    try:
+        await browser.act(agent, {"action": "open", "url": url})
+        _, body = await browser.act(agent, {"action": "text"})
+    except sandbox.SandboxError:
+        return None
+    head, _, text = str(body or "").partition("\n\n")
+    final = head[5:].strip() if head.startswith("URL: ") else url
+    if not text.strip():
+        return None
+    return {"final": final or url, "title": "", "text": text.strip(), "ctype": "text/html", "rendered": True, "at": time.monotonic()}
 
 
 def tools(agent: str) -> list[Tool]:

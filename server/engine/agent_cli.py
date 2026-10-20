@@ -137,6 +137,7 @@ async def pick(agent: str, requested: str | None, via: str | None) -> str:
         if not ref:
             raise Refused(503, "no_model", L("内核还没配模型：server.json 的 engine.model，或者用 --model 指定一个",
                                              "The engine has no model yet: set engine.model in server.json, or pick one with --model"))
+    ref = models.resolve(ref)  # 第 7 批：别名（engine.aliases）先换成真的引用，下面照真的那个判（套餐照样过 may_spend）
     sub = models.subscription(ref)
     if sub == "chatgpt":
         await plan_ready(ref, via, mine=requested is None)

@@ -131,10 +131,11 @@ def save(data: dict) -> None:
 
 
 def pick_api_token(tokens: dict) -> str | None:
-    """本机脚本调 /api 用哪把令牌：第一把不是 mcp、mcp-<agent id>、sentinel、api、api-<agent id> 的（不管 server.json 里的顺序）。没有就 None。"""
+    """本机脚本调 /api 用哪把令牌：第一把不是 mcp、mcp-<agent id>、sentinel、api、api-<agent id>、node-<设备>（节点，只走 /api/nodes/）的
+    （不管 server.json 里的顺序）。没有就 None。"""
     for name, tok in tokens.items():
         name = str(name)
-        if tok and name not in NOT_API and not name.startswith(("mcp-", "api-")):
+        if tok and name not in NOT_API and not name.startswith(("mcp-", "api-", "node-")):
             return str(tok)
     return None
 

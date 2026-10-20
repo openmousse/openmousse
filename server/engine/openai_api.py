@@ -7,6 +7,8 @@ OpenAI 兼容的 HTTP 接口在这里；ACP 适配器（给编辑器用）是另
                  agents    ["main", "diet"]：只给这几个 Agent（不写 = main 和所有 Agent）
                  approve   false：调用方不能替自己会话里交的卡点头，卡只在 app 里等（默认 true：ACP 的 session/request_permission 靠它）
                  wait      流式请求带 X-OpenMousse-Approvals: wait 时，关卡当场等点头最多几秒（默认 300，最多 1800）
+                 responses true：多开 /v1/responses（OpenAI 的 Responses API，第 7 批；默认关，见文件后面那一节）
+                 a2a       true：多开 /v1/a2a/<agent id>（主人自己的 A2A 1.0，第 7 批；默认关，engine/a2a_api.py）
 令牌：auth.tokens 里名字是 api（哪个 Agent 都能用）或 api-<agent id>（只能用那个 Agent，同 /mcp 的 mcp-<id>）的（python3 tokens.py add api）；
   Authorization: Bearer <令牌>（也认 X-API-Key）。别的令牌这里一律 401；这几把在 /api 上 403（main.py 的 guard）：拿着它的程序不能经 /api
   替你点头、配对设备，只能对它自己的会话里交的卡点头（approvals，见下）。
@@ -19,6 +21,9 @@ OpenAI 兼容的 HTTP 接口在这里；ACP 适配器（给编辑器用）是另
                                      ?before=（上一页最后一条的 updated_at）
   POST /v1/openmousse/approvals/{收件箱 id}  {"action": "approve" | "reject", "note"?}：对这把令牌自己的会话里交的卡点头 / 拒绝
                                      （和 app 里点一样走 inbox.act；engine.api.approve = false 时 403，不是它的卡 404）
+  POST /v1/responses、GET / DELETE /v1/responses/{id}  Responses API（engine.api.responses = true 才有，不然 404；见文件后面那一节）
+  GET  /v1/openmousse/history        一个会话里说过的话（ACP 的 session/load 重放用）：?id=（会话键）?agent= ?limit=；只看得到自己这把令牌的
+  GET  /v1/a2a、GET /v1/a2a/{agent}/agent-card.json、POST /v1/a2a/{agent}  A2A 1.0 的 JSON-RPC（engine.api.a2a = true 才有，engine/a2a_api.py）
 
 一轮（照 engine/owner.py 的主人会话：备料、这个 Agent 的工具和关卡、压缩，都和 app 里一样）：
   model         openmousse/<agent id>；只写 openmousse 或不写 = main（api-<id> 的令牌 = 它自己）。别的 404 model_not_found，
@@ -269,8 +274,8 @@ def no_model(agent: str) -> str:
 def model_for(agent: str) -> str | None:
     """跑哪个大模型：这个 Agent 在 app 里的对话选的那个，没选或者不能用 = engine.model。都没有 → None。"""
     m = chosen(agent)
-    if m and models.valid_ref(m):
-        return m
+    if m and models.valid_ref(m) and not models.subscription(m):  # 命令行的套餐（codex/…，第 7 批）也是 valid_ref：不给外面的程序
+        return models.resolve(m)  # 别名（engine.aliases）：换成真的引用
     d = models.default_model()
     if models.subscription(d):  # 默认的是用户自己的套餐（claude-code/…，第 11 项）：外面的程序不花它，换成非套餐的（没有 → None）
         return models.outside(d)
@@ -910,6 +915,420 @@ async def decide(iid: str, request: Request):
                         headers={"Cache-Control": "no-store"})
 
 
+# —— /v1/responses（第 7 批 12.2，2026-10-19）—————————————————————————————————————————————————
+# OpenAI 的 Responses API（照 Hermes 的 gateway/platforms/api_server_openai_routes.py、api_server_response_store.py 和 OpenAI 的
+# 接口说明自己写的，没有拿代码）。开关单独一个：engine.api 开着、而且 engine.api.responses = true 才有，不然这几条一律 404。
+#   POST   /v1/responses          跑一轮；令牌、Agent 名单、收件箱点头、会话都照 /v1/chat/completions
+#   GET    /v1/responses/{id}     拿回存下的那一次（只看得到自己这把令牌的；别人的、删了的、store: false 的 404）
+#   DELETE /v1/responses/{id}     删掉（同上，只删得了自己的）
+# 请求：model 同上（openmousse/<agent id>）；input = 字，或者 item 的列表（{"role", "content"} 的消息，content 是字或者 input_text /
+#   input_image 块；散着的 input_text / input_image 块当用户的一句）；别的 item（function_call_output、input_file……）400。最后一条 user
+#   是这一句，前面的照 chat/completions 当前情（只在建会话时用）。instructions = 这一轮额外的说明（叠在 Agent 自己的开头之上，只管这一轮，
+#   照 OpenAI：不跟着 previous_response_id 带到下一轮）。previous_response_id = 接上那一次的会话（同一把令牌的；别人的、没有的 404）；
+#   不带就照 chat/completions 看 X-Session-Id、user，都没有就是新会话。store: false = 不存（GET 拿不回、也接不上）。
+#   调用方带来的 tools、tool_choice、temperature、max_output_tokens、text.format、background 这些不管：Agent 用自己的工具和设置，当场跑完。
+# 回：response 对象（id resp_…、status completed / incomplete（incomplete_details.reason：max_output_tokens、content_filter = 拒答、
+#   interrupted = 断开或关服务停下的）/ failed、output 里一条 assistant 的 message、usage 照 Responses 的字段 input_tokens / output_tokens /
+#   total_tokens（含缓存读的 input_tokens_details.cached_tokens），多给一样 openmousse（同 chat/completions））。一次性的出错照 chat/completions
+#   回 HTTP 的错（不存）。
+#   stream = true：Responses 的 SSE 事件（event: + data 里的 type、sequence_number）：response.created → response.in_progress →
+#   response.output_item.added → response.content_part.added → response.output_text.delta … → response.output_text.done →
+#   response.content_part.done → response.output_item.done → response.completed / response.incomplete（出错 response.failed，也存下）；
+#   X-OpenMousse-Events: 1 照样多给 openmousse.tool / approval / approval_result / done。思考摘要不放进 output。
+# 存：mousse.db 的 engine_api_responses（用到时才建），每把令牌最多 RESP_KEEP 条，多了删最旧的；重启不丢。
+
+RESP_KEEP = 100
+RESP_SCHEMA = """
+CREATE TABLE IF NOT EXISTS engine_api_responses (
+  id TEXT PRIMARY KEY, token TEXT NOT NULL, agent TEXT NOT NULL, key TEXT NOT NULL, conversation TEXT NOT NULL, created_at INTEGER NOT NULL,
+  data TEXT NOT NULL);
+CREATE INDEX IF NOT EXISTS engine_api_responses_token ON engine_api_responses(token, created_at);
+"""
+RESP_NOTE = ("The program calling you through the API added these instructions for this reply only. Follow them where they don't conflict "
+             "with your own rules:\n\n")
+# 这一轮怎么收的尾（Result.status）→ (Responses 的 status, incomplete_details.reason)；interrupted 是自己加的（断开、关服务停下的）
+RESP_STATUS = {"done": ("completed", None), "refused": ("incomplete", "content_filter"), "length": ("incomplete", "max_output_tokens"),
+               "max_steps": ("incomplete", "max_output_tokens"), "aborted": ("incomplete", "interrupted")}
+_resp_ready: set[str] = set()
+
+
+def responses_on() -> bool:
+    return (cfg() or {}).get("responses") is True
+
+
+def responses_gate() -> None:
+    if not responses_on():
+        raise ApiError(404, L("/v1/responses 没开：server.json 的 engine.api.responses 写 true", "/v1/responses is off: set engine.api.responses to "
+                              "true in server.json"), "invalid_request_error", None, "not_found")
+
+
+def _resp_db() -> None:
+    path = str(settings.db)
+    if path in _resp_ready:
+        return
+    with store.tx() as conn:
+        conn.executescript(RESP_SCHEMA)
+    _resp_ready.add(path)
+
+
+def resp_save(rid: str, caller: Caller, agent: str, key: str, conv: str, created: int, obj: dict) -> None:
+    """存下这一次（同一把令牌最多 RESP_KEEP 条，多了删最旧的）。"""
+    _resp_db()
+    with store.tx() as conn:
+        conn.execute("INSERT OR REPLACE INTO engine_api_responses(id, token, agent, key, conversation, created_at, data) VALUES(?,?,?,?,?,?,?)",
+                     (rid, caller.token, agent, key, conv, created, json.dumps(obj, ensure_ascii=False)))
+        conn.execute("""DELETE FROM engine_api_responses WHERE token=? AND id NOT IN (
+            SELECT id FROM engine_api_responses WHERE token=? ORDER BY created_at DESC, rowid DESC LIMIT ?)""", (caller.token, caller.token, RESP_KEEP))
+
+
+def resp_row(caller: Caller, rid: str):
+    """这把令牌存下的那一次（别人的、没有的 → None）。"""
+    _resp_db()
+    with store.read() as conn:
+        return conn.execute("SELECT * FROM engine_api_responses WHERE id=? AND token=?", (str(rid), caller.token)).fetchone()
+
+
+def resp_not_found(rid: str, param: str | None = None) -> ApiError:
+    return ApiError(404, L(f"没有 {rid} 这一次（或者不是这把令牌的）", f"No response {rid!r} for this token"), "invalid_request_error", param,
+                    "response_not_found")
+
+
+def resp_parts(c: Any, where: str) -> str | list:
+    """Responses 的 content → 和 chat/completions 一样的写法：字，或者 text / image_url 块。input_text、output_text（前情里 assistant 说的）
+    → text，input_image（image_url 写成字符串或者 {"url"}）→ image_url；别的 400。"""
+    if c is None or isinstance(c, str):
+        return c or ""
+    if not isinstance(c, list):
+        raise ApiError(400, L(f"{where} 要是字符串或块的列表", f"{where} must be a string or a list of parts"), "invalid_request_error", where,
+                       "invalid_content")
+    out: list[dict] = []
+    for j, p in enumerate(c):
+        t = p.get("type") if isinstance(p, dict) else None
+        if t in ("input_text", "output_text", "text"):
+            out.append({"type": "text", "text": str(p.get("text") or "")})
+        elif t == "input_image":
+            url = p.get("image_url")
+            url = url.get("url") if isinstance(url, dict) else url
+            if not isinstance(url, str) or not url:
+                raise ApiError(400, L(f"{where}[{j}]：input_image 要写 image_url（file_id 不认）", f"{where}[{j}]: input_image needs image_url "
+                                      "(file_id isn't supported)"), "invalid_request_error", f"{where}[{j}]", "invalid_content")
+            out.append({"type": "image_url", "image_url": {"url": url}})
+        else:
+            raise ApiError(400, L(f"{where}[{j}]：这里只认 input_text 和 input_image", f"{where}[{j}]: only input_text and input_image parts are "
+                                  "supported"), "invalid_request_error", f"{where}[{j}]", "unsupported_content_type")
+    return out
+
+
+def resp_input(raw_input: Any) -> tuple[str | list, list[dict]]:
+    """input → (这一句, 前情)：先换成 chat/completions 的 messages，再照 split_messages。"""
+    if isinstance(raw_input, str):
+        if not raw_input.strip():
+            raise ApiError(400, L("input 是空的", "input is empty"), "invalid_request_error", "input", "missing_input")
+        return raw_input, []
+    if not isinstance(raw_input, list) or not raw_input:
+        raise ApiError(400, L("input 要是字，或者一个非空的 item 列表", "input must be a string or a non-empty list of items"), "invalid_request_error",
+                       "input", "invalid_input")
+    msgs: list[dict] = []
+    for i, item in enumerate(raw_input):
+        where = f"input[{i}]"
+        if isinstance(item, str):
+            msgs.append({"role": "user", "content": item})
+            continue
+        if not isinstance(item, dict):
+            raise ApiError(400, L(f"{where} 要是对象", f"{where} must be an object"), "invalid_request_error", where, "invalid_input")
+        t = item.get("type")
+        if t in ("input_text", "input_image"):
+            msgs.append({"role": "user", "content": resp_parts([item], where)})
+            continue
+        if t not in (None, "message"):
+            raise ApiError(400, L(f"{where}：不认 {t} 这种 item（这里只有消息、input_text、input_image）", f"{where}: {t} items aren't supported "
+                                  "(only messages, input_text and input_image)"), "invalid_request_error", where, "unsupported_input_type")
+        role = item.get("role") or "user"
+        if role not in ("user", "assistant", "system", "developer"):
+            raise ApiError(400, L(f"{where}.role 不认 {role}", f"{where}.role {role!r} isn't supported"), "invalid_request_error", f"{where}.role")
+        msgs.append({"role": role, "content": resp_parts(item.get("content"), f"{where}.content")})
+    return split_messages(msgs)
+
+
+def resp_usage(u: dict) -> dict:
+    """内核的用量 → Responses 的 usage（input_tokens 连缓存读、写都算上，同 usage_of）。"""
+    cr = int(u.get("cache_read") or 0)
+    i = int(u.get("in") or 0) + cr + int(u.get("cache_write") or 0)
+    o = int(u.get("out") or 0)
+    return {"input_tokens": i, "input_tokens_details": {"cached_tokens": cr}, "output_tokens": o, "output_tokens_details": {"reasoning_tokens": 0},
+            "total_tokens": i + o}
+
+
+def resp_message(mid: str, text: str, status: str = "completed") -> dict:
+    return {"id": mid, "type": "message", "status": status, "role": "assistant", "content": [{"type": "output_text", "text": text, "annotations": []}]}
+
+
+def resp_object(rid: str, created: int, model: str, status: str, output: list, *, prev: str | None, instructions: str | None, store_it: bool,
+                usage: dict | None = None, error: dict | None = None, extra: dict | None = None, reason: str | None = None) -> dict:
+    out = {"id": rid, "object": "response", "created_at": created, "status": status, "model": model, "output": output,
+           "error": error, "incomplete_details": {"reason": reason} if status == "incomplete" else None,
+           "instructions": instructions, "previous_response_id": prev, "parallel_tool_calls": False, "tool_choice": "auto", "tools": [],
+           "temperature": None, "top_p": None, "metadata": {}, "store": store_it,
+           "usage": usage if usage is not None else {"input_tokens": 0, "input_tokens_details": {"cached_tokens": 0}, "output_tokens": 0,
+                                                       "output_tokens_details": {"reasoning_tokens": 0}, "total_tokens": 0}}
+    if extra:
+        out["openmousse"] = extra
+    return out
+
+
+@dataclass
+class RespReq:
+    caller: Caller
+    agent: str
+    key: str
+    conv: str
+    rid: str
+    msg_id: str
+    created: int
+    model: str              # openmousse/<agent>
+    prev: str | None
+    instructions: str | None
+    store_it: bool
+
+
+def resp_finish(r: RespReq, run: Run) -> dict:
+    """跑完了：→ response 对象（存下来）。"""
+    res = run.result
+    pend = run.pending()
+    said = "".join(run.text)
+    text = said + pending_note(pend, bool(said))
+    status, reason = RESP_STATUS.get(res.status, ("completed", None))
+    obj = resp_object(r.rid, r.created, r.model, status, [resp_message(r.msg_id, text, "completed" if status == "completed" else "incomplete")],
+                      prev=r.prev, instructions=r.instructions, store_it=r.store_it, usage=resp_usage(res.usage), reason=reason,
+                      extra={"session": r.key, "turn": res.turn, "status": res.status, "pending": pend})
+    if r.store_it:
+        resp_save(r.rid, r.caller, r.agent, r.key, r.conv, r.created, obj)
+    return obj
+
+
+def resp_failed(r: RespReq, run: Run) -> dict:
+    """流式里出错了：→ status failed 的 response 对象（存下来：调用方从 response.failed 里拿到了 id）。"""
+    e = run.error
+    said = "".join(run.text)
+    obj = resp_object(r.rid, r.created, r.model, "failed", [resp_message(r.msg_id, said, "incomplete")] if said else [], prev=r.prev,
+                      instructions=r.instructions, store_it=r.store_it, error={"code": (e.code if e else None) or "server_error",
+                                                                                "message": e.message if e else "error"})
+    if r.store_it:
+        resp_save(r.rid, r.caller, r.agent, r.key, r.conv, r.created, obj)
+    return obj
+
+
+async def resp_sse(r: RespReq, run: Run, events: bool) -> AsyncIterator[bytes]:
+    """Responses 的 SSE（见上面的说明）。断开 = 停（同 Run.sse）。"""
+    task = asyncio.create_task(run.go())
+    seq = 0
+
+    def ev(kind: str, data: dict) -> bytes:
+        nonlocal seq
+        out = frame({"type": kind, "sequence_number": seq, **data}, kind)
+        seq += 1
+        return out
+
+    def opening() -> list[bytes]:
+        return [ev("response.output_item.added", {"output_index": 0, "item": {**resp_message(r.msg_id, "", "in_progress"), "content": []}}),
+                ev("response.content_part.added", {"item_id": r.msg_id, "output_index": 0, "content_index": 0,
+                                                   "part": {"type": "output_text", "text": "", "annotations": []}})]
+    head = resp_object(r.rid, r.created, r.model, "in_progress", [], prev=r.prev, instructions=r.instructions, store_it=r.store_it)
+    opened = False
+    try:
+        yield ev("response.created", {"response": head})
+        yield ev("response.in_progress", {"response": head})
+        while True:
+            try:
+                kind, data = await asyncio.wait_for(run.q.get(), KEEPALIVE)
+            except TimeoutError:
+                yield b": keep-alive\n\n"
+                continue
+            if kind == "done":
+                break
+            if kind == "text":
+                if not opened:
+                    for b in opening():
+                        yield b
+                    opened = True
+                yield ev("response.output_text.delta", {"item_id": r.msg_id, "output_index": 0, "content_index": 0, "delta": data, "logprobs": []})
+            elif events and kind in ("tool", "approval", "approval_result"):
+                yield frame(data, f"openmousse.{kind}")
+        if run.error is not None:
+            yield ev("response.failed", {"response": resp_failed(r, run)})
+            return
+        pend = run.pending()
+        note = pending_note(pend, bool(run.text))
+        if not opened:
+            for b in opening():
+                yield b
+        if note:
+            yield ev("response.output_text.delta", {"item_id": r.msg_id, "output_index": 0, "content_index": 0, "delta": note, "logprobs": []})
+        obj = resp_finish(r, run)
+        text = obj["output"][0]["content"][0]["text"]
+        yield ev("response.output_text.done", {"item_id": r.msg_id, "output_index": 0, "content_index": 0, "text": text, "logprobs": []})
+        yield ev("response.content_part.done", {"item_id": r.msg_id, "output_index": 0, "content_index": 0,
+                                                "part": {"type": "output_text", "text": text, "annotations": []}})
+        yield ev("response.output_item.done", {"output_index": 0, "item": obj["output"][0]})
+        yield ev("response.completed" if obj["status"] == "completed" else "response.incomplete", {"response": obj})
+        if events:
+            yield frame(obj["openmousse"], "openmousse.done")
+    finally:
+        if not task.done():
+            run.control.abort()
+            asyncio.get_running_loop().call_later(GRACE, _cancel, task)
+
+
+@api.post("/v1/responses")
+async def create_response(request: Request):
+    caller = caller_of(request)
+    responses_gate()
+    body = await json_body(request)
+    prev = body.get("previous_response_id")
+    if prev is not None and (not isinstance(prev, str) or not prev.strip()):
+        raise ApiError(400, L("previous_response_id 要是字符串", "previous_response_id must be a string"), "invalid_request_error", "previous_response_id")
+    instructions = body.get("instructions")
+    if instructions is not None and not isinstance(instructions, str):
+        raise ApiError(400, L("instructions 要是字符串", "instructions must be a string"), "invalid_request_error", "instructions")
+    content, history = resp_input(body.get("input"))
+    if prev:
+        row = resp_row(caller, prev)
+        if row is None:
+            raise resp_not_found(prev, "previous_response_id")
+        agent = row["agent"]
+        if body.get("model") not in (None, "", MODEL) and pick(caller, body.get("model")) != agent:
+            raise ApiError(400, L(f"previous_response_id 是 {model_id(agent)} 的，model 不一样", f"previous_response_id belongs to {model_id(agent)}; "
+                                  "the model differs"), "invalid_request_error", "model")
+        key = row["key"]
+    else:
+        agent = pick(caller, body.get("model"))
+        key, _ = session_key(request, body)
+    headers = {**({"X-Session-Id": key} if key.isascii() else {}), "Cache-Control": "no-store"}
+    model = model_for(agent)
+    if model is None:
+        raise ApiError(503, no_model(agent), "server_error", None, "engine_config", headers)
+    conv = conversation(caller.token, agent, key)
+    cwd = urllib.parse.unquote((request.headers.get("x-openmousse-cwd") or "").strip())[:1000] or None
+    open_session(caller, agent, key, conv, title_of(content), cwd)
+    if instructions and instructions.strip():  # 这一轮额外的说明：放在这一句前面，标明是调用方的（只管这一轮）
+        note = RESP_NOTE + instructions.strip()
+        content = f"{note}\n\n---\n\n{content}" if isinstance(content, str) else [{"type": "text", "text": note + "\n\n---"}, *content]
+    stream = body.get("stream") is True
+    wait = stream and (request.headers.get("x-openmousse-approvals") or "").strip().lower() == "wait"
+    run = Run(caller, agent, key, conv, content, history, model, wait=wait)
+    r = RespReq(caller, agent, key, conv, "resp_" + uuid.uuid4().hex, "msg_" + uuid.uuid4().hex[:24], int(time.time()), model_id(agent),
+                prev or None, instructions, body.get("store") is not False)
+    if stream:
+        return StreamingResponse(resp_sse(r, run, _flag(request.headers.get("x-openmousse-events"))), media_type="text/event-stream",
+                                 headers={**headers, "X-Accel-Buffering": "no"})
+    watch = asyncio.create_task(hung_up(request, run.control))
+    try:
+        await run.go()
+    finally:
+        watch.cancel()
+    if run.error is not None:  # 一次性的出错：照 chat/completions 回 HTTP 的错（拿不到 id，不存）
+        run.error.headers.update(headers)
+        raise run.error
+    if run.result.status == "aborted" and run.shutdown:
+        raise ApiError(503, L("这一轮被停下了（服务在重启）", "The turn was stopped (the server is restarting)"), "server_error", None, "aborted", headers)
+    return JSONResponse(resp_finish(r, run), headers=headers)
+
+
+@api.get("/v1/responses/{rid}")
+async def get_response(rid: str, request: Request):
+    caller = caller_of(request)
+    responses_gate()
+    row = resp_row(caller, rid)
+    if row is None:
+        raise resp_not_found(rid)
+    return JSONResponse(json.loads(row["data"]), headers={"Cache-Control": "no-store"})
+
+
+@api.delete("/v1/responses/{rid}")
+async def delete_response(rid: str, request: Request):
+    caller = caller_of(request)
+    responses_gate()
+    if resp_row(caller, rid) is None:
+        raise resp_not_found(rid)
+    with store.tx() as conn:
+        conn.execute("DELETE FROM engine_api_responses WHERE id=? AND token=?", (rid, caller.token))
+    return JSONResponse({"id": rid, "object": "response", "deleted": True}, headers={"Cache-Control": "no-store"})
+
+
+# —— 会话记录（第 7 批 12.3，2026-10-19：ACP 的 session/load 要重放）——————————————————————————————————————
+#   GET /v1/openmousse/history?id=<会话键>[&agent=<agent id>][&limit=200]
+# 只看得到这把令牌自己的会话（照 list_sessions 找、对话 id 里本来就有令牌名的指纹）：别人的、没有的 404。agent 不写 = 这个键最近用的那个
+# Agent。回这个对话里说过的话，按先后，旧的在前（每天一条会话，几天的接起来；压缩过的照原样，摘要不算）：
+#   {"type": "user", "text", "images": 几张图, "at"}、{"type": "assistant", "text"}、{"type": "thinking", "text"}、
+#   {"type": "tool", "id", "name", "status": completed | failed | pending（没有结果的）, "output": 结果的开头}
+# 多了只给最近 limit 条（最多 HISTORY_MAX），truncated = true。一条字最多 HISTORY_TEXT_MAX 字、工具结果 HISTORY_TOOL_MAX 字（后面写明截了）。
+# 开头的规矩、中间补的 system、调用方带的说明（CLIENT_NOTE）不给。
+
+HISTORY_DEFAULT, HISTORY_MAX = 200, 1000
+HISTORY_TEXT_MAX, HISTORY_TOOL_MAX = 20_000, 2_000
+
+
+def _clip(text: str, n: int) -> str:
+    return text if len(text) <= n else text[:n] + f"… [{len(text) - n} more characters]"
+
+
+def history(conv: str, limit: int) -> tuple[list[dict], bool]:
+    """这个对话说过的话（见上）→ (最近 limit 条, 前面还有没有)。"""
+    with store.read() as conn:
+        rows = conn.execute("SELECT id FROM engine_sessions WHERE key>=? AND key<? ORDER BY key, created_at, rowid",
+                            (f"mousse:{conv}:", f"mousse:{conv};")).fetchall()
+    items: list[dict] = []
+    calls: dict[str, dict] = {}
+    for r in rows:
+        s = DbSession.get(r["id"])
+        for e in s.path() if s else []:
+            if e["kind"] != "message":
+                continue
+            try:
+                m = json.loads(e["data"])
+            except ValueError:
+                continue
+            role = m.get("role")
+            if role == "user" and not m.get("compaction"):
+                blocks = m.get("content") or []
+                items.append({"type": "user", "text": _clip(text_of(m), HISTORY_TEXT_MAX), "images": sum(1 for b in blocks if b.get("type") == "image"),
+                              "at": e["ts"]})
+            elif role == "assistant":
+                for b in m.get("content") or []:
+                    t = b.get("type")
+                    if t == "text" and (b.get("text") or "").strip():
+                        items.append({"type": "assistant", "text": _clip(b["text"], HISTORY_TEXT_MAX)})
+                    elif t == "thinking" and (b.get("text") or "").strip() and not b.get("redacted"):
+                        items.append({"type": "thinking", "text": _clip(b["text"], HISTORY_TEXT_MAX)})
+                    elif t == "tool_call" and b.get("id"):
+                        calls[str(b["id"])] = item = {"type": "tool", "id": str(b["id"]), "name": str(b.get("name") or ""), "status": "pending",
+                                                      "output": ""}
+                        items.append(item)
+            elif role == "tool" and str(m.get("id") or "") in calls:
+                item = calls[str(m["id"])]
+                item["status"] = "failed" if m.get("error") else "completed"
+                item["output"] = _clip(text_of(m), HISTORY_TOOL_MAX)
+    return items[-limit:], len(items) > limit
+
+
+@api.get("/v1/openmousse/history")
+async def session_history(request: Request, id: str, agent: str | None = None, limit: int = HISTORY_DEFAULT):  # noqa: A002
+    caller = caller_of(request)
+    key = id.strip()
+    if not key or len(key) > KEY_MAX or any(ord(c) < 32 or ord(c) == 127 for c in key):
+        raise ApiError(400, L("id 不像会话键", "id isn't a session key"), "invalid_request_error", "id", "invalid_session_id")
+    missing = ApiError(404, L("这把令牌没有这个会话", "No such session for this token"), "invalid_request_error", "id", "session_not_found")
+    if caller.agent is not None and agent and agent != caller.agent:
+        raise missing
+    rows = list_sessions(caller.token, agent=agent or caller.agent, key=key, limit=1)
+    if not rows:
+        raise missing
+    who = rows[0]["agent"]
+    items, more = history(conversation(caller.token, who, key), max(1, min(HISTORY_MAX, limit)))
+    return JSONResponse({"object": "list", "session": key, "agent": who, "model": model_id(who), "data": items, "truncated": more},
+                        headers={"Cache-Control": "no-store"})
+
+
 class Gate:
     """main.py 把它加在最外层（app.add_middleware）：/v1/… 而且开着（enabled）才接，交给上面的 api；不然原样往下交，和没有它一样。"""
 
@@ -926,3 +1345,6 @@ class Gate:
                 i18n.reset(tok)
             return
         await self.app(scope, receive, send)
+
+
+from . import a2a_api  # noqa: E402,F401 — 第 7 批：/v1/a2a（主人自己的 A2A）那几条挂在上面的 api 上

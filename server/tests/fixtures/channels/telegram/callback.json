@@ -1,0 +1,31 @@
+{
+ "callback_query": {
+  "id": "CBQ-0001",
+  "chat_instance": "ci-1",
+  "from": {
+   "id": 1000001,
+   "is_bot": false,
+   "first_name": "Alex",
+   "last_name": "Rivers",
+   "username": "alex_rivers_example",
+   "language_code": "en"
+  },
+  "data": "ib:a:ib-00000000",
+  "message": {
+   "message_id": 777,
+   "date": 1760860800,
+   "chat": {
+    "id": 1000001,
+    "type": "private",
+    "first_name": "Alex"
+   },
+   "from": {
+    "id": 7000001,
+    "is_bot": true,
+    "first_name": "Mousse Test",
+    "username": "mousse_test_bot"
+   },
+   "text": "Needs your OK"
+  }
+ }
+}

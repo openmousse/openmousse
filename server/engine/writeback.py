@@ -693,6 +693,9 @@ async def sweep(now: datetime | None = None) -> list[dict]:
     """看一眼：到点的会话写回、停下来的名片 Agent 对话进待定 → 这一次做了的。今天调模型调够了 per_day 次（没写成的也算）就不再跑。"""
     if not enabled():
         return []
+    from . import estop  # 第 4 批：急停着不写回（engine/estop.py）
+    if estop.paused():
+        return []
     now = now or datetime.now(settings.tz)
     done = []
     for sid, why in await asyncio.to_thread(due, now):

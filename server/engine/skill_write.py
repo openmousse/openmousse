@@ -915,7 +915,8 @@ def review_model(default: str) -> str | None:
 def after_turn(res, *, agent: str, session, offered: set[str], model: str) -> None:
     """一轮说完以后（engine/owner.py 调）：开了后台回看、这一轮值得、今天还有次数、这个 Agent 没在回看 → 后台回看一次。不拖累这一轮。"""
     try:
-        ref = review_model(model)
+        from . import estop  # 第 4 批：急停着不回看（engine/estop.py）
+        ref = None if estop.paused() else review_model(model)
         if ref is None or TOOL_NAME not in offered or res.status != "done" or agent in _reviewing:
             return
         day = datetime.now(settings.tz).strftime("%Y-%m-%d")

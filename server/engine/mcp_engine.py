@@ -49,6 +49,7 @@ class Grant:
     task: str | None = None                      # 后台任务的外援：哪个任务
     origin: str | None = None                    # 这一轮的来路（工具跑的脚本再引出一轮时带上，ChatGPT 套餐据此认后台；后台任务 = task）
     calls: int = 0
+    guard: Any = None                            # 第 2 批：这一轮的死循环检测（engine/guard.py；没开 = False，还没查过 = None）
 
 
 _grants: dict[str, Grant] = {}
@@ -91,8 +92,33 @@ def _stopped(g: Grant) -> bool:
 
 
 async def call(g: Grant, name: str, arguments: dict | None, pictures: list | None = None) -> tuple[str, bool]:
-    """跑一次（见文件开头「关卡」）。→ (给模型的字, 是不是出错)。交给用户点头的（approval-pending）不算出错。
-    pictures：给一个列表，工具结果里的图 (base64, 媒体类型) 放进去（⑫b，MCP 的 image 内容）。"""
+    """跑一次（_call，见文件开头「关卡」）。→ (给模型的字, 是不是出错)。交给用户点头的（approval-pending）不算出错。
+    pictures：给一个列表，工具结果里的图 (base64, 媒体类型) 放进去（⑫b，MCP 的 image 内容）。
+    第 2 批：engine.loop.guard 开了，先过死循环检测（engine/guard.py，一把令牌一个）：反复失败、只读原地打转的，结果后面补一句提醒；
+    没人在看的那几轮到阈值不再跑那个调用（这一轮停不停由 Claude Code 自己定）。关卡没放的也算一次失败（分不出来）。"""
+    tool = g.tools.get(name)
+    if g.guard is None:
+        from .guard import Guard
+        g.guard = Guard.make(g.origin) or False
+    if not g.guard or tool is None:
+        return await _call(g, name, arguments, pictures)
+    raw: Any = dict(arguments or {})
+    if tool.prepare is not None:
+        try:
+            raw = tool.prepare(raw)
+        except Exception:  # noqa: BLE001 — 修不了就原样交给下面查
+            pass
+    args, problem = check_args(raw, tool.schema)
+    if problem:
+        return await _call(g, name, arguments, pictures)
+    if (d := g.guard.before(name, args)) is not None:
+        return f"Not run: {d.message}", True
+    text, err = await _call(g, name, arguments, pictures)
+    d = g.guard.after(name, args, ok=not err, text=text, read=tool.level(args)[0] == "read")
+    return (text + d.note(), err) if d is not None else (text, err)
+
+
+async def _call(g: Grant, name: str, arguments: dict | None, pictures: list | None = None) -> tuple[str, bool]:
     tool = g.tools.get(name)
     if tool is None:
         return L(f"这一轮没有 {name} 这个工具。能用的：{', '.join(g.tools) or '（没有）'}",

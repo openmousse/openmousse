@@ -1,0 +1,34 @@
+{
+ "id": "6100001",
+ "application_id": "7100002",
+ "type": 3,
+ "token": "INTERACTION-TOKEN-0001",
+ "version": 1,
+ "channel_id": "9500001",
+ "user": {
+  "id": "8100001",
+  "username": "alex.rivers",
+  "global_name": "Alex Rivers",
+  "discriminator": "0",
+  "avatar": null
+ },
+ "locale": "en-US",
+ "data": {
+  "custom_id": "ib:a:CARD",
+  "component_type": 2
+ },
+ "message": {
+  "id": "MESSAGE",
+  "channel_id": "9500001",
+  "author": {
+   "id": "7100001",
+   "username": "mousse-test",
+   "global_name": null,
+   "discriminator": "0",
+   "avatar": null,
+   "bot": true
+  },
+  "content": "card",
+  "type": 0
+ }
+}

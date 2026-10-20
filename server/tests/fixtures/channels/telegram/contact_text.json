@@ -1,0 +1,19 @@
+{
+ "message": {
+  "message_id": 16,
+  "date": 1760860800,
+  "chat": {
+   "id": 1000002,
+   "type": "private",
+   "first_name": "Sam"
+  },
+  "from": {
+   "id": 1000002,
+   "is_bot": false,
+   "first_name": "Sam",
+   "username": "sam_example",
+   "language_code": "en"
+  },
+  "text": "Is Alex free on Thursday evening?"
+ }
+}

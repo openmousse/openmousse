@@ -1291,11 +1291,14 @@ export function NotifySettingsScreen() {
 export function MyNameScreen() {
   const t = useTheme();
   const nav = useNavigation<any>();
+  const route = useRoute<any>();
   const { appName } = useStore();
   const [suggest, setSuggest] = useState<string | null>(null);
   const [v, setV] = useState('');
   const [busy, setBusy] = useState(false);
-  const next = useCallback(() => nav.reset({ index: 0, routes: [{ name: 'Starter' }] }), [nav]);
+  // 下一步：老服务器去「接上常用的」（Starter）；第一次打开的三步（SetupScreens.tsx）带 next = Tabs（「连接常用服务」挪进了设置）
+  const after = route.params?.next === 'Tabs' ? 'Tabs' : 'Starter';
+  const next = useCallback(() => nav.reset({ index: 0, routes: [{ name: after }] }), [nav, after]);
   useEffect(() => {
     fr.card().then((c) => {
       if (c.name === undefined || c.name) next();

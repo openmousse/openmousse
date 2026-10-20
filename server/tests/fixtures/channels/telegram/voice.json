@@ -1,0 +1,26 @@
+{
+ "message": {
+  "message_id": 14,
+  "date": 1760860800,
+  "chat": {
+   "id": 1000001,
+   "type": "private",
+   "first_name": "Alex"
+  },
+  "from": {
+   "id": 1000001,
+   "is_bot": false,
+   "first_name": "Alex",
+   "last_name": "Rivers",
+   "username": "alex_rivers_example",
+   "language_code": "en"
+  },
+  "voice": {
+   "file_id": "VOICE-0001",
+   "file_unique_id": "v1",
+   "duration": 4,
+   "mime_type": "audio/ogg",
+   "file_size": 5200
+  }
+ }
+}

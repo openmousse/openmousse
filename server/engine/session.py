@@ -12,7 +12,9 @@
   message     一条消息（下面的中立格式）。备料变了往后补的那条 system 带 "ctx"（补完以后各样背景的指纹，engine/context.py）
   context     不是消息：会话开头备料的指纹 {"ctx": …}，或者「这一样变了但模型已经知道」时只更新指纹；不发给模型
   compaction  压缩（engine/compact.py）：{"summary", "first_kept": 从哪一条起原样保留（None = 全压了）, "system": 按压缩时的背景
-              重写的开头, "ctx", "tokens_before", "model", "usage", "reason", …}
+              重写的开头, "ctx", "tokens_before", "model", "usage", "reason", …}；手动的（/compact，第 2 批）带 "fresh"、"focus"
+  prune       第 2 批：旧的工具结果裁一批（compact.prune）：{"ids": [条目 id], "head", "tail", "before", "rearm"}；不是消息，view() 照它把
+              那几条工具结果的字换成留头尾的样子（trim_result），库里原文不动
 view() 照 pi 的 buildSessionContext 从叶子走回根：路上有压缩就是 [摘要（一条 user）] + 从 first_kept 起保留的 + 压缩以后的；
 保留的那几轮去掉 Claude 的思考块（前缀变了，官方：keep-tail 压缩要去掉，不然 400），带 ctx 的补充不再发（重写的开头里已经是最新的）。
 同一份库里的记录每次重建出来一模一样（压缩以后的前缀也是稳定的）。
@@ -115,6 +117,22 @@ def summary_message(summary: str) -> dict:
     return {**user(f"{SUMMARY_PREFIX}\n\n<summary>\n{summary.strip()}\n</summary>"), "compaction": True}
 
 
+PRUNED = "[Old tool result trimmed to save space: kept the first {head} and last {tail} of {n} characters.]"
+
+
+def trim_result(msg: dict, head: int, tail: int) -> dict:
+    """裁过的旧工具结果发给模型时的样子（第 2 批，compact.prune；OpenClaw 的 soft-trim 那句说法）：字留头尾、中间一句说明；
+    图块不动（images.py 自己把老图换成字）。同一条每次裁出来一样（前缀稳定）。没有能裁的 → 原样。"""
+    out, changed = [], False
+    for b in msg.get("content") or []:
+        t = str(b.get("text") or "") if b.get("type") == "text" else ""
+        if len(t) > head + tail + len(PRUNED) + 40:
+            b = {**b, "text": f"{t[:head]}\n\n{PRUNED.format(head=head, tail=tail, n=len(t))}\n\n{t[-tail:]}"}
+            changed = True
+        out.append(b)
+    return {**msg, "content": out, "pruned": True} if changed else msg
+
+
 def strip_thinking(msg: dict) -> dict:
     """压缩以后保留下来的 Claude 回复：去掉思考块（文字、工具调用照留）。Claude 的思考签名绑着生成它时的整个前缀，压缩以后前缀变了，
     原样发回去会 400（官方 keep-tail compaction 的说法）。别家的思考没有签名，原样留着（DeepSeek、Kimi 每一轮都带回去，见 provider_openai）。"""
@@ -213,6 +231,8 @@ class DbSession:
         self.model: str | None = row["model"]
         self.system: str = row["system"] or ""
         self.leaf: str | None = row["leaf"]
+        self.created_at: str | None = row["created_at"]
+        self.updated_at: str | None = row["updated_at"]  # 读出来那一刻的（闲置换新看它，engine/reset.py）
 
     @classmethod
     def get(cls, sid: str) -> DbSession | None:
@@ -223,7 +243,8 @@ class DbSession:
     @classmethod
     def latest(cls, key: str) -> DbSession | None:
         with store.read() as conn:
-            r = conn.execute("SELECT * FROM engine_sessions WHERE key=? ORDER BY created_at DESC, rowid DESC LIMIT 1", (key,)).fetchone()
+            # 按真时间排（created_at 带写下那一刻的时区偏移：换了时区、夏令时回拨那一小时，按字符串排新的会排到旧的后面）
+            r = conn.execute("SELECT * FROM engine_sessions WHERE key=? ORDER BY julianday(created_at) DESC, rowid DESC LIMIT 1", (key,)).fetchone()
         return cls(r) if r else None
 
     @classmethod
@@ -273,8 +294,16 @@ class DbSession:
                     ctx = d["ctx"]
                     break
         ci = max((i for i, r in enumerate(path) if r["kind"] == "compaction"), default=-1)
+        cut: dict[str, tuple[int, int]] = {}  # 第 2 批：裁过的旧工具结果（prune 条目，compact.prune）：条目 id → (留头, 留尾)
+        for r in path:
+            if r["kind"] == "prune":
+                d = json.loads(r["data"])
+                cut.update({str(i): (int(d.get("head") or 1500), int(d.get("tail") or 1500)) for i in d.get("ids") or []})
+
+        def shown(r: dict, m: dict) -> dict:
+            return trim_result(m, *cut[r["id"]]) if cut and r["id"] in cut and m.get("role") == "tool" else m
         if ci < 0:
-            rows = [(r, json.loads(r["data"])) for r in path if r["kind"] == "message"]
+            rows = [(r, shown(r, json.loads(r["data"]))) for r in path if r["kind"] == "message"]
             return View(messages=[m for _, m in rows], rows=rows, ctx=ctx)
         comp = json.loads(path[ci]["data"])
         rewritten = isinstance(comp.get("system"), str) and bool(comp["system"])
@@ -287,9 +316,9 @@ class DbSession:
             m = json.loads(r["data"])
             if rewritten and m.get("role") == "system" and "ctx" in m:
                 continue
-            rows.append((r, strip_thinking(m)))
+            rows.append((r, shown(r, strip_thinking(m))))
         fresh = len(rows)
-        rows += [(r, json.loads(r["data"])) for r in path[ci + 1:] if r["kind"] == "message"]
+        rows += [(r, shown(r, json.loads(r["data"]))) for r in path[ci + 1:] if r["kind"] == "message"]
         summary = str(comp.get("summary") or "")
         return View(messages=[summary_message(summary), *(m for _, m in rows)], rows=rows, fresh=fresh, summary=summary,
                     system=comp["system"] if rewritten else None, ctx=ctx, compaction=comp)

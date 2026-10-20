@@ -80,7 +80,12 @@ ENGINE = "engine"
 READ, UNDO, ASK, OFF = "read", "undo", "ask", "off"
 ACTIONS = ("spawn", "list", "get", "send", "stop", "retry", "quota")
 CHILD_NEVER = frozenset({"handoff", "inbox", "proposals", "agents", "settings", "cron", "skill_manage",
-                         "ask_user", "enter_plan_mode", "propose_plan"})  # 和用户打交道、动系统的：子 Agent 不给
+                         "ask_user", "enter_plan_mode", "propose_plan",
+                         "host_process",  # 和用户打交道、动系统的：子 Agent 不给（第 3 批：后台命令的结果交不回子 Agent）
+                         "nodes",  # 第 8 批：主人的设备（拍照、定位、截屏、在他电脑上跑命令，engine/nodes.py）：后台的子 Agent 不给
+                         "view_image", "read_pdf", "transcribe", "speak", "image_generate",
+                         "video_analyze", "chrome", "llm_task", "execute_code", "video_generate", "music_generate"})  # 第 3 批：媒体那几样、子任务按量花钱、用户的 Chrome 带着他的
+# 登录、代码里的调用走主人回合的关卡（engine/codeexec.py），后台的子 Agent 默认不给
 # skill_manage（第 13 步，engine/skill_write.py）：改自己的做法只在用户看着的对话里
 # ⑫b：问用户、计划模式也不给（问不了用户：要问的写进结果）；todo 给（管它自己的清单，按 task:<id> 存）
 CHILD_ASK = frozenset({"tree add", "tree prune-plan"})  # 子 Agent 写世界树（跨平台共享的记忆）、交修剪计划算要点头 → 不做（Hermes：子 Agent 不写共享的 MEMORY.md）
@@ -504,10 +509,14 @@ async def spawn_from(args: dict, ctx: ToolCtx, *, me: str, depth: int, parent: s
 def create(*, thread: str, agent: str, params: dict, depth: int = 1, parent: str | None = None, turn: str | None = None,
            call: str | None = None, retry_of: str | None = None, inbox: str | None = None) -> dict:
     """记下一个任务（status queued）。params：task / label / runner / model / minutes。"""
-    from . import runners
+    from . import estop, runners, spend
+    if estop.paused():  # 第 4 批：急停着不派新的后台任务（tasks 工具、收件箱卡、重派、/api/engine/bg 都经这里）
+        raise ToolFailure(estop.notice())
     runner = params.get("runner") or ENGINE
     level = child_level() if runner == ENGINE else runners.level(runner)
     model = params.get("model") or (model_for(thread) if runner == ENGINE else runners.default_model(runner))
+    if runner == ENGINE and (hit := spend.blocked(agent=agent, model=model or None)):  # 第 4 批：今天的花费到了上限（engine/spend.py）
+        raise ToolFailure(spend.message(hit))
     return ledger.insert(id="tk_" + uuid.uuid4().hex[:12], thread=thread, agent=agent, parent=parent, depth=depth, turn=turn, call=call,
                          label=params.get("label") or "", task=params["task"], runner=runner, model=model or None, level=level,
                          timeout_s=int(params.get("minutes") or limits()[1]) * 60, status="queued", created_at=ledger.now_ms(),

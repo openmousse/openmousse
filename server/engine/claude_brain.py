@@ -7,8 +7,9 @@ Agent，我们的工具和关卡照旧在我们的服务器上把关。
   我们不读、不存、不传它的令牌，不拿它的令牌直接调接口，也不用 claude setup-token；环境变量里像密钥的都去掉（它只能用它自己的登录）；
   只有用户自己的回合用它（models.may_spend：外人、赛博、对外接口一律不行，不替别人花他的套餐）。
 
-模型：claude-code/<型号>（opus / sonnet / haiku 或完整 id）→ --model <型号>；engine.claude_code.effort → --effort；
-  engine.claude_code.fallback_model → --fallback-model。这台电脑上有用户自己登录的 Claude Code（runners 的检测）才出现在 app 里。
+模型：claude-code/<型号>（opus / sonnet / haiku 或完整 id）→ --model <型号>；engine.claude_code.effort → --effort（第 2 批：这个对话
+  /think 设了、或者 engine.think 给这个 Agent 写了的先用它，engine/think.py）；engine.claude_code.fallback_model → --fallback-model。
+  这台电脑上有用户自己登录的 Claude Code（runners 的检测）才出现在 app 里。
 
 一轮怎么跑（respond，owner.respond 转过来的；一轮起一个 claude 进程，说完就退）：
   会话：还是每个对话每个逻辑日一条 DbSession（owner.open_day：备料、抄进今天早先的记录）。Claude Code 自己的会话 id 记在这条会话里
@@ -108,7 +109,7 @@ from typing import Any
 from config import settings
 from i18n import L
 
-from . import events, mcp_engine, models, runners
+from . import events, mcp_engine, models, runners, spend, think
 from .errors import EngineError
 from .loop import Control, Result, Tool
 from .session import DbSession, text_of, time_stamp, user, with_time
@@ -235,6 +236,7 @@ async def ready_helper() -> dict:
         if runners.bin_of(KEY) is None:  # 命令不在了（卸了、换了地方）
             raise EngineError(advice("broken", L("这台电脑上找不到 claude 命令", "the claude command isn't on this computer")), kind="broken")
         raise EngineError(advice("auth", L("这台电脑上的 Claude Code 没登录", "Claude Code on this computer isn't signed in")), kind="auth")
+    spend.brain(info)  # 第 4 批：API 密钥登录的照算钱，今天到了上限就不开跑（engine/spend.py）
     return info
 
 
@@ -271,7 +273,7 @@ def child_env() -> dict[str, str]:
 
 
 def command(exe: str, *, conf: Path, system_file: Path, tools: list[Tool], model: str, session: str | None, resume: bool,
-            persist: bool = True) -> list[str]:
+            persist: bool = True, effort_: str | None = None) -> list[str]:
     builtin = builtin_tools()
     cmd = [exe, "-p", "--input-format", "stream-json", "--output-format", "stream-json", "--verbose", "--include-partial-messages",
            "--setting-sources", "", "--settings", SETTINGS, "--strict-mcp-config", "--mcp-config", str(conf),
@@ -280,7 +282,7 @@ def command(exe: str, *, conf: Path, system_file: Path, tools: list[Tool], model
     allow = mcp_engine.names(tools) + builtin
     if allow:
         cmd += ["--allowedTools", ",".join(allow)]
-    if e := effort():
+    if e := effort_ if effort_ in EFFORTS else effort():
         cmd += ["--effort", e]
     if f := fallback_model():
         cmd += ["--fallback-model", f]
@@ -393,6 +395,8 @@ def plan(session: DbSession) -> tuple[str | None, list[dict], str, float | None]
     at, sid, total = None, None, None
     for i in range(len(path) - 1, -1, -1):
         r = path[i]
+        if r["kind"] == "compaction" and '"fresh": true' in r["data"]:  # 第 2 批：/compact 以后开新的，开头带压好的那份（compact.compact）
+            break
         if r["kind"] == "message" and r["role"] == "assistant" and '"cc"' in r["data"]:
             d = json.loads(r["data"])
             if d.get("cc"):
@@ -459,6 +463,7 @@ class Turn:
     notices: list[str] = field(default_factory=list)     # 它自己编的那几条回复的字（接口报错、没登录……）：不给用户看成回复，报错时用
     api_errors: list[str] = field(default_factory=list)  # 那几条上它标的错（authentication_failed / billing_error / rate_limit …）
     origin: str | None = None                   # 这一轮的来路：交给经 MCP 跑的工具（脚本再引出一轮时带上，engine/mcp_engine.py）
+    effort: str | None = None                   # 第 2 批：这一轮的 --effort（/think、engine.think，engine/think.py；不给 = engine.claude_code.effort）
     oneshot: bool = False                       # 一次性调用（ask）：零工具、没有 MCP；排位子时排在整轮对话后面（_acquire）
     input_closed: bool = False
     stopping: str | None = None                 # user / idle
@@ -1066,7 +1071,8 @@ async def _turn(thread: str, day: str, agent: str, session: DbSession, ready, to
         for attempt in (1, 2):
             resume = sid is not None
             turn = Turn(tid=tid, conversation=thread, model=model, tools={t.name: t for t in tools}, emit=ev, on_text=on_text, control=control,
-                        session=sid or str(uuid.uuid4()), idle=idle, left=list(carry), origin=origin)
+                        session=sid or str(uuid.uuid4()), idle=idle, left=list(carry), origin=origin,
+                        effort=think.effort_for(thread, agent, model))
 
             def take(took: list[Sent], late: bool = False, _turn: Turn = turn) -> None:
                 """插话报到了（并进来了）：它之前说的字先写进会话，再写这几句，发 steer 事件（chat.py 把那条的连接接到这一轮）。
@@ -1284,7 +1290,7 @@ async def _start(turn: Turn, info: dict, agent: str, system: str, tools: list[To
         web = " Besides them you only have Claude Code's web search." if builtin_tools() else " They are the only tools you have (no web search either)."
         system_file = _private(base_dir() / f".system-{stem}.md", system.rstrip() + "\n\n" + BRAIN_NOTE.format(web=web))
         cmd = command(info["bin"], conf=conf, system_file=system_file, tools=tools, model=name, session=turn.session, resume=resume,
-                      persist=persist)
+                      persist=persist, effort_=turn.effort)
         await drive(turn, cmd, work, child_env(), line(msg, str(uuid.uuid4()), turn.session, prefix=prefix))
     finally:
         mcp_engine.revoke(tok)

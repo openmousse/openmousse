@@ -1,0 +1,24 @@
+Return-Path: <sam@example.com>
+Delivered-To: agent@example.org
+Authentication-Results: mx.example.org; dkim=pass header.d=example.com; dmarc=pass header.from=example.com
+From: "Sam Lee" <sam@example.com>
+To: agent@example.org
+Subject: Photos from the trip
+Date: Mon, 20 Oct 2030 10:00:00 +0000
+Message-ID: <photos-0901@example.com>
+MIME-Version: 1.0
+Content-Type: multipart/mixed; boundary="=-=fake-boundary-0901=-="
+
+--=-=fake-boundary-0901=-=
+Content-Type: text/plain; charset="utf-8"
+
+Can you pass these on to Alex?
+
+--=-=fake-boundary-0901=-=
+Content-Type: application/pdf; name="itinerary.pdf"
+Content-Disposition: attachment; filename="itinerary.pdf"
+Content-Transfer-Encoding: base64
+
+JVBERi0xLjQKJWZha2UgcGRmIGZvciB0ZXN0cwolJUVPRgo=
+
+--=-=fake-boundary-0901=-=--

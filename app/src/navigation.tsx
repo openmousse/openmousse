@@ -8,7 +8,8 @@ import { ChatArchiveScreen, ChatScreen, ThreadScreen, useChatBadge } from './scr
 import { InfoScreen } from './screens/InfoScreen';
 import { GoalsScreen } from './screens/GoalsScreen';
 import { GroupScreen } from './screens/GroupScreen';
-import { MeScreen } from './screens/MeScreen';
+import { MeScreen, SettingsOtherScreen } from './screens/MeScreen';
+import { SettingsHandsScreen, SettingsMemoryScreen, SettingsProvidersScreen, SettingsSearchScreen, SettingsUsageScreen } from './screens/SettingsCenter';
 import { ActivityScreen, AvatarScreen, IdentityScreen, JournalScreen, MemoryScreen, ModelsScreen, SecurityScreen } from './screens/MoreScreens';
 import { NewGroupScreen } from './screens/NewGroupScreen';
 import { BoardHistoryScreen } from './screens/BoardHistoryScreen';
@@ -16,6 +17,11 @@ import { CollectionScreen } from './screens/CollectionScreen';
 import { PageScreen } from './screens/PageScreen';
 import { ScanScreen } from './screens/ScanScreen';
 import { HardwareScreen } from './screens/HardwareScreen';
+import { PhoneNodeScreen } from './nodes/PhoneNodeScreen';
+import { NodeScreen, NodesScreen } from './nodes/NodesScreen';
+import { NodeCameraScreen } from './nodes/NodeCameraScreen';
+import { PhoneNodeRunner } from './nodes/NodeEntries';
+import { TalkScreen } from './talk/TalkScreen';
 import { EditGroupScreen } from './screens/EditGroupScreen';
 import { TaskScreen, TasksScreen } from './screens/TasksScreen';
 import { ScheduleFeedScreen } from './screens/ScheduleFeedScreen';
@@ -50,6 +56,8 @@ import { SharesScreen } from './screens/SharesScreen';
 import { AddFriendScreen, CardAgentScreen, FriendChatScreen, MyNameScreen, NotifySettingsScreen } from './screens/FriendsScreens';
 import { FriendAgentsScreen } from './screens/FriendAgentsScreen';
 import { VizKitScreen } from './screens/VizKitScreen';
+import { SetupDoneScreen, SetupGate, SetupMemoryScreen, SetupModelsScreen, SetupNameScreen, SetupProviderScreen, SetupSearchKeyScreen, SetupSearchScreen } from './screens/SetupScreens';
+import { stepTransition } from './components/setupKit';
 import { MeetingScreen, NewMeetingScreen } from './screens/MeetingScreens';
 import { findCode } from './api/friends';
 import type { PushTarget } from './data/types';
@@ -112,6 +120,13 @@ export const navigationRef = createNavigationContainerRef<any>();
 
 /** 有没有这个路由（会议的 Meeting / NewMeeting 由会议那条线加，没合进来之前没有）。 */
 export const hasRoute = (name: string) => !!navigationRef.getRootState()?.routeNames?.includes(name);
+
+/** 设备节点（第 8 批）：Agent 要这台手机拍照时，打开看得到取景的确认页（src/nodes/phone.ts）。打不开 → false。 */
+const openNodeCamera = (id: string) => {
+  if (!navigationRef.isReady() || !hasRoute('NodeCamera')) return false;
+  navigationRef.navigate('NodeCamera', { id });
+  return true;
+};
 
 /**
  * 输入框上面的引用：从收件箱「去对话里说」带过来的（inboxId：显示「回复：标题」，发出去时带上；follow：「已处理」里点「跟进」，显示「跟进：标题」），
@@ -273,6 +288,15 @@ export function RootNavigator() {
         <Stack.Screen name="AppDetail" component={AppDetailScreen} />
         <Stack.Screen name="CustomApp" component={CustomAppScreen} />
         <Stack.Screen name="MyName" component={MyNameScreen} options={{ gestureEnabled: false }} />
+        {/* 第一次打开的三步 + 设好了（2026-10-19，SetupScreens.tsx）：转场快，系统开了「减少动态效果」就不动 */}
+        <Stack.Screen name="Setup" component={SetupModelsScreen} options={() => ({ ...stepTransition() })} />
+        <Stack.Screen name="SetupProvider" component={SetupProviderScreen} options={() => ({ ...stepTransition() })} />
+        <Stack.Screen name="SetupSearch" component={SetupSearchScreen} options={() => ({ ...stepTransition(), gestureEnabled: true })} />
+        <Stack.Screen name="SetupSearchKey" component={SetupSearchKeyScreen} options={() => ({ ...stepTransition() })} />
+        <Stack.Screen name="SetupMemory" component={SetupMemoryScreen} options={() => ({ ...stepTransition() })} />
+        <Stack.Screen name="SetupDone" component={SetupDoneScreen} options={() => ({ ...stepTransition(), gestureEnabled: false })} />
+        {/* 给助手起个名字（设好了之后、好友怎么称呼你之前；设置里也能进，from = settings） */}
+        <Stack.Screen name="SetupName" component={SetupNameScreen} options={({ route }: { route: { params?: { from?: string } } }) => ({ ...stepTransition(), gestureEnabled: route.params?.from === 'settings' })} />
         <Stack.Screen name="Starter" component={StarterScreen} options={{ gestureEnabled: false }} />
         {/* 每个对话一页（getId）：从一个 Agent 跳到另一个是新的一页，跳回已经开着的就回到它 */}
         <Stack.Screen name="Chat" component={ThreadScreen} getId={({ params }: { params?: { id?: string } }) => params?.id ?? 'main'} />
@@ -288,6 +312,14 @@ export function RootNavigator() {
         <Stack.Screen name="Page" component={PageScreen} getId={({ params }: { params?: { id?: string } }) => params?.id} />
         <Stack.Screen name="Scan" component={ScanScreen} options={{ presentation: 'fullScreenModal' }} />
         <Stack.Screen name="Hardware" component={HardwareScreen} />
+        {/* 设备节点（第 8 批）：这台手机、设备和节点、一个节点、拍照确认（全屏取景，点了才拍） */}
+        <Stack.Screen name="PhoneNode" component={PhoneNodeScreen} />
+        <Stack.Screen name="Nodes" component={NodesScreen} />
+        <Stack.Screen name="Node" component={NodeScreen} getId={({ params }: { params?: { id?: string } }) => params?.id} />
+        <Stack.Screen name="NodeCamera" component={NodeCameraScreen} options={{ presentation: 'fullScreenModal', gestureEnabled: false }}
+          getId={({ params }: { params?: { id?: string } }) => params?.id} />
+        {/* 对讲（第 8 批）：主对话页头的对讲按钮进来，全屏，左上角退出 */}
+        <Stack.Screen name="Talk" component={TalkScreen} options={{ presentation: 'fullScreenModal', gestureEnabled: false }} />
         <Stack.Screen name="HistoryDay" component={HistoryDayScreen} />
         <Stack.Screen name="Inbox" component={InboxScreen} />
         <Stack.Screen name="NewGroup" component={NewGroupScreen} options={{ presentation: 'modal' }} />
@@ -308,6 +340,13 @@ export function RootNavigator() {
         <Stack.Screen name="Task" component={TaskScreen} />
         {/* 设置（「我」）：2026-09-27 从 tab 挪到侧栏底部，2026-10-13 起在「对话」页右上角 */}
         <Stack.Screen name="Me" component={MeScreen} />
+        {/* 设置中心（2026-10-19，SettingsCenter.tsx）：密钥 → 模型 / 搜索 / 向量 / 用量，连接 → 手（只读），其他（原来设置首页的那些） */}
+        <Stack.Screen name="SettingsProviders" component={SettingsProvidersScreen} />
+        <Stack.Screen name="SettingsSearch" component={SettingsSearchScreen} />
+        <Stack.Screen name="SettingsMemory" component={SettingsMemoryScreen} />
+        <Stack.Screen name="SettingsUsage" component={SettingsUsageScreen} />
+        <Stack.Screen name="SettingsHands" component={SettingsHandsScreen} />
+        <Stack.Screen name="SettingsOther" component={SettingsOtherScreen} />
         <Stack.Screen name="ThinkTalk" component={ThinkTalkScreen} />
         <Stack.Screen name="ThinkDone" component={ThinkDoneScreen} />
         <Stack.Screen name="ThinkWrite" component={ThinkWriteScreen} options={({ route }: { route: { params?: { zen?: boolean } } }) => ({ gestureEnabled: !route.params?.zen, animation: route.params?.zen ? 'fade' : 'slide_from_bottom' })} />
@@ -346,6 +385,11 @@ export function RootNavigator() {
         <Stack.Screen name="Meeting" component={MeetingScreen} />
         <Stack.Screen name="NewMeeting" component={NewMeetingScreen} options={{ presentation: 'modal' }} />
       </Stack.Navigator>
+      {/* 已经在用的安装还没有能用的模型：在对话页上时带进三步（一次打开一次，点过「以后再说」就不再带） */}
+      <SetupGate />
+
+      {/* 设备节点（第 8 批）：连上服务器后，这台手机照「这台手机」里打开的几样在前台等活；不画东西 */}
+      <PhoneNodeRunner openCamera={openNodeCamera} />
     </NavigationContainer>
   );
 }

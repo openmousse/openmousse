@@ -1,0 +1,28 @@
+{
+ "message": {
+  "message_id": 17,
+  "date": 1760860800,
+  "chat": {
+   "id": 1000002,
+   "type": "private",
+   "first_name": "Sam"
+  },
+  "from": {
+   "id": 1000002,
+   "is_bot": false,
+   "first_name": "Sam",
+   "username": "sam_example",
+   "language_code": "en"
+  },
+  "caption": "Look at this",
+  "photo": [
+   {
+    "file_id": "PHOTO-contact-0001",
+    "file_unique_id": "pc1",
+    "width": 800,
+    "height": 600,
+    "file_size": 54000
+   }
+  ]
+ }
+}

@@ -27,7 +27,9 @@ auth-profiles/usage-failure-state.ts 的冷却，commit c5c2b7fd）和 Hermes（
   max_retries、兼容接口的 RETRY_DELAYS），loop 的 MODEL_RETRIES 照旧重试完才换；只有外人回合的一次性调用（oneshot.ask_json 有
   总时限）超时不再等第二遍，直接换。没配备用链、链里的都用不了，照旧。
 
-冷却（记在进程里，重启就清了）：只记换一把密钥 / 换个型号能好的那几种（OpenClaw 不记过载、5xx、超时、上下文太长）：
+冷却：只记换一把密钥 / 换个型号能好的那几种（OpenClaw 不记过载、5xx、超时、上下文太长）。第 7 批（10/19）起存盘：<data_dir>/engine/
+cooldowns.json（0600，先写临时文件再改名），服务起来以后第一次用到时读回来，过了期的扔掉（照 OpenClaw 的 auth-profiles 冷却存在状态里、
+Hermes 的 credential_pool_model_cooldowns）。记的只有记号（变量名 + 值的短指纹）、给人看的 label、原因、次数、到什么时候，没有密钥：
   rate_limit       这把密钥 + 这个型号（Anthropic、OpenAI 的限流按型号算）：30 秒起，连着再来翻倍，最多 1 小时
   billing          这把密钥（这一家的所有型号）：10 分钟起，翻倍，最多 6 小时
   auth             这把密钥：10 分钟起，翻倍，最多 1 小时（.env 里换了值就算另一把，马上能用）
@@ -39,9 +41,15 @@ auth-profiles/usage-failure-state.ts 的冷却，commit c5c2b7fd）和 Hermes（
 """
 from __future__ import annotations
 
+import contextlib
 import hashlib
+import json
+import os
 import re
+import threading
 import time
+from contextvars import ContextVar
+from pathlib import Path
 
 from . import models
 from .errors import EngineError
@@ -51,6 +59,8 @@ KEY_REASONS = ("rate_limit", "billing", "auth")  # 换一把密钥可能就好�
 STREAK = 24 * 3600          # 隔了这么久再错，不算「连着」
 PROBE = 120                 # 链里剩下的都在冷却：这么多秒内冷却完的拿来试一次
 _cool: dict[str, dict] = {}  # 记号 → {"until", "at"（monotonic）, "reason", "n", "label"（给人看的，不含密钥）}
+_loaded = False              # 存盘的冷却读回来了没有（第一次用到时读）
+_disk = threading.Lock()
 
 BILLING = re.compile(r"billing|credit balance|insufficient[_ ](?:quota|balance|funds|credits?)|payment required|out of credits|"
                      r"exceeded your current quota|balance (?:is )?(?:too low|insufficient|not enough)|account (?:is )?(?:suspended|deactivated|"
@@ -127,6 +137,54 @@ def reason_of(e: EngineError) -> str | None:
 
 # —— 冷却 ——————————————————————————————————————————————————————————————————
 
+def store_path() -> Path:
+    from config import settings
+    return Path(settings.data_dir) / "engine" / "cooldowns.json"
+
+
+def _load() -> None:
+    """服务起来以后第一次用到冷却时：读回存盘的（墙上的钟换算回 monotonic），过了期的扔掉。读不了 = 当没有。"""
+    global _loaded
+    if _loaded:
+        return
+    _loaded = True
+    try:
+        data = json.loads(store_path().read_text(encoding="utf8"))
+    except (OSError, ValueError):
+        return
+    slots = data.get("slots") if isinstance(data, dict) else None
+    now_w, now_m = time.time(), time.monotonic()
+    for slot, c in (slots.items() if isinstance(slots, dict) else []):
+        try:
+            until, at = float(c["until"]), float(c["at"])
+            reason, n = str(c["reason"]), int(c["n"])
+        except (KeyError, TypeError, ValueError):
+            continue
+        if until <= now_w or reason not in COOL or slot in _cool:
+            continue
+        _cool[str(slot)] = {"until": now_m + (until - now_w), "at": now_m - max(0.0, now_w - at), "reason": reason, "n": n,
+                            "label": str(c.get("label") or "")[:200]}
+
+
+def _save() -> None:
+    """记一笔、清一笔以后存盘：只存还没过期的；原子写（同一目录的 0600 临时文件 → 改名）。写不了只是重启后不记得，不耽误这一轮。"""
+    now_w, now_m = time.time(), time.monotonic()
+    slots = {k: {"until": now_w + (c["until"] - now_m), "at": now_w - (now_m - c["at"]), "reason": c["reason"], "n": c["n"], "label": c["label"]}
+             for k, c in _cool.items() if c["until"] > now_m}
+    p = store_path()
+    tmp = p.with_name(f".{p.name}.{os.getpid()}.tmp")
+    with _disk:
+        try:
+            p.parent.mkdir(parents=True, exist_ok=True)
+            fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+            with os.fdopen(fd, "w", encoding="utf8") as f:
+                json.dump({"v": 1, "slots": slots}, f, ensure_ascii=False)
+            os.replace(tmp, p)
+        except OSError:
+            with contextlib.suppress(OSError):
+                os.unlink(tmp)
+
+
 def key_id(name: str, value: str) -> str:
     """一把密钥的记号：变量名 + 值的短指纹（不是密钥本身；值换了就是另一把）。"""
     return f"{name or '-'}#{hashlib.sha256(value.encode()).hexdigest()[:8]}" if value else (name or "-")
@@ -138,6 +196,7 @@ def _keys(p: dict) -> list[tuple[str, str, str]]:
 
 
 def _left(slot: str, now: float) -> float:
+    _load()
     c = _cool.get(slot)
     return max(0.0, c["until"] - now) if c else 0.0
 
@@ -190,11 +249,13 @@ def note(ref: str, kid: str | None, reason: str) -> None:
         slot, label = f"key:{name}:{kid}:{model_id}", f"{ref} · {kid.split('#')[0]}"
     else:
         slot, label = f"key:{name}:{kid}", f"{name} · {kid.split('#')[0]}"
+    _load()
     now = time.monotonic()
     cur = _cool.get(slot)
     n = cur["n"] + 1 if cur and cur["reason"] == reason and now - cur["at"] < STREAK else 1
     base, cap = COOL[reason]
     _cool[slot] = {"until": now + min(cap, base * 2 ** (n - 1)), "at": now, "reason": reason, "n": n, "label": label}
+    _save()
 
 
 def clear(ref: str, kid: str | None) -> None:
@@ -203,28 +264,39 @@ def clear(ref: str, kid: str | None) -> None:
         name, model_id = models.parse_ref(ref)
     except EngineError:
         return
-    _cool.pop(f"model:{ref}", None)
+    _load()
+    gone = [_cool.pop(f"model:{ref}", None)]
     if kid:
-        _cool.pop(f"key:{name}:{kid}:{model_id}", None)
-        _cool.pop(f"key:{name}:{kid}", None)
+        gone += [_cool.pop(f"key:{name}:{kid}:{model_id}", None), _cool.pop(f"key:{name}:{kid}", None)]
+    if any(gone):  # 成功一次就清：真清掉了才写盘（每一轮成功都会调到这里）
+        _save()
 
 
 def status() -> list[dict]:
     """正在冷却的（给 /api/engine/status）：[{"what", "reason", "seconds"}]，不含密钥。"""
+    _load()
     now = time.monotonic()
     return [{"what": c["label"], "reason": c["reason"], "seconds": int(c["until"] - now)}
             for c in sorted(_cool.values(), key=lambda c: c["until"]) if c["until"] > now]
 
 
 def reset() -> None:
-    """清掉所有冷却（测试用）。"""
+    """清掉所有冷却（测试用；存盘的也清掉）。"""
+    global _loaded
     _cool.clear()
+    _loaded = True
+    with contextlib.suppress(OSError):
+        store_path().unlink()
 
 
 def forget(provider: str) -> None:
     """一家的冷却全清掉（ChatGPT 套餐重新连上时：以前因为没连上、令牌失效记的冷却作废）。"""
-    for slot in [s for s in _cool if s.startswith((f"key:{provider}:", f"model:{provider}/"))]:
+    _load()
+    gone = [s for s in _cool if s.startswith((f"key:{provider}:", f"model:{provider}/"))]
+    for slot in gone:
         _cool.pop(slot, None)
+    if gone:
+        _save()
 
 
 # —— 一轮里用哪个 ——————————————————————————————————————————————————————————————
@@ -232,15 +304,36 @@ def forget(provider: str) -> None:
 def chain(spec) -> list[str]:
     """[主模型, 备用…]（见文件开头）。"""
     rest = getattr(spec, "fallbacks", None)
+    if rest is None and models.subscription(spec.model) in models.CLI_PLANS.values():  # codex/…（第 7 批）：它自己写成列表的链照 chain_after 找
+        rest = models.chain_after(spec.model)
     if rest is None:
         rest = models.own_chain(spec.model)
     if rest is None:
         rest = models.fallbacks()
     out = [spec.model]
     for r in rest:
-        if isinstance(r, str) and r not in out and models.valid_ref(r):
+        # 用户自己的套餐这一轮花不了的不进链（第 7 批：codex/… 是 valid_ref，混进外人回合的链里也不能用）
+        if isinstance(r, str) and r not in out and models.valid_ref(r) and (not models.subscription(r) or models.may_spend(
+                r, kind=getattr(spec, "kind", "outsider"), origin=getattr(spec, "origin", None), via=getattr(spec, "via", None))):
             out.append(r)
     return out
+
+
+def noted(ref: str, e: EngineError) -> str | None:
+    """这一次调用没成，换不换调用方自己定（第 7 批 engine/auto.py：便宜的那个没成就回主模型）：照 Picker.failed 记一次冷却 → 原因（reason_of）。"""
+    reason = reason_of(e)
+    if reason is not None:
+        note(ref, e.key or _default_key(ref), reason)
+    return reason
+
+
+_current: ContextVar[Picker | None] = ContextVar("mousse_model_call", default=None)
+
+
+def current() -> Picker | None:
+    """正在调模型的这一轮的 Picker（第 7 批）：provider 里用（.spec 是这一轮的 Spec：kind、origin、agent、对话、工具、关卡；.notes 记这一轮
+    自己的选择）。loop 的每一次模型调用都先经 Picker.calling，所以在 providers.stream 里总有；不在模型调用里 → None。"""
+    return _current.get()
 
 
 class Picker:
@@ -248,6 +341,8 @@ class Picker:
     used = 这一轮真的调过的（按先后，不重复，engine_turns.models 记它）；final = 出了回复的那个（Result.model）。"""
 
     def __init__(self, spec) -> None:
+        self.spec = spec                    # 这一轮的 Spec（第 7 批：provider 那边经 current() 看得到是哪一种回合、谁的工具和关卡）
+        self.notes: dict = {}               # 这一轮里 provider 那边自己要记住的（第 7 批：同一轮粘住的选择）
         self.chain = chain(spec)
         self.i = 0
         self.used: list[str] = []
@@ -279,6 +374,7 @@ class Picker:
     def calling(self, ref: str) -> None:
         if ref not in self.used:
             self.used.append(ref)
+        _current.set(self)  # loop 的 consume 在它自己的 task 里调这里，紧接着 providers.stream：只在这一次模型调用里看得到
 
     def can_switch(self) -> bool:
         """真有别的模型能换吗（有密钥、没换走过、没在冷却或者马上冷却完，同 _next）：有的话各家那一层不重试（providers.Request.quick）。
@@ -286,8 +382,8 @@ class Picker:
         return self._next(self.ref, "server") is not None
 
     def ok(self, ref: str, kid: str | None) -> None:
-        self.final = ref
-        clear(ref, kid)
+        self.final = self.notes.pop("answered", None) or ref  # 第 7 批：engine/auto.py 换成便宜的那个答的，记成它
+        clear(self.final, kid)
 
     def failed(self, ref: str, e: EngineError, visible: bool) -> dict | None:
         """这一次调用没成：→ {"from", "to", "reason"}（to 和 from 一样 = 同一个型号换一把密钥再来），不换 → None。"""

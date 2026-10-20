@@ -169,7 +169,7 @@ def test_catalog_entries_have_every_required_field():
     assert 20 <= len(catalog.CLOUD) <= 30
     for pid, e in catalog.CLOUD.items():
         for k in catalog.REQUIRED:
-            assert e.get(k), (pid, k)
+            assert e.get(k) or (k == "url" and e[k] == ""), (pid, k)  # 没有默认地址的（Azure）：url 空着
         assert e["api"] in ("openai", "anthropic", "openai-responses")
         assert e["list"] in ("openai", "anthropic", "ollama", "none")
         assert all(s.startswith("https://") for s in e["sources"]), pid
@@ -358,6 +358,27 @@ def test_providers_list_covers_every_way_to_run_a_model(env):
     mo = next(x for x in r["providers"] if x["id"] == "moonshot")
     assert mo["region"] == "global" and [g["id"] for g in mo["regions"]] == ["global", "cn"]
     assert r["custom"]["apis"] == ["openai", "anthropic"]
+
+
+def test_azure_needs_your_own_address(env):
+    """Azure 没有默认地址（第 7 批）：只给密钥不存、测不了；以前存了密钥的也不算连上、不会被挑成默认；填了地址才连上。"""
+    from engine import models
+    from engine.errors import EngineError
+    c = env.client
+    r = c.put("/api/setup/models/azure", headers=H, json={"key": KEY})
+    assert r.status_code == 400 and r.json()["field"] == "url", r.text
+    assert not secretstore.get("AZURE_OPENAI_API_KEY")
+    r = c.post("/api/setup/models/azure/test", headers=H, json={"key": KEY})
+    assert r.status_code == 400 and r.json()["field"] == "url", r.text
+    secretstore.put("AZURE_OPENAI_API_KEY", KEY)
+    row = next(p for p in c.get("/api/setup/models?probe=0", headers=H).json()["providers"] if p["id"] == "azure")
+    assert row["connected"] is False and row["url"] == ""
+    with pytest.raises(EngineError):
+        models.provider("azure")
+    url = "https://my-resource.openai.azure.com/openai/v1"
+    j = c.put("/api/setup/models/azure", headers=H, json={"url": url}).json()
+    assert j["provider"]["connected"] is True and env.conf()["engine"]["providers"]["azure"]["url"] == url
+    assert models.provider("azure")["url"] == url and KEY not in everything(env)
 
 
 def test_saving_a_cloud_key_writes_only_the_secrets_file_and_auto_uses_the_only_provider(env):
@@ -845,6 +866,35 @@ def test_an_old_openclaw_instance_is_reported_as_is_and_never_changed(env, tmp_p
     r = c.put("/api/setup/purposes", headers=H, json={"outsider": "deepseek/deepseek-flash"})
     assert r.status_code == 200 and env.conf()["engine"]["use"] == {"card": "deepseek/deepseek-flash", "doorman": "deepseek/deepseek-flash"}
     assert len(env.backups()) == 1 and (tmp_path / env.backups()[0]).read_bytes() == before
+
+
+def test_a_google_address_from_openclaw_json_becomes_the_openai_compatible_one(env, tmp_path, monkeypatch):
+    """OpenClaw 的 Google 走 Gemini 自己的接口（openclaw.json 里写 …/v1beta），内核走 OpenAI 兼容的那条：照原样带过来，请求一发就 401。
+    官方地址的几种写法都换成目录里的；代理、本来就是兼容的、server.json 里自己写的，照用。地址、密钥都是编的。"""
+    from engine import catalog, models, setup_api
+    official = catalog.CLOUD["google"]["url"]
+    oc = tmp_path / "openclaw.json"
+    oc.write_text(json.dumps({"models": {"providers": {
+        "google": {"apiKey": "${GEMINI_API_KEY}", "baseUrl": "https://generativelanguage.googleapis.com/v1beta", "models": []},
+        "g-bare": {"baseUrl": "https://generativelanguage.googleapis.com/"},
+        "g-v1": {"baseUrl": "https://generativelanguage.googleapis.com/v1", "api": "google-generative-ai"},
+        "g-alpha": {"baseUrl": "https://GenerativeLanguage.googleapis.com/v1alpha/?key=fake-gemini-key-0001"},
+        "g-compat": {"baseUrl": "https://generativelanguage.googleapis.com/v1beta/openai/", "api": "openai-completions"},
+        "g-proxy": {"baseUrl": "https://gemini-proxy.example/v1beta", "api": "openai-completions"},
+    }}}), encoding="utf8")
+    monkeypatch.setattr(config.settings, "openclaw_json", oc)
+    g = models.provider("google")
+    assert g["url"] == official and g["api"] == "openai" and g["key_env"] == "GEMINI_API_KEY"
+    for pid in ("g-bare", "g-v1", "g-alpha", "g-compat"):  # 光写域名、别的版本、大写的域名带 ?key=、本来就是兼容的
+        assert models.provider(pid)["url"] == official, pid
+    assert models.provider("g-v1")["api"] == "openai"  # OpenClaw 自己的接口类型（google-generative-ai）这里没有：照地址走 OpenAI 兼容的
+    assert models.provider("g-proxy")["url"] == "https://gemini-proxy.example/v1beta"  # 代理不替它改
+    m = env.client.get("/api/setup/models", headers=H).json()
+    row = next(x for x in m["providers"] if x["id"] == "google")
+    assert row["url"] == row["defaultUrl"] == official and "fake-gemini-key-0001" not in json.dumps(m)  # 设置页不再像改过地址
+    assert setup_api.target("google", {})[0]["url"] == official  # 「测一下」也发到兼容的那个（这里不真发）
+    env.cfg(engine={"providers": {"google": {"url": "https://my-gateway.example/google/v1beta/openai"}}})
+    assert models.provider("google")["url"] == "https://my-gateway.example/google/v1beta/openai"  # server.json 里自己写的照用
 
 
 def test_overview_reports_each_layer_and_what_is_missing(env):

@@ -43,9 +43,17 @@ FEATURES = (
     "pages.native",     # 页面的桥也认手机 app 的 WebView（window.ReactNativeWebView 发、injectJavaScript 派回结果）；更早的服务器手机上只给说明
     "think.home",       # Zen 重排：GET /api/think/home（在想 + 记下的）、POST /api/think/done（完成 / 恢复，不调模型）、GET /api/think/finished、GET /api/think/heat；收藏带 done
     "podcast.stage",    # /api/podcast 的每一期带 stage（进度四格走到第几格）/ state（一句状态）/ waiting（等你处理）
+    "chat.commands",    # 第 2 批：GET /api/engine/commands（这个对话能用的斜杠命令，输入框打 / 时列出来）；/api/chat/send 认整句以 / 开头的命令
     "today.categories",  # 「今天」的类别和待办（todocat.py）：/api/today 带 categories、pending.stale，每行 category / overdueDays / canDismiss；
                          # POST /api/remember/done 收 how=dismissed（不用管）、POST /api/remember/category；/api/schedule 收 kind todo（可以没日子）、category；
                          # GET /api/today/eng（工程看板，engboard.py）。开没开看 /api/today 的 categories.on（server.json today.categories）
+    "setup",  # 第一次打开的三步和设置中心（2026-10-19）：/api/setup/…（engine/setup_api.py，只认主人的设备）、/api/health 的 no_model；
+              # 没有它的老服务器 app 照旧走「好友怎么称呼你 → 连接常用服务」
+    "naming",  # 第一次打开时给助手起名字（2026-10-19）：GET / PUT /api/naming（naming.py：app_name、IDENTITY.md 里一行性格，只认主人的设备）
+
+    "nodes",            # 设备节点（第 8 批，nodes.py）：/api/nodes…（节点的 hello / poll / result / bye，主人的列表、开关、批准、移除、出节点配对码）；
+                        # 开没开看 GET /api/nodes：没开（engine.nodes，claw 要是 builtin）是 404
+    "talk",             # 对讲（第 8 批，app 的对讲页）：GET /api/chat/transcribe → {ready, why}，语音转写配好了没有（不转写、不花钱）
 )
 
 

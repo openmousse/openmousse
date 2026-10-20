@@ -1,0 +1,18 @@
+{
+ "message": {
+  "message_id": 18,
+  "date": 1760860800,
+  "chat": {
+   "id": 1000003,
+   "type": "private",
+   "first_name": "Jordan"
+  },
+  "from": {
+   "id": 1000003,
+   "is_bot": false,
+   "first_name": "Jordan",
+   "language_code": "zh-hans"
+  },
+  "text": "你好，可以聊聊吗？"
+ }
+}

@@ -141,6 +141,9 @@ def test_risky_commands_always_ask_even_when_allowlisted(ws, server_json):
         assert level == "ask" and why in reason, (cmd, reason)
     assert host_exec.danger(host_exec.parse("main", ["rm", "-rf", "/"])) == "recursive delete of root filesystem"
     assert t.level({"command": "rm scripts/old.txt"})[0] == "undo"  # 名单里、不危险的照跑
+    for cmd in ("python3 mousse.py update --yes", "python3 mousse.py config set engine.model x/y", "python3 mousse.py doctor --fix"):
+        assert "operator command" in (host_exec.danger(host_exec.parse("main", cmd)) or ""), cmd  # 主人的运维命令：要你点头
+    assert host_exec.danger(host_exec.parse("main", "python3 mousse.py status")) is None
 
 
 def test_not_allowlisted_asks_once_or_always_and_always_writes_back(ws, server_json):

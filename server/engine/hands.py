@@ -272,10 +272,13 @@ def browser_tool(extra: bool = False) -> Tool:
         agent = _who(ctx)
         before = _held_before(agent)
         shots: list | None = [] if more else None
+        pdfs: list | None = [] if "pdf" in more else None
         try:
-            said, page = await browser.act(agent, args, extra=more, pictures=shots)
+            said, page = await browser.act(agent, args, extra=more, pictures=shots, pdfs=pdfs)
         except sandbox.SandboxError as e:
             raise ToolFailure(_with_holds(agent, before, str(e))) from None
+        for data, title in pdfs or []:  # 第 3 批：存下的 PDF 存成这个对话的附件（回复下面看得到）
+            said += "\n" + await saved_pdf(ctx, data, title)
         text = _with_holds(agent, before, said + ("\n" + _wrap("sandbox browser", page) if page else ""))
         if not shots:
             return text
@@ -303,9 +306,11 @@ def browser_tool(extra: bool = False) -> Tool:
                     "submit presses Enter after); press a key (Enter, Tab, Escape, ArrowDown…); scroll; back / forward / reload; tabs / tab / close; "
                     "wait for some seconds or until a text shows up; evaluate runs JS in the page. Actions that change the page return the new outline "
                     "(use the latest refs). Doorman holds submissions for the user's OK: don't click again.")
-                + (L("screenshot 截下这一页看得到的那一屏给你看（也存在服务器上，回路径）；要字、要点的东西还是用 snapshot / text。",
+                + (L("screenshot 截下这一页看得到的那一屏给你看（也存在服务器上，回路径）；要字、要点的东西还是用 snapshot / text。"
+                     "pdf 把这一页存成 PDF，存成这个对话的附件。",
                      " screenshot shows you a picture of the visible part of the page (also saved on the server; you get its path); "
-                     "for the words and what to click, snapshot / text are still better.") if extra else ""),
+                     "for the words and what to click, snapshot / text are still better. pdf saves the page as a PDF attachment of this "
+                     "conversation.") if extra else ""),
                 schema={"type": "object", "required": ["action"], "properties": {
                     "action": {"type": "string", "enum": list(browser.ACTIONS) + list(more)},
                     "url": {"type": "string", "description": "open"},
@@ -321,6 +326,18 @@ def browser_tool(extra: bool = False) -> Tool:
                     "tab": {"type": "string", "description": L("tab / close：页面的编号（t1…，tabs 看）", "tab / close: the tab id (t1…, see tabs)")},
                     "seconds": {"type": "number", "description": L("wait：最多等几秒（最多 30）", "wait: seconds to wait (max 30)")},
                     "expression": {"type": "string", "description": "evaluate"}}})
+
+
+async def saved_pdf(ctx: ToolCtx, data: bytes, title: str) -> str:
+    """第 3 批：浏览器存下的 PDF → 这个对话的附件（files.save_generated，回完挂到回复上）→ 给模型的一句。沙箱浏览器、用户的 Chrome 共用。"""
+    import re as _re
+
+    import files
+    name = (_re.sub(r"[^\w.-]+", "-", title).strip("-.")[:60] or "page") + ".pdf"
+    a = await asyncio.to_thread(files.save_generated, ctx.conversation, data, name, "application/pdf", kind="doc",
+                                note=L("网页存成的 PDF", "Page saved as PDF"))
+    return (f"Saved {a['name']} as an attachment of this conversation (id {a['id']}, on the server at {a['path']}); it shows under your reply "
+            "and read_pdf can read it.")
 
 
 # —— 给一轮配工具、开头的规矩 ——————————————————————————————————————————————————

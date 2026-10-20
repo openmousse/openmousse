@@ -6,6 +6,8 @@ import React, { useEffect, useImperativeHandle, useRef, useState } from 'react';
 import { Alert, Platform, Pressable, StyleSheet, TextInput, View, type NativeSyntheticEvent, type TextInputKeyPressEventData } from 'react-native';
 import * as Haptics from 'expo-haptics';
 import { AudioModule, RecordingPresets, setAudioModeAsync, useAudioRecorder, useAudioRecorderState } from 'expo-audio';
+import { chatsApi, type SlashCommand } from '../api/chats';
+import { supports } from '../api/version';
 import { agentName } from '../brand';
 import type { PendingFile } from '../data/types';
 import { loadDraft, saveDraft } from '../drafts';
@@ -58,6 +60,23 @@ export const Composer = React.memo(function Composer({ handle, threadId, placeho
   const [transcribing, setTranscribing] = useState(false);
   const recorder = useAudioRecorder(SPEECH_PRESET);
   const rec = useAudioRecorderState(recorder, 250);
+  // 斜杠命令（服务器 supports('chat.commands')）：还在打命令名（/ 开头、没有空白）时列出这个对话能用的，点了补进输入框。
+  // 列表每个线程只取一次；取不到当没有。
+  const [cmds, setCmds] = useState<{ thread: string; list: SlashCommand[] } | null>(null);
+  const naming = /^\/[^\s/]*$/.test(draft);
+  const wantCmds = naming && cmds?.thread !== threadId && supports('chat.commands');
+  useEffect(() => {
+    if (!wantCmds) return;
+    let live = true;
+    chatsApi.commands(threadId)
+      .then((list) => { if (live) setCmds({ thread: threadId, list }); })
+      .catch(() => { if (live) setCmds({ thread: threadId, list: [] }); });
+    return () => { live = false; };
+  }, [wantCmds, threadId]);
+  const typedName = draft.slice(1).toLowerCase();
+  const hints = naming && cmds?.thread === threadId
+    ? cmds.list.filter((c) => c.name.startsWith(typedName) || c.aliases.some((a) => a.startsWith(typedName))).slice(0, 6)
+    : [];
 
   useImperativeHandle(handle, () => ({
     set: (text) => setDraft(text),
@@ -129,7 +148,23 @@ export const Composer = React.memo(function Composer({ handle, threadId, placeho
       </View>
     );
   }
+  // 输入框上面那一小块：命令的名字、参数写法、一句说明（ChatView 把输入栏这一列竖着排，和引用条、附件同一列）
+  const hintList = hints.length ? (
+    <View style={[styles.hints, { backgroundColor: t.surface }]}>
+      {hints.map((c) => (
+        <Pressable key={c.name} onPress={() => { setDraft(`/${c.name} `); input.current?.focus(); }} accessibilityRole="button"
+          accessibilityLabel={`/${c.name} ${c.description}`} style={styles.hint}>
+          <T v="body" numberOfLines={1}>
+            <T v="body" style={{ fontWeight: '600' }}>/{c.name}</T>{c.args ? <T v="body" color={t.ink3}> {c.args}</T> : null}
+          </T>
+          <T v="caption" color={t.ink2} numberOfLines={1}>{c.description}</T>
+        </Pressable>
+      ))}
+    </View>
+  ) : null;
   return (
+    <>
+    {hintList}
     <View style={styles.composer}>
       <Pressable onPress={onAttach} hitSlop={6} accessibilityRole="button" accessibilityLabel={L('添加附件', 'Add attachment')} style={styles.iconBtn}>
         <Paperclip size={22} color={t.ink2} />
@@ -160,6 +195,7 @@ export const Composer = React.memo(function Composer({ handle, threadId, placeho
         </Pressable>
       )}
     </View>
+    </>
   );
 });
 
@@ -169,4 +205,6 @@ const styles = StyleSheet.create({
   send: { width: 40, height: 40, borderRadius: 20, alignItems: 'center', justifyContent: 'center' },
   iconBtn: { width: 40, height: 40, alignItems: 'center', justifyContent: 'center' },
   recording: { flex: 1, flexDirection: 'row', alignItems: 'center', gap: 8, minHeight: 40, borderRadius: 20, paddingHorizontal: 14 },
+  hints: { marginHorizontal: space.md, marginTop: space.sm, borderRadius: 16, paddingVertical: 4, overflow: 'hidden' },
+  hint: { paddingHorizontal: 16, paddingVertical: 8, gap: 2 },
 });

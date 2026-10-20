@@ -4,7 +4,7 @@ openmousse_tree.manuals），各处只留「去哪取」；每轮开头按用户
 搜什么（catalog，按 Agent）：
   manual  世界树的手册（选中的是开源版世界树、包 0.6 起；作者那份 scripts/memory_tree.py 还没有手册）：名字、什么时候用、一句说明、正文；
           手册写了 agents 的，那几个 Agent 优先
-  skill   这个 Agent 能用的技能（tools.list_skills：packs/core/skills 和工作区的 skills/，同名的工作区优先；engine.skills.agents 写了
+  skill   这个 Agent 能用的技能（tools.list_skills：工作区的 skills/、用户级的 skills/、packs/core/skills，同名的前面的优先；engine.skills.agents 写了
           名单的只给名单上的，engine/agent_skills.py）：名字 + frontmatter 的 when（有就用）+ description；正文还在 SKILL.md，不搬家，
           搜到了照原来的方式读（skill 工具读的同一份）。工作区里它自己的优先
   guide   装在这个 Agent 上的功能包自带的用法（packs/<包>/GUIDE.md，board 工具的 pack guide 读的同一份）：优先
@@ -208,10 +208,11 @@ def _skill_sig(dirs: list[Path]) -> tuple:
 
 
 def _skill_entries(agent: str, offered: set[str]) -> list[dict]:
-    """这个 Agent 的技能（搜用的那几份）：engine.skills.agents 写了名单的只给名单上的（engine/agent_skills.py，名单外的搜不到、记号里也不会有）。"""
+    """这个 Agent 的技能（搜用的那几份）：照 agent_skills.skills_for（engine.skills.agents 的名单；第 5 批起再过门槛：要的程序、环境变量、
+    配置不满足的、engine.skills.entries 里关掉的搜不到，记号里也不会有，engine/skill_gate.py）。"""
     from . import agent_skills
-    allowed = agent_skills.names_for(agent or "main")
-    return [e for e in _all_skill_entries(agent, offered) if allowed is None or e["name"] in allowed]
+    keep = agent_skills.skills_for(agent or "main", offered)
+    return [e for e in _all_skill_entries(agent, offered) if e["name"] in keep]
 
 
 def _all_skill_entries(agent: str, offered: set[str]) -> list[dict]:
@@ -220,6 +221,7 @@ def _all_skill_entries(agent: str, offered: set[str]) -> list[dict]:
 
     from config import settings
 
+    from . import agent_skills
     from . import tools as tools_mod
     ws = settings.workspace if agent == "main" else settings.agent_workspaces.get(agent)
     own_root = (ws / "skills").resolve() if ws is not None and ws.is_dir() else None  # 它自己的工作区（没有自己工作区的 Agent 没有「自己的」技能）
@@ -242,7 +244,7 @@ def _all_skill_entries(agent: str, offered: set[str]) -> list[dict]:
         out.append({"kind": "skill", "name": name, "when": _phrases(fm.get("when") or fm.get("when_to_use") or ""),
                     "about": " ".join(str(fm.get("description") or desc).split()), "body": body[:SEARCH_BODY],
                     "own": not core and own_root is not None and real.is_relative_to(own_root), "ref": str(path),
-                    "source": "core" if core else "workspace", "since": since})
+                    "source": "core" if core else agent_skills.source_of(path), "since": since})
     with _cache_lock:
         if len(_skills) >= MATCHERS_MAX:
             _skills.pop(next(iter(_skills)), None)
@@ -294,6 +296,9 @@ def catalog(agent: str, offered: set[str] | None, *, kinds: tuple[str, ...] = ("
 
 def describe(kind: str, name: str, agent: str = "main") -> dict | None:
     """一样东西现在的「什么时候用」和说明（记号详情用，engine/used.py）；不在了 → None。"""
+    if kind == "intent":  # 第 5 批：要记得的事（engine/intents.py）：触发词、提醒
+        from . import intents
+        return intents.describe(name)
     import bridges
     every = set(bridges.BRIDGES) | {"tasks"}
     for e in catalog(agent, every, kinds=(kind,), disabled=True):
@@ -522,6 +527,13 @@ def body_of(e: dict) -> str:
         return ""
 
 
+def skill_tail(e: dict, agent: str, offered: set[str] | None) -> str:
+    """一个技能的全文后面接的（第 5 批，engine/skill_gate.extra）：[Skill config …]（engine.skills.entries.<名字>.config）、
+    [Skill setup note: …]（缺了不藏的环境变量）。没有 → ""。"""
+    from . import skill_gate
+    return skill_gate.extra(e["name"], Path(e["ref"]), agent=agent, offered=offered)
+
+
 def clip_body(text: str, limit: int, how: str) -> str:
     """太长的留头 75%、尾 25%，中间写明截掉多少、全文去哪读（context.clip 的做法）。"""
     from .context import clip
@@ -606,7 +618,8 @@ def _prep(turn: str, text: str, prev: str, extra: list[str], entries: list[dict]
         body = body_of(e)
         if not body.strip():
             continue
-        blocks.append(heading(e) + "\n\n" + clip_body(body.strip(), limit, read_how(e)))
+        tail = skill_tail(e, agent, offered) if e["kind"] == "skill" else ""  # 第 5 批：技能的 [Skill config …]、[Skill setup note: …]
+        blocks.append(heading(e) + "\n\n" + clip_body(body.strip(), limit, read_how(e)) + tail)
         keys.append(key)
         took.append(e)
     evs = []
@@ -644,8 +657,10 @@ async def prep(turn: str, *, text: str, prev: str, agent: str, offered: set[str]
 async def prep_for(turn: str, prompt: list[dict], session, *, agent: str, offered: set[str], conversation: str) -> dict | None:
     """owner / claude_brain 用：从这一轮进来的话和会话里拿这句话、上一句、带过的那几份，再 prep。"""
     msgs = _messages(session)
-    return await prep(turn, text=texts_of(prompt), prev=previous(msgs), agent=agent, offered=offered, conversation=conversation,
-                      seen=seen_in(msgs))
+    text = texts_of(prompt)
+    note = await prep(turn, text=text, prev=previous(msgs), agent=agent, offered=offered, conversation=conversation, seen=seen_in(msgs))
+    from . import intents  # 第 5 批：要记得的事（engine/intents.py）：这句话对上了触发词，这一条后面多一行提醒（不调模型）
+    return await intents.attach(note, text, turn=turn, agent=agent, conversation=conversation)
 
 
 SKIP_ORIGINS = ("auto", "task")  # 系统自己发进对话的（收件箱点了同意的知会、定时脚本的【自动触发】、后台任务交回来的结果）：不是用户说的话，不按它搜
@@ -684,7 +699,8 @@ def catalog_text(agent: str, offered: set[str]) -> str:
         return tools_mod.skills_index(agent_skills.skills_for(agent, offered))
     if mode == "none":
         return ""
-    lines = [f"- {n}" for n in sorted(agent_skills.skills_for(agent, offered))]  # 名单外的不列（engine.skills.agents）
+    skills = agent_skills.skills_for(agent, offered)  # 名单外的、没过门槛的不列（engine.skills.agents、engine/skill_gate.py）
+    lines = [f"- {n}" + (" (setup needed)" if agent_skills.SETUP_MARK in d else "") for n, (d, _) in sorted(skills.items())]
     lines += [f"- {m['name']} (manual)" for m in tree_manuals()]
     lines += [f"- {g['name']} (pack guide)" for g in _guide_entries(agent)]
     return "\n".join(lines)
@@ -747,6 +763,11 @@ def skill_tool(me: str, offered: set[str], base, skills: dict):
         query = str(args.get("query") or "").strip()
         if query and not name:
             return find_lines(await search(query, agent=me, offered=offered, use_model=False))
+        if name and name not in skills and (why := agent_skills.blocked(me, name, offered)):  # 第 5 批：没过门槛、关掉了：说缺什么
+            raise ToolFailure(L(f"{name} 这个技能现在用不了：{'、'.join(why)}。跟用户说一声（缺的程序、密钥要他在服务器上装、在 app 的技能设置里填），"
+                                "别自己绕过去。",
+                                f"The {name} skill can't be used right now: {'; '.join(why)}. Tell the user (they install missing programs on the "
+                                "server and add missing keys in the app's skill settings); don't work around it."))
         if name and name not in skills and not agent_skills.withheld(me, name, offered):  # 名单外的技能交给原来那个说「这个 Agent 没有」
             if (text := await read_for_tool(me, offered, name, ctx)) is not None:
                 return bridges.clip(text)

@@ -1,0 +1,16 @@
+Return-Path: <owner@example.com>
+Delivered-To: agent@example.org
+Authentication-Results: mx.example.org; dkim=pass header.d=example.com; dmarc=pass header.from=example.com
+From: Alex Rivers <owner@example.com>
+To: agent@example.org
+Subject: Plumber
+Date: Mon, 20 Oct 2030 08:00:00 +0000
+Message-ID: <plumber-0601@mail.example.com>
+MIME-Version: 1.0
+Content-Type: text/html; charset="utf-8"
+
+<html><head><style>p { color: red; }</style></head><body>
+<p>Please <b>remind</b> me&nbsp;to call the plumber at 10.</p>
+<script>alert("hi")</script>
+<div>Thanks &amp; see you</div>
+</body></html>

@@ -1,0 +1,12 @@
+Return-Path: <owner@example.com>
+Delivered-To: agent@example.org
+Authentication-Results: mx.example.com; dkim=pass header.d=example.com; dmarc=pass header.from=example.com
+From: Alex Rivers <owner@example.com>
+To: agent@example.org
+Subject: Quick one
+Date: Sat, 18 Oct 2030 09:25:00 +0000
+Message-ID: <other-0003@example.com>
+MIME-Version: 1.0
+Content-Type: text/plain; charset="utf-8"
+
+Book the usual table for Friday.

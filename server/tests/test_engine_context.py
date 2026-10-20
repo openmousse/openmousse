@@ -303,11 +303,13 @@ def test_moving_time_zones_keeps_where_it_ended_and_todays_messages(home, fake, 
 
 def test_a_turn_running_across_4am_finishes_before_the_new_day_starts(home, monkeypatch, runner):
     order: list[str] = []
+    talking: list[asyncio.Event] = []
 
     async def stream(ref, req):
         first = req.messages[-1]
         order.append(f"request:{text_of(first)}")
         if text_of(first) == "late question":
+            talking[0].set()
             for chunk in ("still ", "answering"):
                 await asyncio.sleep(0.15)
                 order.append(f"chunk:{chunk}")
@@ -322,8 +324,9 @@ def test_a_turn_running_across_4am_finishes_before_the_new_day_starts(home, monk
 
     async def go():
         out: list[str] = []
+        talking.append(asyncio.Event())
         late = asyncio.create_task(owner.turn("g-solo", "2026-10-16", "late question", None, out.append))
-        await asyncio.sleep(0.05)  # 03:59 开始的那一轮还在说
+        await asyncio.wait_for(talking[0].wait(), 10)  # 03:59 开始的那一轮已经在说了（等它真开口：备料在忙的机器上要一两百毫秒，固定睡 0.05 秒会抢在它前面）
         await owner.turn("g-solo", "2026-10-17", "early question", None, out.append)  # 04:01 新的一天
         await late
     run(go())

@@ -35,12 +35,13 @@ def run(coro):
 
 @pytest.fixture
 def plan(tmp_path, monkeypatch, server_json):
-    """假授权服务器 + 套餐的假模型服务（只认现在的访问令牌）+ 非套餐的假模型服务 other/m；这个测试自己的 data_dir。"""
+    """假授权服务器 + 套餐的假模型服务（只认现在的访问令牌；流照套餐线上的回法：不标 Content-Type，10/20 线上 502 就是没认这个）+
+    非套餐的假模型服务 other/m；这个测试自己的 data_dir。"""
     monkeypatch.setattr(settings, "data_dir", tmp_path / "data")
     monkeypatch.setattr(loop, "MODEL_RETRIES", (0, 0))
     monkeypatch.setattr(provider_responses, "RETRY_DELAYS", (0, 0))
     with FakeAuthServer() as fa:
-        fm = FakeModelServer([], key=fa.valid_access).start()
+        fm = FakeModelServer([], key=fa.valid_access, plan_quirks=True).start()
         other = FakeModelServer([], default=Reply(text="from other")).start()
         monkeypatch.setattr(chatgpt_plan, "ISSUER", fa.url)
         monkeypatch.setattr(chatgpt_plan, "API", fm.openai_url)

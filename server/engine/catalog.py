@@ -15,7 +15,8 @@
                 带的前缀（Google 回 models/<型号>）：列的时候去掉，配置里、老的记录里带着的也认，规范成不带的（bare、models.canonical）
   test_model    测一下时列不了模型就拿它发一句（文档里写着的便宜型号）；也是只有这一家时自动用的型号（suggest 里没写 chat 的话）
   suggest       {"chat": 主对话推荐的, "cheap": 后台、外人回合推荐的, "writing": 写作推荐的}（只写文档里有的型号）
-  caps          {"tools", "images", "reasoning", "embeddings"}：True / False / "some"（看型号）/ None（文档里没写，不猜）
+  caps          {"tools", "images", "reasoning", "embeddings", "pdf", "video", "audio"}：True / False / "some"（看型号）/ None（文档里没写，不猜）；
+                pdf / video / audio（第 3 批，2026-10-19）= 这一家的接口收不收 PDF、视频、音频（官方文档写了的才填，别的都是 None）
   engine        进内核时的脾气（provider_openai.py 开头有每一项的意思）；拿不准的不写，按默认（最保守：思考只在一轮的工具来回里带回去、
                 图照发、被拒了自动换成一句话再发）
   market        global / china / both：界面分组用
@@ -25,6 +26,12 @@
 命令行登录（LOGINS）：用户自己在这台电脑上登录的工具，我们不读、不存、不传它们的令牌（claude_brain.py、chatgpt_plan.py、runners.py）。
 核对：2026-10-17 逐家读了官方文档（下面每家的 sources），核对不到的字段不写（比如 Z.AI、NVIDIA 没写列模型的接口：list = none）。
   2026-10-19 补：Google 的 gemini-4-argon（型号页、价目页；价钱在 engine/models.py 的 PRICES）。
+  2026-10-19 第 3 批补：caps 的 pdf / video / audio（OpenAI 的文件输入、Claude 的 PDF、Gemini 的文档 / 视频 / 音频理解，见各家 sources 的新链接）；
+  只做媒体的几家（MEDIA：转写、朗读、生图的服务商，engine/media.py 用）。
+  2026-10-19 补（第 7 批）：企业云 Azure OpenAI（v1 接口：learn.microsoft.com 那一页 ms.date 2026-05-13、06-05 更新过，v1 的 OpenAPI 定义）、
+  Amazon Bedrock（OpenAI 兼容的 Chat Completions、API 密钥那两页）；这两家写了 checked。Google 的 Vertex AI 没加：它的 OpenAI 兼容接口
+  「uses OAuth to authenticate with a short-lived access token」（默认 1 小时就过期，要自己刷新；docs.cloud.google.com 的
+  gemini-enterprise-agent-platform/models/migrate/openai/auth-and-credentials，2026-10-15 更新），不是一把能存的密钥。
 """
 from __future__ import annotations
 
@@ -32,11 +39,11 @@ OPENAI, ANTHROPIC, RESPONSES = "openai", "anthropic", "openai-responses"
 CHECKED = "2026-10-17"
 REQUIRED = ("name", "api", "url", "key_env", "key_url", "docs", "list", "caps", "sources")
 LOCAL_REQUIRED = ("name", "api", "url", "detect", "list", "sources")
-CAP_KEYS = ("tools", "images", "reasoning", "embeddings")
+CAP_KEYS = ("tools", "images", "reasoning", "embeddings", "pdf", "video", "audio")
 
 
-def _caps(tools=True, images="some", reasoning="some", embeddings=False) -> dict:
-    return {"tools": tools, "images": images, "reasoning": reasoning, "embeddings": embeddings}
+def _caps(tools=True, images="some", reasoning="some", embeddings=False, pdf=None, video=None, audio=None) -> dict:
+    return {"tools": tools, "images": images, "reasoning": reasoning, "embeddings": embeddings, "pdf": pdf, "video": video, "audio": audio}
 
 
 # —— 云端（填密钥）——————————————————————————————————————————————————————————————
@@ -45,26 +52,28 @@ CLOUD: dict[str, dict] = {
         "name": "OpenAI", "api": OPENAI, "url": "https://api.openai.com/v1", "key_env": "OPENAI_API_KEY",
         "key_url": "https://platform.openai.com/settings/organization/api-keys", "docs": "https://developers.openai.com/api/docs/quickstart",
         "list": "openai", "test_model": "gpt-6-luna", "suggest": {"cheap": "gpt-6-luna"},
-        "caps": _caps(images=True, reasoning=True, embeddings=True), "market": "global",
+        "caps": _caps(images=True, reasoning=True, embeddings=True, pdf=True, audio="some"), "market": "global",
         "engine": {"max_tokens_field": "max_completion_tokens", "reasoning_effort": True, "effort_map": {}, "tool_id_max": 40},
         "sources": ["https://developers.openai.com/api/reference/overview", "https://developers.openai.com/api/reference/resources/models/methods/list",
-                    "https://developers.openai.com/api/docs/models/gpt-6-luna"]},
+                    "https://developers.openai.com/api/docs/models/gpt-6-luna", "https://developers.openai.com/api/docs/guides/pdf-files",
+                    "https://developers.openai.com/api/docs/guides/audio"]},
     "anthropic": {
         "name": "Anthropic (Claude)", "api": ANTHROPIC, "url": "https://api.anthropic.com", "key_env": "ANTHROPIC_API_KEY",
         "key_url": "https://platform.claude.com/settings/keys", "docs": "https://platform.claude.com/docs/en/api/overview",
         "list": "anthropic", "test_model": "claude-haiku-5-5", "suggest": {"chat": "claude-sonnet-5-5", "cheap": "claude-haiku-5-5"},
-        "caps": _caps(images=True, reasoning=True), "market": "global",
+        "caps": _caps(images=True, reasoning=True, pdf=True), "market": "global",
         "sources": ["https://platform.claude.com/docs/en/api/overview", "https://platform.claude.com/docs/en/api/models/list",
-                    "https://platform.claude.com/docs/en/models/overview"]},
+                    "https://platform.claude.com/docs/en/models/overview", "https://platform.claude.com/docs/en/build-with-claude/pdf-support"]},
     "google": {
         "name": "Google Gemini", "api": OPENAI, "url": "https://generativelanguage.googleapis.com/v1beta/openai", "key_env": "GEMINI_API_KEY",
         "key_url": "https://aistudio.google.com/apikey", "docs": "https://ai.google.dev/gemini-api/docs/openai",
         "list": "openai", "list_prefix": "models/", "test_model": "gemini-3.5-flash-lite",
         "suggest": {"cheap": "gemini-3.5-flash-lite", "writing": "gemini-4-argon"},
-        "caps": _caps(images=True, reasoning=True, embeddings=True), "market": "global",
+        "caps": _caps(images=True, reasoning=True, embeddings=True, pdf=True, video=True, audio=True), "market": "global",
         "sources": ["https://ai.google.dev/gemini-api/docs/openai", "https://ai.google.dev/gemini-api/docs/api-key",
                     "https://ai.google.dev/gemini-api/docs/models", "https://ai.google.dev/gemini-api/docs/models/gemini-4-argon",
-                    "https://ai.google.dev/gemini-api/docs/pricing"]},
+                    "https://ai.google.dev/gemini-api/docs/pricing", "https://ai.google.dev/gemini-api/docs/document-processing",
+                    "https://ai.google.dev/gemini-api/docs/video-understanding", "https://ai.google.dev/gemini-api/docs/audio"]},
     "xai": {
         "name": "xAI (Grok)", "api": OPENAI, "url": "https://api.x.ai/v1", "key_env": "XAI_API_KEY",
         "key_url": "https://console.x.ai/team/default/api-keys", "docs": "https://docs.x.ai/developers/quickstart",
@@ -155,6 +164,36 @@ CLOUD: dict[str, dict] = {
         "caps": _caps(embeddings=True), "market": "global",
         "sources": ["https://vercel.com/docs/ai-gateway/sdks-and-apis/openai-chat-completions",
                     "https://vercel.com/docs/ai-gateway/authentication-and-byok/api-keys", "https://vercel.com/docs/ai-gateway/models-and-providers"]},
+    # 第 7 批：企业云（10/19 读的官方文档）。地址是用户自己的资源 / 地区的，型号是他自己部署的名字：列不了，测一下用文档里的例子。
+    # Azure 没有默认地址（url 空着）：只存了密钥、没填地址的不算连上（models.provider 报没有地址），不会把对话和密钥发到别人的主机
+    "azure": {
+        "name": "Azure OpenAI (Microsoft Foundry)", "api": OPENAI, "url": "",
+        "key_env": "AZURE_OPENAI_API_KEY", "key_url": "https://ai.azure.com/", "docs": "https://learn.microsoft.com/en-us/azure/foundry/openai/api-version-lifecycle",
+        "list": "none", "test_model": "gpt-4.1-nano",
+        "caps": _caps(images="some", reasoning="some", embeddings="some"), "market": "global",
+        "engine": {"max_tokens_field": "max_completion_tokens", "tool_id_max": 40},
+        "note": ("地址换成你自己的资源：https://<资源名>.openai.azure.com/openai/v1（或 .services.ai.azure.com/openai/v1，不用 api-version）；"
+                 "型号写你部署时起的名字（部署名）。测一下默认找叫 gpt-4.1-nano 的部署，你的叫别的就在测试里写上",
+                 "Put in your own resource: https://<resource-name>.openai.azure.com/openai/v1 (or .services.ai.azure.com/openai/v1, no api-version); "
+                 "the model is your deployment's name. The test looks for a deployment called gpt-4.1-nano unless you name another"),
+        "checked": "2026-10-19",
+        "sources": ["https://learn.microsoft.com/en-us/azure/foundry/openai/api-version-lifecycle",
+                    "https://github.com/Azure/azure-rest-api-specs/blob/main/specification/ai/data-plane/OpenAI.v1/azure-v1-v1-generated.json"]},
+    "bedrock": {
+        "name": "Amazon Bedrock", "api": OPENAI, "url": "https://bedrock-runtime.us-east-1.amazonaws.com/openai/v1", "key_env": "AWS_BEARER_TOKEN_BEDROCK",
+        "key_url": "https://console.aws.amazon.com/bedrock", "docs": "https://docs.aws.amazon.com/bedrock/latest/userguide/inference-chat-completions-mantle.html",
+        "regions": {"us-east-1": {"label": ("美国东部（弗吉尼亚北部）", "US East (N. Virginia)"), "url": "https://bedrock-runtime.us-east-1.amazonaws.com/openai/v1"},
+                    "us-west-2": {"label": ("美国西部（俄勒冈）", "US West (Oregon)"), "url": "https://bedrock-runtime.us-west-2.amazonaws.com/openai/v1"}},
+        "list": "none", "test_model": "openai.gpt-oss-120b-1:0",
+        "caps": _caps(tools=None, images=None, reasoning="some", embeddings=False), "market": "global",
+        "note": ("用 Bedrock 的长期 API 密钥（Bedrock 控制台左边的 API keys；只在生成它的那个地区能用。短期的最多 12 小时就过期，这里不会自己换）；"
+                 "型号写 Bedrock 的模型 ID（openai.gpt-oss-120b-1:0 这样）；别的地区把地址里的 us-east-1 换掉",
+                 "Use a long-term Bedrock API key (API keys in the Bedrock console's left pane; it only works in the Region it was made in. Short-term "
+                 "keys expire within 12 hours and aren't renewed here); the model is a Bedrock model ID (like openai.gpt-oss-120b-1:0); for another "
+                 "Region, replace us-east-1 in the address"),
+        "checked": "2026-10-19",
+        "sources": ["https://docs.aws.amazon.com/bedrock/latest/userguide/inference-chat-completions-mantle.html",
+                    "https://docs.aws.amazon.com/bedrock/latest/userguide/api-keys.html"]},
     "deepseek": {
         "name": "DeepSeek", "api": OPENAI, "url": "https://api.deepseek.com", "key_env": "DEEPSEEK_API_KEY",
         "key_url": "https://platform.deepseek.com/api_keys", "docs": "https://api-docs.deepseek.com/",
@@ -233,7 +272,7 @@ CLOUD: dict[str, dict] = {
                     "global": {"label": ("国际站", "International site"), "url": "https://api-inference.modelscope.ai/v1",
                                "key_url": "https://modelscope.ai/my/myaccesstoken"}},
         "list": "none", "test_model": "Qwen/Qwen3.5-35B-A3B", "suggest": {"cheap": "Qwen/Qwen3.5-35B-A3B"},
-        "caps": {"tools": None, "images": "some", "reasoning": "some", "embeddings": False}, "market": "china",
+        "caps": {"tools": None, "images": "some", "reasoning": "some", "embeddings": False, "pdf": None, "video": None, "audio": None}, "market": "china",
         "note": ("免费、按次扣魔粒；账号要先绑定实名的阿里云账号。用的是 ModelScope 的访问令牌",
                  "Free, metered in credits per call; the account must be linked to a verified Alibaba Cloud account. Uses your ModelScope access token"),
         "sources": ["https://modelscope.cn/docs/model-service/API-Inference/intro", "https://modelscope.cn/docs/model-service/API-Inference/limits",
@@ -350,6 +389,23 @@ SEARCH: dict[str, dict] = {
                 "note": ("填你自己的 SearXNG 地址；它的 settings.yml 里 search.formats 要加上 json，不然回 403",
                          "Enter your own SearXNG address; its settings.yml needs json under search.formats, or it answers 403"),
                 "sources": ["https://docs.searxng.org/dev/search_api.html", "https://docs.searxng.org/admin/settings/settings_search.html"]},
+    # 第 3 批（2026-10-19，照 OpenClaw 的 web-search 扩展）：密钥多半本来就为模型存着，所以默认不自己选上（engine/web.py 的 opt_in）
+    "gemini": {"name": ("Gemini（Google 搜索接地）", "Gemini (Google Search grounding)"), "key_env": "GEMINI_API_KEY",
+               "key_url": "https://aistudio.google.com/apikey", "docs": "https://ai.google.dev/gemini-api/docs/google-search",
+               "free": ("免费层每天有一定额度，超了按次计费（看型号）", "A daily free allowance, then billed per grounded request (depends on the model)"),
+               "note": ("回一段带出处的回答；要写明 provider: gemini 才用", "Returns an answer with sources; only used when provider is set to gemini"),
+               "sources": ["https://ai.google.dev/gemini-api/docs/google-search", "https://ai.google.dev/gemini-api/docs/pricing"]},
+    "grok": {"name": "Grok (xAI)", "key_env": "XAI_API_KEY", "key_url": "https://console.x.ai/team/default/api-keys",
+             "docs": "https://docs.x.ai/docs/guides/tools/search-tools", "free": None,
+             "note": ("回一段带出处的回答；要写明 provider: grok 才用", "Returns an answer with sources; only used when provider is set to grok"),
+             "sources": ["https://docs.x.ai/docs/guides/tools/search-tools", "https://docs.x.ai/developers/models"]},
+    "kimi": {"name": ("Kimi 搜索", "Kimi search (Moonshot)"), "key_env": "MOONSHOT_API_KEY", "key_url": "https://platform.kimi.ai/console/api-keys",
+             "docs": "https://platform.kimi.ai/docs/overview", "free": None,
+             "note": ("要写明 provider: kimi 才用；中国大陆的密钥另写地址", "Only used when provider is set to kimi; mainland China keys need the .cn address"),
+             "sources": ["https://platform.kimi.ai/docs/overview"]},
+    "firecrawl": {"name": "Firecrawl", "key_env": "FIRECRAWL_API_KEY", "key_url": "https://www.firecrawl.dev/app/api-keys",
+                  "docs": "https://docs.firecrawl.dev/api-reference/endpoint/search", "free": ("注册送一次性的免费额度", "One-off free credits on sign-up"),
+                  "sources": ["https://docs.firecrawl.dev/api-reference/endpoint/search", "https://www.firecrawl.dev/pricing"]},
     "duckduckgo": {"name": "DuckDuckGo", "keyless": True, "unofficial": True, "docs": "https://duckduckgo.com",
                    "free": ("不要密钥", "No key"),
                    "note": ("没有官方接口：读它的网页结果，常被限流、要人机验证，只在你明确选它时用",
@@ -401,6 +457,29 @@ EMBEDDINGS: dict[str, dict] = {
     "lmstudio": {"name": "LM Studio", "provider": "lmstudio", "local": True, "backend": "openai", "url": "http://127.0.0.1:1234/v1", "model": None,
                  "key_env": "", "note": ("选一个 LM Studio 里装好的向量模型", "Pick an embedding model you've loaded in LM Studio"),
                  "sources": ["https://lmstudio.ai/docs/developer/openai-compat"]},
+}
+
+# —— 只做媒体的几家（第 3 批，2026-10-19）：转写、朗读、生图的服务商，不是对话模型（不进 PROVIDERS、不进模型列表）—————————————————————
+# engine/media.py 按 engine.use.<用途> 的「服务商/型号」找到这里：url = 接口的根，key_env = 密钥变量名（app 里存的密钥也存在这个名字下），
+# does = 能做哪几样（媒体的用途名，engine/media.PURPOSES）。engine.providers.<id> 照样能改 url / key_env（自己的代理、测试的假服务）。
+# 本机的命令（whisper-cli、ffmpeg、pdftoppm）不在这里：写 local/<命令>，探测到才有（engine/media.local_command）。
+MEDIA: dict[str, dict] = {
+    "deepgram": {"name": "Deepgram", "url": "https://api.deepgram.com/v1", "key_env": "DEEPGRAM_API_KEY", "does": ("stt", "tts"),
+                 "key_url": "https://console.deepgram.com", "docs": "https://developers.deepgram.com/reference/speech-to-text/listen-pre-recorded",
+                 "sources": ["https://developers.deepgram.com/reference/speech-to-text/listen-pre-recorded",
+                             "https://developers.deepgram.com/reference/text-to-speech/speak-request", "https://deepgram.com/pricing"]},
+    "elevenlabs": {"name": "ElevenLabs", "url": "https://api.elevenlabs.io/v1", "key_env": "ELEVENLABS_API_KEY", "does": ("tts", "stt", "music"),
+                   "key_url": "https://elevenlabs.io/app/settings/api-keys", "docs": "https://elevenlabs.io/docs/api-reference/text-to-speech/convert",
+                   "sources": ["https://elevenlabs.io/docs/api-reference/text-to-speech/convert",
+                               "https://elevenlabs.io/docs/api-reference/speech-to-text/convert", "https://elevenlabs.io/pricing/api",
+                               "https://elevenlabs.io/docs/api-reference/music/compose"]},
+    "fal": {"name": "fal", "url": "https://fal.run", "key_env": "FAL_KEY", "does": ("image", "video_gen", "music"),
+            "key_url": "https://fal.ai/dashboard/keys", "docs": "https://docs.fal.ai/model-apis/model-endpoints/synchronous-requests",
+            "sources": ["https://docs.fal.ai/model-apis/model-endpoints/synchronous-requests", "https://docs.fal.ai/model-apis/authentication",
+                        "https://fal.ai/docs/model-apis/model-endpoints/queue"]},
+    "comfyui": {"name": "ComfyUI", "url": "http://127.0.0.1:8188", "key_env": "", "does": ("image",), "local": True,
+                "docs": "https://docs.comfy.org/development/comfyui-server/comms_routes",
+                "sources": ["https://docs.comfy.org/development/comfyui-server/comms_routes"]},
 }
 
 # —— 按用途选模型的推荐：理由 + 代价（只是建议，不强制）—————————————————————————————————————
@@ -558,4 +637,12 @@ def problems() -> list[str]:
             out.append(f"embeddings {eid}: bad backend or provider")
         if e.get("backend") == "openai" and not url.match(str(e.get("url") or "")):
             out.append(f"embeddings {eid}: openai backend needs a url")
+    for mid, e in MEDIA.items():
+        if not e.get("name") or not url.match(str(e.get("url") or "")) or not e.get("docs") or not e.get("does") or not e.get("sources"):
+            out.append(f"media {mid}: needs name, url, docs, does and sources")
+        if not e.get("local") and not (re.fullmatch(r"[A-Z_][A-Z0-9_]*", str(e.get("key_env") or "")) and e.get("key_url")):
+            out.append(f"media {mid}: needs key_env and key_url (or local)")
+        if not set(e.get("does") or ()) <= {"vision", "pdf", "video", "stt", "tts", "image", "video_gen", "music"}:  # = models.MEDIA_PURPOSES
+            out.append(f"media {mid}: does names an unknown purpose")
+    out += [f"{x}: listed twice (media)" for x in sorted(set(MEDIA) & (set(CLOUD) | set(LOCAL) | set(LOGINS)))]
     return out

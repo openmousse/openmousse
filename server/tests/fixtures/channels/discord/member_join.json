@@ -1,0 +1,24 @@
+{
+ "id": "5000017",
+ "channel_id": "9200001",
+ "author": {
+  "id": "8100003",
+  "username": "jordan.park",
+  "global_name": "Jordan",
+  "discriminator": "0",
+  "avatar": null
+ },
+ "content": "",
+ "timestamp": "2030-10-19T09:12:03.000000+00:00",
+ "edited_timestamp": null,
+ "tts": false,
+ "mention_everyone": false,
+ "mentions": [],
+ "mention_roles": [],
+ "attachments": [],
+ "embeds": [],
+ "pinned": false,
+ "type": 7,
+ "flags": 0,
+ "guild_id": "9100001"
+}

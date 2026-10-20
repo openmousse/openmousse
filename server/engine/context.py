@@ -286,16 +286,19 @@ def tail_part(thread: str, day: str) -> Part:
         return openai_api.tail_part(thread, day)
     start = chat.day_bounds(day)[0]
     since = chat.day_bounds(logical(day, TAIL_DAYS))[0]
-    # 按真时间比（julianday）：时区改过的话库里新旧两种偏移混着，按字符串比会把今天刚说的那句当成「上一次」的全部（见 chat.day_bounds）
+    # 按真时间比（julianday）：时区改过的话库里新旧两种偏移混着，按字符串比会把今天刚说的那句当成「上一次」的全部（见 chat.day_bounds）；
+    # 斜杠命令那几行、压缩的提示（第 2 批，origin command / btw / notice）不是对话，跳过
     with chat._lock, chat.db() as conn:
         last = conn.execute("SELECT ts FROM messages WHERE thread=? AND julianday(ts)<julianday(?) AND julianday(ts)>=julianday(?) "
-                            "AND role IN ('user','auto','grava') ORDER BY id DESC LIMIT 1", (thread, start, since)).fetchone()
+                            "AND role IN ('user','auto','grava') AND IFNULL(origin, '') NOT IN ('command', 'btw', 'notice') ORDER BY id DESC LIMIT 1",
+                            (thread, start, since)).fetchone()
         if last is None:
             return Part("tail", "Where the last conversation ended", live=False)
         pday = chat.day_of(last["ts"])
         a, b = chat.day_bounds(pday)
         rows = conn.execute("SELECT role, text, status FROM messages WHERE thread=? AND julianday(ts)>=julianday(?) AND julianday(ts)<julianday(?) "
-                            "AND role IN ('user','auto','grava') ORDER BY id DESC LIMIT ?", (thread, a, b, TAIL_MSGS * 4)).fetchall()
+                            "AND role IN ('user','auto','grava') AND IFNULL(origin, '') NOT IN ('command', 'btw', 'notice') ORDER BY id DESC LIMIT ?",
+                            (thread, a, b, TAIL_MSGS * 4)).fetchall()
     kept, skip = [], False
     for r in reversed(rows):
         if r["role"] == "auto" and (r["text"] or "").startswith(AUTO_TRIGGER):

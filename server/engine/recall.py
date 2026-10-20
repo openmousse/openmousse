@@ -222,8 +222,9 @@ _REL = re.compile(r"^(\d+)\s*(h|d|w)$", re.IGNORECASE)  # Hermes 的 _RELATIVE_B
 
 
 def day_of(dt: datetime) -> str:
-    """一个时刻属于哪个逻辑日（server.json 的时区，04:00 为界，同 chat.day_of）。"""
-    return (dt.astimezone(settings.tz) - timedelta(hours=DAY_START_HOUR)).strftime("%Y-%m-%d")
+    """一个时刻属于哪个逻辑日（server.json 的时区，04:00 为界，同 chat.day_of；第 2 批起照 engine.reset.at，engine/reset.py）。"""
+    from .reset import day_start
+    return (dt.astimezone(settings.tz) - day_start()).strftime("%Y-%m-%d")
 
 
 def today() -> str:

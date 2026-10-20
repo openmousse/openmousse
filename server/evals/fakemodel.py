@@ -11,6 +11,8 @@
   {"fake": {"api": "openai-responses", "url": fm.openai_url, "key_env": ""}}   同上，走 Responses API
   {"anthropic": {"url": fm.anthropic_url, "key": "x"}}               模型写 anthropic/claude-…（写了 url 就不带 beta 的 block_binding、fallbacks）
 key 可以是一个函数（拿到 Bearer 后面那一段 → 认不认）：测 ChatGPT 套餐的令牌换过以后旧的不认。
+plan_quirks=True：/v1/responses 的流照 ChatGPT 套餐线上真的回法（10/20 录到的）：不标 Content-Type、请求 id 只在 x-oai-request-id、
+  response.completed 的 output 是空的（输出项只在 response.output_item.done 里）。
 
 剧本：一个列表（每来一个请求用掉一条）或一个函数 responder(请求记录) → 一条；列表用完了回 default（也可以是函数）。一条是下面几种之一：
   Reply      正常回复：思考、文字、工具调用；可以慢（first_delay 首字前等、delay 每段之间等），可以写到上限（stop="length"）
@@ -198,13 +200,14 @@ class FakeModelServer:
 
     def __init__(self, script: list[Step] | Responder | None = None, *, default: Step | Responder | None = None,
                  key: str | Callable[[str], bool] | None = None, host: str = "127.0.0.1", port: int = 0,
-                 catalog: list[dict] | None = None) -> None:
+                 catalog: list[dict] | None = None, plan_quirks: bool = False) -> None:
         self._script: list[Step] = list(script) if isinstance(script, list) else []
         self._responder: Responder | None = script if callable(script) else None
         self.default: Step | Responder = default or Reply(text="ok")
         self.key = key                     # 设了就核对密钥（Authorization: Bearer 或 x-api-key）；函数 = 拿 Bearer 那一段问它认不认
         # GET /v1/models 里 ChatGPT 套餐那种目录（slug / display_name / visibility）
         self.catalog: list[dict] = catalog if catalog is not None else [{"slug": "fake-model", "display_name": "Fake", "visibility": "list"}]
+        self.plan_quirks = plan_quirks     # True：/v1/responses 的流照 ChatGPT 套餐线上真的回法（见文件开头）
         self.requests: list[dict] = []
         self._addr = (host, port)
         self._lock = threading.Lock()
@@ -306,9 +309,12 @@ def _handler(fm: FakeModelServer) -> type[BaseHTTPRequestHandler]:
             self.end_headers()
             self.wfile.write(data)
 
-        def _sse_start(self) -> None:
+        def _sse_start(self, plan: bool = False) -> None:
             self.send_response(200)
-            self.send_header("Content-Type", "text/event-stream")
+            if plan:  # ChatGPT 套餐的 /responses：不标类型，请求 id 在 x-oai-request-id
+                self.send_header("x-oai-request-id", str(uuid.uuid4()))
+            else:
+                self.send_header("Content-Type", "text/event-stream")
             self.send_header("Cache-Control", "no-cache")
             self.send_header("Connection", "close")
             self.end_headers()
@@ -458,7 +464,7 @@ def _handler(fm: FakeModelServer) -> type[BaseHTTPRequestHandler]:
                         "usage": usage, "error": None, "incomplete_details": None, **extra}
 
             if isinstance(step, Broken):
-                self._sse_start()
+                self._sse_start(fm.plan_quirks)
                 ev("response.created", response=resp("in_progress", []))
                 ev("response.output_item.added", output_index=0, item={"type": "message", "id": "msg_fake_b", "role": "assistant", "content": []})
                 ev("response.output_text.delta", item_id="msg_fake_b", output_index=0, content_index=0, delta=step.text[:step.after])
@@ -487,7 +493,7 @@ def _handler(fm: FakeModelServer) -> type[BaseHTTPRequestHandler]:
                 fm.pause(step.first_delay)
                 self._send(200, final)
                 return
-            self._sse_start()
+            self._sse_start(fm.plan_quirks)
             ev("response.created", response=resp("in_progress", []))
             ev("response.in_progress", response=resp("in_progress", []))
             fm.pause(step.first_delay)
@@ -515,7 +521,7 @@ def _handler(fm: FakeModelServer) -> type[BaseHTTPRequestHandler]:
                         ev("response.function_call_arguments.delta", item_id=it["id"], output_index=i, delta=p)
                     ev("response.function_call_arguments.done", item_id=it["id"], output_index=i, arguments=it["arguments"])
                     ev("response.output_item.done", output_index=i, item=it)
-            ev("response.incomplete" if length else "response.completed", response=final)
+            ev("response.incomplete" if length else "response.completed", response={**final, "output": []} if fm.plan_quirks else final)
 
         # —— Claude ——
         def _claude(self, step: Step, rec: dict) -> None:

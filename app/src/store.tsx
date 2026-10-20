@@ -47,6 +47,8 @@ interface State {
   sharedChannels: string[];
   /** 全新的服务器：还没有任何消息、也没建过 Agent（/api/health 的 first_run）。主对话空着时顶上放「从这里开始」 */
   firstRun: boolean;
+  /** 还没有能用的模型（/api/health 的 no_model）：自带内核、服务器有 setup 时 app 走第一次打开的三步（SetupScreens.tsx 的 SetupGate） */
+  noModel: boolean;
   /** 服务器背后的 claw（/api/health）：别的 claw 做不到的（后台任务、插话、执行审批……）app 按 caps 藏起来。连上之前当 OpenClaw。 */
   claw: ClawInfo;
   /** 服务器的版本和能力（/api/health 的 server，见 api/version.ts）。连上之前、老服务器 = OLD_SERVER。 */
@@ -327,6 +329,7 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
     appName: agentName(),
     sharedChannels: [],
     firstRun: false,
+    noModel: false,
     claw: OPENCLAW,
     server: OLD_SERVER,
     live: null,
@@ -833,7 +836,7 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
       setAgentName(p.appName);
       persistAgentName(p.appName).catch(() => {});
       setServerInfo(p.server);
-      setS((st) => ({ ...st, configLoaded: true, needsServer: false, authFailed: false, appName: agentName(), sharedChannels: p.sharedChannels, firstRun: p.firstRun, claw: p.claw, server: p.server, connected: true, booting: false }));
+      setS((st) => ({ ...st, configLoaded: true, needsServer: false, authFailed: false, appName: agentName(), sharedChannels: p.sharedChannels, firstRun: p.firstRun, noModel: p.noModel, claw: p.claw, server: p.server, connected: true, booting: false }));
       // 原生扩展（1.0.5 起）：地址和令牌给分享 / 小组件扩展，补传分享扩展没传上去的，实时活动和小组件对一遍
       const fg = AppState.currentState === 'active';  // 也可能是 iOS 在后台叫醒来同步健康数据的
       shareConfig();
@@ -966,7 +969,7 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
         return reply;
       })
       .then((reply) => {
-        setPartial(threadId, null, true);  // 和下面加进这条回复同一次重画
+        if (!reply.command) setPartial(threadId, null, true);  // 和下面加进这条回复同一次重画（命令的回答不碰：可能还有一条回复在跑）
         setS((st) => {
           // 排着的几条拿到的是同一条回复（appendMsg 按 id 去重）；都回完了才不算「输入中」
           const left = Math.max(0, (sending.current[threadId] ?? 1) - 1);

@@ -8,7 +8,7 @@ import asyncio
 import json
 import sqlite3
 import sys
-from datetime import datetime, timedelta
+from datetime import date, datetime, timedelta
 from pathlib import Path
 
 import pytest
@@ -125,24 +125,27 @@ def say(s: DbSession, text: str, ref: int | None = None, minutes_ago: float = 45
 # —— 什么时候算结束 ————————————————————————————————————————————————————————————————
 
 def test_idle_rollover_and_turns_make_a_session_due(wb, monkeypatch):
-    quiet = session("main", today(), [("user", "我不吃香菜，以后点菜帮我避开", 1), ("assistant", "好的。", None)])
+    now = datetime.now(config.settings.tz)  # 钟只读这一次：会话算哪天、到没到点都照它，几点跑都一样（跑到 04:00 那一下也不会前后对不上）
+    day = chat.day_of(now.isoformat(timespec="seconds"))
+    yesterday = (date.fromisoformat(day) - timedelta(days=1)).isoformat()  # 逻辑日的前一天：04:00 以前，日历上的昨天还算今天
+    quiet = session("main", day, [("user", "我不吃香菜，以后点菜帮我避开", 1), ("assistant", "好的。", None)])
     touch(quiet, 45)
-    busy = session("g-x", today(), [("user", "刚说的一句", 2)])
+    busy = session("g-x", day, [("user", "刚说的一句", 2)])
     touch(busy, 1)
-    old = session("g-y", (datetime.now(config.settings.tz) - timedelta(days=1)).date().isoformat(), [("user", "昨天说的", 3)])
+    old = session("g-y", yesterday, [("user", "昨天说的", 3)])
     touch(old, 1)
-    chatty = session("g-z", today(), [("user", f"第 {i} 句", i) for i in range(writeback.TURNS)])
+    chatty = session("g-z", day, [("user", f"第 {i} 句", i) for i in range(writeback.TURNS)])
     touch(chatty, 1)
-    api = session("api:main:x", today(), [("user", "外面的程序说的", 9)])
+    api = session("api:main:x", day, [("user", "外面的程序说的", 9)])
     touch(api, 90)
-    due = dict(writeback.due())
+    due = dict(writeback.due(now))
     assert due.get(quiet.id) == "idle" and due.get(old.id) == "rollover" and due.get(chatty.id) == "turns"
     assert busy.id not in due and api.id not in due  # 还在聊的、对外接口的会话不写回
     lock = loop._locks.setdefault(quiet.id, asyncio.Lock())
 
     async def held():
         async with lock:
-            return dict(writeback.due())
+            return dict(writeback.due(now))
     assert quiet.id not in run(held())  # 正在跑一轮：等它跑完
 
 

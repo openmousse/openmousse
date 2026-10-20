@@ -1,17 +1,18 @@
-// 设置（从侧栏底部进来；2026-09-29 照 Claude 的设置页改版）：
-// 账号卡（有账号的壳才有）→ 我的 claw（连过的几台，点「换到这台」切换）→ 这个助手的（连接器、档案、世界树、记忆……）→ 活动与安全 → 应用。
-// 原来「我」页的东西都还在，只是分了组；服务器地址和令牌在「我的 claw」点进去。
+// 设置（从对话页右上角进来；2026-09-29 照 Claude 的设置页改版，2026-10-19 第 9 批照设计指挥部第 17 张改排法，原来的东西一样都不删）：
+// 顶上一张状态卡（这台 claw 在不在线、东西都存在哪）→ 连接（授权登录、MCP 服务、技能、记忆、手）→ 密钥（模型、按用途选模型、向量、搜索、
+// 语音、用量）→ 通用（安全、外观）→ 其他（SettingsOtherScreen：账号、我的 claw、档案、日志、朋友画像、形象、活动、任务、分享、语言、通知、
+// 硬件、日程订阅、关于……）。数字从 /api/setup 总览和 /api/setup/usage 读（只认主人的设备）。
+// 老服务器（features 里没有 setup）不放新的那几页：只有授权登录、记忆、按用途选模型、安全、外观和其他。
+// MCP 服务、技能（第 5 批）、语音（第 3 批）是别的批的页：navigation 里有那个路由才能点进去，没有就只显示数、不带箭头；语音要服务器有语音设置才显示。
 import React, { useCallback, useEffect, useState, useSyncExternalStore } from 'react';
 import { Alert, Platform, Pressable, ScrollView, View } from 'react-native';
 import Constants from 'expo-constants';
 import { useFocusEffect, useNavigation } from '@react-navigation/native';
 import { agentName } from '../brand';
-import {
-  Activity, Bell, Bluetooth, BookOpen, Brain, CalendarDays, ChartColumn, Check, ClipboardList, Cpu, Globe, IdCard, Info, LogOut, Palette, Plug, Plus, Server, ShareIcon, ShieldCheck, SunMoon,
-  TreeDeciduous, User,
-} from '../components/icons';
+import { Activity, Bell, Bluetooth, BookOpen, Brain, CalendarDays, ChartColumn, Check, ClipboardList, Globe, IdCard, Info, LogOut, Palette, Plus, Server, ShareIcon, Sparkles, User } from '../components/icons';
 import { LensAvatar } from '../components/LensAvatar';
 import { Chevron, Dot, Group, GroupLabel, GroupNote, Row, SettingsHeader, Tile } from '../components/settings';
+import { GroupHead, KitCard, KitRow } from '../components/setupKit';
 import { useSheet } from '../components/Sheet';
 import { PullRefresh, Screen, T, showError } from '../components/ui';
 import { accountsEnabled, currentAccount, initialsOf, loadAccount, onAccountChange, signOut, syncClaw, type AccountUser } from '../api/account';
@@ -19,11 +20,15 @@ import { appsApi, noApps, type AppSummary } from '../api/apps';
 import { activeClawId, listClaws, pingClaw, switchToClaw, touchClaw, type Claw } from '../api/claws';
 import { defaultBase, getBase } from '../api/base';
 import { podFeatures } from '../api/podcast';
+import { setupApi, type Overview, type Purposes, type SearchView, type Usage } from '../api/setup';
 import { flipperState, onFlipper } from '../hardware/flipper';
 import { serverOutdated, supports } from '../api/version';
 import { L, useLang, type LangPref } from '../i18n';
+import { hasRoute } from '../navigation';
 import { useStore } from '../store';
 import { space, useAppearance, useTheme } from '../theme';
+import { money, plural } from './SettingsCenter';
+import { embedName } from './SetupScreens';
 
 /** 账号：登录着的用户（没有账号服务的壳一直是 null）。 */
 export function useAccount(): { enabled: boolean; user: AccountUser | null } {
@@ -37,36 +42,184 @@ export function useAccount(): { enabled: boolean; user: AccountUser | null } {
   return { enabled: accountsEnabled(), user };
 }
 
+const looksOf = () => [{ value: 'system' as const, label: L('跟随系统', 'System') }, { value: 'light' as const, label: L('浅色', 'Light') }, { value: 'dark' as const, label: L('深色', 'Dark') }];
+const bare = (ref: string | null | undefined) => (ref ? ref.split('/').slice(1).join('/') || ref : '');
+
+/** 从一组选项里挑一个（外观、语言）：弹层里一行一个，选中的打勾。 */
+function usePicker() {
+  const t = useTheme();
+  const sheet = useSheet();
+  return <V extends string>(title: string, options: { value: V; label: string }[], value: V, onChange: (v: V) => void) => {
+    sheet.open({
+      title,
+      content: (close) => (
+        <Group style={{ marginHorizontal: 0 }}>
+          {options.map((o, i) => (
+            <Row key={o.value} title={o.label} first={i === 0} chevron={false} onPress={() => { onChange(o.value); close(); }}
+              right={o.value === value ? <Check size={20} color={t.cyan} /> : undefined} />
+          ))}
+        </Group>
+      ),
+    });
+  };
+}
 
 export function MeScreen() {
   const t = useTheme();
   const nav = useNavigation<any>();
-  const sheet = useSheet();
-  const {
-    avatar, profile, memories, connected, booting, authFailed, appName, tasks, security, models, journal, tree, connectors, reload, claw, server, refreshLive,
-  } = useStore();
+  const pick = usePicker();
+  const { connected, booting, authFailed, security, models, tree, reload, claw, server } = useStore();
   const { appearance, setAppearance } = useAppearance();
+  const warn = security?.facts.filter((f) => f.tone === 'warn') ?? [];
+  const expired = models?.providers.filter((p) => p.subscription && p.status !== 'ok') ?? [];
+  const leaves = tree?.kind === 'ok' ? tree.data.counts : null;
+  const setup = connected && supports('setup');
+  const builtin = claw.kind === 'builtin';
+
+  // 世界树不在启动时读（见 store 的 STARTUP_KEYS）：第一次来这一页时读
+  useEffect(() => { if (connected) reload('tree').catch(() => {}); }, [connected, reload]);
+
+  // 数字：/api/setup 总览、用量、按用途（连上了几家、主对话用哪个）、搜索（用的那家叫什么）。老服务器没有：授权登录照旧读 /api/apps
+  const [ov, setOv] = useState<Overview | null>(null);
+  const [usage, setUsage] = useState<Usage | null>(null);
+  const [pv, setPv] = useState<Purposes | null>(null);
+  const [search, setSearch] = useState<SearchView | null>(null);
+  const [setupErr, setSetupErr] = useState<string | null>(null);
+  const [apps, setApps] = useState<AppSummary[] | null>(null);
+  const load = useCallback(() => {
+    if (!connected) return Promise.resolve();
+    if (!supports('setup')) return appsApi.list().then((r) => setApps(r.apps)).catch((e) => { if (noApps(e)) setApps(null); });
+    return Promise.all([setupApi.overview(), setupApi.usage(30).catch(() => null), setupApi.purposes(false).catch(() => null), setupApi.search().catch(() => null)])
+      .then(([o, u, p, s]) => { setOv(o); setUsage(u); setPv(p); setSearch(s); setSetupErr(null); })
+      .catch((e) => setSetupErr(e instanceof Error ? e.message : String(e)));
+  }, [connected]);
+  useFocusEffect(useCallback(() => { load(); }, [load]));
+
+  const outdated = connected && serverOutdated(server);  // 服务器比这版 app 旧：点进去有更新方法
+  const clawStatus = connected ? (outdated ? L('在线 · 需要更新', 'Online · update needed') : L('在线', 'Online'))
+    : booting ? L('正在连接…', 'Connecting…') : authFailed ? L('令牌无效', 'Invalid token') : L('无法连接', 'Unreachable');
+  const clawLine = builtin ? L(`${agentName()} 自带内核`, `${agentName()} built-in engine`) : claw.name;
+
+  const conn = ov?.layers.connections;
+  const appsOn = conn?.apps ?? (apps ? apps.filter((a) => a.status === 'connected').length : null);
+  const appsNeedAuth = (apps ?? []).some((a) => a.status === 'needs_auth');
+  const handsN = ov?.layers.hands.agents?.filter((a) => a.files || a.webFetch || a.webSearch || a.sandbox || a.hostExec).length;
+  const memories = ov?.layers.memory.tree?.memories ?? leaves?.total ?? null;
+  const external = (layer: { status?: string } | undefined) => !builtin && (layer?.status === 'external' || !layer);
+  const by = L(`由 ${claw.name} 管`, `Managed by ${claw.name}`);
+  const providersN = pv ? Object.keys(pv.providers).length : null;
+  const chatRef = ov?.layers.models.chat ?? null;
+  const emb = ov?.layers.embeddings;
+  const embText = emb?.current ? embedName(emb.current, pv?.choices.embeddings ?? []) : emb?.status === 'warn' ? L('要处理', 'Needs attention') : L('没开', 'Off');
+  const searchName = search?.provider ? search.providers.find((x) => x.id === search.provider)?.name ?? search.provider : null;
+  const searchText = searchName ?? (search?.off ? L('关着', 'Off') : L('没设', 'Not set'));
+  const spent = usage ? usage.total.cost + usage.embeddings.total.cost : null;
+  const usageText = usage ? [money(spent ?? 0), usage.total.planTurns ? L(`套餐 ${usage.total.planTurns} 轮`, plural(usage.total.planTurns, 'plan turn')) : null].filter(Boolean).join(' · ') : null;
+  const go = (route: string) => (hasRoute(route) ? () => nav.navigate(route) : undefined);  // 别的批的页：路由在才能点
+
+  return (
+    <Screen>
+      <SettingsHeader title={L('设置', 'Settings')} onBack={nav.canGoBack() ? () => nav.goBack() : undefined} close />
+      <ScrollView contentContainerStyle={{ paddingBottom: space.xxl, paddingTop: 4, paddingHorizontal: space.lg }}
+        refreshControl={<PullRefresh onRefresh={() => Promise.all([load(), reload('profile', 'tree', 'memories', 'journal', 'activity', 'tasks', 'security', 'models', 'connectors')])} />}>
+
+        <Pressable onPress={() => nav.navigate(connected ? 'Claw' : 'Connect')} accessibilityRole="button"
+          accessibilityLabel={`${clawLine}${L('，', ', ')}${clawStatus}`} style={({ pressed }) => ({ opacity: pressed ? 0.7 : 1 })}>
+          <KitCard style={{ padding: space.lg, gap: 6 }}>
+            <View style={{ flexDirection: 'row', alignItems: 'center', gap: space.sm }}>
+              <Dot tone={connected && !outdated ? 'good' : 'warn'} />
+              <T v="headline" numberOfLines={1} style={{ flex: 1 }}>{`${clawLine} · ${clawStatus}`}</T>
+              <Chevron />
+            </View>
+            <T v="caption" color={t.ink3} style={{ fontWeight: '400', lineHeight: 17 }}>{L('对话、记忆和密钥都存在这台 claw 上。', 'Chats, memory and keys are all stored on this claw.')}</T>
+          </KitCard>
+        </Pressable>
+        {setupErr ? <T v="caption" color={t.warn} style={{ marginTop: space.sm, paddingHorizontal: space.xs, fontWeight: '400' }}>{setupErr}</T> : null}
+
+        <GroupHead title={L('连接', 'Connections')} note={L('接上外面的服务、工具和你的资料', 'Outside services, tools and your own data')} />
+        <KitCard>
+          <KitRow first title={L('授权登录', 'Sign-ins')} value={appsOn != null ? L(`已连 ${appsOn} 个`, `${appsOn} connected`) : null} tone={appsNeedAuth ? 'warn' : undefined}
+            onPress={() => nav.navigate('Connectors')} />
+          {setup && conn ? (
+            <KitRow title={L('MCP 服务', 'MCP servers')} onPress={go('McpServers')} tone={conn.mcpErrors ? 'warn' : undefined}
+              value={conn.mcpErrors ? L(`${conn.mcp ?? 0} 个 / ${conn.mcpErrors} 个出错`, `${conn.mcp ?? 0} / ${conn.mcpErrors} failing`) : L(`${conn.mcp ?? 0} 个`, `${conn.mcp ?? 0}`)} />
+          ) : null}
+          {setup && conn ? <KitRow title={L('技能', 'Skills')} value={L(`${conn.skills ?? 0} 个`, `${conn.skills ?? 0}`)} onPress={go('Skills')} /> : null}
+          <KitRow title={L('记忆', 'Memory')} tone={leaves?.pending ? 'warn' : undefined} onPress={() => nav.navigate('Tree')}
+            value={leaves?.pending ? L(`${leaves.pending} 条待确认`, `${leaves.pending} waiting`) : memories != null ? L(`${memories} 条`, `${memories}`) : null} />
+          {setup ? (
+            <KitRow title={L('手', 'Hands')} disabled={!builtin} value={!builtin ? by : handsN != null ? L(`${handsN} 个 Agent`, `${handsN} Agent${handsN === 1 ? '' : 's'}`) : null}
+              onPress={builtin ? () => nav.navigate('SettingsHands') : undefined} />
+          ) : null}
+        </KitCard>
+
+        <GroupHead title={L('密钥', 'Keys')} note={L('模型，和其他要用密钥的服务', 'Models, and other services that need a key')} />
+        <KitCard>
+          {setup ? (
+            <KitRow first title={L('模型', 'Models')} disabled={external(ov?.layers.models)}
+              value={external(ov?.layers.models) ? by : providersN != null ? L(`${providersN} 家`, `${providersN}`) : null}
+              tone={ov?.layers.models.status === 'missing' ? 'warn' : undefined}
+              onPress={external(ov?.layers.models) ? undefined : () => nav.navigate('SettingsProviders')} />
+          ) : null}
+          <KitRow first={!setup} title={L('按用途选模型', 'Models by purpose')} onPress={() => nav.navigate('Models')}
+            value={expired.length ? L('订阅登录已过期', 'Sign-in expired') : builtin && chatRef ? L(`主对话 ${bare(chatRef)}`, `Main chat ${bare(chatRef)}`) : !builtin ? claw.name : null}
+            tone={expired.length ? 'warn' : undefined} />
+          {setup ? (
+            <KitRow title={L('向量', 'Embeddings')} disabled={!builtin} value={!builtin ? by : embText} tone={emb?.status === 'warn' ? 'warn' : undefined}
+              onPress={builtin ? () => nav.navigate('SettingsMemory') : undefined} />
+          ) : null}
+          {setup ? (
+            <KitRow title={L('搜索', 'Search')} disabled={!builtin} value={!builtin ? by : searchText}
+              onPress={builtin ? () => nav.navigate('SettingsSearch') : undefined} />
+          ) : null}
+          {setup && supports('voice') ? <KitRow title={L('语音', 'Voice')} onPress={go('Voice')} /> : null}
+          {setup ? <KitRow title={L('用量', 'Usage')} value={usageText} onPress={() => nav.navigate('SettingsUsage')} /> : null}
+        </KitCard>
+
+        <GroupHead title={L('通用', 'General')} />
+        <KitCard>
+          <KitRow first title={L('安全', 'Security')} value={security ? (warn.length ? L(`${warn.length} 条提醒`, `${warn.length} to check`) : L('正常', 'All good')) : null}
+            tone={warn.length ? 'warn' : undefined} onPress={() => nav.navigate('Security')} />
+          <KitRow title={L('外观', 'Appearance')} value={looksOf().find((o) => o.value === appearance)?.label}
+            onPress={() => pick(L('外观', 'Appearance'), looksOf(), appearance, setAppearance)} />
+        </KitCard>
+
+        <GroupHead title={L('其他', 'More')} />
+        <KitCard>
+          <KitRow first title={L('账号、我的 claw 和更多', 'Account, claws and more')}
+            sub={L('档案、日志、形象、活动、任务、分享、语言、通知、硬件、日程订阅、关于', 'Profile, journal, look, activity, tasks, sharing, language, notifications, hardware, calendar feed, about')}
+            onPress={() => nav.navigate('SettingsOther')} />
+        </KitCard>
+
+        <T v="caption" color={t.ink3} style={{ textAlign: 'center', marginTop: 20, fontWeight: '400' }}>
+          {L(`${Constants.expoConfig?.name ?? 'OpenMousse'} ${Constants.expoConfig?.version ?? ''} · 开源（AGPL-3.0）`, `${Constants.expoConfig?.name ?? 'OpenMousse'} ${Constants.expoConfig?.version ?? ''} · Open source (AGPL-3.0)`)}
+        </T>
+        {getBase() && !connected && !booting ? (
+          <View style={{ marginTop: space.md, alignItems: 'center' }}>
+            <Pressable onPress={() => nav.navigate('Connect')} accessibilityRole="button"><T v="callout" color={t.cyan}>{L('无法连接？检查地址和令牌 →', "Can't connect? Check the address and token →")}</T></Pressable>
+          </View>
+        ) : null}
+      </ScrollView>
+    </Screen>
+  );
+}
+
+/** 设置 → 其他：账号卡、我的 claw（连过的几台，点「换到这台」切换）、这个助手的（档案、记忆、日志、朋友画像、形象）、活动、应用（语言、通知、硬件……）。
+ *  原来设置首页上的这些一样都没删，只是收到这一页。 */
+export function SettingsOtherScreen() {
+  const t = useTheme();
+  const nav = useNavigation<any>();
+  const sheet = useSheet();
+  const pick = usePicker();
+  const { avatar, profile, memories, connected, booting, authFailed, appName, tasks, journal, claw, server, refreshLive } = useStore();
   const { pref, setPref } = useLang();
   const acct = useAccount();
   const flipper = useSyncExternalStore(onFlipper, flipperState).device;  // 硬件页记住的那台 Flipper
-  const warn = security?.facts.filter((f) => f.tone === 'warn') ?? [];
-  const expired = models?.providers.filter((p) => p.subscription && p.status !== 'ok') ?? [];
   const running = tasks.filter((x) => x.status === '进行中').length;
-  const leaves = tree?.kind === 'ok' ? tree.data.counts : null;
-  const conn = connectors?.kind === 'ok' ? connectors.data.counts : null;
 
-  // 世界树和连接状态不在启动时读（见 store 的 STARTUP_KEYS）：第一次来这一页时读
-  useEffect(() => { if (connected) reload('tree', 'connectors').catch(() => {}); }, [connected, reload]);
   // 朋友画像（播客记的，只有你看得到）：服务器有才显示
   const [people, setPeople] = useState(false);
   useEffect(() => { if (connected) podFeatures().then((f) => setPeople(f.people)).catch(() => {}); }, [connected]);
-
-  // 连接器：连着的应用（服务器老没有这个接口就用原来「连接」的计数）
-  const [apps, setApps] = useState<AppSummary[] | null>(null);
-  const loadApps = useCallback(() => {
-    if (!connected) return;
-    appsApi.list().then((r) => setApps(r.apps)).catch((e) => { if (noApps(e)) setApps(null); });
-  }, [connected]);
 
   // 我的 claw：这台设备连过的几台；正在用的那台顺手更新名字，别的几台看一眼在不在
   const [claws, setClaws] = useState<Claw[]>([]);
@@ -91,8 +244,7 @@ export function MeScreen() {
       }
     }).catch(() => {});
   }, [appName, connected, claw.kind, claw.name]);
-
-  useFocusEffect(useCallback(() => { loadClaws(); loadApps(); }, [loadClaws, loadApps]));
+  useFocusEffect(useCallback(() => { loadClaws(); }, [loadClaws]));
 
   const activeId = activeClawId(claws);
   const web = Platform.OS === 'web';
@@ -112,20 +264,6 @@ export function MeScreen() {
     ]);
   };
 
-  const pick = <V extends string>(title: string, options: { value: V; label: string }[], value: V, onChange: (v: V) => void) => {
-    sheet.open({
-      title,
-      content: (close) => (
-        <Group style={{ marginHorizontal: 0 }}>
-          {options.map((o, i) => (
-            <Row key={o.value} title={o.label} first={i === 0} chevron={false} onPress={() => { onChange(o.value); close(); }}
-              right={o.value === value ? <Check size={20} color={t.cyan} /> : undefined} />
-          ))}
-        </Group>
-      ),
-    });
-  };
-  const looks = [{ value: 'system' as const, label: L('跟随系统', 'System') }, { value: 'light' as const, label: L('浅色', 'Light') }, { value: 'dark' as const, label: L('深色', 'Dark') }];
   const langs: { value: LangPref; label: string }[] = [{ value: 'system', label: L('跟随系统', 'System') }, { value: 'zh', label: '中文' }, { value: 'en', label: 'English' }];
   const version = Constants.expoConfig?.version ?? '';
 
@@ -150,18 +288,14 @@ export function MeScreen() {
     ]);
   };
 
-  const connectedApps = (apps ?? []).filter((a) => a.status !== 'error');
-  const appsNeedAuth = (apps ?? []).filter((a) => a.status === 'needs_auth').length;
-  const outdated = connected && serverOutdated(server);  // 服务器比这版 app 旧：点进去有更新方法
+  const outdated = connected && serverOutdated(server);
   const clawStatus = connected ? (outdated ? L('在线 · 需要更新', 'Online · update needed') : L('在线', 'Online'))
     : booting ? L('正在连接…', 'Connecting…') : authFailed ? L('令牌无效', 'Invalid token') : L('无法连接', 'Unreachable');
 
   return (
     <Screen>
-      <SettingsHeader title={L('设置', 'Settings')} onBack={nav.canGoBack() ? () => nav.goBack() : undefined} close />
-      <ScrollView contentContainerStyle={{ paddingBottom: space.xxl, paddingTop: 4 }}
-        refreshControl={<PullRefresh onRefresh={() => { loadClaws(); loadApps(); return reload('profile', 'tree', 'memories', 'journal', 'activity', 'tasks', 'security', 'models', 'connectors'); }} />}>
-
+      <SettingsHeader title={L('其他', 'More')} onBack={() => nav.goBack()} />
+      <ScrollView contentContainerStyle={{ paddingBottom: space.xxl, paddingTop: 4 }} refreshControl={<PullRefresh onRefresh={() => { loadClaws(); }} />}>
         {acct.enabled ? (
           <Group>
             {acct.user ? (
@@ -214,49 +348,26 @@ export function MeScreen() {
 
         <GroupLabel>{agentName()}</GroupLabel>
         <Group>
-          <Row first icon={<Plug size={22} color={appsNeedAuth || conn?.warn ? t.warn : t.cyan} />} title={L('连接器', 'Connectors')} onPress={() => nav.navigate('Connectors')}
-            right={apps ? (
-              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
-                <View style={{ flexDirection: 'row' }}>
-                  {connectedApps.slice(0, 3).map((a, i) => (
-                    <View key={a.id} style={{ marginLeft: i ? -6 : 0, borderRadius: 8, borderWidth: 2, borderColor: t.surface }}>
-                      <Tile size={22} mono={a.mono || a.name.slice(0, 1)} bg={a.bg} fg={a.fg} border={a.border} />
-                    </View>
-                  ))}
-                </View>
-                {connectedApps.length ? <T v="body" color={appsNeedAuth ? t.warn : t.ink2} style={{ fontSize: 16 }}>{String(connectedApps.length)}</T> : null}
-              </View>
-            ) : undefined}
-            value={apps ? (connectedApps.length ? undefined : L('立即连接', 'Connect one')) : conn ? L(`${conn.ok} 个正常`, `${conn.ok} working`) : undefined}
-            tone={apps && !connectedApps.length ? 'accent' : undefined} />
-          <Row icon={<IdCard size={22} color={t.cyan} />} title={L('基础档案', 'Profile')} value={profile.length ? L(`${profile.length} 条`, `${profile.length}`) : undefined} onPress={() => nav.navigate('Identity')} />
-          <Row icon={<TreeDeciduous size={22} color={t.cyan} />} title={L('世界树', 'Memory tree')}
-            value={leaves ? (leaves.pending ? L(`${leaves.pending} 条待确认`, `${leaves.pending} waiting`) : L(`${leaves.total} 片叶子`, `${leaves.total} leaves`)) : undefined}
-            tone={leaves?.pending ? 'accent' : undefined} onPress={() => nav.navigate('Tree')} />
-          <Row icon={<Brain size={22} color={t.cyan} />} title={L('记忆', 'Memory')} value={memories.length ? L(`${memories.length} 条`, `${memories.length}`) : undefined} onPress={() => nav.navigate('Memory')} />
+          <Row first icon={<IdCard size={22} color={t.cyan} />} title={L('基础档案', 'Profile')} value={profile.length ? L(`${profile.length} 条`, `${profile.length}`) : undefined} onPress={() => nav.navigate('Identity')} />
+          <Row icon={<Brain size={22} color={t.cyan} />} title={L('记忆条目', 'Memory notes')} value={memories.length ? L(`${memories.length} 条`, `${memories.length}`) : undefined} onPress={() => nav.navigate('Memory')} />
           <Row icon={<BookOpen size={22} color={t.cyan} />} title={L('日志', 'Journal')} value={journal.length ? L(`${journal.length} 条`, `${journal.length}`) : undefined} onPress={() => nav.navigate('Journal')} />
           {people ? <Row icon={<User size={22} color={t.cyan} />} title={L('朋友画像', 'Friend notes')} onPress={() => nav.navigate('People')} /> : null}
+          {supports('naming') && claw.kind === 'builtin' && hasRoute('SetupName') ? (
+            <Row icon={<Sparkles size={22} color={t.cyan} />} title={L('名字和性格', 'Name and character')} value={agentName()} onPress={() => nav.navigate('SetupName', { from: 'settings' })} />
+          ) : null}
           <Row icon={<Palette size={22} color={t.cyan} />} title={L('形象', 'Look')} right={<LensAvatar size={24} config={avatar} />} onPress={() => nav.navigate('Avatar')} />
-          <Row icon={<Cpu size={22} color={expired.length ? t.warn : t.cyan} />} title={L('模型与用量', 'Models & usage')}
-            value={expired.length ? L('订阅登录已过期', 'Sign-in expired') : claw.kind !== 'openclaw' ? claw.name : undefined} tone={expired.length ? 'warn' : undefined}
-            onPress={() => nav.navigate('Models')} />
         </Group>
 
-        <GroupLabel>{L('活动与安全', 'Activity & safety')}</GroupLabel>
+        <GroupLabel>{L('活动', 'Activity')}</GroupLabel>
         <Group>
           <Row first icon={<Activity size={22} color={t.cyan} />} title={L('活动记录', 'Activity')} onPress={() => nav.navigate('Activity')} />
           {claw.caps.tasks ? <Row icon={<ClipboardList size={22} color={t.cyan} />} title={L('任务', 'Tasks')} value={running ? L(`${running} 个运行中`, `${running} running`) : undefined} tone="accent" onPress={() => nav.navigate('Tasks')} /> : null}
-          <Row icon={<ShieldCheck size={22} color={warn.length ? t.warn : t.cyan} />} title={L('安全', 'Security')}
-            value={security ? (warn.length ? L(`${warn.length} 项需关注`, `${warn.length} to check`) : L('全部正常', 'All good')) : undefined} tone={warn.length ? 'warn' : 'good'}
-            onPress={() => nav.navigate('Security')} />
           <Row icon={<ShareIcon size={22} color={t.cyan} />} title={L('已分享的链接', 'Shared links')} onPress={() => nav.navigate('Shares')} />
         </Group>
 
         <GroupLabel>{L('应用', 'App')}</GroupLabel>
         <Group>
-          <Row first icon={<SunMoon size={22} color={t.cyan} />} title={L('外观', 'Appearance')} value={looks.find((o) => o.value === appearance)?.label}
-            onPress={() => pick(L('外观', 'Appearance'), looks, appearance, setAppearance)} />
-          <Row icon={<Globe size={22} color={t.cyan} />} title={L('语言', 'Language')} value={langs.find((o) => o.value === pref)?.label}
+          <Row first icon={<Globe size={22} color={t.cyan} />} title={L('语言', 'Language')} value={langs.find((o) => o.value === pref)?.label}
             onPress={() => pick(L('语言', 'Language'), langs, pref, setPref)} />
           {supports('friends.prefs') ? <Row icon={<Bell size={22} color={t.cyan} />} title={L('通知', 'Notifications')} onPress={() => nav.navigate('Notify')} /> : null}
           <Row icon={<Bluetooth size={22} color={t.cyan} />} title={L('硬件', 'Hardware')} value={flipper?.name} onPress={() => nav.navigate('Hardware')} />
@@ -268,14 +379,6 @@ export function MeScreen() {
           <Group style={{ marginTop: 26 }}>
             <Row first icon={<LogOut size={22} color={t.bad} />} title={L('退出登录', 'Sign out')} danger onPress={logout} />
           </Group>
-        ) : null}
-        <T v="caption" color={t.ink3} style={{ textAlign: 'center', marginTop: 20, fontWeight: '400' }}>
-          {L(`${Constants.expoConfig?.name ?? 'OpenMousse'} ${version} · 开源（AGPL-3.0）`, `${Constants.expoConfig?.name ?? 'OpenMousse'} ${version} · Open source (AGPL-3.0)`)}
-        </T>
-        {getBase() && !connected && !booting ? (
-          <View style={{ marginTop: space.md, alignItems: 'center' }}>
-            <Pressable onPress={() => nav.navigate('Connect')} accessibilityRole="button"><T v="callout" color={t.cyan}>{L('无法连接？检查地址和令牌 →', "Can't connect? Check the address and token →")}</T></Pressable>
-          </View>
         ) : null}
       </ScrollView>
     </Screen>

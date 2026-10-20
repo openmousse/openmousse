@@ -13,7 +13,8 @@
   sessions_list / sessions_history / session_status  只读：看别的会话（第 1 批 b，engine/sessions.py：范围按 engine.sessions，读到的标成
           [Inter-session message]、当资料）。
   skill   只读：这个 Agent 能用的 skills（名字 + 一句说明，也写在会话开头），按名字读全文（pi 的做法：说明常驻，全文用到时再读）。
-          skills 在 Agent 工作区的 skills/（没有自己工作区的用主工作区的）和 packs/core/skills/，同名的工作区优先。
+          skills 在 Agent 工作区的 skills/（没有自己工作区的用主工作区的）、数据目录下所有 Agent 共用的 skills/（第 5 批）和
+          packs/core/skills/，同名的前面的优先（skill_dirs）。
           engine.skills.agents.<Agent id> 写了名单的只给名单上的（engine/agent_skills.py 的 skills_for）。
   skill_manage  写自己工作区的 skills/（第 13 步，engine/skill_write.py）：新建、改一段、重写、附属文件、删；改之前整份存进 .history，能恢复。
           没人在看的那几轮、后台任务的子 Agent 不给（engine/unattended.py 的 NO_TOOLS、engine/tasks.py 的 CHILD_NEVER）。
@@ -632,9 +633,12 @@ def _front(text: str) -> dict:
 
 
 def skill_dirs(me: str) -> list[Path]:
+    """技能在哪几处，前面的盖过后面同名的：Agent 工作区 > 用户级（数据目录下所有 Agent 共用的 skills/，第 5 批：技能市场和主人放的，
+    skill_manage 写不到）> packs/core。core 永远是最后一个（list_skills 按它认要别的工具的那几个）。"""
     ws = settings.agent_workspaces.get(me) if me != "main" else None
     ws = ws if ws and ws.is_dir() else settings.workspace
-    return [ws / "skills", bridges.REPO / "packs" / "core" / "skills"]
+    from . import plugins  # 第 5 批：载上的插件自带的技能（在用户级后面、core 前面）
+    return [ws / "skills", settings.data_dir / "skills", *plugins.skill_dirs(), bridges.REPO / "packs" / "core" / "skills"]
 
 
 def list_skills(me: str, offered: set[str]) -> dict[str, tuple[str, Path]]:
@@ -642,7 +646,8 @@ def list_skills(me: str, offered: set[str]) -> dict[str, tuple[str, Path]]:
     frontmatter 写了 disable-model-invocation 的不列（pi），工作区里停用的那一份连 core 里同名的一起不列（13c 每周修剪「停用」就是这么停的）。"""
     out: dict[str, tuple[str, Path]] = {}
     off: set[str] = set()
-    for i, base in enumerate(skill_dirs(me)):
+    dirs = skill_dirs(me)
+    for i, base in enumerate(dirs):
         try:
             subs = sorted(p for p in base.iterdir() if (p / "SKILL.md").is_file())
         except OSError:
@@ -658,7 +663,7 @@ def list_skills(me: str, offered: set[str]) -> dict[str, tuple[str, Path]]:
             if fm.get("disable-model-invocation") is True:
                 off.add(name)
                 continue
-            if i == 1 and (need := SKILL_NEEDS.get(d.name)) and need not in offered:
+            if i == len(dirs) - 1 and (need := SKILL_NEEDS.get(d.name)) and need not in offered:
                 continue
             desc = " ".join(str(fm.get("description") or "").split())
             out[name] = (desc[:SKILL_MAX] + ("…" if len(desc) > SKILL_MAX else ""), d / "SKILL.md")
@@ -694,9 +699,10 @@ def skill_tool(me: str, offered: set[str]) -> Tool:
             text = bridges.clip(path.read_text(encoding="utf8", errors="replace"))
         except OSError as e:
             raise ToolFailure(L(f"读不了：{e.strerror}", f"Can't read it: {e.strerror}")) from None
-        from . import used  # 13c：读了哪个技能记一笔（engine/used.py）
+        from . import skill_gate, used  # 13c：读了哪个技能记一笔（engine/used.py）；第 5 批：全文后面附上这个技能的设置、缺的环境变量
+        text += "" if rel else skill_gate.extra(name, hit[1], agent=me, offered=offered)
         used.note(ctx.turn, conversation=ctx.conversation, agent=ctx.agent or me, kind="skill", names=[name], via="tool",
-                  source="core" if hit[1].resolve().is_relative_to((bridges.REPO / "packs" / "core" / "skills").resolve()) else "workspace")
+                  source=agent_skills.source_of(hit[1]))
         return text
 
     tool = Tool(name="skill", kinds=("owner",), run=run, title=lambda args: f"skill {args.get('name') or ''}".strip(),
@@ -744,6 +750,10 @@ def for_agent(agent: str | None) -> list[Tool]:
     if levels().get("cron") != OFF:
         from . import jobs  # 定时任务（第 6 项）
         tools.append(jobs.tool(me))
+    from . import heartbeat  # 第 4 批：心跳开着的 Agent 每一轮都有 heartbeat_respond（只有心跳那一轮收）
+    tools += heartbeat.tools_for(me)
+    import channels  # 第 6 批的渠道层（server/channels）：message 工具，发给主人直接发、发给联系人交卡；没开渠道就没有
+    tools += [t for t in channels.tools_for(me) if levels().get(t.name) != OFF]
     from . import mcp_client  # 你自己配的 MCP 服务（第 13 步，server.json 的 mcp_servers）
     tools += [t for t in mcp_client.tools_for(me) if levels().get(t.name) != OFF]
     from . import skill_write  # 写自己的 skill（第 13 步；没有自己工作区的 Agent 没有）
@@ -752,10 +762,24 @@ def for_agent(agent: str | None) -> list[Tool]:
     from . import manual_write  # 13c：改手册（做法：先提议、点了头才改；世界树有手册才有）
     if levels().get(manual_write.TOOL_NAME) != OFF and (mw := manual_write.tool(me)) is not None:
         tools.append(mw)
+    from . import skill_market  # 第 5 批：技能市场（搜只读；装、更新、卸载交卡；engine.skills.market.enabled 才有）
+    if levels().get(skill_market.TOOL) != OFF and (sm := skill_market.tool(me)) is not None:
+        tools.append(sm)
+    from . import intents  # 第 5 批：要记得的事（remember_when；engine.intents.enabled 才有）
+    if levels().get(intents.TOOL) != OFF and (it := intents.tool(me)) is not None:
+        tools.append(it)
+    from . import plugins  # 第 5 批：载上的插件的工具（engine.plugins.enabled 才有；撤得回的直接调，别的每次交卡）
+    tools += [t for t in plugins.tools_for(me) if levels().get(t.name) != OFF and t.name not in {x.name for x in tools}]
     from . import handkit  # ⑫：主机上的文件、网页、自己的沙箱、主机上的命令（engine/handkit.py）
     tools += handkit.tools_for(me)
+    from . import nodes as node_tools  # 第 8 批：设备节点（engine/nodes.py；engine.nodes 开着、这个 Agent 在 engine.nodes.agents 里才有）
+    tools += node_tools.tools_for(me)
     from . import used  # 13c：tree / memory_search / memory_get 读到了哪几片叶子，记进事件流
-    return used.wrap(tools)
+    tools = used.wrap(tools)
+    from . import user_hooks  # 第 5 批：tool:before / tool:after 的钩子（包在收进 tool_search 之前：经 tool_call 调的照样过钩子、钩子看到的是真名字）
+    tools = user_hooks.wrap(tools, me)
+    from . import toolsearch  # 第 3 批：MCP、连接器的工具多过门槛时收进 tool_search / tool_describe / tool_call（engine.tools.search，默认关）
+    return toolsearch.compact(me, tools)
 
 
 def chat_tools(agent: str | None, *, watched: bool) -> list[Tool]:
@@ -1075,7 +1099,7 @@ def install_hooks() -> None:
     import inbox
 
     from . import handkit, jobs
-    from . import improve, manual_write, mcp_client, skill_write  # noqa: F401 — 第 13 步：导入时登记各自的跑法（kind tool 的卡同意后照原样做一次，engine/calls.py；13c 的改说明、改手册）
+    from . import improve, manual_write, mcp_client, plugins, skill_market, skill_write, user_hooks  # noqa: F401 — 第 13 步：导入时登记各自的跑法（kind tool 的卡同意后照原样做一次，engine/calls.py；13c 的改说明、改手册；第 5 批的技能市场、钩子、插件的同意卡）
     inbox.HOOKS["tool"] = on_decided
     jobs.install()
     handkit.install()  # ⑫：主机命令、文件、网页、沙箱的卡（重启后之前交的卡点了同意也照做）

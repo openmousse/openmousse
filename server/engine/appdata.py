@@ -4,7 +4,8 @@ OpenClaw 的 Gateway 只留一周当退路，Gateway 一停这几页就空了）
 
   GET  /api/activity        {id, time, actor, text, kind}：app 自己的动作（activity_log）+ 内核的一轮轮（engine_turns：谁、在哪、什么时候、
                             哪个模型、成没成、花了多少、用了哪些工具；kind reply / failed）+ 定时任务和心跳跑的每一次（engine_job_runs，
-                            kind cron / failed；它们那一轮不再单列）。另给 turn、model、models、cost、billing、tokens、status、ms……不调 Gateway
+                            kind cron / failed；它们那一轮不再单列；只跑命令的到点跑成了的那次不列，见 engine_items）。另给 turn、model、models、
+                            cost、billing、tokens、status、ms……不调 Gateway
   GET  /api/models          primary（默认模型）、fallbacks（它的备用链）、subagent（后台和定时用的）、allowed（app 里能切换的）、providers（用到的
                             每一家：套餐还是按量、连没连上，OpenClaw 那条路的样子；Claude Code 照 runners 的检测，不碰令牌）；另给 engine（每个模型的链）、
                             claudeCode、chatgpt、purposes（按用途选的结果，engine/setup_api.py）、usage（这 30 天花了多少，只给主人的设备）
@@ -266,14 +267,19 @@ def run_item(r, t, names: dict[str, str]) -> tuple[float, dict]:
 
 
 def engine_items(limit: int, names: dict[str, str]) -> list[tuple[float, dict]]:
-    """内核记下的：定时任务和心跳跑的每一次 + 别的一轮轮（定时任务那一轮已经算在它跑的那一次里，不再单列）。没用过内核 → []（不建表）。"""
+    """内核记下的：定时任务和心跳跑的每一次 + 别的一轮轮（定时任务那一轮已经算在它跑的那一次里，不再单列）。没用过内核 → []（不建表）。
+    只跑命令的任务到点跑成了的那次不列：5 分钟一次的会把别的都挤出去。它经 /api/chat/trigger 发的话是单独的一轮，照样列；没跑成的、
+    手动跑的照列；每一次都还在任务自己的运行记录里（jobs.runs_of）。在 SQL 里筛：不列的不占 limit。"""
     if not store.exists():
         return []
     out: list[tuple[float, dict]] = []
     have_jobs = jobs.exists()
+    if have_jobs:
+        jobs.ready()  # 10/19 以前建的库，command 那一栏要等 jobs.loop 补上：活动页可能先被问到
     with store.read() as conn:
         runs = conn.execute("SELECT r.*, j.name AS job_name FROM engine_job_runs r LEFT JOIN engine_jobs j ON j.id = r.job "
-                            "WHERE r.status != 'running' ORDER BY r.rowid DESC LIMIT ?", (limit,)).fetchall() if have_jobs else []
+                            "WHERE r.status != 'running' AND NOT (r.status = 'ok' AND r.kind != 'manual' AND COALESCE(j.command, '') != '') "
+                            "ORDER BY r.rowid DESC LIMIT ?", (limit,)).fetchall() if have_jobs else []
         rows = conn.execute("SELECT * FROM engine_turns WHERE status != 'running' AND conversation NOT LIKE 'cron:%' "
                             "AND conversation NOT LIKE 'heartbeat:%' ORDER BY rowid DESC LIMIT ?", (limit,)).fetchall()
         ids = [r["id"] for r in rows]

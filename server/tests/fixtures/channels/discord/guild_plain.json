@@ -1,0 +1,28 @@
+{
+ "id": "5000011",
+ "channel_id": "9200001",
+ "author": {
+  "id": "8100002",
+  "username": "sam.lee",
+  "global_name": "Sam",
+  "discriminator": "0",
+  "avatar": null
+ },
+ "content": "Shall we do brunch on Sunday?",
+ "timestamp": "2030-10-19T09:12:03.000000+00:00",
+ "edited_timestamp": null,
+ "tts": false,
+ "mention_everyone": false,
+ "mentions": [],
+ "mention_roles": [],
+ "attachments": [],
+ "embeds": [],
+ "pinned": false,
+ "type": 0,
+ "flags": 0,
+ "guild_id": "9100001",
+ "member": {
+  "nick": "Sammy",
+  "roles": []
+ }
+}

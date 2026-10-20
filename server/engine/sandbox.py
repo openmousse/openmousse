@@ -32,6 +32,7 @@ engine/handkit.py）：服务器装好了沙箱（errand.py setup 过、或者�
   所有进程，TERM，1 秒后 KILL（OpenClaw process-cleanup.ts 的做法：只杀 docker exec 的客户端，容器里的进程还在跑）。输出边读边截：
   留头 HEAD 字节、尾 TAIL 字节，中间写明截了多少（几百兆的输出也不会读进内存）。后台跑（start_job）：docker exec -d，输出写进容器里的
   /tmp/.mousse-jobs/<id>.log，hands.py 的 process 工具看、停。
+  第 3 批：piped（docker exec -i，标准输入、输出接到服务器这边）给 execute_code（engine/codeexec.py）的本地 RPC 用，用完照记号收掉。
 文件（read_file / write_file / edit_file / list_dir）：容器里的 python3 跑一小段（tmpfs 上 docker cp 用不了；OpenClaw 也是这样）。
 Doorman 扣下的：命令、浏览器动作做完时查一眼这次扣下了哪些（egress_holds），告诉模型在等用户点头、别重发。
 
@@ -118,6 +119,23 @@ def defaults() -> dict:
 def setting(key: str) -> Any:
     c = cfg()
     return c[key] if key in c else defaults()[key]
+
+
+BROWSER_HOME = "/tmp/openclaw-home"   # 浏览器镜像的入口把 HOME 设在这里（Chromium 的 --user-data-dir = $HOME/.chrome）
+
+
+def browser_profile(agent: str) -> Path | None:
+    """第 3 批：这个 Agent 的沙箱浏览器留不留登录配置档：engine.sandbox.agents.<id>.profile = true（"*" 的也认）→ 主机上它的那个文件夹
+    （<data_dir>/engine/browser-profiles/<Agent>，0700，没有就建）；不留 → None（照旧：容器重建就没了）。里面是这个 Agent 在沙箱浏览器里登录的网站的
+    cookie，只挂进它自己的浏览器容器。"""
+    a = cfg().get("agents")
+    a = a if isinstance(a, dict) else {}
+    v = a.get(agent) if agent in a else a.get("*")
+    if not (isinstance(v, dict) and v.get("profile") is True):
+        return None
+    d = Path(settings.data_dir) / "engine" / "browser-profiles" / slug(agent)
+    d.mkdir(parents=True, exist_ok=True, mode=0o700)
+    return d
 
 
 def errand_id() -> str:
@@ -589,6 +607,8 @@ def build(agent: str, kind: str, net: Net, image_ref: str = "") -> Spec:
         if not mounts:
             args += ["--tmpfs", f"{WORKDIR}:rw,nosuid,nodev,size=1g,mode=1777"]
         args += mounts + ["--workdir", WORKDIR]
+    if browser and (prof := browser_profile(agent)) is not None:  # 第 3 批：浏览器的登录配置档留在主机上（容器重建也在）；用服务器这个用户跑才写得进去
+        args += ["--mount", f"type=bind,source={prof},target={BROWSER_HOME}", "--user", f"{os.getuid()}:{os.getgid()}"]
     if net.name == "none":
         args += ["--network", "none"]
     else:
@@ -983,6 +1003,38 @@ async def run(agent: str, command: str, *, timeout: float = EXEC_TIMEOUT, cwd: s
             task.cancel()
             raise
         return Ran(code, cap.text(), cap.size, max(0, cap.cut), int((time.monotonic() - t0) * 1000), timed_out=timed_out)
+
+
+class piped:
+    """第 3 批（execute_code，engine/codeexec.py 用）：async with piped(agent, argv) as proc：在这个 Agent 的 shell 容器里起一个进程，
+    标准输入、输出接到这边（docker exec -i；标准错误并进标准输出）。用完（做完、出错、到点、用户点了停）：容器里这次起的进程按记号一起收掉。"""
+
+    def __init__(self, agent: str, argv: list[str], *, cwd: str = WORKDIR) -> None:
+        self.agent, self.argv, self.cwd = agent, list(argv), cwd
+        self.user = use(agent, "shell")
+        self.proc: Any = None
+        self.xid = uuid.uuid4().hex[:16]
+
+    async def __aenter__(self):
+        cwd = resolve(self.cwd)
+        live = await self.user.__aenter__()
+        try:
+            self.proc = await client().spawn(["exec", "-i", "-w", cwd, "-e", f"{MARK}={self.xid}", live.spec.name, *self.argv], stdin=True)
+        except BaseException:
+            await self.user.__aexit__(None, None, None)
+            raise
+        return self.proc
+
+    async def __aexit__(self, *exc) -> None:
+        try:
+            if self.user.live is not None:
+                await asyncio.shield(kill_marked(self.user.live.spec.name, self.xid))
+        except (asyncio.CancelledError, Exception):  # noqa: BLE001 — 收不掉也往下走（容器收掉时一起没）
+            pass
+        if self.proc is not None:
+            _kill(self.proc)
+            await asyncio.shield(_reap(self.proc))
+        await self.user.__aexit__(*exc)
 
 
 async def _settle(task: asyncio.Task) -> int | None:

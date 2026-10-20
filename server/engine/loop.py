@@ -19,6 +19,14 @@ engine/memgate.py 的读写表筛一遍（screen：主人回合全给，赛博�
   送到了不等于用上了：插话只有真写进会话（on_event 收到 steer 事件）才算并进了这一轮（OpenClaw 的规矩：提交进记录才算接住）；
   没来得及用上的在 Result.pending 里，调用方自己决定怎么办（app 那边变成下一轮，chat.py）。
 
+第 2 批（10/19，server.json 的 engine.loop，都默认关）：
+  parallel  一次回复里挨着的只读调用一起跑（_segments、_run_batch，照 Hermes 切段：要点头的、会改东西的、交互的当分隔；Tool.sequential
+            标了的不一起跑），同时最多 8 个，结果按原来的顺序写回，点了停全部取消。Claude Code 跑的回合由它自己调工具，不归这里
+  guard     死循环检测（engine/guard.py）：同样的调用反复失败、只读的反复拿到一样的结果，结果后面补一句提醒；没人在看的那几轮到阈值
+            硬停：拦下的那一次不跑，这一批跑完这一轮就停（status halted，最后补一段话）。Claude Code 的回合在 /mcp 那一层也查
+  spill     工具输出比 Tool.max_output 长：全文存成文件（engine/spill.py，按对话分、定期清），结果里写明掐掉了哪几行，给主人回合一个只读的
+            翻页工具 read_output。外人回合零工具、Claude Code 的回合走 /mcp：照旧掐中间
+
 on_event 收到的（app 的进度条、插话从这里接，第 3 项；回调自己出错不影响这一轮）：
   {"type": "model", "step": n}                 第 n 次调模型，马上开始（思考从头算）
   {"type": "text" | "thinking", "text"}        模型吐的字、思考摘要（providers.py 原样转过来）；{"type": "tool_start", "id", "name"}：开始写一个工具调用
@@ -100,6 +108,9 @@ class Tool:
     # 一个工具管好几件事（命令行脚本的子命令）时按这一次的参数分：→ (read / undo / ask / off, 一句理由)；给了就不看 reversible
     classify: Callable[[dict], tuple[str, str]] | None = None
     prepare: Callable[[Any], Any] | None = None  # 按 schema 查之前修一下参数（pi 的 prepareArguments：比如整条命令写成了一个字符串）
+    # 第 2 批：不和别的只读调用一起跑（engine.loop.parallel 开着时）。默认按分类：这一次是 read 的能和挨着的只读调用一起跑；共用一个状态
+    # 的（同一个浏览器页面、同一组后台进程……）标 True，第 3 批以后的新工具合进来时照这个标
+    sequential: bool = False
 
     def spec(self) -> dict:
         return {"name": self.name, "description": self.description, "schema": self.schema}
@@ -229,7 +240,7 @@ class Control:
 @dataclass
 class Result:
     turn: str
-    status: str                   # done / aborted / error / refused / length / max_steps
+    status: str                   # done / aborted / error / refused / length / max_steps / halted（第 2 批：死循环检测硬停，engine/guard.py）
     text: str                     # 最后给人看的字
     messages: list[dict]          # 这一轮新加进会话的（含进来的那句）
     usage: dict
@@ -377,6 +388,9 @@ async def _abortable(control: Control, coro) -> Any:
 async def _run(spec: Spec, session, prompt, on_event, control: Control) -> Result:
     from . import memgate
     tools = memgate.screen(spec.kind, [t for t in spec.tools if spec.kind in t.kinds])  # 13d：读写记忆的工具再照读写表筛一遍
+    from . import spill
+    if spec.kind == "owner" and tools and spill.cfg() is not None and not any(t.name == spill.NAME for t in tools):
+        tools = [*tools, spill.tool()]  # 第 2 批：太长的工具输出存成文件，给一个翻页的工具（engine.loop.spill）
     by_name = {t.name: t for t in tools}
     conv = spec.conversation or "-"
 
@@ -402,6 +416,8 @@ async def _run(spec: Spec, session, prompt, on_event, control: Control) -> Resul
     partial: list[str] = []  # 正在流的这一次已经出来的字（被外面取消时存成半截回复）
     prompts, added, recovered = _as_list(prompt), False, False
     pick = fallback.Picker(spec)  # 这一轮用哪个模型（第 13 步：备用链、冷却；没配备用链 = 一直是 spec.model）
+    from .guard import Guard, stop_reply
+    guard = Guard.make(spec.origin) if spec.kind == "owner" and tools else None  # 第 2 批：死循环检测（engine.loop.guard）
 
     def add_prompts() -> None:
         nonlocal added
@@ -434,6 +450,8 @@ async def _run(spec: Spec, session, prompt, on_event, control: Control) -> Resul
                 add({"role": "assistant", "content": [{"type": "text", "text": f"(Stopped after {spec.max_steps} steps without finishing.)"}],
                      "api": None, "provider": None, "model": None, "stop": "end", "usage": {}})
                 break
+            from . import spend  # 第 4 批：花费上限（engine/spend.py）：到了抛 EngineError(budget)，不重试、不换备用链
+            spend.check(tid, spec, pick.ref, emit)
             partial.clear()
             emit({"type": "model", "step": steps})
             try:
@@ -459,6 +477,7 @@ async def _run(spec: Spec, session, prompt, on_event, control: Control) -> Resul
                 status = "aborted"
                 break
             _add_usage(usage, msg)
+            spend.step(tid, spec, msg)  # 第 4 批：这一步的钱记进今天（engine/spend.py）
             add(msg)
             last_text = text_of(msg) or last_text
             stop = msg.get("stop")
@@ -475,9 +494,15 @@ async def _run(spec: Spec, session, prompt, on_event, control: Control) -> Resul
                         add(tool_result(c.get("id") or "", c.get("name") or "", "Not run: the call was cut off (max_tokens).", True))
                     status, error = "length", "a tool call was cut off"
                     break
-                await _run_tools(spec, tid, calls, by_name, emit, control, add)
+                await _run_tools(spec, tid, calls, by_name, emit, control, add, guard)
                 if control.aborted.is_set():
                     status = "aborted"
+                    break
+                if guard is not None and guard.halted is not None:  # 第 2 批：没人在看的一轮反复失败、原地打转：这一批跑完就停
+                    status, error = "halted", f"tool loop: {guard.halted.code} ({guard.halted.tool} ×{guard.halted.count})"
+                    add({"role": "assistant", "content": [{"type": "text", "text": stop_reply(guard.halted)}], "api": None, "provider": None,
+                         "model": None, "stop": "end", "usage": {}})
+                    last_text = stop_reply(guard.halted)
                     break
                 for m in control.take_steers():
                     commit(m, "steer")
@@ -684,82 +709,323 @@ async def _model_step(spec: Spec, tid: str, history: list[dict], tools: list[Too
     return msg, fm
 
 
-async def _run_tools(spec: Spec, tid: str, calls: list[dict], by_name: dict[str, Tool], emit, control: Control, add) -> None:
-    """一个一个跑（以后只读的可以并行），每个结果出来就存。每个调用都有一条结果（做了、没做、出错），会话保持完整。"""
+async def _run_tools(spec: Spec, tid: str, calls: list[dict], by_name: dict[str, Tool], emit, control: Control, add, guard=None) -> None:
+    """一个一个跑，每个结果出来就存。每个调用都有一条结果（做了、没做、出错），会话保持完整。
+    第 2 批：engine.loop.parallel 开了，挨着的只读调用一起跑（_segments、_run_batch），别的照旧一个一个跑；guard = 这一轮的死循环检测
+    （engine/guard.py，没开 = None）。"""
+    workers = parallel_workers()
+    if workers is None or len(calls) < 2:
+        for c in calls:
+            await _run_call(spec, tid, c, by_name, emit, control, add, guard)
+        return
+    for together, seg in _segments(calls, by_name):
+        if together:
+            await _run_batch(spec, tid, seg, by_name, emit, control, add, workers, guard)
+        else:
+            for c in seg:
+                await _run_call(spec, tid, c, by_name, emit, control, add, guard)
+
+
+def _args_of(c: dict, tool: Tool) -> tuple[dict, str | None]:
+    """这一次调用的参数：工具自己先修一下（Tool.prepare），再按 schema 查 → (参数, 问题)。"""
+    raw = c.get("args") if isinstance(c.get("args"), dict) else {}
+    if tool.prepare is not None:
+        try:
+            raw = tool.prepare(raw)
+        except Exception:  # noqa: BLE001 — 修不了就原样交给下面查
+            pass
+    args, problem = check_args(raw, tool.schema)
+    return args, "the input is not valid JSON" if c.get("bad_args") else problem
+
+
+def _title(tool: Tool, args: dict) -> str:
+    try:
+        return tool.title(args) if tool.title else ""
+    except Exception:  # noqa: BLE001
+        return ""
+
+
+async def _verdict(spec: Spec, tool: Tool, args: dict, ctx: ToolCtx) -> str | dict | None:
+    """关卡怎么说：None 放行；字符串 = 不做；dict = 交出去了（见 Spec.gate）。没有关卡的，撤不回的一律不做。"""
+    if spec.gate is not None:
+        try:
+            return await spec.gate(tool, args, ctx)
+        except Exception as e:  # noqa: BLE001 — 关卡自己出错：不做（宁可少做，不可错做）
+            return f"Not run: the safety check failed ({type(e).__name__})."
+    if tool.level(args)[0] in ("ask", "off"):
+        return ("Not run: this action can't be undone and needs the user's OK, but nobody can approve it here. "
+                "The user has NOT consented. Do not retry it or try to reach it another way; tell the user what you wanted to do.")
+    return None
+
+
+def _refused(verdict: str | dict, stopped: bool) -> tuple[bool, str]:
+    """关卡没放 / 交出去了 → (算不算出错, tool_end 的 status)。"""
+    handed = isinstance(verdict, dict)  # 交给用户了（approval-pending）；或者关卡这一轮就等到了用户的决定（对外接口，engine/openai_api.py）
+    bad = not handed or verdict.get("error") is True
+    how = ("stopped" if stopped else "denied") if not handed else "pending" if verdict.get("status") == "approval-pending" \
+        else "error" if bad else "ok"
+    return bad, how
+
+
+def _tool_message(spec: Spec, tid: str, tool: Tool, cid: str, name: str, ok: bool, res: Any) -> tuple[dict, int, list]:
+    """跑完了 → (会话里那条工具结果, 原来多少字, 图)。太长的掐中间；第 2 批：engine.loop.spill 开了的主人回合，全文存成文件，
+    结果里写明掐掉了哪几行、怎么翻（engine/spill.py；存不下来照旧掐）。"""
+    text = _result_text(res)
+    pics = res.images if isinstance(res, ToolOutput) else []
+    body = _clip(text, tool.max_output)
+    if len(text) > tool.max_output and spec.kind == "owner":
+        from . import spill
+        if spill.cfg() is not None:
+            try:
+                body = spill.shown(text, tool.max_output, spill.save(spec.conversation or "-", tid, cid, text))
+            except OSError as e:
+                print(f"[engine] 工具输出没存下来，照旧掐中间：{type(e).__name__}: {str(e)[:120]}")
+    msg = {**tool_result(cid, name, body, not ok, images=pics), **(res.extra if isinstance(res, ToolOutput) else {})}
+    return msg, len(text), pics
+
+
+def _noted(msg: dict, note: str) -> dict:
+    """工具结果的字后面补一句（死循环检测的提醒，engine/guard.py）。"""
+    content = list(msg.get("content") or [])
+    if content and content[0].get("type") == "text":
+        content[0] = {**content[0], "text": str(content[0].get("text") or "") + note}
+    else:
+        content.insert(0, {"type": "text", "text": note.strip()})
+    return {**msg, "content": content}
+
+
+def _blocked(tid: str, conv: str, cid: str, name: str, detail: str, why: str, emit) -> dict:
+    """死循环检测拦下的这一次（engine/guard.py 的 block）：不跑，照样有一步和 tool_run / tool_end。→ 那条工具结果。"""
+    sid = events.step_open(tid, type_="tool", name=name, detail=detail, conversation=conv)
+    emit({"type": "tool_run", "id": cid, "name": name, "detail": detail})
+    events.step_close(sid, status="denied", data={"guard": True}, conversation=conv, turn=tid)
+    emit({"type": "tool_end", "id": cid, "name": name, "ok": False, "status": "denied"})
+    return tool_result(cid, name, f"Not run: {why}", True)
+
+
+def _watched(guard, tool: Tool, args: dict, msg: dict, ok: bool, res: Any) -> dict:
+    """跑完一次：交给死循环检测记一笔，要提醒的补在结果后面。"""
+    if guard is None:
+        return msg
+    d = guard.after(tool.name, args, ok=ok, text=_result_text(res), read=tool.level(args)[0] == "read")
+    return _noted(msg, d.note()) if d is not None else msg
+
+
+async def _run_call(spec: Spec, tid: str, c: dict, by_name: dict[str, Tool], emit, control: Control, add, guard=None) -> None:
+    """跑一个调用，结果出来就存。"""
     conv = spec.conversation or "-"
+    name, cid = str(c.get("name") or ""), str(c.get("id") or "")
+    if control.aborted.is_set():
+        add(tool_result(cid, name, "Not run: the user stopped this turn.", True))
+        return
+    tool = by_name.get(name)
+    if tool is None:
+        add(tool_result(cid, name, f"Unknown tool {name!r}. Available: {', '.join(by_name) or 'none'}.", True))
+        return
+    args, problem = _args_of(c, tool)
+    if problem:
+        add(tool_result(cid, name, f"Not run: {problem}. Fix the input and call again.", True))
+        return
+    ctx = ToolCtx(turn=tid, kind=spec.kind, agent=spec.agent, conversation=conv, call_id=cid, control=control, emit=emit,
+                  origin=models.stricter(spec.origin, spec.via))
+    detail = _title(tool, args)
+    if guard is not None and (d := guard.before(name, args)) is not None:
+        add(_blocked(tid, conv, cid, name, detail, d.message, emit))
+        return
+    sid = events.step_open(tid, type_="tool", name=name, detail=detail, conversation=conv)
+    emit({"type": "tool_run", "id": cid, "name": name, "detail": detail})
+    verdict = await _verdict(spec, tool, args, ctx)
+    stopped = verdict is None and control.aborted.is_set()  # 关卡问到一半用户点了停
+    if stopped:
+        verdict = "Not run: the user stopped this turn."
+    if verdict is not None:
+        bad, how = _refused(verdict, stopped)
+        add(tool_result(cid, name, _result_text(verdict), bad))
+        events.step_close(sid, status="denied" if how == "stopped" else how, conversation=conv, turn=tid)
+        emit({"type": "tool_end", "id": cid, "name": name, "ok": not bad, "status": how})
+        return
+    async def call() -> Any:  # tool.run 的协程在任务里才建：任务还没开跑就被停了，也不留一个没等过的协程
+        return await asyncio.wait_for(tool.run(args, ctx), tool.timeout)
+    task = asyncio.ensure_future(call())
+    control._inner = task
+    ok, res, how = True, None, "ok"
+    try:
+        res = await task
+    except asyncio.CancelledError:
+        if control.aborted.is_set() and not _being_cancelled():
+            ok, res, how = False, "Stopped by the user.", "stopped"
+        else:  # 外面取消（关服务）：跑到一半的这一个不能说「没做」，后面没轮到的才是没做（_run 收尾时补）
+            add(tool_result(cid, name, CANCELLED_MID_CALL, True))
+            events.step_close(sid, status="aborted", conversation=conv, turn=tid)
+            raise
+    except asyncio.TimeoutError:
+        ok, res, how = False, f"Timed out after {tool.timeout:.0f}s.", "timeout"
+    except ToolFailure as e:
+        ok, res, how = False, str(e) or "The tool failed.", "error"
+    except Exception as e:  # noqa: BLE001 — 工具出错回给模型，它自己决定怎么办
+        ok, res, how = False, f"{type(e).__name__}: {str(e)[:300]}", "error"
+    finally:
+        control._inner = None
+    msg, chars, pics = _tool_message(spec, tid, tool, cid, name, ok, res)
+    add(_watched(guard, tool, args, msg, ok, res))
+    events.step_close(sid, status="ok" if ok else "error", data={"chars": chars, **({"images": len(pics)} if pics else {})},
+                      conversation=conv, turn=tid)
+    emit({"type": "tool_end", "id": cid, "name": name, "ok": ok, "status": how})
+
+
+# —— 只读的一起跑（第 2 批）———————————————————————————————————————————————————————————————
+# 照 Hermes agent/tool_dispatch_helpers.py 的 _plan_tool_batch_segments 和 agent/tool_executor.py（10/19 读的，只借设计）：一次回复里的
+# 几个调用按先后切段：挨着的、能一起跑的（这一次分类是 read、没标 Tool.sequential、不是交互的）凑成一段，至少两个才一起跑；别的（要点头的、
+# 会改东西的、交互的）每个单独一段、照旧一个一个跑，当分隔：分隔前后的不跨着跑。同时最多 workers 个（Hermes 8 个），结果按原来的顺序写回。
+
+PARALLEL_MAX = 8
+# 交互的、改这一轮状态的：从来不和别的一起跑（Hermes 的 _NEVER_PARALLEL_TOOLS）。共用一个浏览器页面、一组后台进程的沙箱工具也在这里；
+# 第 3 批以后的新工具自己标 Tool.sequential
+NEVER_PARALLEL = frozenset({"ask_user", "propose_plan", "enter_plan_mode", "todo", "handoff", "tasks", "browser", "sandbox_browser",
+                            "process", "sandbox_process"})
+
+
+def loop_cfg() -> dict:
+    """server.json 的 engine.loop（第 2 批：parallel / guard / spill / resume，都默认关）。"""
+    v = models.cfg().get("loop")
+    return v if isinstance(v, dict) else {}
+
+
+def parallel_workers() -> int | None:
+    """engine.loop.parallel：true = 同时最多 8 个；{"max": n} = n 个（1–16）；不写 / false = 不并行（None）。"""
+    v = loop_cfg().get("parallel")
+    if v is True:
+        return PARALLEL_MAX
+    if isinstance(v, dict) and v.get("enabled", True) is not False:
+        n = v.get("max")
+        return max(1, min(16, n)) if isinstance(n, int) and not isinstance(n, bool) else PARALLEL_MAX
+    return None
+
+
+def _together(c: dict, by_name: dict[str, Tool]) -> bool:
+    """这个调用能不能和挨着的只读调用一起跑。"""
+    tool = by_name.get(str(c.get("name") or ""))
+    if tool is None or tool.sequential or tool.name in NEVER_PARALLEL:
+        return False
+    args, problem = _args_of(c, tool)
+    return problem is None and tool.level(args)[0] == "read"
+
+
+def _segments(calls: list[dict], by_name: dict[str, Tool]) -> list[tuple[bool, list[dict]]]:
+    """按先后切段 → [(一起跑?, 那几个调用)]：能一起跑的挨着两个以上才一起跑，单个的并进前后一个一个跑的那段。"""
+    out: list[tuple[bool, list[dict]]] = []
+    run: list[dict] = []
+
+    def alone(cs: list[dict]) -> None:
+        if out and not out[-1][0]:
+            out[-1][1].extend(cs)
+        else:
+            out.append((False, list(cs)))
+
+    def close() -> None:
+        if len(run) >= 2:
+            out.append((True, list(run)))
+        elif run:
+            alone(run)
+        run.clear()
     for c in calls:
+        if _together(c, by_name):
+            run.append(c)
+        else:
+            close()
+            alone([c])
+    close()
+    return out
+
+
+async def _run_batch(spec: Spec, tid: str, seg: list[dict], by_name: dict[str, Tool], emit, control: Control, add, workers: int,
+                     guard=None) -> None:
+    """一段只读的调用一起跑（见上）。每个照旧有自己的 tool_run / tool_end 和事件表的一步，关卡照旧问（只读的直接放）；结果全跑完以后
+    按原来的顺序写进会话。点了停：还没开始的不做、正在跑的收到取消，都记成停了；外面取消（关服务）：跑完的照存，正在跑的记「可能做了、
+    可能没做」，没开始的留给 _run 收尾补「没做」，再往外抛。"""
+    conv = spec.conversation or "-"
+    gate = asyncio.Semaphore(workers)
+    out: list[dict | None] = [None] * len(seg)
+    stopping = False
+
+    async def one(i: int, c: dict) -> None:
         name, cid = str(c.get("name") or ""), str(c.get("id") or "")
-        if control.aborted.is_set():
-            add(tool_result(cid, name, "Not run: the user stopped this turn.", True))
-            continue
-        tool = by_name.get(name)
-        if tool is None:
-            add(tool_result(cid, name, f"Unknown tool {name!r}. Available: {', '.join(by_name) or 'none'}.", True))
-            continue
-        raw = c.get("args") if isinstance(c.get("args"), dict) else {}
-        if tool.prepare is not None:
-            try:
-                raw = tool.prepare(raw)
-            except Exception:  # noqa: BLE001 — 修不了就原样交给下面查
-                pass
-        args, problem = check_args(raw, tool.schema)
-        if c.get("bad_args"):
-            problem = "the input is not valid JSON"
-        if problem:
-            add(tool_result(cid, name, f"Not run: {problem}. Fix the input and call again.", True))
-            continue
-        ctx = ToolCtx(turn=tid, kind=spec.kind, agent=spec.agent, conversation=conv, call_id=cid, control=control, emit=emit,
-                      origin=models.stricter(spec.origin, spec.via))
+        tool = by_name[name]
+        args, _ = _args_of(c, tool)
         try:
-            detail = tool.title(args) if tool.title else ""
-        except Exception:  # noqa: BLE001
-            detail = ""
-        sid = events.step_open(tid, type_="tool", name=name, detail=detail, conversation=conv)
-        emit({"type": "tool_run", "id": cid, "name": name, "detail": detail})
-        verdict: str | dict | None = None
-        if spec.gate is not None:
-            try:
-                verdict = await spec.gate(tool, args, ctx)
-            except Exception as e:  # noqa: BLE001 — 关卡自己出错：不做（宁可少做，不可错做）
-                verdict = f"Not run: the safety check failed ({type(e).__name__})."
-        elif tool.level(args)[0] in ("ask", "off"):
-            verdict = ("Not run: this action can't be undone and needs the user's OK, but nobody can approve it here. "
-                       "The user has NOT consented. Do not retry it or try to reach it another way; tell the user what you wanted to do.")
-        stopped = verdict is None and control.aborted.is_set()  # 关卡问到一半用户点了停
-        if stopped:
-            verdict = "Not run: the user stopped this turn."
-        if verdict is not None:
-            handed = isinstance(verdict, dict)  # 交给用户了（approval-pending）；或者关卡这一轮就等到了用户的决定（对外接口，engine/openai_api.py）
-            bad = not handed or verdict.get("error") is True
-            how = ("stopped" if stopped else "denied") if not handed else "pending" if verdict.get("status") == "approval-pending" \
-                else "error" if bad else "ok"
-            add(tool_result(cid, name, _result_text(verdict), bad))
-            events.step_close(sid, status="denied" if how == "stopped" else how, conversation=conv, turn=tid)
-            emit({"type": "tool_end", "id": cid, "name": name, "ok": not bad, "status": how})
-            continue
-        task = asyncio.ensure_future(asyncio.wait_for(tool.run(args, ctx), tool.timeout))
-        control._inner = task
-        ok, res, how = True, None, "ok"
-        try:
-            res = await task
+            await gate.acquire()
         except asyncio.CancelledError:
-            if control.aborted.is_set() and not _being_cancelled():
-                ok, res, how = False, "Stopped by the user.", "stopped"
-            else:  # 外面取消（关服务）：跑到一半的这一个不能说「没做」，后面没轮到的才是没做（_run 收尾时补）
-                add(tool_result(cid, name, CANCELLED_MID_CALL, True))
-                events.step_close(sid, status="aborted", conversation=conv, turn=tid)
+            if not stopping:
                 raise
-        except asyncio.TimeoutError:
-            ok, res, how = False, f"Timed out after {tool.timeout:.0f}s.", "timeout"
-        except ToolFailure as e:
-            ok, res, how = False, str(e) or "The tool failed.", "error"
-        except Exception as e:  # noqa: BLE001 — 工具出错回给模型，它自己决定怎么办
-            ok, res, how = False, f"{type(e).__name__}: {str(e)[:300]}", "error"
+            out[i] = tool_result(cid, name, "Not run: the user stopped this turn.", True)
+            return
+        try:
+            if control.aborted.is_set():
+                out[i] = tool_result(cid, name, "Not run: the user stopped this turn.", True)
+                return
+            ctx = ToolCtx(turn=tid, kind=spec.kind, agent=spec.agent, conversation=conv, call_id=cid, control=control, emit=emit,
+                          origin=models.stricter(spec.origin, spec.via))
+            detail = _title(tool, args)
+            if guard is not None and (d := guard.before(name, args)) is not None:
+                out[i] = _blocked(tid, conv, cid, name, detail, d.message, emit)
+                return
+            sid = events.step_open(tid, type_="tool", name=name, detail=detail, conversation=conv)
+            emit({"type": "tool_run", "id": cid, "name": name, "detail": detail})
+            try:
+                verdict = await _verdict(spec, tool, args, ctx)
+                stopped = verdict is None and control.aborted.is_set()  # 关卡问到一半用户点了停
+                if stopped:
+                    verdict = "Not run: the user stopped this turn."
+                if verdict is not None:
+                    bad, how = _refused(verdict, stopped)
+                    out[i] = tool_result(cid, name, _result_text(verdict), bad)
+                    events.step_close(sid, status="denied" if how == "stopped" else how, conversation=conv, turn=tid)
+                    emit({"type": "tool_end", "id": cid, "name": name, "ok": not bad, "status": how})
+                    return
+                ok, res, how = True, await asyncio.wait_for(tool.run(args, ctx), tool.timeout), "ok"
+            except asyncio.CancelledError:
+                if not stopping:
+                    out[i] = tool_result(cid, name, CANCELLED_MID_CALL, True)
+                    events.step_close(sid, status="aborted", conversation=conv, turn=tid)
+                    raise
+                ok, res, how = False, "Stopped by the user.", "stopped"
+            except asyncio.TimeoutError:
+                ok, res, how = False, f"Timed out after {tool.timeout:.0f}s.", "timeout"
+            except ToolFailure as e:
+                ok, res, how = False, str(e) or "The tool failed.", "error"
+            except Exception as e:  # noqa: BLE001 — 工具出错回给模型，它自己决定怎么办
+                ok, res, how = False, f"{type(e).__name__}: {str(e)[:300]}", "error"
+            msg, chars, pics = _tool_message(spec, tid, tool, cid, name, ok, res)
+            out[i] = _watched(guard, tool, args, msg, ok, res)
+            events.step_close(sid, status="ok" if ok else "error", data={"chars": chars, "parallel": True, **({"images": len(pics)} if pics else {})},
+                              conversation=conv, turn=tid)
+            emit({"type": "tool_end", "id": cid, "name": name, "ok": ok, "status": how})
         finally:
-            control._inner = None
-        text = _result_text(res)
-        pics = res.images if isinstance(res, ToolOutput) else []
-        add({**tool_result(cid, name, _clip(text, tool.max_output), not ok, images=pics), **(res.extra if isinstance(res, ToolOutput) else {})})
-        events.step_close(sid, status="ok" if ok else "error", data={"chars": len(text), **({"images": len(pics)} if pics else {})},
-                          conversation=conv, turn=tid)
-        emit({"type": "tool_end", "id": cid, "name": name, "ok": ok, "status": how})
+            gate.release()
+
+    tasks = [asyncio.ensure_future(one(i, c)) for i, c in enumerate(seg)]
+    stop = asyncio.ensure_future(control.aborted.wait())
+    try:
+        while not all(t.done() for t in tasks):
+            await asyncio.wait([*(t for t in tasks if not t.done()), *([] if stopping else [stop])], return_when=asyncio.FIRST_COMPLETED)
+            if stop.done() and not stopping:  # 点了停：没开始的不做，正在跑的收到取消
+                stopping = True
+                for t in tasks:
+                    t.cancel()
+    except asyncio.CancelledError:  # 外面取消（关服务）
+        for t in tasks:
+            t.cancel()
+        await asyncio.gather(*tasks, return_exceptions=True)
+        for m in out:
+            if m is not None:
+                add(m)
+        raise
+    finally:
+        stop.cancel()
+    for i, t in enumerate(tasks):  # 万一哪一个自己出了意外（不该有）：照样给一条结果，会话保持完整
+        if out[i] is None:
+            err = t.exception() if t.done() and not t.cancelled() else None
+            out[i] = tool_result(str(seg[i].get("id") or ""), str(seg[i].get("name") or ""),
+                                 f"Not run: {type(err).__name__ if err else 'cancelled'}.", True)
+    for m in out:
+        add(m)

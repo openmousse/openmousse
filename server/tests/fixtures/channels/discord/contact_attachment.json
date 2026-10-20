@@ -1,0 +1,32 @@
+{
+ "id": "5000003",
+ "channel_id": "9500002",
+ "author": {
+  "id": "8100002",
+  "username": "sam.lee",
+  "global_name": "Sam",
+  "discriminator": "0",
+  "avatar": null
+ },
+ "content": "Can you pass this on?",
+ "timestamp": "2030-10-19T09:12:03.000000+00:00",
+ "edited_timestamp": null,
+ "tts": false,
+ "mention_everyone": false,
+ "mentions": [],
+ "mention_roles": [],
+ "attachments": [
+  {
+   "id": "6000002",
+   "filename": "itinerary.pdf",
+   "size": 35,
+   "url": "CDN/itinerary.pdf",
+   "proxy_url": "CDN/itinerary.pdf",
+   "content_type": "application/pdf"
+  }
+ ],
+ "embeds": [],
+ "pinned": false,
+ "type": 0,
+ "flags": 0
+}

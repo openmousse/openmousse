@@ -1,0 +1,21 @@
+{
+ "edited_message": {
+  "message_id": 11,
+  "date": 1760860800,
+  "edit_date": 1760860830,
+  "chat": {
+   "id": 1000001,
+   "type": "private",
+   "first_name": "Alex"
+  },
+  "from": {
+   "id": 1000001,
+   "is_bot": false,
+   "first_name": "Alex",
+   "last_name": "Rivers",
+   "username": "alex_rivers_example",
+   "language_code": "en"
+  },
+  "text": "What's on my calendar on Friday?"
+ }
+}

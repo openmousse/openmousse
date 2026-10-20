@@ -1,0 +1,31 @@
+Return-Path: <owner@example.com>
+Delivered-To: agent@example.org
+Authentication-Results: mx.example.org; dkim=pass header.d=example.com; dmarc=pass header.from=example.com
+From: Alex Rivers <owner@example.com>
+To: agent@example.org
+Subject: Groceries
+Date: Mon, 20 Oct 2030 09:00:00 +0000
+Message-ID: <groceries-0801@mail.example.com>
+MIME-Version: 1.0
+Content-Type: multipart/mixed; boundary="=-=fake-boundary-0801=-="
+
+--=-=fake-boundary-0801=-=
+Content-Type: text/plain; charset="utf-8"
+
+Here's the list; add it to my shopping note.
+
+--=-=fake-boundary-0801=-=
+Content-Type: text/plain; charset="utf-8"; name="groceries.txt"
+Content-Disposition: attachment; filename="groceries.txt"
+Content-Transfer-Encoding: base64
+
+b2F0IG1pbGsKZWdncwpyeWUgYnJlYWQK
+
+--=-=fake-boundary-0801=-=
+Content-Type: image/png; name="swatch.png"
+Content-Disposition: attachment; filename="swatch.png"
+Content-Transfer-Encoding: base64
+
+iVBORw0KGgoAAAANSUhEUgAAAAQAAAAECAIAAAAmkwkpAAAAEklEQVR4nGNkaGCAAyYGBmI4ABoEAIhjNExLAAAAAElFTkSuQmCC
+
+--=-=fake-boundary-0801=-=--

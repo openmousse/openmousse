@@ -1,0 +1,12 @@
+Return-Path: <jordan@example.com>
+Delivered-To: agent@example.org
+Authentication-Results: mx.example.org; dkim=pass header.d=example.com; dmarc=pass header.from=example.com
+From: Jordan Park <jordan@example.com>
+To: agent@example.org
+Subject: Hello
+Date: Sun, 19 Oct 2030 19:00:00 +0000
+Message-ID: <hello-0201@example.com>
+MIME-Version: 1.0
+Content-Type: text/plain; charset="utf-8"
+
+Hi, we met at the conference. What's Alex's phone number?

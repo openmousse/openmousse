@@ -22,6 +22,8 @@
   DELETE /api/setup/models/{id}             删掉 app 里存的密钥（自定义的连同 engine.providers 那一项）
   GET    /api/setup/purposes                按用途选模型（能选的只列连上的；推荐 = 理由 + 代价；只有一家时的 auto）
   PUT    /api/setup/purposes                {"chat"?, "background"?, "writing"?, "outsider"?, "card"?, "doorman"?, "embeddings"?, "models"?}
+                                            第 3 批：媒体那几样也在这里（"vision"?、"pdf"?：引用 | {"model", …选项} | null，engine/media.py；
+                                            GET 回的是另一栏 media，purposes 那几行不变）
   GET    /api/setup/search                  搜索：开没开、用哪家、每家连没连
   PUT    /api/setup/search                  {"enabled"?, "provider"?}：开关、默认的一家（null = 按顺序挑有密钥的）
   PUT    /api/setup/search/{id}             {"key"}（SearXNG 是 {"url"}）
@@ -42,6 +44,7 @@ import json
 import os
 import re
 import shutil
+import sys
 import threading
 import time
 from collections.abc import Callable
@@ -391,9 +394,10 @@ def cloud_row(pid: str, e: dict) -> dict:
     ki = key_info(pid, p) or {"present": False, "source": None, "hint": None, "savedAt": None}
     reg = catalog.region(e, rid if rid != "custom" else None)
     return {"id": pid, "kind": "cloud", "name": catalog.text(e["name"]), "api": p.get("api") or e["api"], "url": url, "defaultUrl": e["url"],
-            "region": rid, "regions": [{"id": r, "label": catalog.text(v["label"]), "url": v["url"]} for r, v in (e.get("regions") or {}).items()],
+            "region": rid, "regions": [{"id": r, "label": catalog.text(v["label"]), "url": v["url"], "keyUrl": v.get("key_url") or e.get("key_url")}
+                                       for r, v in (e.get("regions") or {}).items()],
             "keyEnv": key_env(pid, p), "key": ki, "keyUrl": reg.get("key_url"), "docs": e.get("docs"), "caps": e["caps"],
-            "market": e.get("market"), "note": catalog.text(e.get("note")), "connected": bool(ki.get("present")), "models": cached_count(pid),
+            "market": e.get("market"), "note": catalog.text(e.get("note")), "connected": bool(ki.get("present")) and bool(url), "models": cached_count(pid),
             "canList": e["list"] != "none", "suggest": suggestions(e, p), "cost": catalog.text(catalog.KIND_NOTES["cloud"])}
 
 
@@ -869,12 +873,31 @@ def hands_layer() -> dict:
     a = host_exec.cfg().get("agents")
     computer = sorted(str(k) for k, v in (a.items() if isinstance(a, dict) else []) if v is True or isinstance(v, dict))
     out = {"files": files, "webFetch": web.allowed("main", "fetch"), "webSearch": web.provider() is not None and web.allowed("main", "search"),
-           "sandbox": sandbox.hands_on(), "hostCommands": computer}
+           "sandbox": sandbox.hands_on(), "hostCommands": computer, "agents": []}
+    with contextlib.suppress(Exception):  # 读不到对话库这类：这一层照旧，「手」页只少了一个 Agent 一行的那几样
+        out["agents"] = hands_agents()
     on = [L(n_zh, n_en) for k, n_zh, n_en in (("files", "文件", "files"), ("webFetch", "打开网页", "web pages"), ("webSearch", "搜索", "search"),
                                                ("sandbox", "沙箱", "sandbox")) if out[k]]
     if computer:
         on.append(L("主机命令", "host commands"))
     return {"status": "ok", "missing": [], **out, "line": L("、".join(on) or "都关着", ", ".join(on) or "all off")}
+
+
+def hands_agents() -> list[dict]:
+    """设置里的「手」页（第 9 批，只读）：一个 Agent 一行（主对话在前）：名字、文件工具（自己的工作区）、打开网页、搜索、自己的沙箱和浏览器、
+    主机命令开没开（放行名单在 /api/security 的 engine.hostExec）。只在 claw 是 builtin 时有意义。"""
+    import data
+
+    from . import appdata, host_exec, host_files, sandbox, web
+    names = data.thread_names()
+    search = web.provider() is not None
+    out = []
+    for aid in ["main", *appdata.group_ids()]:
+        box = sandbox.hands_of(aid)
+        out.append({"id": aid, "name": appdata.agent_of(aid, names), "files": bool(host_files.enabled(aid) and host_files.root_of(aid)),
+                    "webFetch": web.allowed(aid, "fetch"), "webSearch": search and web.allowed(aid, "search"), "sandbox": box is not None,
+                    "browser": bool(box and box.get("browser")), "hostExec": host_exec.policy(aid) is not None})
+    return out
 
 
 def config_facts() -> dict:
@@ -908,9 +931,11 @@ async def overview():
 
 @router.get("/api/setup/models")
 async def list_providers(probe: int = 1, check: int = 0):
-    """服务商。→ {"ok", "providers": [云端 / 本机 / 命令行登录 / 自定义 / OpenClaw 里配的，每一行见 *_row], "custom": {"hint", "apis"}}"""
+    """服务商。→ {"ok", "providers": [云端 / 本机 / 命令行登录 / 自定义 / OpenClaw 里配的，每一行见 *_row], "custom": {"hint", "apis"},
+    "host": {"mac"}}（host.mac：服务器是不是 Mac，app 给「仅 Mac」的本机跑的那几家标灰）"""
     rows = await providers(bool(probe), bool(check))
-    return {"ok": True, "providers": rows, "custom": {"hint": catalog.text(catalog.CUSTOM["hint"]), "apis": list(catalog.CUSTOM["apis"])}}
+    return {"ok": True, "providers": rows, "custom": {"hint": catalog.text(catalog.CUSTOM["hint"]), "apis": list(catalog.CUSTOM["apis"])},
+            "host": {"mac": sys.platform == "darwin"}}
 
 
 def row_of(pid: str) -> dict:
@@ -942,6 +967,8 @@ async def save_provider(pid: str, request: Request):
             if rid not in (e.get("regions") or {}):
                 raise SetupError(400, L("没有这个地区", "No such region"), field="region")
             url = url or catalog.region(e, rid)["url"]
+        if not e.get("url") and not url and not over(pid).get("url"):  # 没有默认地址的（Azure）：先填你自己的资源地址
+            raise SetupError(400, L("先填你自己的资源地址（url）", "Fill in your own resource's address (url) first"), field="url")
         if url is not None:
             def go(data: dict, u: str = url) -> None:
                 prov = section(data, "engine", "providers", pid)
@@ -1024,6 +1051,8 @@ def target(pid: str, b: dict) -> tuple[dict, str]:
         raise SetupError(400, L("没有这个地区", "No such region"), field="region")
     base = url or (catalog.region(e, rid)["url"] if e and rid else None) or p.get("url") or (e or {}).get("url") or ""
     base = str(base).rstrip("/")
+    if not base:  # 没有默认地址的（Azure）、还没存地址
+        raise SetupError(400, L("先填你自己的资源地址（url）", "Fill in your own resource's address (url) first"), field="url")
     api = p.get("api") or (e or {}).get("api") or _str(b, "api", 40) or catalog.OPENAI
     list_url = test_model = None
     if e is not None:
@@ -1161,7 +1190,58 @@ async def purposes_view(probe_local: bool = True) -> dict:
                 r["why"] = why
     return {"ok": True, "claw": claw.kind(), "purposes": rows, "choices": {"models": choices_of(conn), "embeddings": embedding_choices(conn)},
             "providers": {pid: {"kind": d["kind"], "name": d["name"], "listed": d["listed"]} for pid, d in conn.items()},
-            "auto": auto_choice(conn) if builtin else None}
+            "auto": auto_choice(conn) if builtin else None,
+            "media": media_rows(builtin)}  # 第 3 批：看图、看文档……另放一栏（purposes 那几行的样子不变）
+
+
+def media_rows(builtin: bool) -> list[dict]:
+    """第 3 批：媒体那几样（engine/media.py，做好了的才列）→ 每样一行 {"id", "kind": "media", "label", "applies", "current": 引用 | null,
+    "options": 对象里 model 之外写的, "problem": 写错了的说明 | null, "providers": [能选的那几家], "cost": 一句代价}。不写 = 没有这一样。"""
+    from . import media
+    rows = []
+    for pid, o in media.offered().items():
+        raw_v = media.raw_use(pid)
+        c = media.choice(pid)
+        rows.append({"id": pid, "kind": "media", "label": o["label"], "applies": builtin, "current": c.ref if c else None,
+                     "options": {k: v for k, v in c.opts.items() if k not in ("key",)} if c else {},
+                     "problem": media.problem(pid) if raw_v not in (None, False) else None, "providers": o["providers"], "cost": o["cost"]})
+    return rows
+
+
+def media_plan(b: dict, builtin: bool) -> list[Callable[[dict], None]]:
+    """PUT 里媒体那几样（第 3 批）："vision": 引用 | {"model": 引用, …选项} | null / "off"（= 不用这一样）。选项只收短的字、数、真假，不收 key
+    （密钥只进 secrets.env）。→ 要做的改动。"""
+    from . import media
+    out: list[Callable[[dict], None]] = []
+    offer = media.offered()
+    for k in offer:
+        if k not in b:
+            continue
+        if not builtin:
+            raise SetupError(409, L("这一样只在自己的内核里有", "This is only available with the built-in engine"), field=k)
+        v = b[k]
+        conf = None
+        if v not in (None, "off", False):
+            c = media.parse(k, v)
+            if c is None or c.provider not in offer[k]["providers"]:
+                raise SetupError(400, L(f"{k} 要写成 服务商/型号，服务商是能做这一样的那几家之一", f"{k} must be provider/model, from a provider that can do this"),
+                                 field=k)
+            if isinstance(v, dict):
+                extra = {x: y for x, y in v.items() if x not in ("model", "key") and isinstance(x, str) and len(x) <= 40
+                         and isinstance(y, (str, int, float, bool)) and len(str(y)) <= 500}
+                conf = {"model": c.ref, **extra}
+            else:
+                conf = c.ref
+
+        def put(data: dict, key: str = k, x=conf) -> None:
+            use = section(data, "engine", "use")
+            if x is None:
+                use.pop(key, None)
+            else:
+                use[key] = x
+            prune(data, "engine", "use")
+        out.append(put)
+    return out
 
 
 @router.get("/api/setup/purposes")
@@ -1286,6 +1366,7 @@ async def put_purposes(request: Request):
                 rec["embeddings"] = c
             prune(data, "engine", "recall")
         plan.append(emb)
+    plan += media_plan(b, builtin)  # 第 3 批：看图、看文档……
     if not plan:
         raise SetupError(400, L("没有要改的", "Nothing to change"))
 

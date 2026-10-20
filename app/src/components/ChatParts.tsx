@@ -4,7 +4,7 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { Animated, Easing, Platform, Pressable, ScrollView, StyleSheet, View } from 'react-native';
 import Svg, { Circle } from 'react-native-svg';
-import { BellOff, ChevronLeft, ChevronRight, FolderKanban, Info, Pin } from './icons';
+import { AudioLinesBars, BellOff, ChevronLeft, ChevronRight, FolderKanban, Info, Pin } from './icons';
 import { GroupBadge, GROUP_ICONS, iconKey } from './GroupIcon';
 import { LensAvatar } from './LensAvatar';
 import { Btn, T } from './ui';
@@ -116,9 +116,10 @@ export function RoomFace({ members, size = 46, avatar }: { members: Member[]; si
   );
 }
 
-/** 统一的聊天页头：返回 / 头像 / 名字 + 副标题 / ⓘ（资料页）。副标题可以是一段可点的提示（未连接）。 */
-export function ChatHeader({ title, sub, subTone, onSub, face, onBack, onInfo, infoLabel }: {
-  title: string; sub?: string; subTone?: 'warn' | 'good'; onSub?: () => void; face: React.ReactNode; onBack: () => void; onInfo?: () => void; infoLabel?: string;
+/** 统一的聊天页头：返回 / 头像 / 名字 + 副标题 /（对讲）/ ⓘ（资料页）。副标题可以是一段可点的提示（未连接）。
+ *  onTalk：给了就在 ⓘ 前面多一个对讲按钮（第 8 批，只有主对话给，见 src/talk/TalkScreen.tsx）。 */
+export function ChatHeader({ title, sub, subTone, onSub, face, onBack, onInfo, infoLabel, onTalk }: {
+  title: string; sub?: string; subTone?: 'warn' | 'good'; onSub?: () => void; face: React.ReactNode; onBack: () => void; onInfo?: () => void; infoLabel?: string; onTalk?: () => void;
 }) {
   const t = useTheme();
   const subColor = subTone === 'warn' ? t.warn : subTone === 'good' ? t.good : t.ink3;
@@ -136,6 +137,11 @@ export function ChatHeader({ title, sub, subTone, onSub, face, onBack, onInfo, i
           {onSub && subEl ? <Pressable onPress={onSub} hitSlop={6} accessibilityRole="button" style={{ alignSelf: 'flex-start' }}>{subEl}</Pressable> : subEl}
         </View>
       </Pressable>
+      {onTalk ? (
+        <Pressable onPress={onTalk} hitSlop={8} accessibilityRole="button" accessibilityLabel={L('对讲', 'Talk')} style={styles.headBtn}>
+          <AudioLinesBars size={22} color={t.ink2} />
+        </Pressable>
+      ) : null}
       {onInfo ? (
         <Pressable onPress={onInfo} hitSlop={8} accessibilityRole="button" accessibilityLabel={infoLabel ?? L('资料与设置', 'Details and settings')} style={styles.headBtn}>
           <Info size={22} color={t.ink2} />

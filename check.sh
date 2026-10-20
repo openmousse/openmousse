@@ -667,5 +667,8 @@ n_bad, n_warn, n_ok = marks.count("✗"), marks.count("!"), marks.count("✓")
 print()
 print(L(f"{n_ok} 项正常 · {n_warn} 项要留意 · {n_bad} 项不通。", f"{n_ok} ok · {n_warn} to look at · {n_bad} failing.")
       + L("这段输出里没有令牌和密钥，可以整段发给帮你的人。", " There are no tokens or keys in this output; you can send all of it to whoever helps you."))
+# venv 里更全的体检（权限、数据库、FTS 索引、配对码……，--fix 能修常见的）：server/ops/doctor.py。这里只用系统的 python3，venv 坏了也能跑
+print(L("更全的体检（还能修常见问题）：mousse doctor，或 ~/.openmousse/venv/bin/python ~/.openmousse/repo/server/mousse.py doctor --fix",
+        "A fuller check that can also fix common problems: mousse doctor, or ~/.openmousse/venv/bin/python ~/.openmousse/repo/server/mousse.py doctor --fix"))
 sys.exit(1 if n_bad else 0)
 PY

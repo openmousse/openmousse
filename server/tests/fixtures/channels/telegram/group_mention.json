@@ -1,0 +1,27 @@
+{
+ "message": {
+  "message_id": 21,
+  "date": 1760860800,
+  "chat": {
+   "id": -1001000001,
+   "type": "supergroup",
+   "title": "Weekend Crew"
+  },
+  "from": {
+   "id": 1000001,
+   "is_bot": false,
+   "first_name": "Alex",
+   "last_name": "Rivers",
+   "username": "alex_rivers_example",
+   "language_code": "en"
+  },
+  "text": "@mousse_test_bot what did Sam ask?",
+  "entities": [
+   {
+    "type": "mention",
+    "offset": 0,
+    "length": 16
+   }
+  ]
+ }
+}

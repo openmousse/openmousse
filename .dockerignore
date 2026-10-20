@@ -1,0 +1,22 @@
+# Build context = the repository root (docker build -f docker/Dockerfile .; docs/docker.md)
+.git
+.github
+**/__pycache__
+**/*.pyc
+**/node_modules
+**/.venv
+**/*.db
+**/.DS_Store
+# The app's sources stay out; a web build (npm run web:build → app/dist) comes along
+app/*
+!app/dist
+relay
+docs/screenshots
+tree/build
+tree/*.egg-info
+# Local settings and keys never go into an image (a checkout that also ran the server has them lying around)
+**/.env
+**/secrets.env
+**/server.json
+**/config.json
+**/*.pem

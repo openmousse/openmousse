@@ -43,7 +43,7 @@ from datetime import datetime
 from config import raw, settings
 from i18n import L
 
-from . import compact, context, manuals, mcp_client, memgate, models, recall, skill_write, store
+from . import compact, context, manuals, mcp_client, memgate, models, recall, reset, skill_write, store, think, user_hooks
 from . import tools as tools_mod
 from .errors import EngineError
 from .loop import Control, Result, Spec, run_turn, wait_idle
@@ -55,6 +55,7 @@ CHAT_TOOLS = {"ask_user", "todo", "enter_plan_mode", "propose_plan"}  # tools.ch
 SEED_TURNS = 40        # 当天的会话第一次建时，最多抄 app 里之前的多少轮
 ROLLOVER_WAIT = 600    # 换新的一天时，最多等前一天那一轮多少秒
 _opening: dict[str, asyncio.Lock] = {}
+_bg: set[asyncio.Task] = set()  # 后台的写回（换了新会话时，after_reset）
 
 
 def system_prompt() -> str:
@@ -201,9 +202,10 @@ def seed(thread: str, day: str, before: int | None) -> list[dict]:
     if before is None:
         return []
     since = chat.day_bounds(day)[0]
-    with chat._lock, chat.db() as conn:  # 按真时间比（时区改过偏移就不一样，见 chat.day_bounds）
+    with chat._lock, chat.db() as conn:  # 按真时间比（时区改过偏移就不一样，见 chat.day_bounds）；斜杠命令那几行、压缩的提示（第 2 批）不是对话，不抄
         rows = conn.execute("SELECT id, role, text, gw_text FROM messages WHERE thread=? AND id<? AND julianday(ts)>=julianday(?) "
-                            "AND role IN ('user','auto','grava') ORDER BY id DESC LIMIT ?", (thread, before, since, SEED_TURNS * 2)).fetchall()
+                            "AND role IN ('user','auto','grava') AND IFNULL(origin, '') NOT IN ('command', 'btw', 'notice') ORDER BY id DESC LIMIT ?",
+                            (thread, before, since, SEED_TURNS * 2)).fetchall()
     merged: list[dict] = []
     for row in reversed(rows):
         role = "assistant" if row["role"] == "grava" else "user"
@@ -223,20 +225,187 @@ def seed(thread: str, day: str, before: int | None) -> list[dict]:
     return out
 
 
+RECAP_MSGS, RECAP_MSG_MAX, RECAP_MAX, RECAP_SUMMARY = 10, 600, 3_000, 2_000  # 换新会话带的「上一条聊到哪」（同 context.tail_part 的上限）
+CARRY_TITLES = {
+    "new": "Where the previous session ended (the user started a new session with /new)",
+    "idle": "Where the previous session ended (it had been idle for a while, so this is a new session)",
+    "notes": "What the user asked to carry over into this new session (/new)",
+    "resume": "Where an earlier session of this chat left off (the user picked it up again with /resume)",
+}
+
+
+def recap(s: DbSession) -> str:
+    """一条会话聊到哪（/new、闲置换新时带进新会话的开头，照 context.tail_part 的写法）：压缩过的先放摘要，再放最后 RECAP_MSGS 句
+    （一句最多 RECAP_MSG_MAX 字，合计 RECAP_MAX；【自动触发】那几轮连回复跳过）；最后一句没回上、被停了的写明。没有话 → ""。"""
+    v = s.view()
+    kept: list[tuple[str, str, dict]] = []
+    skip = False
+    for _, m in v.rows:
+        role = m.get("role")
+        if role == "system" and m.get("stopped") and kept:
+            kept.append(("stopped", "", m))
+            continue
+        if role not in ("user", "assistant"):
+            continue
+        t = " ".join(text_of(m).split())
+        if role == "user" and t.startswith(context.AUTO_TRIGGER):
+            skip = True
+            continue
+        if role == "assistant" and skip:
+            skip = not t  # 定时那一轮的回复（调工具的中间几步没字，接着跳）
+            continue
+        skip = False
+        if t:
+            kept.append((role, t if len(t) <= RECAP_MSG_MAX else t[:RECAP_MSG_MAX] + "…", m))
+    lines = []
+    for role, t, m in kept[-RECAP_MSGS:]:
+        if role == "stopped":
+            lines.append("(The user stopped the reply there: that request was called off.)")
+        else:
+            lines.append(f"{'User' if role == 'user' else 'You'}: {t}" + (" (cut off)" if m.get("stop") == "aborted" else ""))
+    if kept and kept[-1][0] == "user":
+        lines.append("(That last message never got a reply.)")
+    text = "\n".join(lines)
+    if len(text) > RECAP_MAX:
+        text = "…" + text[-RECAP_MAX:]
+    if v.summary:
+        head = v.summary.strip()
+        head = head if len(head) <= RECAP_SUMMARY else head[:RECAP_SUMMARY] + "…"
+        text = f"Summary of the earlier part:\n{head}" + (f"\n\nThe last messages:\n{text}" if text else "")
+    return text
+
+
+def carried(s: DbSession) -> dict | None:
+    """这条会话开头带的那一段（换新时存在第一条 context 条目的 carry 里）：压缩重写开头时照样带上。"""
+    path = s.path()
+    if path and path[0]["kind"] == "context":
+        c = json.loads(path[0]["data"]).get("carry")
+        if isinstance(c, dict) and c.get("text"):
+            return c
+    return None
+
+
+def with_carry(ctx: context.Context, carry: dict | None) -> context.Context:
+    """「上次聊到哪」换成换新时带的那一段（没有 = 原样）。"""
+    if carry:
+        ctx.parts["tail"] = context.Part("tail", str(carry.get("title") or CARRY_TITLES["new"]), str(carry["text"]), live=False)
+    return ctx
+
+
+async def _fresh(thread: str, day: str, agent: str, model: str, tools: list, old: DbSession | None, *, reason: str,
+                 notes: str = "") -> tuple[DbSession, context.Context]:
+    """换一条新会话（同一个键、新的一条：DbSession.latest 认它，键的老拆法照样认）。开头照常备料，「上次聊到哪」换成原来那条聊到哪
+    （recap），用户写了要点就带他写的；带的那一段和为什么换新记在第一条 context 条目里。不抄 app 的记录（那些在原来那条里）。"""
+    ctx = await context.gather(agent, thread, day, {t.name for t in tools})
+    mine = notes.strip()
+    text = mine[:RECAP_MAX] if mine else (recap(old) if old is not None else "")
+    carry = {"title": CARRY_TITLES["notes" if mine else reason], "text": text} if text else None
+    s = DbSession.create(day_key(thread, day), kind="owner", agent=agent, model=model, system=system_for(agent, tools, with_carry(ctx, carry)))
+    s.append({**context.state_entry(ctx.state()), "fresh": {"from": old.id if old else None, "reason": reason}, **({"carry": carry} if carry else {})},
+             kind="context")
+    return s, ctx
+
+
+def after_reset(old: DbSession | None, reason: str) -> None:
+    """换了新会话：原来那条这一段对话算结束了，开了写回的话在后台写回一次（不拖这一句；写回没开什么都不做）。"""
+    if old is None:
+        return
+    from . import writeback
+    if not writeback.enabled():
+        return
+    task = asyncio.ensure_future(writeback.run_session(old.id, reason))
+    _bg.add(task)
+    task.add_done_callback(_bg.discard)
+
+
+async def start_new(thread: str, day: str, *, agent: str, model: str, notes: str = "", reason: str = "new") -> tuple[DbSession, DbSession | None]:
+    """/new（engine/commands.py）：这个对话马上换一条新会话。开头带上一条聊到哪，用户写了要点就带他写的。→ (新的, 原来那条)。
+    Claude Code 跑的对话：新会话里还没有它的会话 id（"cc"），下一轮开新的 Claude Code 会话，不 --resume（claude_brain.plan）。"""
+    await mcp_client.ready(agent, None)
+    tools = tools_mod.for_agent(agent) + tools_mod.chat_tools(agent, watched=False)
+    key = day_key(thread, day)
+    async with _opening.setdefault(key, asyncio.Lock()):
+        old = DbSession.latest(key)
+        if old is not None and not await wait_idle(old.id, ROLLOVER_WAIT):
+            print(f"[engine] {thread}：/new 等原来那条会话的一轮 {ROLLOVER_WAIT} 秒还没跑完，先换新的")
+        s, _ = await _fresh(thread, day, agent, model, tools, old, reason=reason, notes=notes)
+        user_hooks.opened(thread, agent, s, old, reason=reason)  # 第 5 批：/new、/reset 也是一段结束、一段开始
+    after_reset(old, reason)
+    return s, old
+
+
+async def resume_from(thread: str, day: str, source: DbSession, *, agent: str, model: str) -> tuple[DbSession, DbSession | None]:
+    """/resume（engine/history.py）：挑一条旧会话接着聊——同 /new 开一条新会话，开头带的是挑的那一条聊到哪（recap）；现在这条照 /new
+    算这一段结束（写回开了就写回）。→ (新的, 原来现在的那条)。Claude Code 跑的对话：下一轮开新的 Claude Code 会话，不 --resume。"""
+    await mcp_client.ready(agent, None)
+    tools = tools_mod.for_agent(agent) + tools_mod.chat_tools(agent, watched=False)
+    key = day_key(thread, day)
+    async with _opening.setdefault(key, asyncio.Lock()):
+        cur = DbSession.latest(key)
+        if cur is not None and not await wait_idle(cur.id, ROLLOVER_WAIT):
+            print(f"[engine] {thread}：/resume 等现在这条会话的一轮 {ROLLOVER_WAIT} 秒还没跑完，先换")
+        s, _ = await _fresh(thread, day, agent, model, tools, source, reason="resume")
+        user_hooks.opened(thread, agent, s, cur, reason="resume")  # 结束的是现在这条（不是挑的那条）
+    if cur is not None and cur.id != source.id:
+        after_reset(cur, "resume")
+    return s, cur
+
+
+async def compact_now(thread: str, day: str, *, model: str | None, focus: str = "", before: int | None = None) -> dict:
+    """/compact（engine/commands.py）、POST /api/engine/compact：这个对话现在的会话手动压一次（compact.manual：focus = 关注点，before =
+    从 app 里这条消息往前压）。拿会话锁（同一条会话同时只跑一轮：这时说的话等它压完）；事件表记一轮（kind owner、origin compact，里面
+    一步 compact；摘要那一次调用照旧另记，用量算在那边）。开头照这一刻的背景重写（换新时带的那一段照样带上）。
+    Claude Code 跑的对话照样在我们这边压（摘要照 compact.summary_model：没配 engine.use.compact 就交给他自己的 Claude Code），压缩
+    条目带 fresh：下一轮开新的 Claude Code 会话，开头带压好的那份（claude_brain.plan）。→ compact.manual 的结果；没有会话 → why no_session。"""
+    from . import events
+    from . import loop as loop_mod
+    s = DbSession.latest(day_key(thread, day))
+    if s is None:
+        return {"ok": False, "why": "no_session"}
+    agent = agent_of(thread)
+    chosen = model if model and (models.subscription(model) or models.valid_ref(model)) else models.default_model()
+    if not chosen:
+        raise EngineError("no model: set engine.model in server.json", kind="config")
+    await mcp_client.ready(agent, None)
+    tools = tools_mod.for_agent(agent) + tools_mod.chat_tools(agent, watched=False)
+    spec = Spec(kind="owner", model=chosen, tools=tools, conversation=thread, agent=agent, origin="user")
+    async with loop_mod._locks.setdefault(s.id, asyncio.Lock()):
+        spec.system = s.effective_system()
+        ctx = await context.gather(agent, thread, day, {t.name for t in tools})
+        tid = events.turn_open(conversation=thread, kind="owner", model=chosen, session=s.id, agent=agent, origin="compact")
+        out: dict = {"ok": False, "why": "failed"}
+        try:
+            out = await compact.manual(s, spec, tid, lambda: (system_for(agent, tools, with_carry(ctx, carried(s))), ctx.state()), focus=focus,
+                                       before_ref=before)
+        finally:
+            events.turn_close(tid, conversation=thread, status="done" if out.get("ok") else "error", usage={},
+                              error=None if out.get("ok") else str(out.get("why")), models=[chosen])
+    return out
+
+
 async def open_day(thread: str, day: str, agent: str, model: str, tools: list, ref: int | None,
                    history: list[dict] | None = None) -> tuple[DbSession, context.Context | None]:
     """这个对话这一天的会话；没有就建（→ 新建时把备料一起交回去，这一轮不用再备一次）。同一个键同时只建一次。
-    history：新建时接在 app 的记录后面放进去的往来（对外接口的调用方带来的前情，engine/openai_api.py）；会话已经有了就不用。"""
+    history：新建时接在 app 的记录后面放进去的往来（对外接口的调用方带来的前情，engine/openai_api.py）；会话已经有了就不用。
+    第 2 批：闲了 engine.reset.idle_minutes 分钟的（engine/reset.py），这一句先换一条新会话（_fresh，带上一条聊到哪）。"""
     key = day_key(thread, day)
     async with _opening.setdefault(key, asyncio.Lock()):
         s = DbSession.latest(key)
         if s is not None:
-            return s, None
+            if not reset.stale(s.updated_at):
+                return s, None
+            if not await wait_idle(s.id, ROLLOVER_WAIT):
+                print(f"[engine] {thread}：闲置换新时原来那条会话 {ROLLOVER_WAIT} 秒还没跑完，先换新的")
+            fresh, ctx = await _fresh(thread, day, agent, model, tools, s, reason="idle")
+            user_hooks.opened(thread, agent, fresh, s, reason="idle")
+            after_reset(s, "idle")
+            return fresh, ctx
         prev = DbSession.latest(day_key(thread, context.logical(day, 1)))
         if prev is not None and not await wait_idle(prev.id, ROLLOVER_WAIT):
             print(f"[engine] {thread}：前一天那一轮 {ROLLOVER_WAIT} 秒还没跑完，先开新的一天")
         ctx = await context.gather(agent, thread, day, {t.name for t in tools})
         s = DbSession.create(key, kind="owner", agent=agent, model=model, system=system_for(agent, tools, ctx))
+        user_hooks.opened(thread, agent, s, prev, reason="day")  # 第 5 批：session:start（前一天那条算 session:end）的钩子，在后台跑
         s.append(context.state_entry(ctx.state()), kind="context")
         for m in [*seed(thread, day, ref), *(history or [])]:
             s.append(m)
@@ -331,10 +500,11 @@ async def respond(thread: str, day: str, content: str | list, model: str | None,
     emit({"type": "phase", "phase": "preparing_context"})
     session, ready = await open_day(thread, day, agent, ref_model, tools, ref, history)
     spec = Spec(kind="owner", model=ref_model, system=session.system, tools=tools, conversation=thread, agent=agent, origin=origin,
-                gate=gate or tools_mod.gate, display="summarized", timeout=timeout, cache_ttl="1h", via=via, fallbacks=fallbacks)
+                gate=gate or tools_mod.gate, display="summarized", timeout=timeout, cache_ttl="1h", via=via, fallbacks=fallbacks,
+                effort=think.effort_for(thread, agent, ref_model))  # 第 2 批：/think、engine.think（都没写 = None，照旧）
 
-    def renderer(ctx: context.Context):
-        return lambda: (system_for(agent, tools, ctx), ctx.state())
+    def renderer(ctx: context.Context):  # 压缩时重写开头：换新时带的那一段（carried，第 2 批）照样带上
+        return lambda: (system_for(agent, tools, with_carry(ctx, carried(session))), ctx.state())
 
     async def prepare(tid: str, prompt: list[dict]) -> list[dict]:
         nonlocal ready
@@ -344,6 +514,8 @@ async def respond(thread: str, day: str, content: str | list, model: str | None,
         rewritten = await compact.maybe(session, spec, tid, prompt, renderer(ctx))
         if rewritten:
             spec.system = rewritten
+        else:  # 第 2 批：没压缩的这一轮，旧的工具结果太占地方就裁一批（engine.compaction.prune，默认关）
+            compact.prune(session, spec, tid, prompt)
         note, state = context.changes(session.view().ctx, ctx)
         if note:
             return [*prompt, context.note_message(note, state or ctx.state())]

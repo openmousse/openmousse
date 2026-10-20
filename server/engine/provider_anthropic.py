@@ -85,6 +85,9 @@ def _media(blocks: list[dict]) -> list[dict]:
             out.append({"type": "text", "text": b["text"]})
         elif b.get("type") == "image" and b.get("data"):
             out.append({"type": "image", "source": {"type": "base64", "media_type": b.get("mime") or "image/png", "data": b["data"]}})
+        elif b.get("type") == "document" and b.get("data"):  # 第 3 批：PDF（engine/pdf.py 读回的 base64）原样交给 Claude（user 和 tool_result 里都收）
+            out.append({"type": "document", "source": {"type": "base64", "media_type": "application/pdf", "data": b["data"]},
+                        **({"title": str(b["title"])[:200]} if b.get("title") else {})})
     return out
 
 

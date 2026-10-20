@@ -110,7 +110,7 @@ def test_initialize_new_session_prompt_updates_and_end(served):
         r = init["result"]
         assert r["protocolVersion"] == 1 and r["authMethods"] == [] and r["agentInfo"]["name"] == "openmousse"
         assert r["agentCapabilities"]["sessionCapabilities"] == {"list": {}, "resume": {}, "close": {}}
-        assert r["agentCapabilities"]["promptCapabilities"]["image"] is True and r["agentCapabilities"]["loadSession"] is False
+        assert r["agentCapabilities"]["promptCapabilities"]["image"] is True and r["agentCapabilities"]["loadSession"] is True  # 第 7 批起有 session/load
         new, _ = ed.call("session/new", {"cwd": "/home/demo/notes", "mcpServers": []})
         sid = new["result"]["sessionId"]
         opt = new["result"]["configOptions"][0]
@@ -136,7 +136,7 @@ def test_initialize_new_session_prompt_updates_and_end(served):
         assert re.fullmatch(r"\[(?:Mon|Tue|Wed|Thu|Fri|Sat|Sun) \d{4}-\d\d-\d\d \d\d:\d\d \w+\] what's on today\?", asked)
         listed, _ = ed.call("session/list", {"cwd": "/home/demo/notes"})
         assert [(s["sessionId"], s["cwd"], s["title"]) for s in listed["result"]["sessions"]] == [(sid, "/home/demo/notes", "what's on today?")]
-        assert ed.call("session/load", {"sessionId": sid, "cwd": "/", "mcpServers": []})[0]["error"]["code"] == -32601
+        assert "configOptions" in ed.call("session/load", {"sessionId": sid, "cwd": "/", "mcpServers": []})[0]["result"]  # 重放见 test_ops_acp.py
         bad, _ = ed.call("session/prompt", {"sessionId": "nope", "prompt": [{"type": "text", "text": "hi"}]})
         assert bad["error"]["code"] == -32602
         rel, _ = ed.call("session/new", {"cwd": "relative/dir", "mcpServers": []})

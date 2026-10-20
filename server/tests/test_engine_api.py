@@ -503,9 +503,9 @@ def test_shutdown_stops_api_turns(api, monkeypatch):
         async with api.client() as c:
             task = asyncio.create_task(c.post("/v1/chat/completions", headers=H("tok-api", **{"X-Session-Id": "s-down"}), json=ask("talk")))
             t0 = time.monotonic()
-            while not openai_api.RUNS and time.monotonic() - t0 < 5:
+            # 等第一段字到了再停（同 test_engine_acp）：只等登记、再固定等 0.2 秒，CI 的机器慢时一个字都还没出，就没有半截回复可存
+            while not any(r.text for r in openai_api.RUNS.values()) and time.monotonic() - t0 < 10:
                 await asyncio.sleep(0.01)
-            await asyncio.sleep(0.2)
             assert chat.stop_engine_runs() == 1
             return await task
     r = run(go())

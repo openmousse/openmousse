@@ -52,12 +52,23 @@ export interface ChatList {
   server: boolean;
 }
 
+/** 斜杠命令（服务器 engine/commands.py，supports('chat.commands')）：输入框打 / 时列出来，点了补进输入框。 */
+export interface SlashCommand {
+  name: string;
+  aliases: string[];
+  /** 参数的写法，比如 [模型]；没有参数 = '' */
+  args: string;
+  description: string;
+}
+
 export const chatsApi = {
   load: () => request<Omit<ChatList, 'server'>>('/api/chats').then((j): ChatList => ({ agents: j.agents, rows: j.rows, ended: j.ended, archived: j.archived, server: true })),
   archived: () => request<{ rows: ChatRow[] }>('/api/chats?archived=1').then((j) => j.rows),
   patch: (thread: string, body: { pinned?: boolean; muted?: boolean }) =>
     request<{ pinned: boolean; muted: boolean }>(`/api/chats/${encodeURIComponent(thread)}`, { method: 'PATCH', body }),
   remove: (thread: string) => request(`/api/chats/${encodeURIComponent(thread)}`, { method: 'DELETE' }),
+  /** 这个对话能用的斜杠命令；服务器没开命令 = 空的 */
+  commands: (thread: string) => request<{ commands: SlashCommand[] }>(`/api/engine/commands?thread=${encodeURIComponent(thread)}`).then((j) => j.commands ?? []),
 };
 
 const iso = (ms: number) => (ms ? new Date(ms).toISOString() : null);

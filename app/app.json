@@ -2,7 +2,7 @@
   "expo": {
     "name": "OpenMousse",
     "slug": "openmousse",
-    "version": "1.0.6",
+    "version": "1.0.7",
     "orientation": "portrait",
     "icon": "./assets/icon.png",
     "userInterfaceStyle": "automatic",
@@ -112,6 +112,18 @@
           "neverForLocation": true,
           "companionDeviceEnabled": false,
           "bluetoothAlwaysPermission": "{name} 用蓝牙连接你的 Flipper 等硬件设备。"
+        }
+      ],
+      [
+        "expo-location",
+        {
+          "locationWhenInUsePermission": "{name} 在你打开「这台手机 → 定位」后，只在 app 开着时读取位置，用来回答你让它查的事。",
+          "locationAlwaysAndWhenInUsePermission": "{name} 只在 app 开着时读取位置，不在后台定位。",
+          "locationAlwaysPermission": false,
+          "motionUsagePermission": "{name} 不读取运动状态；这一项是定位组件要求附带的说明。",
+          "isIosBackgroundLocationEnabled": false,
+          "isAndroidBackgroundLocationEnabled": false,
+          "isAndroidForegroundServiceEnabled": false
         }
       ]
     ]

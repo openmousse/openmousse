@@ -1,0 +1,23 @@
+Return-Path: <owner@example.com>
+Delivered-To: agent@example.org
+Authentication-Results: mx.example.org;
+	dkim=pass (2048-bit key; unprotected) header.d=example.com header.i=@example.com header.b=Xq1fake0;
+	spf=pass (mx.example.org: domain of owner@example.com designates 192.0.2.10 as permitted sender) smtp.mailfrom=owner@example.com;
+	dmarc=pass (p=reject dis=none) header.from=example.com
+Received: from mail.example.com (mail.example.com [192.0.2.10])
+	by mx.example.org with ESMTPS id 4Xfake0001
+	for <agent@example.org>; Sat, 18 Oct 2030 09:12:03 +0000 (UTC)
+DKIM-Signature: v=1; a=rsa-sha256; d=example.com; s=s1; h=from:to:subject:date:message-id; bh=fakebodyhash=; b=fakesignature=
+From: Alex Rivers <owner@example.com>
+To: Mousse <agent@example.org>
+Subject: Packing list for Saturday
+Date: Sat, 18 Oct 2030 09:12:00 +0000
+Message-ID: <hike-0001@mail.example.com>
+MIME-Version: 1.0
+Content-Type: text/plain; charset="utf-8"
+Content-Transfer-Encoding: 7bit
+
+Can you draft a packing list for the hike on Saturday? Keep it short.
+
+--
+Alex

@@ -14,9 +14,24 @@
   cyber.py               赛博回合（后端 + 测试入口）
   tools.py               主人回合的工具：我们自己的命令行工具（bridges.py）+ 连接器 + skill；分类表和关卡（撤得回直接做，撤不回进收件箱）
   mcp_client.py          你自己配的 MCP 服务（第 13 步，server.json 的 mcp_servers）：本机 stdio 的常驻进程、写好令牌的远端，工具接进主人回合
+                         第 5 批：prompts 两个只读工具、sampling（默认关，零工具的外人回合、限速、不花套餐）、/api/setup/mcp…、
+                         ../mcp_ctl.py（mousse mcp）
   skill_write.py         写自己的 skill（第 13 步）：skill_manage 工具、改之前存历史、内容检查、提醒存、后台回看（默认关）
   agent_skills.py        每个 Agent 能用哪些技能（engine.skills.agents.<id>，10/19）：skills_for 管住开头的技能目录、skill 工具、经 /mcp 给外援的；
                          谁写名单：新建 Agent、装日结提案的 skill、app 里改（GET / PUT /api/setup/skills/{agent}，只认主人的设备、先备份）
+  skill_gate.py          第 5 批：技能的门槛（OpenClaw 的 metadata.openclaw.requires / os / always、Hermes 的 platforms、requires_tools、
+                         required_environment_variables）和配置（engine.skills.entries.<名字>：enabled、env、config）；主机命令拿到技能声明的环境变量
+  skill_market.py        第 5 批：技能市场（ClawHub、GitHub、skills.sh、照 agentskills.io 格式发布的网站、直接给的链接）：搜；装 = 隔离区 → 扫描
+                         （skills_guard.py，照搬 Hermes 的）→ 卡 → 点了才装、记 lock；更新、卸载；skill_market 工具、/api/setup/skills/market…、
+                         ../skills_ctl.py（mousse skills）
+  user_hooks.py          第 5 批：用户钩子（engine.hooks.<事件>、工作区的 hooks/<名字>/HOOK.md）：事件跑主人的脚本（stdin JSON、block / modify、
+                         退出码 2 = 拦），第一次跑之前要同意（指纹进白名单）；tool:before / after 由 tools.for_agent 包一层；自带 boot-md、
+                         command-logger（默认关）；GET /api/engine/hooks、../hooks_ctl.py（mousse hooks）
+  intents.py             第 5 批：要记得的事（engine.intents.enabled，默认关）：remember_when 工具（只给主人回合、撤得回）；主人说的每一句
+                         不调模型地对触发词，对上了在 manuals.prep_for 那一条里带一行；最多几次、冷却、过期；记性的闸里算经历
+  plugins.py             第 5 批：带代码的插件（engine.plugins.enabled，默认一个都不载）：manifest + register(ctx)，只给声明了的工具、钩子、
+                         技能、MCP；在服务器进程里跑、没有沙箱；能力要同意（多了重新同意）；git 只认 40 位提交；载入有时限、出错只坏它自己；
+                         ../plugins_ctl.py（mousse plugins）、/api/setup/plugins…
   appdata.py             claw 选 builtin 时 app 的几页读内核（10/19 第 1 批）：/api/activity（engine_turns、engine_job_runs）、/api/models、
                          /api/security、/api/upcoming（定时任务和心跳，开关 = 暂停 / 恢复）、老 app 的 /api/approvals；样子和 OpenClaw 那条路对齐
   calls.py               不是命令行脚本、也要点头的调用（MCP 工具、写 skill）：交 kind tool 的卡，同意后照原样跑一次
@@ -44,6 +59,21 @@
   jobs.py                定时任务（第 6 项）：表、cron 工具、收件箱卡（Agent 建的先停着，用户点了才开）、到点跑、接口 /api/engine/jobs；
                          10/19 起多一种只跑命令的（不调模型：BRIDGES 的工具或 engine.jobs.scripts 白名单里的脚本，有时限，输出记进运行记录）
   heartbeat.py           心跳：每个 Agent 可选的定期「看一眼」（server.json 开），没清单不调模型，没要说的回 NO_REPLY 什么都不发
+  estop.py               第 4 批 急停：<data_dir>/ESTOP 一个文件停掉所有自动的事（定时任务、心跳、触发、新的后台任务、工作流、写回、回看、
+                         补向量），在跑的默认不杀；/api/engine/pause、resume（只认主人的设备）、mousse pause / resume（../estop_ctl.py）
+  spend.py               第 4 批 按钱的花费上限（engine.spend：一天 / 一轮 / 某个 Agent / 某种用途，美元）：loop 每次调模型前 check、每一步 step，
+                         到了抛 EngineError(budget)（不重试、不换备用）；后台的开跑前 blocked() 跳过记 limit；提醒线一天推一次；/api/engine/spend
+  triggers.py            第 4 批 从外面进来的触发共用的：事件表（去重、限速）、零工具的读（外来的字只进它）、出通知（包成资料补进会话）、
+                         出卡（kind trigger，点了才开主人回合）、trust: owner 的直接叫醒；GET /api/engine/triggers
+  webhooks.py            第 4 批 webhook：POST /webhooks/<名字>（不在 /api 下，github / hmac 带时间 / bearer 自己验），过滤、合并、
+                         public: true 的也挂在对外的小服务上；PUT / DELETE /api/engine/triggers/webhooks/<名字>
+  watch.py               第 4 批 定时任务的 watch（命令的输出、看板表、网页：没变不调模型，变了才叫醒；网页只出通知或卡）和 pre
+                         （先跑一条命令，最后一行 {"wake": false} 就不叫醒）
+  mailwatch.py           第 4 批 邮件触发：IMAP 只读地盯一个邮箱（imaplib：EXAMINE、BODY.PEEK、UIDVALIDITY + UID，第一次只记到哪了），
+                         新信只进零工具的读，出通知或卡；认识 = known + 我们的收信服务器写的 dmarc=pass；和 channels.email 同一个邮箱就不跑
+  bg.py                  第 4 批 后台跑这句：POST /api/engine/bg {thread, text}：派成后台任务（tasks.create / start，不问额度），做完结果回到这个对话
+  flows.py               第 4 批 轻量的多步工作流（engine.flows）：do（一轮主人回合）/ run（命令）/ ask（收件箱卡），每步记进库、重启接着走、
+                         做到一半的记 interrupted；定时任务能开；/api/engine/flows…
   unattended.py          没人在看的一轮：新会话里跑、认「没要说的」、结果发进对话 + 推送 + 补进那个对话今天的会话
   tasks.py               后台任务和子 Agent：tasks 工具（派、看、接着说、停、重派、额度）、子 Agent 的工具子集和关卡、做完交回原对话、重启收尾
   sessions.py            第 1 批 b 看别的会话：sessions_list / sessions_history / session_status（只读；范围 engine.sessions：默认 Agent 看自己的、
@@ -51,6 +81,19 @@
                          转过去那句话标成别的会话转来（../chat.py 的 /api/chat/relay 用）
   agent_cli.py           第 1 批 b 命令行 mousse agent（../mousse.py）的服务器那一半：POST /api/engine/agent，一个新会话里只读地跑一轮，
                          回答、用了什么、多少 token 打成 JSON；模型不写用那个 Agent 的，chatgpt/… 照 models.may_spend 走用户自己的套餐
+  commands.py            第 2 批斜杠命令：登记表（别的模块、渠道往里加）、解析、只认主人、命令和回答不进会话；/help /status /usage /context
+                         /tools /model /stop /new /compact /think /queue /btw /resume /export /goal；GET /api/engine/commands
+  reset.py               第 2 批换天的钟点、闲了多久换新会话（engine.reset）
+  guard.py               第 2 批死循环检测（engine.loop.guard）：反复失败、只读没进展补一句提醒，没人在看的到阈值硬停；/mcp 那一层也查
+  spill.py               第 2 批太长的工具输出全文存成文件、主人回合用 read_output 翻页（engine.loop.spill）
+  side.py                第 2 批 /btw 旁问：拿这个对话当背景的一次性问答，零工具、不进会话、不打断
+  think.py               第 2 批思考档位：/think 按对话、engine.think 按 Agent，模型没有的档就近夹（Hermes clamp_effort）
+  queueing.py            第 2 批 /queue：回复在跑时又说的话插话 / 一句一轮 / 合成一轮 / 打断，按对话存
+  resume.py              第 2 批重启打断的那一轮接着跑一次（engine.loop.resume）
+  history.py             第 2 批旧会话、/resume、分叉、切枝、导出的接口（/api/engine/chats/{thread}/…）
+  export.py              第 2 批 /export：一条会话导成 Markdown / JSON / HTML，打码
+  goal.py                第 2 批 /goal 持续目标（engine.goal）：每一轮完了判一次做到没有，没做到接着做
+  titles.py              第 2 批会话的标题：第一句；engine.titles 开了用小模型起名
   ledger.py              后台任务的台账（engine_tasks 表；给 cards.py / data.py 的是 OpenClaw 台账的样子）
   runners.py             外援子 Agent：本机用户自己登录的官方 Claude Code / Codex，一次性，经 /mcp 用我们的工具（临时令牌、只读）
   sandbox.py             沙箱（第 8 项）：内核自己起、管、收 Docker 容器（加固、只经 Doorman 出网、闲了收掉、重启后认回）；容器里跑命令、读写文件
@@ -61,7 +104,31 @@
   host_files.py          ⑫ 主机上的文件工具：自己工作区里读、列、找、搜、写、改、换回旧版本；路径守卫（..、符号链接、像密钥的、别人的）
   safefs.py, versions.py ⑫ 不跟符号链接的读写（openat 一层层走）；写之前留旧版本 / 恢复（通用的小模块）
   host_exec.py           ⑫ 主机上跑命令（照 OpenClaw 的执行审批）：默认全关；放行名单、危险命令识别、不经 shell、去掉像密钥的环境变量
-  web.py                 ⑫ web_search（Brave、Tavily、Exa、Perplexity、SearXNG、DuckDuckGo）和 web_fetch（只去公网、钉住查过的地址、转成 Markdown）
+  patch.py               第 3 批：apply_patch 多文件补丁（*** Begin Patch 格式，全有或全无，每个文件留版本；engine.files.patch 开）
+  host_process.py        第 3 批：主机上的后台命令（host_exec 的 background / yield_ms / watch，host_process 工具，做完往对话补一句，重启收掉）；
+                         host_exec 的 shell = true 经 bash -c、每一段都查
+  media.py               第 3 批：媒体那几样共用的一层：engine.use.<用途> 选服务商、地址和密钥、发请求（报错抹密钥）、记花费（engine_media_usage）、
+                         拿文件（工作区、图库、附件、公网网址）、本机的命令
+  vision.py, pdf.py      第 3 批：view_image（主模型看得见就给图，看不见交看图模型）、不收图的模型配了看图时图先换成描述；read_pdf（原样交给
+                         读 PDF 的模型 / 看文档的模型 / 抽字，扫描页转成图）、工具结果里的 PDF 怎么发给各家
+  stt.py                 第 3 批：transcribe 工具和 engine.use.stt（OpenAI、Groq、Gemini、Deepgram、ElevenLabs、本机 whisper-cli）；
+                         transcribe_file 给渠道、附件、语音输入（不配走 files.py 原来那条）
+  tts.py                 第 3 批：speak 工具和 engine.use.tts（OpenAI、ElevenLabs、Gemini、Deepgram、本机命令）：念好的存成对话附件挂到回复上；
+                         「用语音回」按对话的开关（只有接口）；synthesize / speech_file 给渠道
+  imagegen.py            第 3 批：image_generate 工具和 engine.use.image（OpenAI 的生成 / 编辑、Gemini、fal、本机 ComfyUI）：进图库、存成对话附件
+  video.py               第 3 批：video_analyze 和 engine.use.video（Gemini 直接看，大的经 Files API；别的会看图的模型看 ffmpeg 抽的帧）；
+                         截一段、压小；用户发来的视频可选先看一遍（engine.media.describe_video）
+  chrome.py              第 3 批：chrome 工具接用户自己的 Chrome（CDP 地址和令牌在密钥里，按 Agent 开）：看的直接做，点、填、跑脚本交卡写清哪个网站；
+                         不经 Doorman；给第 8 批的接口 ADDRESS_HOOKS / connect_to。沙箱浏览器的登录配置档在 sandbox.browser_profile
+  web.py                 ⑫ web_search（Brave、Tavily、Exa、Perplexity、SearXNG、DuckDuckGo；第 3 批加 Gemini、Grok、Kimi、Firecrawl，写明才用）和
+                         web_fetch（只去公网、钉住查过的地址、转成 Markdown；第 3 批：只有脚本的壳可选交沙箱浏览器渲染）
+  toolsearch.py          第 3 批：MCP、连接器的工具多过门槛（engine.tools.search）收进 tool_search / tool_describe / tool_call，分类和卡照被调的那个
+  llm_task.py            第 3 批：llm_task 结构化的子任务（engine.tools.llm_task）：零工具的一问（oneshot.ask_json）、照 JSON Schema 校验、may_spend
+  difftool.py            第 3 批：diff（engine.tools.diff）：两段文字、或者文件和它留着的旧版本（versions.py）比；可选做成一页（pages.py）
+  mediagen.py            第 3 批第 14 项：video_generate、music_generate 和 engine.use.video_gen / music（Gemini Omni Flash、Lyria 经
+                         Interactions API，fal 的队列，ElevenLabs Music）：没马上好就转后台，做好了交回对话；生成视频每次先交卡
+  codeexec.py            第 3 批：execute_code（engine.tools.execute_code）：沙箱里跑 Python，经 docker exec 的标准输入输出调工具（一次一把
+                         mcp_engine 的临时令牌，每个调用过关卡，默认只读）
   images.py              ⑫b 工具结果里的图：卡大小和缩放（照 pi）、存进图库（按内容取名，会话里只记引用）、发给各家前读回来或换成一句话、
                          老图成批换成字
   ask.py                 ⑫b ask_user：一轮里问用户一句、等他回答（插话或 /api/engine/answer），只给有人在看的那几轮
@@ -73,6 +140,14 @@
   chatgpt_plan.py        模型 chatgpt/…（第 11b 项）：用户自己的 ChatGPT 套餐（官方 Sign in with ChatGPT 给开源 / 本地应用的那条路）：授权、
                          令牌存在本机（0600）、刷新排队、撤销；推理走公开的 Responses API；谁能花照 models.may_spend（后台的要用户同意过）；
                          /api/engine/chatgpt…
+  provider_cli.py        模型 codex/…、copilot/…（第 7 批，默认关）：用户自己登录的官方 Codex / Copilot 命令行当主人回合的模型
+                         （providers.stream 交过来）：一次回复起一次命令，关掉它自己的工具，我们的工具经 MCP 给；谁能花照 models.may_spend
+  auto.py                自动选模型（第 7 批，engine.auto，默认关）：主人自己说的简单的一句交给便宜的模型，同一轮粘住，没成回到主模型
+                         （接在 providers.stream 最前面）
+  a2a_api.py             主人自己的 A2A 1.0（第 7 批，engine.api.a2a，默认关）：/v1/a2a/<agent> 的 JSON-RPC（SendMessage、GetTask、ListTasks、
+                         CancelTask）和名片；一条消息 = 对外接口的一轮（openai_api.Run），任务存在 engine_a2a_tasks
+  warming.py             提示缓存保温（第 7 批，engine.cache_warming，默认关）：主人自己和 Claude 聊完走开了，1 小时的缓存快过期时把
+                         最后那次请求原样再发一次（max_tokens 1），记一轮 origin warming
   mcp_engine.py          内核的工具经 MCP 给外援：一轮一把临时令牌，看到的是这一轮的整张工具表，每次调用走内核同一套关卡
   catalog.py             第 9 步「通用的选择层」：服务商目录（云端二十几家、本机的 Ollama / LM Studio / vLLM / llama.cpp / MLX、命令行登录、
                          自定义地址、搜索、向量），每家的地址、密钥变量名、拿密钥的网址、怎么列模型、能力、核对过的官方页面；models.PROVIDERS 从它来
@@ -86,6 +161,11 @@
                          撤不回的照样进收件箱、调用方那边能当场点头；给 ACP 适配器的 /v1/openmousse/…。server.json 的 engine.api 开了才挂，
                          令牌只认 api、api-<agent id>
   acp.py                 ACP 适配器：编辑器以 stdio 起的独立小进程（只用标准库，经 /v1 跟服务器说话，不导入这里的任何模块）
+  nodes.py               第 8 批 nodes 工具：用主人配好的设备节点（../nodes.py 管配对、命令面、传话）；跑命令照这个节点的放行名单、写文件拍照截屏定位
+                         照主人开的档、交卡照 host_exec；回来的东西包成外来内容，图进图库
+
+  ../channels/           第 6 批的渠道层（不在这个包里）：Telegram、Discord、邮件。主人在渠道里说的走 app 那条路（主人回合），联系人的话交给名片
+                         Agent（外人回合），陌生人配对；message 工具（发给主人直接发、发给别人交卡）经 tools.for_agent 登记
 
 这一层只在用到时才导入 anthropic SDK；不配 server.json 的 engine 段，服务里一切照旧。
 """

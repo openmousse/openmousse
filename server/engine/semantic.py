@@ -467,6 +467,12 @@ def _allowed() -> bool:
     return claw.is_builtin()
 
 
+def _held() -> bool:
+    """第 4 批：急停着（engine/estop.py）、今天的花费到了上限（engine/spend.py：总数或 background）：这一轮不补向量。"""
+    from . import estop, spend
+    return estop.paused() or not spend.embed_ok()
+
+
 def _loop() -> None:
     from . import recall
     first = True
@@ -477,7 +483,7 @@ def _loop() -> None:
         if _halt.is_set():
             break
         s = E.spec()
-        if s is None or not _allowed():
+        if s is None or not _allowed() or _held():
             continue
         if _attempt(s) == _state.get("hold_for") and time.monotonic() < _state.get("hold_until", 0):
             continue  # 上一轮出错了（密钥、型号、连不上）：先歇一会儿，别每搜一次就撞一次；配置、密钥改了马上再试

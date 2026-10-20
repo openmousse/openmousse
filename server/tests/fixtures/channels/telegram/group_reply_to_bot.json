@@ -1,0 +1,36 @@
+{
+ "message": {
+  "message_id": 22,
+  "date": 1760860800,
+  "chat": {
+   "id": -1001000001,
+   "type": "supergroup",
+   "title": "Weekend Crew"
+  },
+  "from": {
+   "id": 1000001,
+   "is_bot": false,
+   "first_name": "Alex",
+   "last_name": "Rivers",
+   "username": "alex_rivers_example",
+   "language_code": "en"
+  },
+  "text": "and after that?",
+  "reply_to_message": {
+   "message_id": 501,
+   "date": 1760860770,
+   "chat": {
+    "id": -1001000001,
+    "type": "supergroup",
+    "title": "Weekend Crew"
+   },
+   "from": {
+    "id": 7000001,
+    "is_bot": true,
+    "first_name": "Mousse Test",
+    "username": "mousse_test_bot"
+   },
+   "text": "Sam asked about brunch."
+  }
+ }
+}

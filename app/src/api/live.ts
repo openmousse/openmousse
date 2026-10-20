@@ -62,9 +62,10 @@ export const OPENCLAW: ClawInfo = { kind: 'openclaw', name: 'OpenClaw', caps: { 
 
 /** firstRun：全新的服务器（还没有任何消息、也没建过 Agent），主对话空着时顶上放「从这里开始」。老服务器没有这个字段 = false。 */
 /** server：服务器的版本和能力（见 version.ts）；老服务器没有这一段 = OLD_SERVER。 */
-export type ProbeResult = { status: 'ok'; appName: string; sharedChannels: string[]; sources: Sources; firstRun: boolean; claw: ClawInfo; server: ServerInfo } | { status: 'auth' | 'down' };
+/** noModel：还没有能用的模型（/api/health 的 no_model，2026-10-19）：自带内核时 app 走第一次打开的三步。老服务器没有 = false。 */
+export type ProbeResult = { status: 'ok'; appName: string; sharedChannels: string[]; sources: Sources; firstRun: boolean; noModel: boolean; claw: ClawInfo; server: ServerInfo } | { status: 'auth' | 'down' };
 
-type HealthResp = { ok: boolean; app_name?: string; shared_channels?: string[]; sources?: Sources; first_run?: boolean; claw?: Partial<ClawInfo>; server?: unknown };
+type HealthResp = { ok: boolean; app_name?: string; shared_channels?: string[]; sources?: Sources; first_run?: boolean; no_model?: boolean; claw?: Partial<ClawInfo>; server?: unknown };
 
 function clawOf(c?: Partial<ClawInfo>): ClawInfo {
   if (!c?.kind || c.kind === 'openclaw') return OPENCLAW;
@@ -75,7 +76,7 @@ export async function probe(): Promise<ProbeResult> {
   try {
     const h = await get<HealthResp>('/api/health');
     return h.ok ? { status: 'ok', appName: h.app_name || 'OpenMousse', sharedChannels: h.shared_channels ?? [], sources: h.sources ?? {}, firstRun: h.first_run === true,
-      claw: clawOf(h.claw), server: serverOf(h.server) } : { status: 'down' };
+      noModel: h.no_model === true, claw: clawOf(h.claw), server: serverOf(h.server) } : { status: 'down' };
   } catch (e) {
     return { status: e instanceof AuthError ? 'auth' : 'down' };
   }

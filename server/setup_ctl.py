@@ -167,11 +167,17 @@ def connect_cloud(rows: list[dict]) -> str | None:
     if row.get("note"):
         say(row["note"])
     say(L(f"密钥在这里拿：{row['keyUrl']}", f"Get a key here: {row['keyUrl']}") if row.get("keyUrl") else "")
+    url = None
+    if not row.get("defaultUrl"):  # 没有默认地址的（Azure）：地址是你自己的资源
+        url = ask(L("你自己的资源地址（url）", "Your own resource's address (url)"), row.get("url") or "").strip() or None
+        if not url:
+            say(L("没填地址，跳过", "No address; skipped"))
+            return None
     key = secret(L(f"{name_of(row)} 的密钥（不回显；回车 = 用已经有的）", f"{name_of(row)} key (hidden; Enter = keep the one there is)"))
     if not key and not row["connected"]:
         say(L("没填密钥，跳过", "No key; skipped"))
         return None
-    body = {**({"key": key} if key else {}), **({"region": region} if region else {})}
+    body = {**({"key": key} if key else {}), **({"region": region} if region else {}), **({"url": url} if url else {})}
     try:
         ok = show_test(call(sa.test_provider, pid, body=body))
         if not ok and not yes(L("还是存下来吗", "Save it anyway"), False):
@@ -437,6 +443,26 @@ def wizard() -> int:
     return 0
 
 
+def warn_invalid() -> None:
+    """写完以后整份查一遍 server.json（ops/confcheck.py，第 7 批）：只提醒，不拦、不改（有 ✗ 就说一声，怎么查）。"""
+    try:
+        import json
+
+        import config
+        from ops import confcheck
+        bad = confcheck.errors(confcheck.validate(json.loads(config.CONFIG_PATH.read_text(encoding="utf8"))))
+    except Exception:  # noqa: BLE001 — 提醒而已：读不了、查不了都不耽误这条命令
+        return
+    if bad:
+        say(L(f"server.json 里有 {len(bad)} 处不对（不是这次改的也算）：", f"server.json has {len(bad)} problems (not necessarily from this change):"))
+        for f in bad[:5]:
+            say(f"  ✗ {f.path}: {f.message}")
+        say(L("  全部看：mousse config validate", "  all of them: mousse config validate"))
+
+
+WRITES = ("add", "remove", "use", "search", "memory", "embeddings")  # 会写 server.json 的子命令：写完 warn_invalid
+
+
 def _opt(argv: list[str], name: str) -> str | None:
     if name in argv:
         i = argv.index(name)
@@ -531,6 +557,8 @@ def main(argv: list[str]) -> int:
     except sa.SetupError as e:
         print(L(f"没成：{e}", f"Didn't work: {e}"), file=sys.stderr)
         return 1
+    if cmd in WRITES:
+        warn_invalid()
     return 0
 
 

@@ -11,6 +11,10 @@ app 拿配对码换一个自己的接入令牌。
 防猜：码 8 位（去掉 0 O 1 I L 之后的 31 个字母数字，约 40 位），默认 10 分钟过期、只能用一次；/api/pair 每个来源 10 分钟最多错 5 次、
 全部加起来 10 分钟最多错 30 次，超了一律 429。/api/pair 在 /api 下面：只在 Tailscale 私网里（公网 Funnel 不开 /api），手机要先进同一个 tailnet。
 新令牌叫 device-<设备>-<月日时分>，和手填的令牌一样能在服务器上 tokens.py remove 掉。
+
+节点配对码（第 8 批，2026-10-19，见 nodes.py）：tokens.py pair --node 出的码记着 "node": true，只给节点主机换（node_host.py pair 发
+{"node": true}）：换来的令牌叫 node-<设备>，main.py 的 guard 只放它走 /api/nodes/*。两种码不混用：手机拿节点的码、节点拿手机的码都不换，
+码也不作废、不算试错。链接多一个 k=node。
 """
 from __future__ import annotations
 
@@ -53,28 +57,28 @@ def server_url() -> str:
     return f"http://{host}:{port}"
 
 
-def link(server: str, code: str) -> str:
-    return "openmousse://pair?" + urllib.parse.urlencode({"s": server, "c": code})
+def link(server: str, code: str, node: bool = False) -> str:
+    return "openmousse://pair?" + urllib.parse.urlencode({"s": server, "c": code, **({"k": "node"} if node else {})})
 
 
-def new_code(name: str = "", minutes: int = 10) -> tuple[str, str]:
-    """出一个新配对码，写进 server.json（只存哈希）。→ (码, 过期时间 ISO)。"""
+def new_code(name: str = "", minutes: int = 10, node: bool = False) -> tuple[str, str]:
+    """出一个新配对码，写进 server.json（只存哈希）。node = 节点配对码（只换 node-* 令牌）。→ (码, 过期时间 ISO)。"""
     code = "".join(secrets.choice(ALPHABET) for _ in range(CODE_LEN))
     now = datetime.now(timezone.utc)
     expires = (now + timedelta(minutes=max(1, min(60, int(minutes))))).isoformat(timespec="seconds")
     data = dict(raw(fresh=True))
     auth = dict(data.get("auth") or {})
     live = [p for p in auth.get("pairing") or [] if isinstance(p, dict) and str(p.get("expires") or "") > now.isoformat(timespec="seconds")]
-    live.append({"hash": _hash(code), "expires": expires, "name": str(name or "")[:40]})
+    live.append({"hash": _hash(code), "expires": expires, "name": str(name or "")[:40], **({"node": True} if node else {})})
     auth["pairing"] = live[-20:]
     data["auth"] = auth
     save(data)
     return code, expires
 
 
-def _slug(device: str) -> str:
+def _slug(device: str, fallback: str = "phone") -> str:
     s = re.sub(r"[^a-z0-9]+", "-", str(device or "").lower()).strip("-")[:20]
-    return s or "phone"
+    return s or fallback
 
 
 def limited(source: str) -> bool:
@@ -86,8 +90,9 @@ def limited(source: str) -> bool:
     return len(_fails.get(source, [])) >= PER_SOURCE or sum(len(v) for v in _fails.values()) >= TOTAL
 
 
-def redeem(code: str, device: str, source: str) -> dict:
-    """换令牌。→ {"ok": True, "token", "name", "appName"} 或 {"ok": False, "error", "status"}。"""
+def redeem(code: str, device: str, source: str, node: bool = False) -> dict:
+    """换令牌。→ {"ok": True, "token", "name", "appName"} 或 {"ok": False, "error", "status"}。
+    node：节点主机来换（nodes.py）：只认节点配对码，换来的令牌叫 node-<设备>。码的种类对不上 → 400，码不作废、不算试错。"""
     if limited(source):
         return {"ok": False, "status": 429, "error": L("试错太多次了，过 10 分钟再试", "Too many wrong tries; wait 10 minutes and try again")}
     h = _hash(code)
@@ -100,8 +105,22 @@ def redeem(code: str, device: str, source: str) -> dict:
         _fails.setdefault(source, []).append(time.monotonic())
         return {"ok": False, "status": 403, "error": L("配对码不对，或者已经过期 / 用过了。在服务器上重新出一个：tokens.py pair",
                                                       "Wrong pairing code, or it expired / was already used. Make a new one on the server: tokens.py pair")}
+    if bool(hit.get("node")) != bool(node):
+        return {"ok": False, "status": 400, "error": L(
+            "这是节点（电脑）的配对码：在要当节点的那台电脑上跑 node_host.py pair <链接>。手机用 tokens.py pair 出的码。" if hit.get("node") else
+            "这是给手机的配对码。节点用 tokens.py pair --node 出的码。",
+            "This pairing code is for a node (a computer): run node_host.py pair <link> on that computer. Phones use a code from tokens.py pair."
+            if hit.get("node") else "This pairing code is for a phone. Nodes use a code from tokens.py pair --node.")}
     tokens = dict(auth.get("tokens") or {})
-    name = f"device-{_slug(hit.get('name') or device)}-{datetime.now():%m%d%H%M}"
+    if node:  # node-<设备>：也是 engine.nodes 里的键（nodes.py）。用过的名字不再用（收回的节点留下的批准不能落到新配的这台上）
+        eng = data.get("engine") if isinstance(data.get("engine"), dict) else {}
+        taken = set(tokens) | (set(eng["nodes"]) if isinstance(eng.get("nodes"), dict) else set())
+        base = name = f"node-{_slug(hit.get('name') or device, 'computer')}"
+        n = 2
+        while name in taken:
+            name, n = f"{base}-{n}", n + 1
+    else:
+        name = f"device-{_slug(hit.get('name') or device)}-{datetime.now():%m%d%H%M}"
     while name in tokens:
         name += "x"
     tok = secrets.token_urlsafe(24)
@@ -110,7 +129,7 @@ def redeem(code: str, device: str, source: str) -> dict:
     auth["pairing"] = [p for p in pairing if p is not hit and str(p.get("expires") or "") > now]  # 用过就删，过期的一起清
     data["auth"] = auth
     save(data)
-    return {"ok": True, "token": tok, "name": name, "appName": settings.app_name}
+    return {"ok": True, "token": tok, "name": name, "appName": settings.app_name, **({"node": True} if node else {})}
 
 
 def terminal_qr(text: str) -> str:
@@ -141,26 +160,28 @@ router = APIRouter()
 
 @router.post("/api/pair")
 async def pair(request: Request):
-    """不要令牌（main.py 的 guard 放行这一个路径）：拿配对码换接入令牌。"""
+    """不要令牌（main.py 的 guard 放行这一个路径）：拿配对码换接入令牌。节点主机（node_host.py）带 "node": true。"""
     try:
         body = await request.json()
     except ValueError:
         body = {}
     body = body if isinstance(body, dict) else {}
-    r = redeem(str(body.get("code") or ""), str(body.get("device") or ""), request.client.host if request.client else "?")
+    r = redeem(str(body.get("code") or ""), str(body.get("device") or ""), request.client.host if request.client else "?",
+               node=body.get("node") is True)
     if r.get("ok"):
         return r
     return JSONResponse({"ok": False, "error": r["error"]}, status_code=r["status"])
 
 
 # —— 设备（2026-09-29，app「设置 → claw → 能连它的设备」）——————————————————————————————
-# 设备 = auth.tokens 里给人用的令牌（手填的、配对换来的 device-…）；给程序用的（mcp、mcp-<id>、sentinel、api、api-<id>）不算，这里看不到也删不了。
+# 设备 = auth.tokens 里给人用的令牌（手填的、配对换来的 device-…）；给程序用的（mcp、mcp-<id>、sentinel、api、api-<id>，
+# 节点的 node-<设备>）不算，这里看不到也删不了（节点在 app「设备和节点」里收回，见 nodes.py）。
 
 PROGRAM_TOKENS = ("mcp", "sentinel", "api")
 
 
 def program_token(name: str) -> bool:
-    return name in PROGRAM_TOKENS or name.startswith(("mcp-", "api-"))
+    return name in PROGRAM_TOKENS or name.startswith(("mcp-", "api-", "node-"))
 
 
 def device_label(name: str) -> str:

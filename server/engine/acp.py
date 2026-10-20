@@ -26,7 +26,11 @@ agent 用。它只经对外接口（engine/openai_api.py 的 /v1，令牌是 api
                              接着做。编辑器取消了这次询问、点了不认识的选项：不替用户决定，卡留在 app 的收件箱里
   session/cancel             断开这一轮的连接（服务器那边 = 点了停：出来的字留着、会话补完整），session/prompt 回 cancelled
   session/set_config_option  configId agent：换一个 Agent（同一个 sessionId 在服务器上是另一个对话）
-  没有 session/load（要重放记录；用 resume）。不认识的方法回 -32601。
+  session/load               （第 7 批，2026-10-19；loadSession = true）接上一个会话并重放记录：先照 GET /v1/openmousse/history 把说过的话
+                             一条条发成 session/update（用户的 → user_message_chunk，图写成 [image]；Agent 的 → agent_message_chunk；
+                             思考摘要 → agent_thought_chunk；工具调用 → tool_call，带上结果的开头，completed / failed / pending），
+                             发完再回 {configOptions}。最多重放最近 LOAD_LIMIT 条，更早的不发（开头说一句）。只看得到这把令牌自己的会话
+  不认识的方法回 -32601。
 
 改写自 Hermes（NousResearch/hermes-agent，MIT，Copyright (c) 2025 Nous Research）commit e4635a16a6367f63003feb9c0447c5e6375fbd04：
   acp_adapter/permissions.py（_OPTION_ID_TO_HERMES、_build_permission_options、_map_outcome_to_hermes：选项 once / session / deny
@@ -56,6 +60,8 @@ PROTOCOL = 1
 VERSION = "2026.10.16"
 HTTP_TIMEOUT = 30      # 一般的请求（列会话、点头）最多等几秒
 READ_TIMEOUT = 180     # 流式这一轮多久一个字节都没有就算断了（服务器每 15 秒发一行保活）
+LOAD_LIMIT = 500       # session/load 最多重放最近几条
+EARLIER = "(Earlier messages in this session aren't shown here.)"
 ABANDONED = "This tool call ended without a result (blocked, denied, or interrupted)."
 WAITING_APP = "Waiting for your OK in the OpenMousse app's inbox (card {inbox})."
 
@@ -307,7 +313,7 @@ class Agent:
 
     def initialize(self, params: dict) -> dict:
         return {"protocolVersion": PROTOCOL, "agentInfo": {"name": "openmousse", "title": "OpenMousse", "version": VERSION},
-                "agentCapabilities": {"loadSession": False, "promptCapabilities": {"image": True, "audio": False, "embeddedContext": True},
+                "agentCapabilities": {"loadSession": True, "promptCapabilities": {"image": True, "audio": False, "embeddedContext": True},
                                       "mcpCapabilities": {"http": False, "sse": False},
                                       "sessionCapabilities": {"list": {}, "resume": {}, "close": {}}},
                 "authMethods": []}
@@ -346,6 +352,45 @@ class Agent:
         elif cwd:
             s.cwd = cwd
         return {"configOptions": self.config_options(s)}
+
+    def load(self, params: dict) -> dict:
+        """session/load：接上会话（同 resume），先把记录重放成 session/update，发完再回话（ACP：回话之前要发完）。"""
+        sid, cwd = str(params.get("sessionId") or ""), str(params.get("cwd") or "")
+        if not sid:
+            raise invalid("sessionId is required")
+        if cwd and not os.path.isabs(cwd):
+            raise invalid(f"cwd must be an absolute path: {cwd}")
+        rows = self.server.call("GET", "/v1/openmousse/sessions?" + urllib.parse.urlencode({"id": sid, "limit": "1"})).get("data") or []
+        if not rows:
+            raise invalid(f"unknown session: {sid}")
+        agent = rows[0]["agent"] if rows[0].get("agent") in self.agents() else self.first_agent()
+        got = self.server.call("GET", "/v1/openmousse/history?" + urllib.parse.urlencode({"id": sid, "agent": agent, "limit": str(LOAD_LIMIT)}))
+        s = self.sessions.get(sid)
+        if s is None or s.turn is None:  # 正在跑一轮的不换（它的 Session 还要用）
+            s = self.sessions[sid] = Session(sid, cwd or rows[0].get("cwd") or "", agent)
+        elif cwd:
+            s.cwd = cwd
+        if got.get("truncated"):
+            self.update(s, {"sessionUpdate": "agent_message_chunk", "messageId": str(uuid.uuid4()), "content": {"type": "text", "text": EARLIER}})
+        for it in got.get("data") or []:
+            self.replay(s, it)
+        return {"configOptions": self.config_options(s)}
+
+    def replay(self, s: Session, it: dict) -> None:
+        t, text = it.get("type"), str(it.get("text") or "")
+        if t == "user":
+            text += "".join("\n[image]" for _ in range(int(it.get("images") or 0)))
+            self.update(s, {"sessionUpdate": "user_message_chunk", "messageId": str(uuid.uuid4()), "content": {"type": "text", "text": text}})
+        elif t == "assistant":
+            self.update(s, {"sessionUpdate": "agent_message_chunk", "messageId": str(uuid.uuid4()), "content": {"type": "text", "text": text}})
+        elif t == "thinking":
+            self.update(s, {"sessionUpdate": "agent_thought_chunk", "messageId": str(uuid.uuid4()), "content": {"type": "text", "text": text}})
+        elif t == "tool" and it.get("id"):
+            name = str(it.get("name") or "")
+            st = it.get("status") if it.get("status") in ("completed", "failed", "pending") else "completed"
+            out = str(it.get("output") or "")
+            self.update(s, {"sessionUpdate": "tool_call", "toolCallId": str(it["id"]), "title": name, "status": st,
+                            "kind": KINDS.get(name) or ("fetch" if "__" in name else "other"), **({"content": text_content(out)} if out else {})})
 
     def close(self, params: dict) -> dict:
         s = self.session(params)
@@ -536,7 +581,7 @@ class Agent:
     # —— 收发 ——
 
     REQUESTS = {"initialize": "initialize", "session/new": "new", "session/list": "list", "session/resume": "resume", "session/close": "close",
-                "session/set_config_option": "set_config_option"}
+                "session/set_config_option": "set_config_option", "session/load": "load"}
 
     def handle(self, msg: dict) -> None:
         method, rid = msg.get("method"), msg.get("id")

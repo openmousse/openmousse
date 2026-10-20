@@ -11,6 +11,7 @@ import { useStore } from '../store';
 import { radius, space, type, useTheme } from '../theme';
 import { KeyboardScroll } from '../components/keyboard';
 import { ScanLine } from '../components/icons';
+import { routeAfterConnect } from './SetupScreens';
 
 /** 网站上的新手指南：从装服务到在手机上说第一句话。 */
 const GUIDE_URL = 'https://openmousse.ai/start.html';
@@ -47,9 +48,11 @@ export function ConnectScreen() {
     await rememberClaw({ base: getBase(), token: getToken(), name: appName }).catch(() => null);
     syncClaw({ base: getBase(), name: appName }).catch(() => {});
     refreshLive();
+    // 连上以后去哪（SetupScreens.tsx 的 routeAfterConnect）：自带内核还没有能用的模型 → 第一次打开的三步；新的服务器 → 好友怎么称呼你
+    // （服务器已经有名字就自己跳过）→ 对话页；老服务器（没有 setup）照旧：好友怎么称呼你 → 接上常用的
+    const next = await routeAfterConnect(firstTime).catch(() => ({ name: firstTime ? 'MyName' : 'Tabs' }));
     setBusy(false);
-    // 第一次连上（之前一台都没有）：先问朋友怎么称呼你（服务器已经有名字就自己跳过），再到「接上常用的」（没有连接器的话那一页自己直接进去）
-    nav.reset({ index: 0, routes: [{ name: firstTime ? 'MyName' : 'Tabs' }] });
+    nav.reset({ index: 0, routes: [next] });
   };
 
   const pair = async () => {

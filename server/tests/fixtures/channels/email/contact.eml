@@ -1,0 +1,14 @@
+Return-Path: <sam@example.com>
+Delivered-To: agent@example.org
+Authentication-Results: mx.example.org; dkim=pass header.d=example.com; spf=pass smtp.mailfrom=sam@example.com; dmarc=pass header.from=example.com
+From: "Sam Lee" <sam@example.com>
+To: agent@example.org
+Subject: Dinner next week?
+Date: Sun, 19 Oct 2030 18:02:00 +0000
+Message-ID: <dinner-0101@example.com>
+MIME-Version: 1.0
+Content-Type: text/plain; charset="utf-8"
+
+Hi! Is Alex free for dinner one evening next week?
+
+Sam

@@ -15,10 +15,12 @@
       {"die": "字", "exit": 退出码}                             放在第一步：读标准输入之前就退出（命令行参数不认得：版本不对）
       {"broken": "半截", "again": "整句", "call": "schedule", "input": {...}, "block": false, "lost_call": false, "streamed": false}
                                                                 开口说到一半流断了，它重问一次、整条换个 id 重来（见 broken()）
-  FAKE_CLAUDE_STATE     状态目录：第几次起、记得哪些会话（--resume 一个不认识的 → 「No conversation found…」退出 1）
+  FAKE_CLAUDE_STATE     状态目录：第几次起、记得哪些会话（--resume 一个不认识的 → 「No conversation found…」退出 1）。
+                        同时起好几个时，读了再写的那一段拿 lock 文件锁着
   FAKE_CLAUDE_LOG       每次起都往这里追加几行 JSON：命令行、环境、工作目录、临时配置、开头、标准输入、MCP 的往返、收到的信号
   FAKE_CLAUDE_AUTH      claude auth status --json 回什么（默认套餐登录）
 """
+import fcntl
 import json
 import os
 import select
@@ -57,6 +59,8 @@ if ARGV[:2] == ["auth", "status"]:
     sys.exit(0)
 
 os.makedirs(STATE, exist_ok=True)
+lock = open(os.path.join(STATE, "lock"), "w")
+fcntl.flock(lock, fcntl.LOCK_EX)  # 同时起好几个（排队的测试一次起两个）：次数、会话都是读了再写，不锁会读到别人刚清空的文件、互相盖掉
 count_file = os.path.join(STATE, "count")
 RUN = int(open(count_file).read()) if os.path.exists(count_file) else 0
 with open(count_file, "w") as f:
@@ -84,6 +88,7 @@ if new and "--no-session-persistence" not in ARGV:
     sessions.append(new)
     with open(sessions_file, "w") as f:
         json.dump(sessions, f)
+lock.close()  # 放开锁：下面各跑各的
 log(start)
 SERVED = {"opus": "claude-fake-opus", "sonnet": "claude-fake-sonnet", "haiku": "claude-fake-haiku"}.get(opt("--model") or "", opt("--model"))
 
