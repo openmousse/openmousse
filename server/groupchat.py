@@ -27,17 +27,17 @@
    赛博经装载的功能 Agent 要改数据的（ask_agent）：那张卡照旧挂在它一对一的对话上，群里也列出来。
 
 成员怎么说（都在自己的回合里、自己的会话里，各用各的模型）
-- 赛博：赛博回合（engine/cyber.speak：kind cyber，从不花套餐），带它的装载工具（ask_agent，只能找它装载的功能 Agent）。
+- 赛博：赛博回合（engine/cyber.speak：kind cyber，来路 user，替你自己在群里说的能花登录着的套餐），带它的装载工具（ask_agent，只能找它装载的功能 Agent）。
   会话 group:<群>:<赛博>（一轮一条，不落库）。
 - 功能 Agent：它自己的工作区和记忆（engine/context：它是谁、AGENTS.md / SOUL.md / IDENTITY.md / MEMORY.md、你的档案、世界树里它的枝、
   日记、上次的日结），零工具；模型是它对话里选的；kind owner（你的 Agent、你开的群，套餐照 may_spend）。不经 engine/owner.stream
   （那条路不带 Agent 自己的设定）：agent_speak 在这里自己拼开头。
 - 主持人：助手（main）在这个群自己的会话里：零工具的 llmjson.ask（kind owner，资料只有你和你自己的 Agent 说的），不占主对话；
-  一位赛博（cy-…）用它自己的模型，零工具的一问（外人回合式，不花套餐）。主持人只做两件事：「主持人安排」时挑下一位；每轮最后写
+  一位赛博（cy-…）用它自己的模型，零工具的一问（来路 user：替你安排这个群，登录着的套餐能花）。主持人只做两件事：「主持人安排」时挑下一位；每轮最后写
   小结（第 16 件）。
 
 群里的内容进待定（memhold.hold(channel="group")）：一段聊完（HOLD_IDLE_MIN 分钟没有新的话，或者群结束了），照写回（engine/writeback.py
-  名片那条路：零工具、不花套餐的一问，服务器自己挑：三项检验都过、原话真在群里）挑值得记的，写明是谁说的、原话，你在记忆页逐条定；
+  那条路：零工具的一问，来路 auto，登录着的套餐这一轮能花就用；服务器自己挑：三项检验都过、原话真在群里）挑值得记的，写明是谁说的、原话，你在记忆页逐条定；
   一条都不直接长成叶子。写回关着（engine.writeback false）或者缺东西就不跑。
 用量按群按天记（group_usage）：模型报了用量的照实记，没报的（llmjson 那几问）按字数估，标「约」。
 服务重启时正在进行的：下次读到时记一行「服务重启，本轮未完成」。
@@ -648,7 +648,7 @@ def member_input(conn: sqlite3.Connection, g, me: str, ag: dict[str, dict], ask,
 # —— 成员发言 ————————————————————————————————————————————————————————————————————————————
 
 async def cyber_speak(cid: str, gid: str, content: str, where: str, on_delta, sink: list) -> tuple[str, dict]:
-    """赛博在群里说一句：赛博回合（engine/cyber.speak，不花套餐），带装载工具；那边出的卡记进 sink。→ (模型, 用量)。"""
+    """赛博在群里说一句：赛博回合（engine/cyber.speak，来路 user，替你说的能花套餐），带装载工具；那边出的卡记进 sink。→ (模型, 用量)。"""
     from engine import cyber as engine_cyber
     from engine import cyber_tools
     with _lock, cybers.cydb() as conn:
@@ -1355,7 +1355,7 @@ PICK_RULES = (
 
 async def host_ask(g, rules: str, inp: dict, *, required: tuple[str, ...] = (), timeout: float = 45) -> dict | None:
     """主持人想一下（零工具的一问）：助手 = llmjson.ask（kind owner，在这个群自己的会话里：资料只有这个群的）；赛博 = 用它的模型
-    （engine.ask_json，外人回合式，不花套餐），开头带上它是谁。→ JSON（dict）；想不出来 → None。用量记进这个群。"""
+    （engine.ask_json，来路 user，替你安排的能花套餐），开头带上它是谁。→ JSON（dict）；想不出来 → None。用量记进这个群。"""
     import llmjson
     from engine import EngineError, ask_json
     from engine import cyber as engine_cyber
@@ -1371,8 +1371,9 @@ async def host_ask(g, rules: str, inp: dict, *, required: tuple[str, ...] = (), 
             if r is None:
                 return None
             persona = LS(f"（你是赛博「{r['name']}」：{cybers.persona(r)}）\n\n", f"(You are the Cyber \"{r['name']}\": {cybers.persona(r)})\n\n")
-            out, _via = await ask_json(persona + rules, inp, model=engine_cyber.model_of(cybers.engine_dict(r)), purpose="cyber", required=required,
-                                       timeout=timeout, conversation=f"group:{g['id']}:host", origin="group")
+            d = cybers.engine_dict(r)
+            out, _via = await ask_json(persona + rules, inp, model=engine_cyber.model_of(d, "user"), purpose="cyber", required=required,
+                                       timeout=timeout, conversation=f"group:{g['id']}:host", origin="user")
     except (llmjson.LLMError, EngineError) as e:
         print(f"[groupchat] {g['id']} 的主持人没想出来：{str(e)[:120]}")
         out = None
@@ -1885,7 +1886,7 @@ async def hold_lines(msgs: list[dict], *, thread: str, conversation: str, via: s
            "branches": material.get("branches") or [], "leaves": material.get("leaves") or [], "conversation": convo}
     try:
         out, _via = await ask_json(HOLD_PROMPT, inp, model=model, purpose="writeback", timeout=120, conversation=f"writeback:{conversation}",
-                                   origin="writeback")
+                                   origin="auto")  # 写回是用户自己的后台；不标 kind，按量的来路留在 auto
     except EngineError as e:
         print(f"[groupchat] {thread} 挑待定没成：{str(e)[:120]}")
         return None

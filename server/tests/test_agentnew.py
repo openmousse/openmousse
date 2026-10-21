@@ -149,7 +149,7 @@ def test_creating_the_agent_sets_up_its_table_and_board_and_leaves_reminders_off
     assert env.client.post("/api/new/agent", json=body, headers=H).status_code == 409  # 重名
 
 
-def test_trial_uses_the_cybers_own_model_with_no_tools(env, fake):  # noqa: F811 — env、fake、groups_clean 是导入的 fixture
+def test_trial_uses_the_cybers_own_model_with_no_tools(env, fake, monkeypatch):  # noqa: F811 — env、fake、groups_clean 是导入的 fixture
     persona = {"name": "Victor", "identity": "An early-stage investor.", "tone": "Direct.", "rules": "Asks for numbers."}
     f = fake([reply({"line": "What's your 4-week retention?", "tone": "Direct.", "rules": "Asks for numbers."}),
               reply({"line": "Numbers first. What's retention?", "tone": "Blunt and demanding.", "rules": "Asks for numbers and calls out weak ones."})])
@@ -162,14 +162,31 @@ def test_trial_uses_the_cybers_own_model_with_no_tools(env, fake):  # noqa: F811
     assert ref1 == ref2 == "moonshot/kimi-k3" and tools1 == tools2 == []
     assert "stricter" in sent2 and "What's your 4-week retention?" in sent2 and "stricter" not in sent1  # 「换一句」不重样
     assert env.client.post("/api/new/trial", json={**persona, "tweak": "louder"}, headers=H).status_code == 400
-    plan = env.client.post("/api/new/trial", json={**persona, "model": "claude-code/opus"}, headers=H)
-    assert plan.status_code == 400 and "plan" in plan.json()["detail"]
+    from engine import claude_brain
+    from engine.loop import Result
+
+    async def fake_ask(system, text, *, model, origin="auto", **kw):
+        return Result(turn="t-trial", status="done",
+                      text='{"line": "Show me the numbers.", "tone": "Direct.", "rules": "Asks for numbers."}',
+                      messages=[], usage={}, model=model)
+    monkeypatch.setattr(claude_brain, "ask", fake_ask)
+    plan = env.client.post("/api/new/trial", json={**persona, "model": "claude-code/opus"}, headers=H).json()
+    assert plan["model"] == "claude-code/opus" and plan["line"] == "Show me the numbers."  # 用户自己试聊，能花套餐
     fake([{"text": "Hello!"}, {"text": "Hello again!"}])
     assert env.client.post("/api/new/trial", json=persona, headers=H).status_code == 502  # 回的不是 JSON：app 里「换一句」重试
 
 
-def test_trial_never_spends_the_owners_plan(env, fake):  # noqa: F811 — env、fake、groups_clean 是导入的 fixture
-    env.cfg(engine={**BASE["engine"], "use": {"cyber": "claude-code/opus", "json": True}})  # 赛博的默认是用户自己的 Claude Code
-    f = fake([reply({"line": "Hi.", "tone": "", "rules": ""})])
+def test_trial_uses_the_signed_in_plan_when_that_is_the_cybers_default(env, monkeypatch):  # noqa: F811
+    """engine.use.cyber 写成套餐：试聊是用户自己的，用那个套餐。不起真的 Claude Code。"""
+    from engine import claude_brain
+    from engine.loop import Result
+    env.cfg(engine={**BASE["engine"], "use": {"cyber": "claude-code/opus", "json": True}})
+    seen: dict = {}
+
+    async def fake_ask(system, text, *, model, origin="auto", **kw):
+        seen["model"], seen["origin"] = model, origin
+        return Result(turn="t-trial", status="done", text='{"line": "Hi.", "tone": "", "rules": ""}',
+                      messages=[], usage={}, model=model)
+    monkeypatch.setattr(claude_brain, "ask", fake_ask)
     r = env.client.post("/api/new/trial", json={"name": "Kai", "identity": "A code advisor."}, headers=H).json()
-    assert r["model"] == "deepseek/deepseek-flash" and f.requests[0][0] == "deepseek/deepseek-flash"
+    assert r["model"] == "claude-code/opus" and r["line"] == "Hi." and seen == {"model": "claude-code/opus", "origin": "user"}

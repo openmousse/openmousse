@@ -113,8 +113,9 @@ def test_checks_names_models_and_avatars(env):
     make(env, "Rachel")
     assert env.client.post("/api/cybers", json={"name": "rachel"}, headers=H).status_code == 409  # 群里 @ 它不能认错
     assert env.client.post("/api/cybers", json={"name": "  "}, headers=H).status_code == 400
-    r = env.client.post("/api/cybers", json={"name": "Sam", "model": "claude-code/opus"}, headers=H)
-    assert r.status_code == 400 and "plan" in r.json()["detail"]  # 赛博暂时不能用套餐
+    r = env.client.post("/api/cybers", json={"name": "Plan", "model": "claude-code/opus"}, headers=H)
+    assert r.status_code == 200 and r.json()["cyber"]["model"] == "claude-code/opus"  # 登录着的套餐能选，替用户自己的回合才花
+    assert r.json()["cyber"]["modelInUse"] == "claude-code/opus"
     assert env.client.post("/api/cybers", json={"name": "Sam", "model": "nonsense"}, headers=H).status_code == 400
     assert env.client.post("/api/cybers", json={"name": "Sam", "avatar": {"hair": "mohawk"}}, headers=H).status_code == 400
     assert env.client.post("/api/cybers", json={"name": "Sam", "avatar": {"upload": "0123456789ab"}}, headers=H).status_code == 400
@@ -180,13 +181,30 @@ def test_a_cyber_chat_runs_a_cyber_turn_with_its_own_model(env, fake):
     assert [m["role"] for m in f.requests[1][1].messages] == ["user", "assistant", "user"]  # 接在它今天的会话后面
 
 
-def test_cyber_turns_never_spend_the_owners_plan(env, fake):
-    env.cfg(engine={**BASE["engine"], "use": {"cyber": "claude-code/opus"}})  # 赛博的默认是用户自己的 Claude Code：换成不花套餐的
+def test_the_users_own_cyber_turn_spends_their_plan(env, fake, monkeypatch):
+    """用户自己的赛博回合、用户自己的后台赛博回合走套餐；管家替外人答的换成按量的。不起真的 Claude Code。"""
+    from engine import claude_brain, cyber
+    from engine.loop import Result
+    env.cfg(engine={**BASE["engine"], "use": {"cyber": "claude-code/opus"}})
     k = make(env, "Kai")
-    assert k["modelInUse"] == "deepseek/deepseek-flash"
-    f = fake([{"text": "Hi."}])
-    talk(k["id"], "hello")
-    assert f.requests[0][0] == "deepseek/deepseek-flash"
+    assert k["modelInUse"] == "claude-code/opus"
+    seen: list[dict] = []
+
+    async def fake_once(agent, conversation, system, tools, prompt, *, model, origin="auto", kind="owner", on_event=None, **kw):
+        seen.append({"model": model, "origin": origin, "kind": kind})
+        if on_event is not None:
+            on_event({"type": "text", "text": "Hi."})
+        return Result(turn="t-cyber", status="done", text="Hi.", messages=[], usage={}, model=model)
+
+    monkeypatch.setattr(claude_brain, "once", fake_once)
+    r = talk(k["id"], "hello")
+    assert r.status == "ok" and r.text == "Hi." and seen == [{"model": "claude-code/opus", "origin": "user", "kind": "cyber"}]
+    res = run(cyber.chat({"id": "bg1", "name": "Kai", "identity": "checks in"}, "check in", origin="auto"))
+    assert res.model == "claude-code/opus" and res.text == "Hi." and seen[-1]["origin"] == "auto" and seen[-1]["kind"] == "cyber"
+    f = fake([{"text": "from the meter"}])
+    res = run(cyber.chat({"id": "out1", "name": "Kai", "identity": "a butler"}, "hello", origin="butler"))
+    assert res.model == "deepseek/deepseek-flash" and res.text == "from the meter" and f.requests[0][0] == "deepseek/deepseek-flash"
+    assert seen[-1]["origin"] == "auto"  # 管家那一轮没再去起 Claude Code
 
 
 def test_chat_rows_and_unread_follow_the_conversation(env, fake):
@@ -540,15 +558,31 @@ def test_changes_from_a_cyber_become_cards_for_the_owner(env, fake, runner, grou
     assert inbox.item(card["id"])["status"] == "done"
 
 
-def test_the_loaded_agent_never_spends_the_owners_plan(env, fake, runner, groups_clean):
+def test_the_users_own_ask_spends_the_plan_and_a_butlers_ask_does_not(env, fake, runner, groups_clean, monkeypatch):
+    """用户自己的赛博去问装载的 Agent：那个 Agent 选了 Claude Code 就花套餐（走 once，不起真的进程）。管家的来路（butler）仍换成按量的。"""
+    from engine import claude_brain, cyber_tools, openai_api
+    from engine.loop import Result
     notes = agent(env, "Notes library", icon="book")
-    with chat._lock, chat.db() as conn:
-        conn.execute("UPDATE threads SET model='claude-code/opus' WHERE id=?", (notes,))  # 它自己的对话选的是主人的 Claude Code
     k = make(env, "Kai")
     env.client.post(f"/api/cybers/{k['id']}/loadout", json={"agent": notes}, headers=H)
-    f = fake([{"text": "", "calls": [("c1", "ask_agent", {"agent": notes, "question": "anything new?"})]}, {"text": "Nothing new."}, {"text": "Quiet day."}])
-    talk(k["id"], "anything new?")
-    assert f.requests[1][0] == "deepseek/deepseek-flash"  # 来路是赛博：换成不花套餐的
+    seen = []
+
+    async def once(*_a, **kws):
+        seen.append({"model": kws["model"], "origin": kws["origin"], "kind": kws["kind"]})
+        return Result(turn="t-ask", status="done", text="Nothing new.", messages=[], usage={}, model=kws["model"])
+
+    monkeypatch.setattr(claude_brain, "once", once)
+    # 对话上记的套餐要这台电脑登录着才出现在 claw.models() 里。这里直接当作那位 Agent 选了它。
+    monkeypatch.setattr(openai_api, "chosen", lambda _agent: "claude-code/opus")
+    f = fake([{"text": "", "calls": [("c1", "ask_agent", {"agent": notes, "question": "anything new?"})]}, {"text": "Quiet day."}])
+    r = talk(k["id"], "anything new?")
+    assert r.status == "ok" and r.text == "Quiet day.", (r.status, r.error, r.text)
+    assert seen == [{"model": "claude-code/opus", "origin": "user", "kind": "owner"}]
+    assert [ref for ref, _req in f.requests] == ["deepseek/deepseek-flash", "deepseek/deepseek-flash"]  # 赛博自己仍是按量的；Agent 那一轮不走假接口
+    assert "Nothing new." in str(f.requests[1][1].messages[-1]["content"])
+    metered = fake([{"text": "From the meter."}])
+    out = run(cyber_tools.ask_round(notes, "hello from outside", cyber={"id": k["id"], "name": "Kai"}, thread=k["id"], cards=[], origin="butler"))
+    assert metered.requests[0][0] == "deepseek/deepseek-flash" and out["answer"] == "From the meter." and len(seen) == 1
 
 
 def test_daily_read_is_off_by_default_and_reads_todays_output_when_on(env, fake, groups_clean):

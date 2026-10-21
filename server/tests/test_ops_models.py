@@ -91,10 +91,13 @@ def test_aliases_resolve_everywhere_a_ref_is_read(server_json):
 
 
 def test_aliases_never_get_round_may_spend(server_json):
-    """指到套餐的别名：先解析成真的引用，再照 may_spend 判；外人回合、对外接口一律花不了。"""
-    server_json({"engine": {"model": "deepseek/deepseek-flash", "aliases": ALIASES, "use": {"doorman": "plan", "json": "gpt"}}})
+    """指到套餐的别名：先解析成真的引用，再照 may_spend 判。自己的内核里，用户自己的赛博回合能花；外人回合、对外接口一律花不了。
+    OpenClaw 那条路照旧只给主人回合，别名也绕不过。"""
+    server_json({"claw": {"kind": "builtin"}, "engine": {"model": "deepseek/deepseek-flash", "aliases": ALIASES,
+                 "use": {"doorman": "plan", "json": "gpt"}}})
     assert models.subscription("plan") == "claude-code" and models.subscription("gpt") == "chatgpt"
-    for kind, origin in (("outsider", "card"), ("outsider", None), ("owner", "api"), ("owner", "acp"), ("cyber", "user")):
+    assert models.may_spend("plan", kind="cyber", origin="user") and models.may_spend("gpt", kind="cyber", origin="user")
+    for kind, origin in (("outsider", "card"), ("outsider", None), ("owner", "api"), ("owner", "acp"), ("cyber", "butler")):
         assert not models.may_spend("plan", kind=kind, origin=origin) and not models.may_spend("gpt", kind=kind, origin=origin)
     assert models.may_spend("plan", kind="owner", origin="user")
     assert models.route("doorman") == "deepseek/deepseek-flash"  # 外人回合：换成不花套餐的
@@ -105,6 +108,9 @@ def test_aliases_never_get_round_may_spend(server_json):
         asyncio.run(agent_cli.pick("main", "plan", None))
     assert e.value.status == 403 and "claude-code/opus" in str(e.value)
     assert asyncio.run(agent_cli.pick("main", "fast", None)) == "deepseek/deepseek-flash"
+    server_json({"claw": {"kind": "openclaw"}, "engine": {"model": "deepseek/deepseek-flash", "aliases": ALIASES}})
+    assert not models.may_spend("plan", kind="cyber", origin="user") and not models.may_spend("gpt", kind="cyber", origin="user")
+    assert models.may_spend("plan", kind="owner", origin="user")
 
 
 def test_the_api_reads_aliases(server_json, monkeypatch):

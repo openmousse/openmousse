@@ -183,7 +183,7 @@ def test_at_one_member_answers_in_its_own_cyber_turn(genv, scripted):
     assert last["who"]["kind"] == "cyber" and last["who"]["tag"] == "Early investor"
     assert any(m["kind"] == "system" and m["text"] == "You asked Victor to answer" for m in msgs)
     turn = events.turns(f"group:{gid}:{v}")[-1]
-    assert turn["kind"] == "cyber" and turn["origin"] == "user"  # 它自己在这个群的会话，赛博回合，不花套餐
+    assert turn["kind"] == "cyber" and turn["origin"] == "user"  # 它自己在这个群的会话，赛博回合，替用户说的能花套餐
     with chat._lock, chat.db() as conn:
         row = conn.execute("SELECT role, origin, model FROM messages WHERE thread=? ORDER BY id DESC LIMIT 1", (gid,)).fetchone()
     assert (row["role"], row["origin"], row["model"]) == (ASSISTANT_ROLE, "group", "moonshot/kimi-k3")

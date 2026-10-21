@@ -43,6 +43,22 @@ def test_validate_accepts_real_configs_and_only_warns_on_unknown_keys(h, capsys)
     assert {f["path"] for f in rep["findings"]} == {"future_feature", "engine.brand_new"} and {f["level"] for f in rep["findings"]} == {"warn"}
 
 
+def test_group_butler_cyber_meeting_upcoming_and_connector_keys_are_known():
+    """这些键以前整段被说成不认识。写上以后不警告；类型不对仍是错。人和事都是编的。"""
+    cfg = base(groupchat=True, butler={"enabled": False},
+               cybers={"enabled": True, "review": {"every": 6}, "daily_at": "09:00", "health_agents": ["g-meals"]},
+               meetings={"by_origin": True},
+               upcoming={"titles": {"weekly-review": {"zh": "每周回看", "en": "Weekly review", "repeat": "weekly"}, "digest": "Morning digest"},
+                         "reminder_prefix": "mousse-remind-"},
+               connectors={"units": {"browser": "canvas-browser.service", "mail": "mousse-mail.timer", "extra": "mousse-extra.service"},
+                           "canvas_courses": "canvas/tracked.json"})
+    found = CC.validate(cfg)
+    assert CC.errors(found) == [] and [f for f in found if f.level == "warn"] == [], found
+    bad = base(meetings={"by_origin": "yes"}, cybers={"review": {"every": 1}, "daily_at": "morning"})
+    paths = {f.path for f in CC.validate(bad) if f.level == "error"}
+    assert {"meetings.by_origin", "cybers.review.every", "cybers.daily_at"} <= paths
+
+
 def test_validate_flags_wrong_types_and_ranges(h, capsys, tmp_path):
     bad = base(bind={"host": "127.0.0.1", "port": 99999}, timezone="Mars/Base", language="fr", update={"channel": "beta"})
     bad["engine"].update(model="not-a-ref", effort="ultra", jobs={"max_parallel": 0}, api={"agents": "main"}, tools={"levels": {"journal": "maybe"}},

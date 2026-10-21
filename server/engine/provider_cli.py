@@ -18,10 +18,10 @@
     No authentication information found → 401，换备用链。每次回复花用户 Copilot 套餐里的 AI 额度（AI credits；老计费是 premium requests）。
   不做的（10/19 读的条款）：Gemini CLI 用 Google 登录的那条（geminicli.com/docs/resources/tos-privacy/，2026-04-10：用别的软件经 Gemini CLI
     的 OAuth 去用它背后的服务算违规，举的例子就是 OpenClaw）；Cursor、Qwen、Kimi 这几家没核实到允许、或者已经停了，也不做。
-谁能花（models.subscription = "codex" / "copilot"：是用户自己的套餐）：codex 照 ChatGPT 套餐的规矩（models.may_spend：用户自己引出来的能花，
-后台的要用户在设置里同意过）；copilot 用户自己引出来的能花，后台的（定时任务、收件箱接着做的）要 engine.copilot.background = true；外人、
-赛博、对外接口一律不行。loop.run_turn 先挡一道；这里再按这一轮的 Spec（fallback.current）挡一道（备用链里不该有的 fallback.chain 已经
-去掉，这里是最后一道）。
+谁能花（models.subscription = "codex" / "copilot"：是用户自己的套餐）：codex 照 ChatGPT 套餐的规矩（models.may_spend：替用户自己的能花，
+后台的要用户在设置里同意过）；copilot 替用户自己的能花（含他的赛博），后台的（定时任务、收件箱接着做的）要 engine.copilot.background = true；
+替外人答的、对外接口不行。loop.run_turn 先挡一道；这里再按这一轮的 Spec（fallback.current）问 may_spend（备用链里不该有的 fallback.chain 已经
+去掉，这里是最后一道）。10/21 起不另看 kind：来路认了就能花。
 一次模型调用 = 起一次命令，说完就退：
   开头 + 记录：我们这条会话（req.system、req.messages，先过 session.repair：用户的话带上当地时间）整理成一段字从标准输入给它（它不接着
     上一次：每次都是完整的记录，太长的留后面的 TRANSCRIPT_MAX 字；工具结果只留开头；不放命令行里：别的用户 ps 看得见，也有长度上限）；
@@ -426,8 +426,8 @@ def _guard(ref: str):
     """这一轮能花它吗（见文件开头）→ 这一轮的 Spec；不能抛 EngineError(rule)。"""
     pick = fallback.current()
     spec = pick.spec if pick is not None else None
-    if spec is None or spec.kind != "owner" or not models.may_spend(ref, kind=spec.kind, origin=spec.origin, via=getattr(spec, "via", None)):
-        raise EngineError(f"{ref} is the user's own {NAMES.get(ref.split('/', 1)[0], 'login')} on this computer, which only their own turns "
+    if spec is None or not models.may_spend(ref, kind=spec.kind, origin=spec.origin, via=getattr(spec, "via", None)):
+        raise EngineError(f"{ref} is the user's own {NAMES.get(ref.split('/', 1)[0], 'login')} on this computer, which only turns for them "
                           "can use", kind="rule")
     return spec
 

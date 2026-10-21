@@ -401,15 +401,17 @@ def test_who_may_spend_the_chatgpt_plan(plan):
         assert models.may_spend(PLAN, kind="owner", origin=origin)
     for origin in ("auto", "task"):
         assert not models.may_spend(PLAN, kind="owner", origin=origin)
+    assert models.may_spend(PLAN, kind="cyber", origin="user")  # 用户自己的赛博是前台：不用另同意
     for kind, origin, via in (("owner", "api", None), ("owner", "acp", None), ("owner", "compact", None), ("owner", "skill-review", None),
-                              ("owner", None, None), ("cyber", "user", None), ("outsider", "card", None), ("outsider", "a2a", None),
-                              ("owner", "relay", "mcp"), ("owner", "user", "-"), ("owner", "auto", "mcp")):
+                              ("owner", None, None), ("cyber", "butler", None), ("outsider", "card", None), ("outsider", "a2a", None),
+                              ("owner", "relay", "mcp"), ("owner", "user", "-"), ("owner", "auto", "mcp"), ("cyber", "auto", None)):
         assert not models.may_spend(PLAN, kind=kind, origin=origin, via=via), (kind, origin, via)
     assert not models.may_spend(PLAN, kind="owner", origin="relay", via="auto")  # 后台的一轮里调了转交：还是后台
     chatgpt_plan.set_background(True)
     assert chatgpt_plan.status()["background"]["allowed"] and chatgpt_plan.status()["background"]["since"]
     assert models.may_spend(PLAN, kind="owner", origin="auto") and models.may_spend(PLAN, kind="owner", origin="relay", via="task")
-    assert not models.may_spend(PLAN, kind="owner", origin="relay", via="mcp") and not models.may_spend(PLAN, kind="cyber", origin="user")
+    assert models.may_spend(PLAN, kind="cyber", origin="auto")  # 同意过以后，用户自己的后台赛博也花
+    assert not models.may_spend(PLAN, kind="owner", origin="relay", via="mcp") and models.may_spend(PLAN, kind="cyber", origin="user")
     assert models.may_spend("claude-code/opus", kind="owner", origin="relay", via="mcp")  # Claude Code 那边照旧（不登录时一切照旧）
     assert models.stricter("user", "auto") == "auto" and models.stricter("auto", None) == "auto" and models.plan_class("user", "mcp") == "never"
 
@@ -422,20 +424,29 @@ def test_outside_route_and_fallback_chains_never_pick_the_plan(plan):
     assert models.chain_of([PLAN, "other/m"]) == ["other/m"]
 
 
-def test_cyber_outsider_one_shot_and_external_turns_dont_spend_the_plan(plan, monkeypatch):
+def test_a_users_cyber_spends_the_plan_and_other_peoples_turns_do_not(plan, monkeypatch):
     run(connect(paste=True))
     from engine import cyber, oneshot, owner
+    plan.fm.push(Reply(text="on your plan"))
     res = run(cyber.chat({"id": "cy1", "name": "Cy", "identity": "a friend"}, "hello"))
-    assert res.model == "other/m" and res.text == "from other"
+    assert res.model == PLAN and res.text == "on your plan"  # 用户自己的赛博：前台，不用另同意
+    res = run(cyber.chat({"id": "cy2", "name": "Cy", "identity": "a friend"}, "hello", origin="butler"))
+    assert res.model == "other/m" and res.text == "from other"  # 管家替外人答：不花
+    res = run(cyber.chat({"id": "cy3", "name": "Cy", "identity": "a friend"}, "later", origin="auto"))
+    assert res.model == "other/m" and res.text == "from other"  # 后台的 ChatGPT 还没同意
     plan.other.push(Reply(text='{"ok": true}'))
     v, via = run(oneshot.ask_json("JSON please.", {"q": 1}, model=models.route("json") or models.outside(PLAN) or ""))
     assert via == "builtin:other/m"
     assert run(owner.stream([{"role": "user", "content": "quick question"}], "k", PLAN, lambda _t: None)) == "from other"
     with pytest.raises(EngineError, match="ChatGPT plan"):
-        run(engine.run_turn(engine.Spec(kind="cyber", model=PLAN), MemorySession(), user("x")))
+        run(engine.run_turn(engine.Spec(kind="cyber", model=PLAN), MemorySession(), user("x")))  # 没写来路：当外人
     with pytest.raises(EngineError, match="ChatGPT plan"):
         run(engine.run_turn(engine.Spec(kind="owner", model=PLAN, origin="user", via="mcp"), MemorySession(), user("x")))
-    assert not plan.fm.of("responses")  # 套餐的服务一次都没被调过
+    chatgpt_plan.set_background(True)
+    plan.fm.push(Reply(text="background ok"))
+    res = run(cyber.chat({"id": "cy4", "name": "Cy", "identity": "a friend"}, "check", origin="auto"))
+    assert res.model == PLAN and res.text == "background ok"  # 同意过以后，用户自己的后台赛博也花
+    assert len(plan.fm.of("responses")) == 2
 
 
 def test_owner_turns_in_the_app_use_the_plan_but_api_and_mcp_ones_dont(plan, monkeypatch):

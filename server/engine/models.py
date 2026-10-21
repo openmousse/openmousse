@@ -96,24 +96,26 @@ server.json 的 engine 段（不写这一段 = 内核不接管任何事，全部
 另外 server.json 的 mcp_servers（不在 engine 段里）：你自己配的 MCP 服务，说明在 engine/mcp_client.py 开头
 
 用户自己的套餐（第 11 项）：claude-code/<型号>（opus / sonnet / haiku 或完整 id，交给 --model）不经我们的接口，一轮交给本机用户自己登录的
-Claude Code 跑（engine/claude_brain.py），花的是他自己的套餐。subscription(ref) 认它；只有主人回合能用（may_spend）：赛博、外人回合、
-对外接口（OpenAI 兼容接口、ACP：外面的程序不算用户本人）一律换成 outside() 挑的非套餐模型，挑不到就照调用方自己的退路。
-10/19 起主人自己的一次性调用也能用（claude_brain.ask）：一问一答（owner.stream：Zen「想完了」、会议）、llmjson.ask（会议纪要、播客、
-学习页……）、主人回合的压缩摘要。调用方报上来路（kind / origin），may_spend 认了才花；不报的当外人。
-valid_ref 对它回 False（我们的接口跑不了），所以没专门处理的地方默认就碰不到它；loop.run_turn 再挡一道。
+Claude Code 跑（engine/claude_brain.py），花的是他自己的套餐。subscription(ref) 认它。may_spend 看来路、不看 kind（10/21：能走套餐的应走尽走）：
+替用户自己干活的来路能花（OWNER_ORIGINS：user 用户本人、auto 他自己的定时和后台、relay 经中继的本人），不管这一轮是主对话、赛博、群里一位的
+发言、会议、一问一答还是写回。替外人答的来路不花（card 名片 Agent、doorman、butler 管家回外人、api / acp / openai / mcp 对外接口，以及没报来路）。
+挑不到、这一轮不能花的换成 outside() 的非套餐模型，再没有就照调用方自己的退路。
+10/19 起一次性调用也能用（claude_brain.ask）：一问一答、llmjson.ask（会议纪要、播客、学习页……）、压缩摘要。调用方报上来路（origin），
+may_spend 认了才花；不报的当外人。kind 还留在参数里（事件表、OpenClaw 那条路），自己的内核里不再拿它挡套餐。
+valid_ref 对它回 False（我们的接口跑不了），所以没专门处理的地方默认就碰不到它；loop.run_turn 不跑 claude-code（只交给 claude_brain）。
 第 11b 项：chatgpt/<型号>（型号是这个账号模型目录里的 slug）= 用户自己的 ChatGPT 套餐（engine/chatgpt_plan.py 拿令牌，
 provider_responses.py 调公开的 Responses API）。也是套餐：subscription() 回 "chatgpt"，valid_ref 同样回 False（不进备用链、outside()、
-route() 这些地方），只在专门放行的地方跑：owner.respond（主人回合）、unattended.fresh（定时任务、心跳）、tasks（后台任务）、
-compact.summarize（这些回合自己的压缩），每一处都问 may_spend，loop.run_turn 再挡一道。may_spend 对它比 claude-code 严：
-用户自己引出来的（user、relay）能花；后台的（auto：定时任务、心跳、收件箱和后台任务接着做的；task：后台任务自己）要用户在设置里同意过
-（chatgpt_plan.background_allowed）；别的（赛博、外人回合、对外接口、/mcp 来的、一问一答……）一律不行。via = 这一轮是经谁的请求引出来的
+route() 这些地方），只在专门放行的地方跑，每一处都问 may_spend，loop.run_turn 再挡一道。may_spend 对它比 claude-code 严：
+用户自己引出来的（user、relay，含他的赛博和别的 kind）能花；后台的（auto：定时任务、心跳、收件箱、写回和他的赛博后台；task：后台任务自己）
+要用户在设置里同意过（chatgpt_plan.background_allowed）；替外人答的、对外接口、/mcp 来的一律不行。via = 这一轮是经谁的请求引出来的
 （外面的 MCP 客户端经 /mcp 跑的脚本 = mcp；内核自己的工具跑的脚本 = 那一轮的来路，比如后台的一轮里调了转交 = auto）：和 origin 取更严的那个。
 10/20：grok/<型号> = 用户自己的 Grok 订阅（SuperGrok / X Premium+，engine/grok_plan.py：xAI 的 OAuth 设备码登录，推理经 providers.stream
 调 https://api.x.ai/v1 的 Responses API，每次现取访问令牌）。命名照 chatgpt/ 和 openai/ 的分法：grok/ 是订阅、xai/ 是按量的 API 密钥，
-看前缀就分得清谁花套餐。和命令行的套餐（CLI_PLANS）一样是 valid_ref（主对话、定时任务、后台任务、压缩、一次性调用都照常经 providers.stream
-跑，不用每一处另开一条路），可还是套餐：subscription() 回 "grok"（API_PLANS），may_spend 照 ChatGPT 套餐的规矩（用户自己引出来的能花；
-后台的要用户在设置里另外同意过，grok_plan.background_allowed，和 ChatGPT 的同意分开记；别人的回合一律不行），outside() / route()（card、
+看前缀就分得清谁花套餐。和命令行的套餐（CLI_PLANS）一样是 valid_ref（主对话、定时任务、后台任务、压缩、一次性调用、用户自己的赛博都照常经
+providers.stream 跑，不用每一处另开一条路），可还是套餐：subscription() 回 "grok"（API_PLANS），may_spend 照 ChatGPT 套餐的规矩（替用户自己的
+能花；后台的要用户在设置里另外同意过，grok_plan.background_allowed，和 ChatGPT 的同意分开记；替外人答的一律不行），outside() / route()（card、
 doorman）/ chain_of / fallback.chain 都不把它当按量的；loop.run_turn 那一道照样挡。
+OpenClaw 那条路（claw 不是 builtin）照旧只给 kind 是 owner 的回合花套餐：may_spend 里那一道还在，那边的行为不变。
 """
 from __future__ import annotations
 
@@ -381,8 +383,9 @@ SUBSCRIPTIONS = {"claude-code": "claude-code", "chatgpt": "chatgpt"}  # provider
 CLI_PLANS = {"codex": "codex", "copilot": "copilot"}
 # 10/20：用户自己的套餐、我们自己拿着他的 OAuth 令牌调公开接口的（engine/grok_plan.py：grok/…）。也是 valid_ref、也是套餐（见文件开头）
 API_PLANS = {"grok": "grok"}
-# 主人回合里能花套餐的来路：用户自己说的（user）、他自己的定时任务和心跳、收件箱和后台任务替他接着做的（auto）、主对话转给 Agent 的（relay）。
-# 别的（赛博、外人回合、对外接口 openai / acp ……）一律不行：只认名单里的，新加的来路默认不能花。
+# 能花套餐的来路（看这一轮替谁干活，不看 kind）：用户自己说的（user）、他自己的定时、心跳、收件箱、写回和后台接着做的（auto）、
+# 主对话转给 Agent 的（relay）。名片 Agent、Doorman、管家回外人（card / doorman / butler）、对外接口（api / acp / openai / mcp）不在这里。
+# 只认名单里的，新加的来路默认不能花。后台任务自己的来路 task 不在这份名单里（claude-code 照旧不花）；ChatGPT 那几家把 task 算后台，见下。
 OWNER_ORIGINS = frozenset({"user", "auto", "relay"})
 # ChatGPT 套餐更严（条款：后台用之前要用户明确同意）：用户自己引出来的直接能花；后台的（auto、后台任务自己 task）要用户在设置里同意过
 PLAN_FOREGROUND = frozenset({"user", "relay"})
@@ -430,12 +433,14 @@ def plan_class(origin: str | None, via: str | None = None) -> str:
 
 
 def may_spend(ref: str | None, *, kind: str, origin: str | None, via: str | None = None) -> bool:
-    """这一轮能不能用这个模型：不花套餐的都能；花套餐的只给主人回合。claude-code：来路在 OWNER_ORIGINS 里。chatgpt：用户自己引出来的
-    能花，后台的要用户同意过，别的都不行（plan_class，见文件开头）。"""
+    """这一轮能不能用这个模型：不花套餐的都能。花套餐的看替谁干活（来路），不看 kind（10/21）。claude-code：来路在 OWNER_ORIGINS 里。
+    chatgpt / codex / copilot / grok：用户自己引出来的能花，后台的要用户同意过，替外人答的不行（plan_class，见文件开头）。
+    kind 还收着：OpenClaw 那条路照旧只放主人回合；自己的内核里它不参与判断。"""
     sub = subscription(ref)
     if sub is None:
         return True
-    if kind != "owner":
+    import claw  # 不在文件头导入：claw 不依赖内核，这里只用它认是不是自己的内核
+    if not claw.is_builtin() and kind != "owner":  # OpenClaw 那条路的行为不变
         return False
     if sub in ("chatgpt", "codex"):  # codex/…（第 7 批）：Codex 用 ChatGPT 登录花的就是 ChatGPT 套餐，同一条规矩、同一个后台同意
         how = plan_class(origin, via)
@@ -459,8 +464,8 @@ def may_spend(ref: str | None, *, kind: str, origin: str | None, via: str | None
 
 
 def outside(ref: str | None = None) -> str | None:
-    """不能花套餐的那些（赛博、外人回合、对外接口、不是主人自己引出来的一问一答）用哪个模型：ref 是我们的接口能跑的就用它；否则（是套餐的、没给的）
-    用默认模型，默认的也是套餐就挑 engine.models 里第一个能跑的；都没有 → None（调用方照自己的退路：llm-task、不做……）。"""
+    """这一轮不能花套餐时用哪个模型（替外人答的、对外接口、来路不在 OWNER_ORIGINS 里、后台没同意的）：ref 是我们的接口能跑的就用它；
+    否则（是套餐的、没给的）用默认模型，默认的也是套餐就挑 engine.models 里第一个能跑的；都没有 → None（调用方照自己的退路：llm-task、不做……）。"""
     if ref and valid_ref(ref) and not subscription(ref):  # 命令行的套餐（CLI_PLANS）也是 valid_ref：不给外面
         return resolve(ref)
     for m in (default_model(), *(_first(x) for x in cfg().get("models") or [])):

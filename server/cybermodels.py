@@ -3,8 +3,8 @@
 只读现有的模型设置（engine/models.py、engine/setup_api.py 的函数，/api/models、/api/setup/models 两个接口是 B 的，不改），在这里排：
   开源的排前面（开源模型是主线；闭源的接进来只给有限的权限：它读到的就发到那一家）；
   本机的（Ollama、LM Studio……）算开源、成本最低，对话不出你的机器；
-  用户自己的套餐（Claude Code、ChatGPT……）照样列出来，但标「赛博暂时不能用套餐」（engine/models.py 的 may_spend 不改：
-  赛博回合 kind 不是 owner，一律不花套餐）。
+  用户登录着的套餐（Claude Code、ChatGPT……）排在最前、能选：替用户自己干活的赛博回合花它（engine/models.py 的 may_spend 看来路）。
+  替外人答的不花。没登录的套餐列出来但不能用。
 成本档按价目表（models.price）的输出价：每百万 token 不到 2 美元 = 低，不到 8 = 中，再贵 = 高；价目表里没有的不猜（None）。
 推荐（recommend）照这位赛博是哪一类挑：专业的（出题、点评、给判断）要能力强一些，朋友、机器、空白的要便宜、快。
 
@@ -90,7 +90,7 @@ def use_line(ref: str) -> str:
     """一句用途（列表每一行的第二行）。"""
     b, tier = billing(ref), cost_tier(ref)
     if b == "plan":
-        return L("你自己的套餐：赛博暂时不能用套餐", "Your own plan: Cybers can't use subscription plans yet")
+        return L("你登录着的套餐，替你干活时用它", "Your signed-in plan, used when this turn is for you")
     if b == "local":
         return L("在你的电脑上跑，对话不出你的机器", "Runs on your computer; the chat stays on your machine")
     if is_open(ref):
@@ -115,6 +115,13 @@ def candidates() -> list[str]:
         add(r)
     add(models.default_model())
     add(models.route("cyber"))
+    use = models.cfg().get("use")  # route("cyber") 不回套餐：写在 engine.use.cyber 上的套餐从原值补进来
+    raw = use.get("cyber") if isinstance(use, dict) else None
+    if isinstance(raw, list):
+        for item in raw:
+            add(item)
+    elif isinstance(raw, str):
+        add(raw)
     try:
         import chat
         import cybers
@@ -129,32 +136,32 @@ def candidates() -> list[str]:
 
 
 def usable(ref: str) -> bool:
-    """现在跑得了（不连网）：认得这一家、要密钥的有密钥；套餐要登录着（列出来但赛博不能用）。"""
+    """现在跑得了（不连网）：认得这一家、要密钥的有密钥；套餐要登录着。"""
     from engine import setup_api
     return setup_api.usable(ref)
 
 
 def row(ref: str) -> dict:
-    """列表的一行：{ref, name, vendor, open, local, billing, cost, usable, allowed, use, note?}。allowed = 赛博能选（不是套餐）。"""
+    """列表的一行：{ref, name, vendor, open, local, billing, cost, usable, allowed, use}。登录着的套餐也能选。"""
     import cybers
     b = billing(ref)
-    out = {"ref": ref, "name": cybers.pretty_model(ref), "vendor": vendor(ref), "open": is_open(ref), "local": b == "local", "billing": b,
-           "cost": cost_tier(ref), "usable": usable(ref), "allowed": b != "plan", "use": use_line(ref)}
-    if b == "plan":
-        out["note"] = L("赛博暂时不能用套餐", "Cybers can't use subscription plans yet")
-    return out
+    return {"ref": ref, "name": cybers.pretty_model(ref), "vendor": vendor(ref), "open": is_open(ref), "local": b == "local", "billing": b,
+            "cost": cost_tier(ref), "usable": usable(ref), "allowed": True, "use": use_line(ref)}
 
 
 def ranked(refs: list[str], kind: str = "blank") -> list[str]:
-    """开源的在前，再按这一类偏好的成本档；同一档里保持原来的先后（app 里能切的、默认的在前）。套餐的排最后。"""
+    """登录着、现在跑得了的套餐在最前；然后开源的，再按这一类偏好的成本档。同一档里保持原来的先后。跑不了的套餐和别的跑不了的排在一起。"""
     prefer = PREFER.get(kind, PREFER["blank"])
     order = {tier: i for i, tier in enumerate(prefer)}
-    return sorted(refs, key=lambda r: (billing(r) == "plan", not usable(r), not is_open(r), order.get(cost_tier(r), len(order)), refs.index(r)))
+    return sorted(refs, key=lambda r: (not (billing(r) == "plan" and usable(r)), not usable(r), not is_open(r),
+                                       order.get(cost_tier(r), len(order)), refs.index(r)))
 
 
 def reason(ref: str, kind: str) -> str:
     """推荐理由（一句）。"""
     tier, b = cost_tier(ref), billing(ref)
+    if b == "plan":
+        return L("你登录着的套餐，替你干活时先用它", "Your signed-in plan: use it first when this turn is for you")
     if b == "local":
         return L("在你的电脑上跑：不花钱，对话不出你的机器", "Runs on your computer: free, and the chat stays on your machine")
     if not is_open(ref):
@@ -179,11 +186,11 @@ async def pool(probe: bool = False) -> tuple[list[str], dict[str, dict]]:
 
 
 async def recommend(kind: str = "blank") -> dict | None:
-    """给这一类赛博推荐一个（跑得了、不是套餐的里排第一的）：{ref, name, reason, cost, open, local}；一个都没有 → None（跟默认的走）。
+    """给这一类赛博推荐一个（跑得了的里排第一的；登录着的套餐在最前）：{ref, name, reason, cost, open, local}；一个都没有 → None。
     和选模型的页「推荐」那一栏的第一个是同一个。"""
     import cybers
     refs, _ = await pool()
-    usable_refs = [r for r in refs if billing(r) != "plan" and usable(r)]
+    usable_refs = [r for r in refs if usable(r)]
     if not usable_refs:
         return None
     ref = ranked(usable_refs, kind)[0]
@@ -202,8 +209,8 @@ def channels(conn: dict[str, dict]) -> list[dict]:
              "line": L("Ollama、LM Studio：对话不出你的机器", "Ollama, LM Studio: the chat stays on your machine")},
             {"id": "keys", "provider": None, "name": L("各家的 API 密钥", "API keys from each vendor"), "connected": bool(cloud),
              "line": L("DeepSeek、Kimi、通义千问……填一把密钥就能用，按用量付费", "DeepSeek, Kimi, Qwen and more: add a key, pay as you go")},
-            {"id": "chatgpt", "provider": "chatgpt", "name": L("ChatGPT 套餐", "ChatGPT plan"), "connected": "chatgpt" in conn, "allowed": False,
-             "line": L("赛博暂时不能用套餐", "Cybers can't use subscription plans yet")}]
+            {"id": "chatgpt", "provider": "chatgpt", "name": L("ChatGPT 套餐", "ChatGPT plan"), "connected": "chatgpt" in conn, "allowed": True,
+             "line": L("替你干活时，赛博可以用你的 ChatGPT 套餐", "A Cyber can use your ChatGPT plan when the turn is for you")}]
 
 
 @router.get("/api/cyber-models")
@@ -228,7 +235,7 @@ async def cyber_models(cyber: str | None = None, kind: str = Query("blank", alia
     def one(ref: str) -> dict:
         return {**row(ref), "providerName": names.get(ref) or vendor(ref), "current": ref == (current or None), "inUse": ref == in_use}
 
-    rec = [{**one(r), "reason": reason(r, kind)} for r in order if billing(r) != "plan" and usable(r)][:3]
+    rec = [{**one(r), "reason": reason(r, kind)} for r in order if usable(r)][:3]
     rows = [one(r) for r in shown]
     return {"ok": True, "cyber": cyber, "class": kind, "current": current, "inUse": in_use, "inUseName": cybers.pretty_model(in_use),
             "recommended": rec, "all": rows, "local": [x for x in rows if x["local"]], "channels": channels(conn)}

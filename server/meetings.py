@@ -27,7 +27,7 @@
 - 不推送：纪要只记未读（会议和主对话各一条）。
 
 主线第三步（2026-10-21）
-- 会议可以加赛博（cybers.py 开着时 agent_rows 也认 cy-…）：赛博在会里走赛博回合（engine/cyber.speak，不花套餐，带它的装载工具），
+- 会议可以加赛博（cybers.py 开着时 agent_rows 也认 cy-…）：赛博在会里走赛博回合（engine/cyber.speak，来路 user，替你开会能花套餐，带它的装载工具），
   只出看法、不领待办（纪要里的待办只给功能 Agent）；健康、饮食、睡眠的功能 Agent 不和赛博同会。
 - 「定了告诉我」（auto）：全自动跑完：一轮说完写纪要，还有没定的、纪要说了该请谁就再开一轮（最多 AUTO_ROUNDS 轮），然后自动确认
   （待办写进日程和看板），主对话里一行「会议…已开完，N 项待办已写进日程和看板」+ 纪要卡（已确认的回执）。只给你在 app 里发起的会，
@@ -778,7 +778,7 @@ MEETING_NOTE = ("## This meeting\nYou're taking part in a meeting the user start
 
 
 async def stream_cyber(cid: str, mid: str, content: str, on_delta) -> None:
-    """赛博在会上说（主线第三步）：赛博回合（engine/cyber.speak：kind cyber，从不花套餐），带它的装载工具；会话 meeting:<会议>:<赛博>。"""
+    """赛博在会上说（主线第三步）：赛博回合（engine/cyber.speak：kind cyber，来路 user，替你说的能花套餐），带它的装载工具；会话 meeting:<会议>:<赛博>。"""
     import cybers
     from engine import cyber as engine_cyber
     from engine import cyber_tools

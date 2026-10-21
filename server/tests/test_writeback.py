@@ -46,7 +46,7 @@ def wb(tmp_path, monkeypatch, server_json, mousse_tree):
     with store.tx() as conn:
         for t in ("engine_writeback", "engine_memory"):
             conn.execute(f"DELETE FROM {t}")  # noqa: S608
-        conn.execute("DELETE FROM engine_turns WHERE origin='writeback'")  # 今天写回调了几次模型（per_day）从零数
+        conn.execute("DELETE FROM engine_turns WHERE origin='writeback' OR conversation GLOB 'writeback:*'")  # 今天写回的次数从零数
     monkeypatch.setattr(writeback, "_needs", {})  # 写回要的包每个测试重新查
     with chat._lock, memhold.hdb() as conn:
         conn.execute("DELETE FROM memory_held")
@@ -225,14 +225,26 @@ def test_a_failure_keeps_the_cursor_backs_off_and_stops_at_retries(wb, monkeypat
     assert len(f.requests) == writeback.RETRIES
 
 
-def test_model_routing_never_spends_a_plan(wb, server_json):
+def test_model_routing_spends_a_plan_on_the_users_own_background(wb, server_json, monkeypatch):
+    """写回是用户自己的后台（来路 auto）。ChatGPT 没同意过后台：仍用按量的。同意过、或主模型是 Claude Code：用那份套餐。
+    名片、Doorman、管家这些外人来路照旧不能花。来路名字 writeback 本身不在能花的名单里。"""
+    from engine import chatgpt_plan
     server_json({"claw": {"kind": "builtin"}, "engine": {"model": MODEL, "use": {"background": "chatgpt/gpt-6.1-sol"}}})
-    assert writeback.model_for() == MODEL  # 后台是套餐：外人回合花不了，换成不花套餐的默认模型
+    assert writeback.model_for() == MODEL  # 后台是 ChatGPT、还没同意：这一轮不花，用按量的默认模型
+    monkeypatch.setattr(chatgpt_plan, "background_allowed", lambda: True)
+    assert writeback.model_for() == "chatgpt/gpt-6.1-sol"
+    monkeypatch.setattr(chatgpt_plan, "background_allowed", lambda: False)
+    server_json({"claw": {"kind": "builtin"}, "engine": {"model": "claude-code/opus", "models": [MODEL]}})
+    assert writeback.model_for() == "claude-code/opus"  # Claude Code 的后台不用另一次同意
     server_json({"claw": {"kind": "builtin"}, "engine": {"model": MODEL, "writeback": {"model": "moonshot/kimi-k3"}}})
     assert writeback.model_for() == "moonshot/kimi-k3"
     server_json({"claw": {"kind": "builtin"}, "engine": {"model": MODEL, "use": {"background": "moonshot/kimi-k3"}}})
     assert writeback.model_for() == "moonshot/kimi-k3"
     assert models.may_spend("chatgpt/gpt-6.1-sol", kind="outsider", origin="writeback") is False
+    assert models.may_spend("claude-code/opus", kind="cyber", origin="card") is False
+    assert models.may_spend("claude-code/opus", kind="cyber", origin="doorman") is False
+    assert models.may_spend("claude-code/opus", kind="cyber", origin="butler") is False
+    assert models.may_spend("claude-code/opus", kind="owner", origin="auto") is True
 
 
 def test_openclaw_path_never_writes_back(wb, server_json, monkeypatch):

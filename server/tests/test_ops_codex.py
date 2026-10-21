@@ -126,7 +126,8 @@ def test_codex_is_the_users_plan_and_only_their_own_turns_spend_it(cx, monkeypat
     assert models.subscription("codex/default") == "codex" and models.subscription("codex/gpt-6-codex") == "codex"
     assert models.valid_ref("codex/default") and models.known("codex/default") and models.subscription("codex/rm -rf") is None
     assert models.may_spend("codex/default", kind="owner", origin="user") and models.may_spend("codex/default", kind="owner", origin="relay")
-    for kind, origin in (("owner", "api"), ("owner", "acp"), ("outsider", "card"), ("cyber", "user"), ("owner", "cli")):
+    assert models.may_spend("codex/default", kind="cyber", origin="user")  # 用户自己的赛博
+    for kind, origin in (("owner", "api"), ("owner", "acp"), ("outsider", "card"), ("cyber", "butler"), ("owner", "cli")):
         assert not models.may_spend("codex/default", kind=kind, origin=origin), (kind, origin)
     monkeypatch.setattr(chatgpt_plan, "background_allowed", lambda: False)
     assert not models.may_spend("codex/default", kind="owner", origin="auto")  # 后台：和 ChatGPT 套餐同一个同意

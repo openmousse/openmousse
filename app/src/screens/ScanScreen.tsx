@@ -1,13 +1,15 @@
 // 扫一扫（1.0.6，expo-camera）：扫配对二维码和好友邀请二维码，认出来交给 navigation.tsx 的 openScanned 去跳（配对只填好连接页，不自动连）。
 // 进来的地方：「对话」页「+」两边各一个、连接页配对码旁边的按钮（还没连服务器也能用：新手机先扫另一台设备「添加设备」的码）。
+// 顶栏右边「相册」：选一张本机图片，用同一个相机模块的 scanFromURLAsync 只认 qr，再走 onScan。网页版、没有相机模块的旧包不显示。
 // expo-camera 只在原生端、真要开相机时才加载：网页包里不碰它，网页版只说明一句；缺这个原生模块的旧包显示「需要更新 app」，不会崩。
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { AccessibilityInfo, ActivityIndicator, AppState, Linking, Platform, Pressable, StatusBar, StyleSheet, Text, useWindowDimensions, View } from 'react-native';
 import { useNavigation, useRoute } from '@react-navigation/native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import * as Haptics from 'expo-haptics';
+import * as ImagePicker from 'expo-image-picker';
 import type { BarcodeScanningResult, BarcodeSettings } from 'expo-camera';
-import { Camera, ScanLine, X } from '../components/icons';
+import { Camera, ImageIcon, ScanLine, X } from '../components/icons';
 import { Btn } from '../components/ui';
 import { L } from '../i18n';
 import { openScanned } from '../navigation';
@@ -32,6 +34,13 @@ function cameraModule(): CameraModule | null {
   return cameraMod;
 }
 
+/** 从图片认二维码的函数。和相机模块一起按需拿：模块没有、或这个版本的原生模块没这个函数 → null。 */
+function scanStill(cam: CameraModule | null): CameraModule['scanFromURLAsync'] | null {
+  if (!cam) return null;
+  const fn = (cam as { scanFromURLAsync?: CameraModule['scanFromURLAsync'] }).scanFromURLAsync;
+  return typeof fn === 'function' ? fn : null;
+}
+
 const QR_ONLY: BarcodeSettings = { barcodeTypes: ['qr'] };
 // 整页深色（相机取景），不跟主题走
 const INK = '#FFFFFF';
@@ -44,6 +53,10 @@ export function ScanScreen() {
   const insets = useSafeAreaInsets();
   const kind = route.params?.kind as ScanKind | undefined;
   const cam = cameraModule();
+  const pickRef = useRef<(() => void) | null>(null);
+  const [albumBusy, setAlbumBusy] = useState(false);
+  // 网页版、没有相机模块的旧包：没有相册。占位和关闭按钮一样宽，标题仍居中，但不画那圈深色底。
+  const showAlbum = Platform.OS !== 'web' && !!cam;
   return (
     <View style={styles.root}>
       <StatusBar barStyle="light-content" />
@@ -51,7 +64,7 @@ export function ScanScreen() {
         <Notice icon={<ScanLine size={30} color={INK} />} title={L('网页版不支持扫码', "Scanning isn't available on the web")}
           body={L('请在手机 app 中使用扫一扫。在网页上，可以直接粘贴配对链接或好友邀请链接。', 'Use Scan in the phone app. On the web, paste the pairing link or invite link instead.')} />
       ) : cam ? (
-        <Scanner cam={cam} kind={kind} />
+        <Scanner cam={cam} kind={kind} pickRef={pickRef} onAlbumBusy={setAlbumBusy} />
       ) : (
         <Notice icon={<ScanLine size={30} color={INK} />} title={L('扫一扫需要更新 app', 'Scan needs a newer version of the app')}
           body={L('请更新 app 后再试。也可以直接粘贴配对链接或好友邀请链接。', 'Update the app and try again, or paste the pairing link or invite link instead.')} />
@@ -61,14 +74,25 @@ export function ScanScreen() {
           <X size={24} color={INK} />
         </Pressable>
         <Text style={[type.headline, { color: INK }]} accessibilityRole="header">{L('扫一扫', 'Scan')}</Text>
-        <View style={styles.close} />
+        {showAlbum ? (
+          <Pressable onPress={() => { const pick = pickRef.current; if (pick) pick(); }} disabled={albumBusy} hitSlop={8}
+            accessibilityRole="button" accessibilityLabel={L('相册', 'Photos')} accessibilityState={{ disabled: albumBusy, busy: albumBusy }}
+            style={[styles.close, albumBusy && { opacity: 0.55 }]}>
+            {albumBusy ? <ActivityIndicator color={INK} size="small" /> : <ImageIcon size={22} color={INK} />}
+          </Pressable>
+        ) : <View style={styles.slot} />}
       </View>
     </View>
   );
 }
 
 /** 相机 + 取景框。权限：进来就问（点「扫一扫」就是要用相机）；拒过且不能再问 → 去系统设置，回到 app 时重新看一次。 */
-function Scanner({ cam, kind }: { cam: CameraModule; kind?: ScanKind }) {
+function Scanner({ cam, kind, pickRef, onAlbumBusy }: {
+  cam: CameraModule;
+  kind?: ScanKind;
+  pickRef: React.MutableRefObject<(() => void) | null>;
+  onAlbumBusy: (busy: boolean) => void;
+}) {
   const [perm, ask, recheck] = cam.useCameraPermissions({ request: true });
   const [mountErr, setMountErr] = useState<string | null>(null);
   const [note, setNote] = useState('');
@@ -108,20 +132,71 @@ function Scanner({ cam, kind }: { cam: CameraModule; kind?: ScanKind }) {
     AccessibilityInfo.announceForAccessibility(text);
   }, [showNote]);
 
-  if (!perm) return <View style={styles.center}><ActivityIndicator color={INK} /></View>;
+  const say = useCallback((text: string) => {
+    showNote(text);
+    AccessibilityInfo.announceForAccessibility(text);
+  }, [showNote]);
+  // 选图和识别都要时间。picking 同步挡第二次点；按钮上的转圈等父组件那一帧。
+  const picking = useRef(false);
+  const alive = useRef(true);
+  useEffect(() => () => { alive.current = false; }, []);
+  const pickFromAlbum = useCallback(async () => {
+    if (done.current || picking.current) return;
+    const scan = scanStill(cam);
+    if (!scan) {
+      say(L('这个版本的 app 不支持从相册识别', "This version of the app can't scan QR codes from photos"));
+      return;
+    }
+    picking.current = true;
+    onAlbumBusy(true);
+    try {
+      const permLib = await ImagePicker.requestMediaLibraryPermissionsAsync();
+      if (!permLib.granted) {
+        say(L('无相册权限，请在系统设置中开启。', 'No photo library access. Turn it on in Settings.'));
+        return;
+      }
+      // 只要一张图，不裁切。quality 用 1：再压会把二维码压糊。取消就什么都不做。
+      const res = await ImagePicker.launchImageLibraryAsync({ mediaTypes: ['images'], allowsMultipleSelection: false, quality: 1 });
+      if (res.canceled || !alive.current || done.current) return;
+      const uri = res.assets[0]?.uri;
+      if (!uri) {
+        say(L('无法读取这张图片', "Couldn't read this photo"));
+        return;
+      }
+      const found = await scan(uri, ['qr']);
+      if (!alive.current || done.current) return;
+      const hit = found.find((r) => (r.data || '').trim());
+      if (!hit) {
+        say(L('这张图里没找到二维码', 'No QR code found in this photo'));
+        return;
+      }
+      onScan(hit);
+    } catch {
+      if (alive.current) say(L('无法读取这张图片', "Couldn't read this photo"));
+    } finally {
+      picking.current = false;
+      if (alive.current) onAlbumBusy(false);
+    }
+  }, [cam, onAlbumBusy, onScan, say]);
+  useEffect(() => {
+    pickRef.current = () => { pickFromAlbum().catch(() => {}); };
+    return () => { pickRef.current = null; };
+  }, [pickFromAlbum, pickRef]);
+
+  if (!perm) return <View style={styles.center}><ActivityIndicator color={INK} /><ScanNote text={note} /></View>;
   if (!perm.granted) {
     return perm.canAskAgain ? (
       <Notice icon={<Camera size={30} color={INK} />} title={L('需要相机权限', 'Camera access needed')}
         body={L('扫一扫使用相机读取二维码，画面不会保存或上传。', 'Scan uses the camera to read QR codes. Nothing is saved or uploaded.')}
-        action={{ label: L('允许访问', 'Allow access'), onPress: () => { ask().catch(() => {}); } }} />
+        action={{ label: L('允许访问', 'Allow access'), onPress: () => { ask().catch(() => {}); } }} note={note} />
     ) : (
       <Notice icon={<Camera size={30} color={INK} />} title={L('无相机权限', 'No camera access')}
         body={L('请在系统设置中开启相机权限。', 'Turn on camera access in Settings.')}
-        action={{ label: L('打开设置', 'Open Settings'), onPress: () => { Linking.openSettings().catch(() => {}); } }} />
+        action={{ label: L('打开设置', 'Open Settings'), onPress: () => { Linking.openSettings().catch(() => {}); } }} note={note} />
     );
   }
   if (mountErr !== null) {
-    return <Notice icon={<Camera size={30} color={INK} />} title={L('无法启动相机', "Couldn't start the camera")} body={mountErr || undefined} />;
+    return <Notice icon={<Camera size={30} color={INK} />} title={L('无法启动相机', "Couldn't start the camera")} body={mountErr || undefined} note={note} />;
   }
   const CameraView = cam.CameraView;
   const hint = kind === 'pair' ? L('对准 claw 的配对二维码', "Point the camera at your claw's pairing QR code")
@@ -146,20 +221,26 @@ function Scanner({ cam, kind }: { cam: CameraModule; kind?: ScanKind }) {
         </View>
         <View style={styles.below}>
           <Text style={[type.callout, { color: INK2, textAlign: 'center' }]}>{hint}</Text>
-          {note ? <View style={styles.note}><Text style={[type.callout, { color: INK, textAlign: 'center' }]}>{note}</Text></View> : null}
+          <ScanNote text={note} />
         </View>
       </View>
     </View>
   );
 }
 
-function Notice({ icon, title, body, action }: { icon: React.ReactNode; title: string; body?: string; action?: { label: string; onPress: () => void } }) {
+function ScanNote({ text }: { text: string }) {
+  if (!text) return null;
+  return <View style={styles.note}><Text style={[type.callout, { color: INK, textAlign: 'center' }]}>{text}</Text></View>;
+}
+
+function Notice({ icon, title, body, action, note }: { icon: React.ReactNode; title: string; body?: string; action?: { label: string; onPress: () => void }; note?: string }) {
   return (
     <View style={styles.center}>
       <View style={styles.noticeIcon}>{icon}</View>
       <Text style={[type.title, { color: INK, textAlign: 'center' }]}>{title}</Text>
       {body ? <Text style={[type.callout, { color: INK2, textAlign: 'center' }]}>{body}</Text> : null}
       {action ? <View style={{ alignSelf: 'stretch', marginTop: space.md }}><Btn label={action.label} onPress={action.onPress} /></View> : null}
+      <ScanNote text={note ?? ''} />
     </View>
   );
 }
@@ -168,6 +249,8 @@ const styles = StyleSheet.create({
   root: { flex: 1, backgroundColor: '#000000' },
   top: { position: 'absolute', top: 0, left: 0, right: 0, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: space.md },
   close: { width: 44, height: 44, borderRadius: 22, alignItems: 'center', justifyContent: 'center', backgroundColor: 'rgba(0,0,0,0.35)', marginVertical: 4 },
+  // 和关闭按钮一样宽，没有圆底。网页版、没有相机模块时用来把标题留在中间。
+  slot: { width: 44, height: 44, marginVertical: 4 },
   center: { flex: 1, alignItems: 'center', justifyContent: 'center', paddingHorizontal: space.xxl, gap: space.sm, maxWidth: 420, width: '100%', alignSelf: 'center' },
   noticeIcon: { width: 64, height: 64, borderRadius: 32, alignItems: 'center', justifyContent: 'center', backgroundColor: 'rgba(255,255,255,0.12)', marginBottom: space.sm },
   corner: { position: 'absolute', width: 30, height: 30, borderColor: INK },

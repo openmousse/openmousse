@@ -21,8 +21,9 @@
   怎么补（照仓库 README 装包）。包查过一次就记下来，服务重启或过一天再查（装了包要重启服务）；模型每次照 server.json 现挑（改了配置下一轮
   就接着写）。10/19 一台刚换到自带内核的实例：Python 里没装这个包，原来是先调模型、挑的时候才导入，每一段每一轮都白花一次，名片 Agent
   那条路失败了也不封顶，一小时调了 30 多次。
-写回本身：一次便宜的模型调用（外人回合的写法：零工具、不落会话，engine/oneshot.py），模型照 engine.writeback.model → engine.use.background
-  → engine.use.json → 不花套餐的默认模型；不花用户的套餐（models.may_spend 的外人回合）。它读这一段对话（[User] / [Assistant]）、世界树的
+写回本身：一次便宜的模型调用（零工具、不落会话，engine/oneshot.py），模型照 engine.writeback.model → engine.use.background
+  → engine.use.json → 默认模型。这是用户自己的后台（来路 auto）：登录着的套餐这一轮能花就用（models.may_spend；ChatGPT、Grok、Copilot 的后台还要在设置里
+  同意过），这一轮不能花就看下一项，最后才换成按量的。它读这一段对话（[User] / [Assistant]）、世界树的
   规则、这个 Agent 看得到的叶子（查重、取代），回一串候选，每条三项打分（规则.md 的检验）：
     durable  三个月以后换个 AI 跟用户聊，知道这条有没有用（2 = 有）
     new      树上没有（2）/ 是树上某一片的新说法（1，supersedes 写那片的 id）/ 已经有了（0）
@@ -110,12 +111,46 @@ def _int(key: str, dflt: int) -> int:
     return v if isinstance(v, int) and not isinstance(v, bool) and v > 0 else dflt
 
 
+def _json_model() -> str | None:
+    """engine.use.json 写的那一个（列表取打头的；true = 默认模型）。打头是套餐、这一轮又不能花：用列表里后面第一个按量的。
+    不在这里换成 outside()：后面还有默认模型，可能是这一轮能花的另一份套餐。"""
+    use = models.cfg().get("use")
+    v = use.get("json") if isinstance(use, dict) else None
+    if v is None or v is False:
+        return None
+    if v is True:
+        return models.default_model() or None
+    if isinstance(v, list):
+        head = models._first(v)
+        if head and models.subscription(head) and not _plan_ok(head):
+            rest = models.chain_of(v) or []
+            return rest[0] if rest else None
+        return head or None
+    return v.strip() if isinstance(v, str) and v.strip() else None
+
+
+def _plan_ok(ref: str) -> bool:
+    """这份套餐，用户自己的写回这一轮能不能花。OpenClaw 那条路不花（写回本来也不在那边跑）。"""
+    import claw
+    return claw.is_builtin() and models.may_spend(ref, kind="owner", origin="auto")
+
+
+def _keep(m) -> str | None:
+    """这一项能用就回规范写法。套餐这一轮不能花 → None（看下一项，不在这里换成 outside()）。"""
+    if not isinstance(m, str) or not m.strip():
+        return None
+    if models.subscription(m):
+        return models.canonical(m) if _plan_ok(m) else None
+    return models.canonical(m) if models.valid_ref(m) else None
+
+
 def model_for() -> str | None:
-    """写回用哪个模型：engine.writeback.model → engine.use.background → engine.use.json → 默认模型；是用户的套餐（外人回合花不了）就换成
-    不花套餐的那个（models.outside）。都没有 → None（这次不写回）。"""
-    for m in (cfg().get("model"), models.background_model(), models.route("json")):
-        if isinstance(m, str) and m and models.may_spend(m, kind="outsider", origin="writeback") and models.valid_ref(m):
-            return m
+    """写回用哪个模型：engine.writeback.model → engine.use.background → engine.use.json → 默认模型。用户自己的后台（来路 auto）：
+    登录着的套餐这一轮能花就用（Claude Code 直接能；ChatGPT、Grok、Copilot 要后台同意过），不能花就看下一项。都没有 → outside()
+    挑的按量模型，再没有 → None（这次不写回）。"""
+    for m in (cfg().get("model"), models.background_model(), _json_model(), models.default_model()):
+        if got := _keep(m):
+            return got
     return models.outside()
 
 
@@ -155,9 +190,10 @@ def explain(error: str | None) -> str:
                      f"Python doesn't have (or has an older one). Install it as the repository README (tree/README.md) says, into the server's own "
                      f"Python the way install.sh does: {cmd}, then restart the server. Until then writeback calls no model."))
     if "missing model" in error:
-        out.append(L("没有写回能用的模型：写回不花套餐，要一个按量付费、有密钥的（server.json 的 engine.writeback.model，或 engine.model）。"
-                     "改好了下一轮就接着写。",
-                     "There's no model writeback may use: it never spends a plan, so it needs a pay-as-you-go one with a key "
+        out.append(L("没有写回能用的模型。写回是你自己的后台：登录着的套餐这一轮能花就用（ChatGPT、Grok、Copilot 的后台要在设置里同意过）；"
+                     "都没有就配一个按量付费、有密钥的（server.json 的 engine.writeback.model，或 engine.model）。改好了下一轮就接着写。",
+                     "There's no model writeback may use. Writeback is your own background job: a signed-in plan is used when this turn can "
+                     "spend it (ChatGPT, Grok and Copilot background still need a yes in Settings). Otherwise set a pay-as-you-go model with a key "
                      "(engine.writeback.model or engine.model in server.json). It picks up again at the next round once that's set."))
     return " ".join(out) or error
 
@@ -501,7 +537,7 @@ async def run_session(session_id: str, reason: str) -> dict:
             material = await asyncio.to_thread(tree_material, agent)
             inp = task_input(msgs, material, language="Chinese" if settings.language == "zh" else "English")
             out, _via = await ask_json(PROMPT, inp, model=ref, purpose="writeback", timeout=120, conversation=f"writeback:{conversation}",
-                                       origin="writeback")
+                                       origin="auto")  # 用户自己的后台，不标 kind：按量的来路留在 auto，不会被改写成 purpose
             pick = select(out if isinstance(out, dict) else {}, msgs, leaves=material["leaves"])
             picked, skipped = [], list(pick["skipped"])
             for item in pick["picked"]:
@@ -599,7 +635,7 @@ async def run_card(ref: str, peer: str, peer_name: str) -> dict:
             inp = task_input(msgs, material, language="Chinese" if settings.language == "zh" else "English",
                              them={"name": peer_name or L("对方", "they"), "via": "agent" if channel == "a2a" else "person"})
             out, _via = await ask_json(OUTSIDE_PROMPT, inp, model=model, purpose="writeback", timeout=120, conversation=f"writeback:card:{ref}",
-                                       origin="writeback")
+                                       origin="auto")  # 记进你自己的记忆，不是替对方答话；回话那一轮仍是来路 card，不花套餐
             pick = select(out if isinstance(out, dict) else {}, msgs, outside=True, leaves=material["leaves"], limit=2)
             held = []
             for item in pick["picked"]:
@@ -689,8 +725,8 @@ def today_count() -> int:
     """今天写回调了几次模型（per_day 管的）：事件表里写回的每一轮都算，写成的、没写成的、回的不像样再问的那一次都是一轮。
     缺东西、话太少没调模型的不算。"""
     start = datetime.now(settings.tz).replace(hour=0, minute=0, second=0, microsecond=0).isoformat(timespec="seconds")
-    with store.read() as conn:  # conversation 都是 writeback:…（GLOB 走得上 engine_turns 的索引）
-        return conn.execute("SELECT COUNT(*) FROM engine_turns WHERE conversation GLOB 'writeback:*' AND origin='writeback' "
+    with store.read() as conn:  # conversation 都是 writeback:…（GLOB 走得上 engine_turns 的索引）。来路是 auto，按对话前缀数，不看来路
+        return conn.execute("SELECT COUNT(*) FROM engine_turns WHERE conversation GLOB 'writeback:*' "
                             "AND julianday(started_at) >= julianday(?)", (start,)).fetchone()[0]
 
 

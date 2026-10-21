@@ -125,7 +125,8 @@ def test_copilot_is_the_users_plan_and_only_their_own_turns_spend_it(cp):
     assert models.subscription("copilot/auto") == "copilot" and models.subscription("copilot/claude-sonnet-5.5") == "copilot"
     assert models.valid_ref("copilot/auto") and models.known("copilot/auto") and models.subscription("copilot/rm -rf") is None
     assert models.may_spend("copilot/auto", kind="owner", origin="user") and models.may_spend("copilot/auto", kind="owner", origin="relay")
-    for kind, origin in (("owner", "api"), ("owner", "acp"), ("outsider", "card"), ("cyber", "user"), ("owner", "cli")):
+    assert models.may_spend("copilot/auto", kind="cyber", origin="user")  # 用户自己的赛博
+    for kind, origin in (("owner", "api"), ("owner", "acp"), ("outsider", "card"), ("cyber", "butler"), ("owner", "cli")):
         assert not models.may_spend("copilot/auto", kind=kind, origin=origin), (kind, origin)
     assert not models.may_spend("copilot/auto", kind="owner", origin="auto")  # 后台：默认不行（engine.copilot.background）
     assert not models.may_spend("copilot/auto", kind="owner", origin="user", via="task")

@@ -221,10 +221,14 @@ def test_outsiders_cyber_and_external_interfaces_never_spend_the_subscription(cc
                                                          "use": {"card": True, "doorman": "claude-code/sonnet", "json": "claude-code/opus"}}})
     assert models.route("card") == models.route("doorman") == models.route("json", "claude-code/haiku") == "deepseek/deepseek-flash"
     assert models.route("json", "moonshot/kimi-k3") == "moonshot/kimi-k3"
-    assert cyber.model_of({"id": "c1", "model": "claude-code/opus"}) == "deepseek/deepseek-flash"
+    assert cyber.model_of({"id": "c1", "model": "claude-code/opus"}) == "claude-code/opus"  # 用户自己的赛博用他的套餐
+    assert cyber.model_of({"id": "c1", "model": "claude-code/opus"}, "butler") == "deepseek/deepseek-flash"  # 替外人答的换成按量的
+    assert cyber.model_of({"id": "plain"}) == "claude-code/opus"  # 没写 engine.use.cyber，主对话是套餐，默认用它
+    assert cyber.fallbacks_of({"id": "c1", "model": ["claude-code/opus", "deepseek/deepseek-flash"]}, "claude-code/opus") == ["deepseek/deepseek-flash"]
     assert models.outside("claude-code/opus") == "deepseek/deepseek-flash" and models.outside("moonshot/kimi-k3") == "moonshot/kimi-k3"
     assert models.may_spend("claude-code/opus", kind="owner", origin="user") and models.may_spend("claude-code/opus", kind="owner", origin="auto")
-    for kind, origin in (("owner", "api"), ("owner", "openai"), ("owner", "acp"), ("owner", None), ("cyber", "user"), ("outsider", "card"),
+    assert models.may_spend("claude-code/opus", kind="cyber", origin="user")  # 用户自己的赛博：看来路，不看 kind
+    for kind, origin in (("owner", "api"), ("owner", "openai"), ("owner", "acp"), ("owner", None), ("cyber", "butler"), ("outsider", "card"),
                          ("outsider", "a2a")):
         assert not models.may_spend("claude-code/opus", kind=kind, origin=origin), (kind, origin)
     assert models.may_spend("deepseek/deepseek-flash", kind="outsider", origin="doorman")
@@ -253,6 +257,9 @@ def test_outsiders_cyber_and_external_interfaces_never_spend_the_subscription(cc
     with pytest.raises(EngineError) as e:
         run(owner.respond("t-cc-ext2", "2026-10-16", "hi", None, lambda t: None, origin="acp"))
     assert e.value.kind == "config" and cc.records() == []
+    server_json({"claw": {"kind": "openclaw"}, "engine": {"model": "deepseek/deepseek-flash"}})  # OpenClaw 那条路照旧只给主人回合
+    assert not models.may_spend("claude-code/opus", kind="cyber", origin="user")
+    assert models.may_spend("claude-code/opus", kind="owner", origin="user")
 
 
 def test_the_v1_api_never_spends_the_subscription(cc, server_json):

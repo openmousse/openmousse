@@ -316,15 +316,17 @@ def test_who_may_spend_the_grok_subscription(xai):
         assert models.may_spend(GROK, kind="owner", origin=origin)
     for origin in ("auto", "task"):  # 后台的：没同意过不花
         assert not models.may_spend(GROK, kind="owner", origin=origin)
+    assert models.may_spend(GROK, kind="cyber", origin="user")  # 用户自己的赛博是前台
     for kind, origin, via in (("owner", "api", None), ("owner", "acp", None), ("owner", "compact", None), ("owner", None, None),
-                              ("cyber", "user", None), ("outsider", "card", None), ("outsider", "a2a", None), ("outsider", "doorman", None),
-                              ("owner", "relay", "mcp"), ("owner", "user", "mcp"), ("owner", "auto", "mcp")):
+                              ("cyber", "butler", None), ("outsider", "card", None), ("outsider", "a2a", None), ("outsider", "doorman", None),
+                              ("owner", "relay", "mcp"), ("owner", "user", "mcp"), ("owner", "auto", "mcp"), ("cyber", "auto", None)):
         assert not models.may_spend(GROK, kind=kind, origin=origin, via=via), (kind, origin, via)
     assert not models.may_spend(GROK, kind="owner", origin="relay", via="auto")  # 后台的一轮里调了转交：还是后台
     grok_plan.set_background(True)
     assert grok_plan.status()["background"]["allowed"] and grok_plan.status()["background"]["since"]
     assert models.may_spend(GROK, kind="owner", origin="auto") and models.may_spend(GROK, kind="owner", origin="task")
-    assert not models.may_spend(GROK, kind="owner", origin="relay", via="mcp") and not models.may_spend(GROK, kind="cyber", origin="user")
+    assert models.may_spend(GROK, kind="cyber", origin="auto")  # 同意过以后，用户自己的后台赛博也花
+    assert not models.may_spend(GROK, kind="owner", origin="relay", via="mcp") and models.may_spend(GROK, kind="cyber", origin="user")
     assert not models.may_spend("chatgpt/gpt-test", kind="owner", origin="auto")  # 两家的后台同意分开记
     grok_plan.set_background(False)
     assert not models.may_spend(GROK, kind="owner", origin="auto")
@@ -447,16 +449,23 @@ def test_one_shots_and_compaction_on_grok_run_as_the_owners_turn(xai):
         run(compact.summarize(view, 2, engine.Spec(kind="owner", model=GROK, origin="auto", conversation="main")))
 
 
-def test_cyber_and_outsider_turns_never_spend_grok(xai):
+def test_a_users_cyber_spends_grok_and_other_peoples_turns_do_not(xai):
     run(sign_in())
     from engine import cyber
     res = run(cyber.chat({"id": "cy1", "name": "Cy", "identity": "a friend"}, "hello"))
-    assert res.model == "other/m" and res.text == "from other"
+    assert res.model == GROK and res.text == "Hello from the fake Grok."  # 用户自己的赛博
+    res = run(cyber.chat({"id": "cy2", "name": "Cy", "identity": "a friend"}, "hello", origin="butler"))
+    assert res.model == "other/m" and res.text == "from other"  # 管家替外人答
+    res = run(cyber.chat({"id": "cy3", "name": "Cy", "identity": "a friend"}, "later", origin="auto"))
+    assert res.model == "other/m" and res.text == "from other"  # 后台的 Grok 还没同意
     for spec in (engine.Spec(kind="cyber", model=GROK), engine.Spec(kind="owner", model=GROK, origin="user", via="mcp"),
                  engine.Spec(kind="outsider", model=GROK, origin="card")):
         with pytest.raises(EngineError):
             run(engine.run_turn(spec, MemorySession(), user("x")))
-    assert not xai.fx.of("/v1/responses")  # 订阅一次都没被调过
+    grok_plan.set_background(True)
+    res = run(cyber.chat({"id": "cy4", "name": "Cy", "identity": "a friend"}, "check", origin="auto"))
+    assert res.model == GROK and res.text == "Hello from the fake Grok."
+    assert len(xai.fx.of("/v1/responses")) == 2
 
 
 def test_background_consent_only_from_the_owners_devices(xai, capsys):

@@ -9,8 +9,10 @@ ask_agent 找它装载的功能 Agent（目标限死在装载名单里）、prop
 群里（主线第三步第二段，../groupchat.py）走 speak()：同样是赛博回合、同样的工具，但不接一对一的会话，一轮一条不落库的会话。
 
 cyber 是一个 dict：{"id", "name", "identity", "model"?, "sources"?: ["card"], "effort"?}
-  model    不写 = server.json 的 engine.use.cyber，再不行用 engine.model。写成列表 ["anthropic/claude-sonnet-5-5", "moonshot/kimi-k3"]
-           = 第一个是它的模型、后面是它自己的备用链（第 13 步，engine/fallback.py；只写一个 = 不换）
+  model    不写 = server.json 的 engine.use.cyber，再不行用 engine.model。engine.use.cyber 也没写、主对话模型是用户登录着的套餐、
+           这一轮又是替用户自己干活的：就用那个套餐（10/21）。写成列表 ["anthropic/claude-sonnet-5-5", "moonshot/kimi-k3"]
+           = 第一个是它的模型、后面是它自己的备用链（第 13 步，engine/fallback.py；只写一个 = 不换）。替外人答的（管家回别人，来路 butler）
+           不花套餐，写成套餐就换成按量的。
   sources  第 0 步只有 "card" = 名片（名片 Agent 给「朋友」这一档公开的那部分）。「它记住的」「问搭档」等「认识你」定了再做。
            赛博用哪家模型，这些资料就发到哪家：默认什么都不给。
 会话：每个赛博每个逻辑日一条（cyber:<id>:<逻辑日>，04:00 换新）。开头的规矩在当天第一句时定下；当天改了性格，往后补一条 system，不改开头。
@@ -83,15 +85,55 @@ def system_prompt(cyber: dict, manuals: bool = False, tools: list | None = None,
     return "\n\n".join(p for p in parts if p)
 
 
-def model_of(cyber: dict) -> str:
-    own = models.chain_of(cyber.get("model"))
-    if own:
-        return own[0]
-    m = str(cyber.get("model") or "").strip() if isinstance(cyber.get("model"), str) else ""
-    if m and models.valid_ref(m):
-        return m
+def _spendable(ref: str, origin: str) -> str:
+    """这一轮能用的规范引用。套餐只在替这个来路干活时留着（models.may_spend）；不像样的、这一轮不能花的 → ""。"""
+    ref = (ref or "").strip()
+    if not ref or not (models.subscription(ref) or models.valid_ref(ref)):
+        return ""
+    if models.subscription(ref) and not models.may_spend(ref, kind="cyber", origin=origin):
+        return ""
+    return models.canonical(ref)
+
+
+def _metered_rest(v) -> str:
+    rest = models.chain_of(v) or []
+    return rest[0] if rest else ""
+
+
+def _use_value():
+    """engine.use.cyber 的原值：没写这一项、写了 null → None；写了 false → False；别的原样。"""
+    use = models.cfg().get("use")
+    if not isinstance(use, dict) or "cyber" not in use:
+        return None
+    return use.get("cyber")
+
+
+def model_of(cyber: dict, origin: str = "user") -> str:
+    """这位赛博这一轮用哪个模型。origin 是这一轮替谁干活（chat / speak 传进来的）：用户自己的来路能花他登录着的套餐，
+    替外人答的换成按量的。它自己写了模型就用那个；没写看 engine.use.cyber；那一项也没写、主对话是套餐、这一轮又能花，就用主对话的。"""
+    raw = cyber.get("model")
+    specified = isinstance(raw, list) or (isinstance(raw, str) and raw.strip())
+    if specified:
+        head = models._first(raw) if isinstance(raw, list) else str(raw).strip()
+        if kept := _spendable(head, origin):
+            return kept
+        if isinstance(raw, list) and (alt := _metered_rest(raw)):  # 列表打头的套餐这一轮不能花：用它后面第一个按量的
+            return alt
+    configured = _use_value()
+    if configured not in (None, False):
+        head = models.default_model() if configured is True else (configured.strip() if isinstance(configured, str) else models._first(configured))
+        if kept := _spendable(head, origin):
+            return kept
+        if isinstance(configured, list) and (alt := _metered_rest(configured)):
+            return alt
+        if head and models.subscription(head) and (alt := models.outside(head)):
+            return alt
+    elif configured is None and not specified:  # 没写 engine.use.cyber：主对话是套餐、这一轮又能花，赛博默认用它
+        d = models.default_model()
+        if d and models.subscription(d) and models.may_spend(d, kind="cyber", origin=origin):
+            return models.canonical(d)
     m = models.route("cyber") or models.default_model()
-    if models.subscription(m):  # 赛博回合不花用户的套餐：换成默认的非套餐模型
+    if models.subscription(m):  # 这一轮不能花（替外人答的、后台没同意的）：换成按量的
         m = models.outside(m) or ""
     if not m:
         raise EngineError("no model for this Cyber: give it one, or set engine.model in server.json", kind="config")
@@ -99,11 +141,58 @@ def model_of(cyber: dict) -> str:
 
 
 def fallbacks_of(cyber: dict, model: str) -> list[str] | None:
-    """它自己的备用链：model 写成列表的后面那几个；用的是 engine.use.cyber 的就看那一项；都不是 → None（按模型找默认链）。"""
-    own = models.chain_of(cyber.get("model"))
-    if own and own[0] == model:
-        return own[1:]
+    """它自己的备用链：model 写成列表的后面那几个（打头是套餐时，后面按量的整段就是链）；用的是 engine.use.cyber 的就看那一项；
+    都不是 → None（按模型找默认链）。"""
+    raw = cyber.get("model")
+    if isinstance(raw, list):
+        head = models._first(raw)
+        if models.subscription(head) and head == model:
+            return models.chain_of(raw) or []
+        own = models.chain_of(raw)
+        if own and own[0] == model:
+            return own[1:]
     return models.purpose_chain("cyber", model)
+
+
+async def _cyber_gate(tool, args, ctx) -> str | None:
+    """和没有 Spec.gate 的赛博回合一样：撤不回的不做。Claude Code 那条路经 MCP 把 ToolCtx.kind 写成 owner，不能借 tools.gate。"""
+    if tool.level(args)[0] in ("ask", "off"):
+        return ("Not run: this action can't be undone and needs the user's OK, but nobody can approve it here. "
+                "The user has NOT consented. Do not retry it or try to reach it another way; tell the user what you wanted to do.")
+    return None
+
+
+async def _dispatch(spec: Spec, session, prompt, *, on_event, control: Control | None) -> Result:
+    """按量的、chatgpt / grok / codex / copilot 走 run_turn（may_spend 已经按来路放过）。claude-code 不起 run_turn（那里直接拒），
+    交给 claude_brain.once：一次性的新会话，早先的对话整理成记录接在这句话前面。换了备用模型时 run_turn 已经把这句话写进会话，这里不再写。"""
+    if models.subscription(spec.model) != "claude-code":
+        return await run_turn(spec, session, prompt, on_event=on_event, control=control)
+    import dataclasses
+
+    from . import claude_brain
+    control = control or Control()
+    msgs = list(prompt) if isinstance(prompt, list) else [prompt]
+    user_msg = next((m for m in msgs if isinstance(m, dict) and m.get("role") == "user"), user(""))
+    notes = [text_of(m) for m in msgs if isinstance(m, dict) and m.get("role") == "system" and text_of(m).strip()]
+    prefix = claude_brain.prompt_prefix("fresh", session.messages(), "\n\n".join(notes) or None)
+
+    async def switch(chain: list[str], failed: Result) -> Result:
+        res = await run_turn(dataclasses.replace(spec, model=chain[0], fallbacks=chain[1:] or None), session, msgs,
+                             on_event=on_event, control=control)
+        res.models = [spec.model, *res.models]
+        return res
+
+    res = await claude_brain.once(spec.agent or "cyber", spec.conversation or "cyber", spec.system or "", list(spec.tools), user_msg,
+                                  model=spec.model, origin=spec.origin or "user", on_event=on_event, control=control, switch=switch,
+                                  gate=_cyber_gate, kind=spec.kind or "cyber", prefix=prefix, chain=spec.fallbacks)
+    if models.subscription(res.model) == "claude-code":  # 换过模型的，run_turn 已经落库
+        for m in msgs:
+            session.append(m, res.turn)
+        if (res.text or "").strip():
+            session.append({"role": "assistant", "content": [{"type": "text", "text": res.text}], "api": None, "provider": "claude-code",
+                            "model": res.model, "stop": "end" if res.status == "done" else (res.status or "end"),
+                            "usage": res.usage or {}}, res.turn)
+    return res
 
 
 async def chat(cyber: dict, text: str, *, on_event=None, control: Control | None = None, origin: str = "user", tools: list | None = None,
@@ -114,7 +203,7 @@ async def chat(cyber: dict, text: str, *, on_event=None, control: Control | None
     ref：app 里这条消息的 id（同主人回合，撤回时认）；stamp：这句话带上当地时间（同主人回合，session.with_time）。
     都不给 = 原来的样子（测试入口 /api/engine/cyber）。"""
     cid = cyber_id(cyber)
-    model = model_of(cyber)
+    model = model_of(cyber, origin)
     from . import manuals  # 13c：只读的 manual 工具（世界树有手册才有）
     tool = manuals.cyber_tool()
     extra = [t for t in tools or [] if "cyber" in t.kinds]
@@ -132,21 +221,21 @@ async def chat(cyber: dict, text: str, *, on_event=None, control: Control | None
                 origin=origin,
                 effort=cyber.get("effort") if cyber.get("effort") in ("low", "medium", "high", "xhigh", "max") else None,
                 display="summarized", cache_ttl="1h", fallbacks=fallbacks_of(cyber, model))
-    return await run_turn(spec, session, prompt, on_event=on_event, control=control)
+    return await _dispatch(spec, session, prompt, on_event=on_event, control=control)
 
 
 async def speak(cyber: dict, text: str, *, where: str, conversation: str, on_event=None, control: Control | None = None,
                 origin: str = "user", tools: list | None = None, timeout: float = 600) -> Result:
-    """在群里说一句（主线第三步第二段，../groupchat.py）：还是赛博回合（kind cyber：不花套餐，工具只有 Tool.kinds 带 cyber 的那几样），
-    但不接它一对一的会话：一轮一条不落库的会话（MemorySession），开头 = 它的设定 + where（这个群的规矩），text = 这一次它该读的
-    （群那边拼好：钉住的小结、最近几条、@ 它的那条）。conversation：事件表里记成哪个对话（group:<群>:<赛博>，它在这个群自己的会话）。
-    不带它记下的和知识库（群里只读设定、小结、最近几条和 @ 它的那条），名片照旧（sources card）。"""
+    """在群里说一句（主线第三步第二段，../groupchat.py）：还是赛博回合（kind cyber，工具只有 Tool.kinds 带 cyber 的那几样）。
+    替用户自己说的（来路 user）能花他的套餐；替外人答的（来路 butler）不能。不接它一对一的会话：一轮一条不落库的会话（MemorySession），
+    开头 = 它的设定 + where（这个群的规矩），text = 这一次它该读的（群那边拼好：钉住的小结、最近几条、@ 它的那条）。
+    conversation：事件表里记成哪个对话（group:<群>:<赛博>，它在这个群自己的会话）。不带它记下的和知识库，名片照旧（sources card）。"""
     from .session import MemorySession
     cid = cyber_id(cyber)
-    model = model_of(cyber)
+    model = model_of(cyber, origin)
     extra = [t for t in tools or [] if "cyber" in t.kinds]
     system = "\n\n".join(p for p in [system_prompt(cyber, tools=extra), where.strip()] if p)
     spec = Spec(kind="cyber", model=model, system=system, tools=extra, conversation=conversation, agent=cid, origin=origin,
                 effort=cyber.get("effort") if cyber.get("effort") in ("low", "medium", "high", "xhigh", "max") else None,
                 display="summarized", timeout=timeout, fallbacks=fallbacks_of(cyber, model))
-    return await run_turn(spec, MemorySession(), {**user(text), "at": time_stamp()}, on_event=on_event, control=control)
+    return await _dispatch(spec, MemorySession(), {**user(text), "at": time_stamp()}, on_event=on_event, control=control)

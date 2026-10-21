@@ -814,7 +814,8 @@ def test_writing_may_use_a_plan_only_where_may_spend_allows(env, monkeypatch):
     assert c.put("/api/setup/purposes", headers=H, json={"writing": "claude-code/sonnet"}).status_code == 200  # 和主对话一样能选套餐
     assert env.conf()["engine"]["use"]["writing"] == "claude-code/sonnet"
     assert models.route("writing", kind="owner", origin="user") == models.route("writing", kind="owner", origin="auto") == "claude-code/sonnet"
-    for kind, origin in (("owner", "api"), ("owner", "mcp"), ("cyber", "user"), ("outsider", "card")):  # 不能花套餐的：换成 outside() 挑的
+    assert models.route("writing", kind="cyber", origin="user") == "claude-code/sonnet"  # 用户自己的赛博：写作也能花套餐
+    for kind, origin in (("owner", "api"), ("owner", "mcp"), ("cyber", "butler"), ("outsider", "card")):  # 替外人、对外接口：换成 outside() 挑的
         assert models.route("writing", kind=kind, origin=origin) == "deepseek/deepseek-flash", (kind, origin)
     assert models.route("writing") == "deepseek/deepseek-flash"  # 不报这一轮是谁 = 当外人回合
     c.put("/api/setup/purposes", headers=H, json={"writing": "chatgpt/gpt-test"})
@@ -829,7 +830,7 @@ def test_writing_may_use_a_plan_only_where_may_spend_allows(env, monkeypatch):
     # true = 默认模型：默认是套餐的照样问 may_spend；card 这些外人回合照旧不花套餐
     env.cfg(engine={"model": "claude-code/sonnet", "models": ["deepseek/deepseek-flash"], "use": {"card": True, "writing": True}})
     assert models.route("card") == "deepseek/deepseek-flash" and models.route("writing", kind="owner", origin="user") == "claude-code/sonnet"
-    assert models.route("writing", kind="cyber", origin="user") == "deepseek/deepseek-flash"
+    assert models.route("writing", kind="cyber", origin="user") == "claude-code/sonnet"  # 同一套餐，用户自己的赛博照样花
 
 
 def test_an_old_openclaw_instance_is_reported_as_is_and_never_changed(env, tmp_path, monkeypatch):

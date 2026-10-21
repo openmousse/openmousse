@@ -11,7 +11,7 @@
            单独列，只给看。Claude Code 用 API 密钥登录的那几轮照记成钱（是用户自己账上的）
 用途（看 kind 和 origin）：chat = 主人自己的对话（user / relay）；background = 定时任务、心跳、后台任务、收件箱接着做的（auto / task），
   还有一次性 JSON（json）和回看 skill（skill-review）；outsider = 外人回合（名片 Agent、A2A、Doorman、第 4 批的触发：外面进来的 webhook、
-  邮件、网页那一次零工具的读）；api = 对外接口（/v1、ACP）；
+  邮件、网页那一次零工具的读，以及管家替外人理要点、回话）；api = 对外接口（/v1、ACP）；
   cyber = 赛博；claw = OpenClaw 自己的回合（engine.record_openclaw 开了才有）；warming = 提示缓存保温（engine/warming.py，第 7 批）；
   别的 = other。
 向量（按意思搜，engine/embeddings.py）不是一轮：另记在 engine_embed_usage，汇总成 embeddings 那一栏（见下面「向量的用量」）。
@@ -37,7 +37,7 @@ from . import embeddings as E
 
 PURPOSES = ("chat", "background", "outsider", "api", "cyber", "claw", "warming", "other")
 BACKGROUND_ORIGINS = frozenset({"auto", "task", "json", "skill-review", "skills"})
-OUTSIDER_ORIGINS = frozenset({"card", "a2a", "doorman", "trigger"})  # trigger：第 4 批从外面进来的触发（webhook、邮件、盯的网页）那一次零工具的读
+OUTSIDER_ORIGINS = frozenset({"card", "a2a", "doorman", "trigger", "butler"})  # trigger：外面进来的；butler：管家替外人理要点、回话（10/21）
 MAX_DAYS = 366
 
 

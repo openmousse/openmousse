@@ -3,7 +3,7 @@
 一句话（或选模板）→ 补问两三道点选题（不用打字；不想答可以直接生成）→ 草稿（全部预填，哪里不对改哪里）→ 试聊（只有赛博：听它说一句，
 用「更严格 / 更温和 / 更简短 / 用英文 / 多举例」调，能「换一句」）→ 创建。补问、草稿、试聊都是零工具的 JSON 调用：
   补问、草稿：llmjson.ask（kind owner、origin user：是你自己打的描述，json 那一项配成你的套餐时能用它）；
-  试聊：engine.ask_json，用这位赛博的模型（外人回合，从不花套餐；赛博本来也选不了套餐）。给模型的只有草稿上的性格，不带你的资料。
+  试聊：engine.ask_json，用这位赛博的模型（用户自己在建，来路 user，登录着的套餐能花）。给模型的只有草稿上的性格，不带你的资料。
 模型没回、回的不像样：补问、草稿照模板和你点的答案先填一份（fallback: true），哪里不对改哪里；试聊报 502（app 里「换一句」重试）。
 
 模板（TEMPLATES）：专业（有专长的角色：出题、点评、给判断）、朋友（陪你聊、陪你练，说话随意一些）、机器（不扮演人、不寒暄、只做一件事，
@@ -654,8 +654,8 @@ class TrialIn(BaseModel):
 
 @router.post("/api/new/trial")
 async def trial(body: TrialIn):
-    """试聊一句：用这位赛博的模型、零工具的一问（外人回合，从不花套餐）。tweak（stricter / gentler / shorter / english / examples）
-    先照它改语气和规矩，再说一句；previous = 已经说过的几句（「换一句」不重样）。"""
+    """试聊一句：用这位赛博的模型、零工具的一问。这是用户自己在建赛博，来路 user，登录着的套餐能花。
+    tweak（stricter / gentler / shorter / english / examples）先照它改语气和规矩，再说一句；previous = 已经说过的几句（「换一句」不重样）。"""
     from engine import EngineError, ask_json
     from engine import cyber as engine_cyber
     tweak = (body.tweak or "").strip() or None
@@ -663,7 +663,7 @@ async def trial(body: TrialIn):
         raise HTTPException(400, L(f"tweak 只能是 {' / '.join(TWEAKS)}", f"tweak must be one of {', '.join(TWEAKS)}"))
     persona = {"name": clean(body.name, cybers.NAME_MAX) or "Cyber", "identity": clean(body.identity, cybers.LINE_MAX),
                "tone": clean(body.tone, cybers.LINE_MAX), "rules": clean(body.rules, cybers.LINE_MAX)}
-    ref = cybers.clean_model(body.model)  # 套餐 → 400（赛博暂时不能用套餐）
+    ref = cybers.clean_model(body.model)  # 套餐也能存：这一问是用户自己的
     try:
         model = engine_cyber.model_of({"id": "trial", "model": ref})
     except EngineError as e:
@@ -674,7 +674,8 @@ async def trial(body: TrialIn):
     try:
         out, _via = await ask_json(TRIAL_RULES.format(tweak=adjust, owner=owner),
                                    {"persona": persona, "previous": [clean(x, LINE_MAX) for x in body.previous[-5:]]},
-                                   model=model, purpose="cyber", required=("line",), timeout=60, conversation="cyber-trial", origin="cyber-trial")
+                                   model=model, purpose="cyber", required=("line",), timeout=60, conversation="cyber-trial",
+                                   origin="user", kind="cyber")
     except EngineError as e:
         raise HTTPException(502, L(f"试聊没成：{str(e)[:160]}", f"The trial didn't work: {str(e)[:160]}")) from None
     line = clean(out.get("line"), LINE_MAX)

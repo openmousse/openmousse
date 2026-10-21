@@ -110,6 +110,28 @@ def test_changing_a_line_previews_first_applies_on_ok_and_undoes(benv, scripted)
     assert c.post("/api/butler/undo", json={}, headers=H).status_code == 409
 
 
+def test_card_doorman_and_butler_calls_are_marked_as_someone_elses(benv, monkeypatch):
+    """名片、Doorman、管家理要点：来路写明是外人的，不靠 kind 猜。这三处都不花套餐。"""
+    import engine
+    benv.cfg(butler=True, user_name="Alex", engine={**ENGINE, "use": {"card": "deepseek/deepseek-flash", "doorman": "deepseek/deepseek-flash"}})
+    seen = []
+
+    async def ask_json(*_a, **k):
+        seen.append((k.get("purpose"), k.get("origin"), k.get("kind")))
+        return {"reply": "ok", "verdict": "ok", "gist": "Whether to open the library"}, "builtin:test"
+
+    monkeypatch.setattr(engine, "ask_json", ask_json)
+    run(cardagent.via_builtin("Answer.", {"message": "hi"}, 10, need="reply", purpose="card"))
+    run(cardagent.via_builtin("Check.", {"text": "hi"}, 10, need="verdict", purpose="doorman"))
+    gist = run(butler.gist_of("Should the library be open source?", "Mia"))
+    assert seen == [("card", "card", "outsider"), ("doorman", "doorman", "outsider"), ("card", "butler", "outsider")]
+    assert gist == "Whether to open the library"
+    from engine import models
+    assert models.may_spend("claude-code/opus", kind="outsider", origin="card") is False
+    assert models.may_spend("claude-code/opus", kind="outsider", origin="doorman") is False
+    assert models.may_spend("claude-code/opus", kind="cyber", origin="butler") is False
+
+
 def test_consulting_a_cyber_takes_only_the_gist(benv, scripted):
     benv.cfg(butler=True, user_name="Alex", engine=ENGINE, cybers=True)
     v = make(benv, "Victor", tag="Early investor", identity="An early-stage investor.")["id"]

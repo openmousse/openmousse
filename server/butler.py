@@ -10,7 +10,7 @@
 - 固定的规矩（不做开关）：约时间、答应别人的事、涉及钱、别人要你的资料，一律先出只给你的卡；健康、饮食、睡眠不说，它也看不到。
   cardagent 本来就这么做（TIME_WORDS / MONEY / COMMITS、资料里没有健康），这里写给你看。
 - 可以请教的赛博：名单你定。请教时先零工具地把别人的问题理成要点（去掉原话和名字；服务器再查一遍：要点里带了名字、大段原话的不问），
-  再走那位赛博的回合（engine/cyber.speak：kind cyber，不花套餐，零工具，它自己一条不落库的会话），回答写明「X 的看法」。
+  再走那位赛博的回合（engine/cyber.speak：kind cyber，来路 butler，替外人回话之前问的，不花套餐，零工具，它自己一条不落库的会话），回答写明「X 的看法」。
   每次请教记一笔（仅你可见：问了谁、带的要点、它怎么说）。问的是健康、饮食、睡眠的一律不去问。管家自己的回合照旧零工具。
 - 说过的话：管家这周对外说过的每句（card_log），Doorman 扣下的也在；「放行 / 不放」走原来那张 review 卡（inbox 的 act，钩子是
   cardagent.release），不另起一套。
@@ -430,7 +430,7 @@ def scrub(gist: str, question: str, hide: list[str]) -> str | None:
 
 
 async def gist_of(question: str, peer_name: str, also: list[str] | None = None) -> str | None:
-    """零工具地把问题理成要点（外人回合：问题是别人写的；用管家的模型，不花套餐）。理不出来 / 不该问 → None。"""
+    """零工具地把问题理成要点（来路 butler：问题是别人写的，不花套餐；用管家的模型）。理不出来 / 不该问 → None。"""
     import cybers
     import engine
     if cybers.HEALTH.search(question) or cardagent.HEALTH.search(question):
@@ -440,7 +440,8 @@ async def gist_of(question: str, peer_name: str, also: list[str] | None = None) 
         return None
     rules_ = LS(*GIST_RULES).format(user=cardagent.owner())
     try:
-        out, _via = await engine.ask_json(rules_, {"question": clean(question, 1000)}, model=ref, purpose="card", need="gist", timeout=45)
+        out, _via = await engine.ask_json(rules_, {"question": clean(question, 1000)}, model=ref, purpose="card", need="gist", timeout=45,
+                                         origin="butler", kind="outsider")
     except engine.EngineError as e:
         print(f"[butler] 没理出要点：{str(e)[:120]}")
         return None

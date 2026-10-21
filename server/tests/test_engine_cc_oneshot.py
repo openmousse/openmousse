@@ -80,7 +80,9 @@ def test_only_the_owners_own_one_shots_may_spend_the_plan(claude, server_json):
     for origin in ("user", "auto", "relay"):  # 主人自己的：app 里点的、他自己的定时任务、主对话转过来的
         assert models.route("json", kind="owner", origin=origin) == "claude-code/sonnet"
         assert models.route("compact", kind="owner", origin=origin) == "claude-code/haiku"
-    for kind, origin in (("owner", None), ("owner", "api"), ("owner", "acp"), ("owner", "mcp"), ("owner", "task"), ("cyber", "user"),
+    assert models.route("json", kind="cyber", origin="user") == "claude-code/sonnet"  # 用户自己的赛博：一问一答也能花
+    assert models.route("compact", kind="cyber", origin="auto") == "claude-code/haiku"  # 用户自己的后台（写回、回看）也能花
+    for kind, origin in (("owner", None), ("owner", "api"), ("owner", "acp"), ("owner", "mcp"), ("owner", "task"), ("cyber", "butler"),
                          ("outsider", "card"), ("outsider", "a2a"), ("outsider", "doorman")):
         assert models.route("json", kind=kind, origin=origin) == API, (kind, origin)  # 换成 outside() 挑的按量模型
         assert models.route("compact", kind=kind, origin=origin) == "moonshot/kimi-k3", (kind, origin)  # 套餐打头的列表：后面那个按量的

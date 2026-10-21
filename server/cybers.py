@@ -279,7 +279,7 @@ def pretty_model(ref: str | None) -> str:
 
 
 def model_in_use(r: sqlite3.Row) -> str | None:
-    """这位赛博实际用哪个模型（它自己的；没写 = engine.use.cyber → engine.model；套餐换成不花套餐的）。内核还没配模型 → None。"""
+    """这位赛博实际用哪个模型（它自己的；没写 = engine.use.cyber → 主对话是套餐就用套餐，否则 engine.model）。内核还没配模型 → None。"""
     from engine import cyber as engine_cyber
     from engine.errors import EngineError
     try:
@@ -338,16 +338,14 @@ def clean_name(v, conn: sqlite3.Connection, cid: str | None = None) -> str:
 
 
 def clean_model(v) -> str | None:
-    """模型：不写 = 跟 engine.use.cyber；要是我们的接口跑得了的 provider/model。用户自己的套餐（Claude Code、ChatGPT……）赛博暂时不能用。"""
+    """模型：不写 = 跟 engine.use.cyber。要是我们的接口跑得了的 provider/model，或者用户自己的套餐（替他干活的回合才花，存的时候不要求已经登录）。"""
     from engine import models as engine_models
     ref = str(v or "").strip()
     if not ref:
         return None
-    if engine_models.subscription(ref):
-        raise HTTPException(400, L("赛博暂时不能用套餐：选一个用 API 密钥或本机的模型", "Cybers can't use subscription plans yet: pick a model with an API key or a local one"))
-    if not engine_models.valid_ref(ref):
-        raise HTTPException(400, L(f"不认识这个模型：{ref}（写成 provider/model）", f"Unknown model: {ref} (use provider/model)"))
-    return engine_models.canonical(ref)
+    if engine_models.subscription(ref) or engine_models.valid_ref(ref):
+        return engine_models.canonical(ref)
+    raise HTTPException(400, L(f"不认识这个模型：{ref}（写成 provider/model）", f"Unknown model: {ref} (use provider/model)"))
 
 
 def clean_voice(v) -> str | None:
@@ -551,7 +549,7 @@ async def delete(cid: str):
 # —— 一对一：赛博回合 ————————————————————————————————————————————————————————————————————
 # app 的 /api/chat/send 发到线程 cy-…：chat.start_run 认出来（模型是这位赛博的），chat.engine_stream 交给 respond()，跑一轮赛博回合
 # （engine/cyber.chat：它自己今天的会话，cyber:<id>:<逻辑日>）。流的事件、存进 messages、未读都和别的对话一样，app 的对话页不用改。
-# 赛博回合不花你的套餐（models.may_spend：kind 不是 owner 一律不花；它的模型是套餐的，engine/cyber.model_of 换成不花套餐的）。
+# 赛博回合替用户自己干活时能花他登录着的套餐（models.may_spend 看来路，不看 kind）。替外人答的换成按量的。
 
 def persona(r: sqlite3.Row) -> str:
     """性格三行 → 赛博回合开头的「你是谁、怎么说话」（借 Hermes hermes_cli/personality.py 的 render_personality_prompt：
@@ -1229,7 +1227,8 @@ async def profile_change(cid: str, body: ChangeIn):
 
 # —— 怎么长大：回看（默认关）————————————————————————————————————————————————————————————————————
 # 每隔几轮回头看一次最近的对话（server.json 的 cybers.review：true = 每 6 轮；{"every": n}）：哪句该记、说话方式要不要调，
-# 用这位赛博自己的模型做一次零工具的 JSON 调用（engine/oneshot.ask_json，外人回合的样子：不花套餐），想记的、想改的都先提给你
+# 用这位赛博自己的模型做一次零工具的 JSON 调用（engine/oneshot.ask_json，来路 auto：你自己的后台回看，登录着的套餐能花；
+# ChatGPT 这类后台要同意过），想记的、想改的都先提给你
 # （propose via review，卡挂在它的对话上），点了才生效，能撤回。和内核「回合后复盘只提议」是同一套。新的后台花费：默认关；急停时不跑。
 
 REVIEW_EVERY, REVIEW_TALK = 6, 30
@@ -1296,7 +1295,9 @@ REVIEW_RULES = (
 async def review(cid: str) -> list[dict]:
     """回看一次（见上）→ 这次提的改法。出错只记一行日志。"""
     from config import settings, user_word
+    from engine import cyber as engine_cyber
     from engine import estop, oneshot
+    from engine.errors import EngineError
     from i18n import LS
     if estop.note("cyber review"):
         return []
@@ -1307,7 +1308,10 @@ async def review(cid: str) -> list[dict]:
         rows = conn.execute(f"SELECT role, text FROM messages WHERE thread=? AND role IN ('user','{ASSISTANT_ROLE}') AND status='ok' ORDER BY id DESC LIMIT ?",
                             (cid, REVIEW_TALK)).fetchall()
         notes = [n["text"] for n in note_rows(conn, cid)[:40]]
-    model = model_in_use(r)
+    try:  # 来路 auto：回看是用户自己的后台。ChatGPT 这类没同意过后台的，这里就换成按量的，不让这一问直接失败
+        model = engine_cyber.model_of({"id": r["id"], "model": r["model"]}, "auto")
+    except EngineError:
+        model = None
     if not model or not rows:
         return []
     talk = [{"who": "user" if x["role"] == "user" else "cyber", "text": x["text"][:1500]} for x in reversed(rows)]
@@ -1315,7 +1319,7 @@ async def review(cid: str) -> list[dict]:
     try:
         out, _ = await oneshot.ask_json(LS(*REVIEW_RULES).format(name=r["name"], user=user_word().strip() or settings.user_name or "the user"),
                                         inp, model=model, purpose="cyber", required=("notes",), timeout=90, conversation=f"cyber-review:{cid}",
-                                        origin="cyber-review")
+                                        origin="auto")
     except Exception as e:  # noqa: BLE001 — 回看没成：下一回再看
         print(f"[cybers] {cid} 回看没成：{type(e).__name__}: {str(e)[:160]}")
         return []
@@ -1482,12 +1486,13 @@ def asker(cid: str, sink: list | None = None):
     """给 ask_agent 的那一步：真去问之前再查一遍（还装着、不是健康类）。sink：交了的卡（{id, title}）也记一份到这里（群里那一轮用：
     卡照旧挂在它一对一的对话上，群里也列出来，groupchat.py）。"""
     async def ask(agent: str, question: str, ctx) -> str:
-        return await ask_loaded(cid, agent, question, sink=sink)
+        return await ask_loaded(cid, agent, question, sink=sink, origin=getattr(ctx, "origin", None) or "user")
     return ask
 
 
-async def ask_loaded(cid: str, agent: str, question: str, *, sink: list | None = None) -> str:
-    """赛博问它装载的功能 Agent（engine/cyber_tools.py 的 ask_round）：两边留记录，回给赛博的是包成资料的回答和交了的卡。"""
+async def ask_loaded(cid: str, agent: str, question: str, *, sink: list | None = None, origin: str = "user") -> str:
+    """赛博问它装载的功能 Agent（engine/cyber_tools.py 的 ask_round）：两边留记录，回给赛博的是包成资料的回答和交了的卡。
+    origin：这一轮替谁干活（赛博回合的来路）。用户自己的能花套餐；管家请教（butler）不能。"""
     from config import settings
     from engine import cyber_tools
     from engine.loop import ToolFailure
@@ -1497,7 +1502,8 @@ async def ask_loaded(cid: str, agent: str, question: str, *, sink: list | None =
     if r is None or agent not in loaded:
         raise ToolFailure(f"Not asked: {agent} isn't loaded on you any more.")
     cards: list[dict] = []
-    out = await cyber_tools.ask_round(agent, question, cyber={**engine_dict(r), "model": model_in_use(r)}, thread=cid, cards=cards)
+    out = await cyber_tools.ask_round(agent, question, cyber={**engine_dict(r), "model": model_in_use(r)}, thread=cid, cards=cards,
+                                     origin=origin)
     if sink is not None:
         sink.extend(cards)
     name = loaded[agent]["name"]

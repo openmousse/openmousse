@@ -514,13 +514,15 @@ async def via_llm_task(prompt: str, input_: dict, timeout: float, *, schema: dic
 
 async def via_builtin(prompt: str, input_: dict, timeout: float, *, need: str = "reply", purpose: str = "card",
                       effort: str | None = None) -> tuple[dict, str]:
-    """自己的内核（engine/oneshot.py）：外人回合，零工具、新会话，能换模型（server.json 的 engine.use.card / doorman）。
-    名片 agent 的模型：card.model 写的是合法的模型引用就用它，否则用 engine 那边给这件事配的。"""
+    """自己的内核（engine/oneshot.py）：外人回合，来路 card / doorman，零工具、新会话，能换模型（server.json 的 engine.use.card / doorman）。
+    名片 agent 的模型：card.model 写的是合法的模型引用就用它，否则用 engine 那边给这件事配的。不花用户的套餐。"""
+    origin = purpose if purpose in ("card", "doorman") else "card"
     ref = engine.route(purpose, cfg().get("model") if purpose == "card" else None)
     if not ref:
         raise CardLLMError(f"engine.use.{purpose} is not set")
     try:
-        v, via = await engine.ask_json(prompt, input_, model=ref, purpose=purpose, need=need, timeout=timeout, effort=effort)
+        v, via = await engine.ask_json(prompt, input_, model=ref, purpose=purpose, need=need, timeout=timeout, effort=effort,
+                                      origin=origin, kind="outsider")
     except engine.EngineError as e:
         raise CardLLMError(str(e)[:200]) from e
     if not isinstance(v, dict):

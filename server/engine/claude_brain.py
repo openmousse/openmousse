@@ -5,7 +5,7 @@ Agent，我们的工具和关卡照旧在我们的服务器上把关。
   收集或保存 Claude 的令牌；允许的是用户自己登录、没改过的官方 Claude Code（原文：「Nor does it prevent an end user from signing in to
   the unmodified Claude Code binary with their own Claude subscription」）。所以这里只在这台电脑上起官方的 claude 命令，用它自己存的登录：
   我们不读、不存、不传它的令牌，不拿它的令牌直接调接口，也不用 claude setup-token；环境变量里像密钥的都去掉（它只能用它自己的登录）；
-  只有用户自己的回合用它（models.may_spend：外人、赛博、对外接口一律不行，不替别人花他的套餐）。
+  只有替用户自己干活的回合用它（models.may_spend 看来路：他本人、他的定时和后台、他的赛博；替外人答的、对外接口一律不行，不替别人花他的套餐）。
 
 模型：claude-code/<型号>（opus / sonnet / haiku 或完整 id）→ --model <型号>；engine.claude_code.effort → --effort（第 2 批：这个对话
   /think 设了、或者 engine.think 给这个 Agent 写了的先用它，engine/think.py）；engine.claude_code.fallback_model → --fallback-model。
@@ -945,13 +945,15 @@ def _model_name(ref: str) -> str:
 Switch = Callable[[list[str], Result], Awaitable[Result]]
 
 
-def _backup(res: Result, shown: bool, model: str, origin: str, switch: Switch | None) -> list[str]:
+def _backup(res: Result, shown: bool, model: str, origin: str, switch: Switch | None, *, kind: str = "owner",
+            chain: list[str] | None = None) -> list[str]:
     """换得了吗：调用方给了 switch、这一轮是 SWITCH 那几类错、还没出字也没调工具（出过字照旧报错，和备用链一样；调过工具的可能已经做了
-    事，从头再答会做两遍）→ 备用链（fallback.backup：不是套餐的、这一轮能花的、有密钥的）；否则 []。"""
+    事，从头再答会做两遍）→ 备用链（fallback.backup：不是套餐的、这一轮能花的、有密钥的）；否则 []。
+    kind / chain：不给 = 主人回合、按模型找默认链。赛博回合把自己的链和 kind 传进来。"""
     if switch is None or shown or res.status != "error" or res.error_kind not in SWITCH:
         return []
     from . import fallback
-    return fallback.backup(model, kind="owner", origin=origin)
+    return fallback.backup(model, kind=kind, origin=origin, chain=chain)
 
 
 async def _switch(switch: Switch, chain: list[str], failed: Result, control: Control) -> Result:
@@ -962,13 +964,14 @@ async def _switch(switch: Switch, chain: list[str], failed: Result, control: Con
 
 
 async def _unready(e: EngineError, conversation: str, agent: str, model: str, origin: str, control: Control,
-                   switch: Switch | None) -> Result:
-    """还没起它就知道跑不了（没装、没登录）：事件表照样记一轮出错（看得出为什么换了），换得了就换，换不了回这个错（advice）。"""
-    tid = events.turn_open(conversation=conversation, kind="owner", model=model, agent=agent, origin=origin)
+                   switch: Switch | None, *, kind: str = "owner", chain: list[str] | None = None) -> Result:
+    """还没起它就知道跑不了（没装、没登录）：事件表照样记一轮出错（看得出为什么换了），换得了就换，换不了回这个错（advice）。
+    kind 不给 = 主人回合。赛博回合传 cyber，事件表才记成赛博。"""
+    tid = events.turn_open(conversation=conversation, kind=kind, model=model, agent=agent, origin=origin)
     events.turn_close(tid, conversation=conversation, status="error", error=str(e), models=[model])
     res = Result(turn=tid, status="error", text="", messages=[], usage={}, model=model, error=str(e), error_kind=e.kind, models=[model])
-    chain = _backup(res, False, model, origin, switch)
-    return await _switch(switch, chain, res, control) if chain and switch is not None else res
+    spare = _backup(res, False, model, origin, switch, kind=kind, chain=chain)
+    return await _switch(switch, spare, res, control) if spare and switch is not None else res
 
 
 async def respond(thread: str, day: str, content: str | list, model: str, on_delta: Callable[[str], None], *, ref: int | None = None,
@@ -1339,12 +1342,12 @@ async def _start(turn: Turn, info: dict, agent: str, system: str, tools: list[To
                     pass
 
 
-async def once(agent: str, conversation: str, system: str, tools: list[Tool], prompt: str, *, model: str, origin: str = "auto",
+async def once(agent: str, conversation: str, system: str, tools: list[Tool], prompt: str | dict, *, model: str, origin: str = "auto",
                on_event: Callable[[dict], None] | None = None, control: Control | None = None, switch: Switch | None = None,
-               gate: Callable | None = None) -> Result:
-    """没人在看的一轮（unattended.fresh 转过来的：用户自己的定时任务和心跳）：一次性的新会话，不存（见文件开头）。
-    switch：同 respond（跑不了、还没出字没调工具，就换备用链里的；会话本来就不存，不用撤）。
-    gate：换一道关卡（不给 = tools.gate）：命令行 mousse agent 的一轮只放只读的（engine/agent_cli.py，第 1 批 b）。"""
+               gate: Callable | None = None, kind: str = "owner", prefix: str = "", chain: list[str] | None = None) -> Result:
+    """没人在看的一轮（unattended.fresh 转过来的：用户自己的定时任务和心跳），以及替用户自己干活的赛博回合（kind cyber）：一次性的新会话，不存。
+    prompt：一段字，或一条中立格式的 user 消息（赛博带图的那句）。prefix：接在这句话前面的记录（赛博早先的对话）。
+    kind 不给 = owner。chain：这一轮自己的备用链（不给 = 按模型找）。switch / gate 同以前。"""
     from . import tools as tools_mod
 
     def emit(ev: dict) -> None:
@@ -1354,7 +1357,7 @@ async def once(agent: str, conversation: str, system: str, tools: list[Tool], pr
             except Exception:  # noqa: BLE001
                 pass
 
-    if not models.may_spend(model, kind="owner", origin=origin):
+    if not models.may_spend(model, kind=kind, origin=origin):
         raise EngineError("only the user's own turns can use their Claude Code", kind="rule")
     name = _model_name(model)
     control = control or Control()
@@ -1363,15 +1366,17 @@ async def once(agent: str, conversation: str, system: str, tools: list[Tool], pr
     except EngineError as e:
         if e.kind not in SWITCH:
             raise
-        return await _unready(e, conversation, agent, model, origin, control, switch)
-    tid = events.turn_open(conversation=conversation, kind="owner", model=model, session=None, agent=agent, origin=origin)
+        return await _unready(e, conversation, agent, model, origin, control, switch, kind=kind, chain=chain)
+    tid = events.turn_open(conversation=conversation, kind=kind, model=model, session=None, agent=agent, origin=origin)
     turn = Turn(tid=tid, conversation=conversation, model=model, tools={t.name: t for t in tools}, emit=emit,
                 on_text=lambda t: emit({"type": "text", "text": t}), control=control, idle=idle_limit(), origin=origin)
     status, error, ekind = "done", None, None
     try:
-        asked = {**user(prompt), "at": time_stamp()}  # 带上当地时间（同 app 里说的一句）
-        await _run(turn, info, agent, system, tools, name, asked, "", gate=gate or tools_mod.gate, conversation=conversation, persist=False,
-                   resume=False)
+        asked = prompt if isinstance(prompt, dict) else user(prompt)
+        if asked.get("role") == "user" and not asked.get("at"):
+            asked = {**asked, "at": time_stamp()}  # 带上当地时间（同 app 里说的一句）；调用方已经带了的不覆盖
+        await _run(turn, info, agent, system, tools, name, asked, prefix, gate=gate or tools_mod.gate, conversation=conversation,
+                   persist=False, resume=False)
         fail = None if turn.stopping == "user" else turn.failure()
         if turn.stopping == "user":
             status = "aborted"
@@ -1392,8 +1397,8 @@ async def once(agent: str, conversation: str, system: str, tools: list[Tool], pr
     text = final if status == "done" and isinstance(final, str) and final.strip() else segs[-1] if segs else ""
     res = Result(turn=tid, status=status, text=text, messages=[], usage=usage, model=model, error=error, error_kind=ekind,
                  first_ms=turn.first_ms, models=[model])
-    chain = _backup(res, bool(segs) or bool(turn.tools_seen), model, origin, switch)
-    return await _switch(switch, chain, res, control) if chain and switch is not None else res
+    spare = _backup(res, bool(segs) or bool(turn.tools_seen), model, origin, switch, kind=kind, chain=chain)
+    return await _switch(switch, spare, res, control) if spare and switch is not None else res
 
 
 # —— 一次性调用（ask）———————————————————————————————————————————————————————————————————

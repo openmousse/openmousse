@@ -263,7 +263,7 @@ def test_cybers_can_join_a_meeting_but_take_no_to_dos(menv, scripted):
     got = meetings.get_meeting(mid)
     said = [m for m in got["messages"] if m["kind"] == "agent"]
     assert [m["name"] for m in said] == ["Victor", "Running"]
-    assert events.turns(f"meeting:{mid}:{v}")[-1]["kind"] == "cyber"  # 赛博回合，不花套餐
+    assert events.turns(f"meeting:{mid}:{v}")[-1]["kind"] == "cyber"  # 赛博回合，来路 user，替用户开会能花套餐
     assert got["meeting"]["members"][0]["kind"] == "cyber" and got["meeting"]["members"][0]["tag"] == "Early investor"
     mins = [m for m in got["messages"] if m["kind"] == "minutes"][0]["minutes"]
     assert [td["agent"] for td in mins["todos"]] == [runner]  # 赛博不领待办

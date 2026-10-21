@@ -381,9 +381,16 @@ KEYS = Obj({
     "mcp_servers": DictOf(Obj(open=True)), "mcpServers": DictOf(Obj(open=True)), "wake": Obj(open=True),
     "relay": OneOf(Bool(), Obj(open=True)), "think": Obj(open=True), "today": Obj(open=True), "tree": Obj(open=True),
     "update": Obj({"channel": Enum("stable", "main"), "remote": Str(nonempty=True), "wait": Num(1), "idle_wait": Num(0)}),
-    # 「接下来会自动做的事」里起好认的名字（data.py）、连接页认的单元名和文件（connectors.py）：2026-10-20 从代码里挪出来的
-    "upcoming": Obj({"titles": DictOf(OneOf(Str(), Obj({"zh": Str(), "en": Str(), "repeat": Enum("daily", "weekly")}))), "reminder_prefix": Str()}),
-    "connectors": Obj({"units": Obj({"browser": Str(), "mail": Str(), "obsidian": Str(), "tree": Str()}), "canvas_courses": PATH}),
+    # 「接下来会自动做的事」里起好认的名字（data.py）、连接页认的单元名和文件（connectors.py）。单元名不限那四个：多写的也认。
+    "upcoming": Obj({"titles": DictOf(OneOf(Str(), Obj({"zh": Str(), "en": Str(), "repeat": Enum("daily", "weekly")}, open=True))),
+                     "reminder_prefix": Str()}, open=True),
+    "connectors": Obj({"units": DictOf(Str()), "canvas_courses": PATH}, open=True),
+    # 主线第三步的开关（不写 = 关）。true 或 {"enabled": …}；赛博还能写回看、每天读的钟点、健康类 Agent。会议只认 by_origin。
+    "groupchat": OneOf(Bool(), Obj({"enabled": Bool()}, open=True)),
+    "butler": OneOf(Bool(), Obj({"enabled": Bool()}, open=True)),
+    "cybers": OneOf(Bool(), Obj({"enabled": Bool(), "daily_at": Time(), "health_agents": ListOf(Str()),
+                                 "review": OneOf(Bool(), Obj({"enabled": Bool(), "every": Int(2, 50)}, open=True))}, open=True)),
+    "meetings": Obj({"by_origin": Bool()}, open=True),
 })
 
 
