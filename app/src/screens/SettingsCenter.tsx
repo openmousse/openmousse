@@ -101,6 +101,11 @@ function lineOf(r: Shown): string {
 
 /** 右上角的状态：已连通 / 在跑 / 已登录 / 没连通。 */
 function stateOf(r: Shown, test?: TestResult): { text: string; tone: 'good' | 'warn' } {
+  if (r.kind === 'login' && r.id === 'kimi') {
+    if (test && !test.ok) return { text: L('没连通', 'Not connected'), tone: 'warn' };
+    if (test?.ok || r.ready) return { text: L('已保存', 'Saved'), tone: 'good' };
+    return { text: L('没贴密钥', 'No key'), tone: 'warn' };
+  }
   const ok = test ? test.ok : r.kind === 'local' ? r.detected : r.kind === 'login' ? r.ready : r.connected;
   if (!ok) return { text: L('没连通', 'Not connected'), tone: 'warn' };
   if (r.kind === 'local') return { text: L('在跑', 'Running'), tone: 'good' };
@@ -130,7 +135,7 @@ function ProviderCard({ r, test, busy, onTest, onKey, onDelete }: {
 }) {
   const t = useTheme();
   const st = stateOf(r, test);
-  const key = r.kind === 'cloud' ? r.key : r.kind === 'custom' ? r.key : null;
+  const key = r.kind === 'cloud' ? r.key : r.kind === 'custom' ? r.key : r.kind === 'login' && r.id === 'kimi' ? r.key ?? null : null;
   const fixed = !!key?.present && (key.source === 'env' || key.source === 'env_file' || key.source === 'config');
   const listed = r.kind === 'cloud' || r.kind === 'custom' || r.kind === 'openclaw' ? r.models : null;
   return (
@@ -158,7 +163,12 @@ function ProviderCard({ r, test, busy, onTest, onKey, onDelete }: {
       {r.kind === 'local' ? (
         <KitRow title={L('型号', 'Models')} sub={r.models.length ? r.models.join(L('、', ', ')) : L('没探到装着的型号', 'No models found')} />
       ) : null}
-      {r.kind === 'login' ? (
+      {r.kind === 'login' && r.id === 'kimi' ? (
+        <KitRow title={L('密钥', 'Key')} value={r.key?.present ? (r.key.hint || L('已保存', 'Saved')) : L('没有', 'None')}
+          sub={r.key?.present ? [sourceWord(r.key.source), dayOf(r.key.savedAt)].filter(Boolean).join(' · ') || null : null}
+          tone={r.key?.present ? undefined : 'warn'} />
+      ) : null}
+      {r.kind === 'login' && r.id !== 'kimi' ? (
         <KitRow title={r.id === 'chatgpt' ? L('套餐', 'Plan') : L('登录', 'Sign-in')} value={r.plan || r.billing || (r.ready ? L('能用', 'Ready') : L('要重新登录', 'Sign in again'))} />
       ) : null}
       {test ? (
@@ -174,7 +184,7 @@ function ProviderCard({ r, test, busy, onTest, onKey, onDelete }: {
           <KitSep />
           <View style={styles.buttons}>
             <View style={{ flex: 1 }}><QuietButton label={L('测试', 'Test')} onPress={onTest} busy={busy} /></View>
-            {onKey ? <View style={{ flex: 1 }}><QuietButton label={r.kind === 'login' ? L('连接', 'Connect') : L('换密钥', 'New key')} onPress={onKey} /></View> : null}
+            {onKey ? <View style={{ flex: 1 }}><QuietButton label={r.kind === 'login' ? (r.id === 'kimi' ? L('设置', 'Settings') : L('连接', 'Connect')) : L('换密钥', 'New key')} onPress={onKey} /></View> : null}
             {onDelete && !fixed ? <View style={{ flex: 1 }}><QuietButton label={L('删除', 'Delete')} onPress={onDelete} /></View> : null}
           </View>
           {fixed ? <T v="caption" color={t.ink3} style={[styles.note, { paddingHorizontal: space.lg, paddingBottom: space.md }]}>{L('要去服务器上改，这里删不了', "Change it on the server; it can't be deleted here")}</T> : null}
@@ -232,7 +242,8 @@ export function SettingsProvidersScreen() {
   };
   const keyOf = (r: Shown) => (r.kind === 'cloud' || r.kind === 'custom' || r.kind === 'login'
     ? () => nav.navigate('SetupProvider', { id: r.id, kind: r.kind, from: 'settings', returnTo: 'SettingsProviders' }) : undefined);
-  const deletable = (r: Shown) => (r.kind === 'cloud' && r.key.present) || r.kind === 'custom' || (r.kind === 'local' && r.configured);
+  const deletable = (r: Shown) => (r.kind === 'cloud' && r.key.present) || r.kind === 'custom' || (r.kind === 'local' && r.configured)
+    || (r.kind === 'login' && r.id === 'kimi' && !!r.key?.present);
   return (
     <Page title={L('模型', 'Models')} onBack={() => nav.goBack()} onRefresh={load}
       right={<RoundButton onPress={add} label={L('添加', 'Add')}><Plus size={20} color={t.ink} /></RoundButton>}>

@@ -12,8 +12,8 @@
               模型说太长了：切在这一轮的开头（前面的全压，这一轮正在做的留着）。
   摘要        server.json 的 engine.use.compact 写了模型就用它，不写用这一轮自己的模型（summary_model）；零工具、外人回合式的一次调用
               （run_turn kind = outsider）。10/19 起 engine.use.compact 能写用户自己的 Claude Code（claude-code/…）：这一轮的来路
-              may_spend 认了（主人回合：user / auto / relay），摘要交给他自己登录的 Claude Code 一次性地跑（claude_brain.ask，零工具、
-              不存会话）；不认的（对外接口、后台任务……）换成 outside() 挑的。它没做成（没登录、额度用完、超时……）就换：
+              may_spend 认了（主人回合：user / auto / relay；10/21 起后台任务自己的来路 task 也认），摘要交给他自己登录的 Claude Code
+              一次性地跑（claude_brain.ask，零工具、不存会话）；不认的（对外接口、替外人答的……）换成 outside() 挑的。它没做成（没登录、额度用完、超时……）就换：
               engine.use.compact 写成列表的就按列表（没写成列表按 engine.fallbacks），最后是这一轮自己的模型（以前就用它）；有这些备用时
               它最多等 SUMMARY_TIMEOUT 的一半，换上的拿剩下的（10/20）。
               对话写成 [User] / [Assistant] / [Tool result] 一行行（OpenClaw 的格式，工具结果最多 2000 字），一次最多约 6 万 token，多了分几段、一段段更新

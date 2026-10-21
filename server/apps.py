@@ -10,10 +10,23 @@
   client_id，不注册；否则有 registration_endpoint → 动态注册（DCR，token_endpoint_auth_method 要 none，对方非要给 secret 就留着、
   按它说的方式认证），按（issuer、回调地址）记在 clients.json。授权网址带 PKCE S256、随机 state、resource（RFC 8707：MCP 地址，
   资源元数据的 resource 是它的上级时用那个）、scope（WWW-Authenticate 的，没有就资源元数据的 scopes_supported）。
+  注册过的客户端只在用它换到过令牌以后（ok_at）才沿用；没走完的下次重新注册（有的服务会清掉一直没用过的注册，授权页只回
+  invalid_client，用户关掉页面，我们什么也收不到；10/21 前只在 10 分钟内又点一次时才换）。对方说 invalid_client 就忘掉。
   手机上登录、同意 → 对方跳回 <app 的 scheme>://oauth/callback?code&state → app 交给 POST /api/apps/oauth/callback →
-  换令牌（也带 resource）、列工具。进行中的授权按 state 记在 pending.json：10 分钟、只能用一次，服务重启也还在。
-- 令牌只在这台服务器上：不回给 app、不写日志、不进错误信息。快过期（60 秒内）先刷新；对方回 401 就刷新一次再试；刷新不了标 needs_auth，
-  app 里重新连一下（POST /api/apps/{id}/connect）。删掉时先到授权服务器撤销（有 revocation_endpoint 的话，尽力而为）。
+  换令牌（也带 resource）、列工具。进行中的授权按 state 记在 pending.json：30 分钟（新用户可能要先注册对方的账号、收验证邮件；
+  10/21 前是 10 分钟）、只能用一次，服务重启也还在；又点了一次连接，前一次照样能做完。
+  回调幂等：同一个 state 正在换令牌 → 等那一次的结果；换过了 → 回那个连接器，不报错；没成 → 回当时那句话；超时 → 「授权超时，
+  请重新连接」；不认得 → 说认不出、请重新连。用过的、过期的 state 只记指纹（states.json，留一天）。
+  app 的应用内登录页关掉了、没带回授权 → POST /api/apps/oauth/closed：这一次记成卡在登录那步，用的那个注册下次不沿用；
+  pending 留着（安卓上关掉和跳回来可能前后脚到）。
+- 每一步都记下来（不记令牌、授权码、state，对方错误里原样带回的也抹掉）：找授权服务器、注册、登录和同意、换令牌、列工具。
+  最近有动静的那次记在 apps.json 的 attempt，详情页照着说卡在哪：找不到能用的授权服务器、注册没通过、登录页报错 / 关掉了 /
+  你取消了 / 授权超时、换令牌失败、连不上对方、列工具失败。每一步也追加一行到 apps/log.jsonl，刷新的结果、没调成的调用、
+  状态变化也记（超过 256 KB 留后一半），以后查得到是哪一步、哪天开始坏的。
+- 令牌只在这台服务器上：不回给 app、不写日志、不进错误信息。快过期（60 秒内）先刷新；对方回 401 就刷新一次再试。刷新被对方明确拒绝
+  （invalid_grant、invalid_client 这类，或者不带说法的 400 / 401 / 403）、对方没给刷新令牌，才标 needs_auth，app 里重新连一下
+  （POST /api/apps/{id}/connect）；对方 5xx、server_error、temporarily_unavailable、连不上，只报这一次的错，授权留着下次再试。
+  删掉时先到授权服务器撤销（有 revocation_endpoint 的话，尽力而为）。
 - 用：连上的应用的工具出现在 /mcp 上（mcp_bridge.EXTRA），名字是 <应用 id>__<工具名>（只留 [A-Za-z0-9_-]，最长 64，重名加短哈希），
   说明前面带应用的名字，参数多一个 agent（和桥接工具一个意思；对方自己有 agent 参数就叫 mousse_agent）。每个工具一个档：
   auto 直接调、ask 先交收件箱等你点头、off 不给。默认读的 auto、写的 ask（readOnlyHint；没写就看名字：去掉 notion- 这样的前缀后
@@ -43,9 +56,16 @@ tools/apps/probe_catalog.py，不在仓库里）：
   Cloudflare 文档、DeepWiki、Context7      不用授权（Context7 也有可选的 OAuth，匿名就够用）
   没收 Asana：v2（/v2/mcp）的授权服务器 app.asana.com 既没有 DCR 也没有 CIMD，要先在 Asana 开发者后台注册应用；
   还能 DCR 的 /sse 是要下线的 v1。
+2026-10-21 体检（隔离测试服，回调 grava:// 和 openmousse:// 各一次，只开到登录页；脚本在 crew 会话的临时目录，不在仓库里）：
+  Notion、Todoist、Atlassian、Linear、Sentry、Hugging Face 都过（Todoist、Hugging Face、Notion 登录前就校验 client_id 和回调，
+  假的当场拒）；令牌端点对假授权码、假刷新令牌都回 invalid_grant（请求格式对）。这三个连不了，目录里标 blocked（还列着、排在最后，
+  点了只回一句为什么；server.json 写 apps.catalog {"<id>": {"blocked": null}} 可以放开）：
+  Canva   注册得上，授权页 400 Invalid redirect URI：app 的回调和 https://openmousse.ai/… 都拒，只收 http://127.0.0.1
+  Figma   注册就 403 Forbidden（换 https 回调也一样）：只给它批准过的客户端
+  Stripe  注册回 invalid_redirect_uri：不收 app 自己的 scheme，要 Stripe 加白名单；换成 https 回调能注册、授权页正常
 
 server.json 的 apps 段（都可以不写，每次读文件）：
-  "apps": {"catalog": [{"id", "name", "url", "category", "desc", "mono", "bg", "fg", "border", "auth", "hint"}…]
+  "apps": {"catalog": [{"id", "name", "url", "category", "desc", "mono", "bg", "fg", "border", "auth", "hint", "blocked"}…]
                       或 {"<id>": {…要改的字段} 或 null（藏起来）},
            "client_id_url": "https://…/client.json",   CIMD：对方支持就拿这个网址当 client_id（文档要你自己放在那个网址上）
            "redirect_uris": ["https://…"],             网页版、测试用的 http(s) 回调地址（精确匹配）
@@ -57,8 +77,9 @@ server.json 的 apps 段（都可以不写，每次读文件）：
            "<连接器 id>": {"disabled_tools": ["工具名"], "enabled_tools": ["工具名"]}}
                                                        按远端工具名关：disabled 黑名单，enabled 白名单（空名单 = 全关）；
                                                        不是列表就当没写。档位 off 照旧。调用关掉的工具会说明怎么开回去，不会去连对方
-文件（<data_dir>/apps/，目录 700、文件 600，先写临时文件再改名）：apps.json 各应用的状态、权限和工具（没有秘密）；
-secrets.json 令牌、客户端、授权服务器的端点；clients.json 注册过的客户端；pending.json 进行中的授权；calls.json 等你点头的调用。
+文件（<data_dir>/apps/，目录 700、文件 600，先写临时文件再改名）：apps.json 各应用的状态、权限、工具和最近一次连接走到哪了
+（没有秘密）；secrets.json 令牌、客户端、授权服务器的端点；clients.json 注册过的客户端；pending.json 进行中的授权；states.json
+用过、过期的 state 的指纹和结局；calls.json 等你点头的调用；log.jsonl 每一步的记录（只追加，没有秘密）。
 """
 from __future__ import annotations
 
@@ -112,8 +133,13 @@ AUTHS = ("oauth", "token", "none")
 CATEGORIES = ("common", "dev", "data")
 HTTP_TIMEOUT = httpx.Timeout(15, connect=10)  # 元数据、注册、换令牌、撤销
 CALL_TIMEOUT = 60      # 一次远端操作（连上 → 初始化 → 列工具 / 调工具）最长多少秒
-PENDING_TTL = 600      # 授权要在 10 分钟内做完
+PENDING_TTL = 1800     # 授权要在 30 分钟内做完（新用户可能要先注册对方的账号、收验证邮件）
+STATE_KEEP = 86400     # 用过的、过期的 state 的指纹留一天：同一个回调又来时认得出
+LOG_MAX = 256 * 1024   # apps/log.jsonl 超过这么大留后一半
 REFRESH_AHEAD = 60     # 令牌离过期不到这么多秒就先刷新
+# 刷新时对方回这些：之前的授权确实不能用了，标 needs_auth 请你重新连；别的（server_error、temporarily_unavailable、5xx）下次再试
+DEAD_CODES = {"invalid_grant", "invalid_client", "unauthorized_client", "invalid_scope", "invalid_target", "access_denied",
+              "unsupported_grant_type"}
 MAX_OUT = 30000        # 回给模型的文字最多多少字（和 mcp_bridge 一样掐中间）
 MAX_ARGS = 100000      # 一次调用的参数（JSON）最多多少字
 MAX_DESC = 8000        # mcp_servers（engine/mcp_client.py）的工具说明交给模型时最多多少字；claw 不是 builtin 时连接器的工具说明也是它（clip_desc）
@@ -152,6 +178,8 @@ def quiet():
         _quiet.reset(token)
 
 # 目录。desc / hint 是（中文, English）。mono 是图标块上的 1–3 个字，bg / fg / border 是它的底色、字色、描边（浅底才要描边）。
+# blocked：对方现在不让我们连（10/21 体检），给用户的一句为什么；还列在目录里，点了不去连。
+BLOCKED_APPROVED = ("{name} 目前只让它审核过的应用登录，暂时连不了", "{name} only allows sign-in from apps it has approved, so it can't be connected for now")
 BUILTIN: list[dict] = [
     {"id": "notion", "name": "Notion", "url": "https://mcp.notion.com/mcp", "category": "common", "auth": "oauth",
      "desc": ("查找、读写你的 Notion 页面和数据库", "Search, read and write your Notion pages and databases"),
@@ -161,10 +189,11 @@ BUILTIN: list[dict] = [
     {"id": "atlassian", "name": "Atlassian", "url": "https://mcp.atlassian.com/v1/mcp", "category": "common", "auth": "oauth",
      "desc": ("Jira 的问题和 Confluence 的页面", "Jira issues and Confluence pages"), "mono": "A", "bg": "#0052CC", "fg": "#FFFFFF"},
     {"id": "canva", "name": "Canva", "url": "https://mcp.canva.com/mcp", "category": "common", "auth": "oauth",
-     "desc": ("找你的设计、按你的品牌做新的", "Find your designs and make new ones in your brand"), "mono": "C", "bg": "#7D2AE8", "fg": "#FFFFFF"},
+     "desc": ("找你的设计、按你的品牌做新的", "Find your designs and make new ones in your brand"), "mono": "C", "bg": "#7D2AE8", "fg": "#FFFFFF",
+     "blocked": tuple(s.format(name="Canva") for s in BLOCKED_APPROVED)},
     {"id": "figma", "name": "Figma", "url": "https://mcp.figma.com/mcp", "category": "common", "auth": "oauth",
      "desc": ("读 Figma 文件里的设计、变量和组件", "Read designs, variables and components from your Figma files"),
-     "mono": "F", "bg": "#1E1E1E", "fg": "#FFFFFF"},
+     "mono": "F", "bg": "#1E1E1E", "fg": "#FFFFFF", "blocked": tuple(s.format(name="Figma") for s in BLOCKED_APPROVED)},
     {"id": "github", "name": "GitHub", "url": "https://api.githubcopilot.com/mcp/", "category": "dev", "auth": "token",
      "desc": ("仓库、问题和拉取请求", "Repositories, issues and pull requests"), "mono": "GH", "bg": "#181717", "fg": "#FFFFFF",
      "hint": ("在 github.com/settings/personal-access-tokens 建一个细粒度的个人访问令牌，只选要用的仓库和权限，粘贴到这里",
@@ -181,7 +210,9 @@ BUILTIN: list[dict] = [
     {"id": "context7", "name": "Context7", "url": "https://mcp.context7.com/mcp", "category": "dev", "auth": "none",
      "desc": ("各种库和框架的最新文档", "Up-to-date docs for libraries and frameworks"), "mono": "C7", "bg": "#0E9F6E", "fg": "#FFFFFF"},
     {"id": "stripe", "name": "Stripe", "url": "https://mcp.stripe.com", "category": "data", "auth": "oauth",
-     "desc": ("客户、付款、订阅和退款", "Customers, payments, subscriptions and refunds"), "mono": "S", "bg": "#635BFF", "fg": "#FFFFFF"},
+     "desc": ("客户、付款、订阅和退款", "Customers, payments, subscriptions and refunds"), "mono": "S", "bg": "#635BFF", "fg": "#FFFFFF",
+     "blocked": ("Stripe 要先把我们的 app 加进它的白名单才能登录，暂时连不了",
+                 "Stripe has to add this app to its allowlist before you can sign in, so it can't be connected for now")},
     {"id": "huggingface", "name": "Hugging Face", "url": "https://huggingface.co/mcp", "category": "data", "auth": "oauth",
      "desc": ("搜模型、数据集、Spaces 和论文", "Search models, datasets, Spaces and papers"), "mono": "HF", "bg": "#FFD21E", "fg": "#1F2937"},
 ]
@@ -199,6 +230,18 @@ class TokenError(AppError):
     def __init__(self, message: str, code: str = "", status: int = 0):
         super().__init__(message)
         self.code, self.status = code, status
+
+
+class NetError(AppError):
+    """连不上对方（断网、超时、DNS）：对方没说话，不是它拒了。"""
+
+
+class StepError(AppError):
+    """连接卡在某一步：话前面是这一步的标题（「注册没通过：…」），attempt 记着走到哪了。"""
+
+    def __init__(self, message: str, attempt: Attempt):
+        super().__init__(message)
+        self.attempt = attempt
 
 
 class Unauthorized(Exception):
@@ -282,8 +325,11 @@ def forget(aid: str) -> None:
         if s.pop(aid, None) is not None:
             store("secrets.json", s)
         p = load("pending.json")
-        if any(v.get("app") == aid for v in p.values()):
-            store("pending.json", {k: v for k, v in p.items() if v.get("app") != aid})
+        gone = [k for k, v in p.items() if isinstance(v, dict) and v.get("app") == aid]
+        if gone:  # 正在授权的作废；回调再来说一句「删掉了」
+            store("pending.json", {k: v for k, v in p.items() if k not in gone})
+            msg = L("这个连接器已经删掉了", "This connector was removed")
+            _note_states({sid_of(k): {"app": aid, "at": time.time(), "how": "failed", "status": 404, "message": msg} for k in gone})
 
 
 def secret(aid: str) -> dict:
@@ -303,6 +349,32 @@ def set_secret(aid: str, value: dict | None) -> None:
 
 def mark(aid: str, status: str, error: str = "") -> None:
     change(aid, status=status, error=error[:300])
+    log_step(aid, "status", False, error, status=status)
+
+
+_log_lock = threading.Lock()
+
+
+def log_step(aid: str, step: str, ok: bool | None, note: str = "", **extra: Any) -> None:
+    """追加一行到 apps/log.jsonl：哪个连接器、哪一步、成没成（None = 等着）、对方怎么说。不记令牌、授权码、state（attempt 是 state
+    的指纹）。超过 LOG_MAX 留后一半。写不了就算了，不耽误连接。"""
+    row = {"at": now_iso(), "app": aid, "step": step, "ok": ok, **{k: v for k, v in extra.items() if v not in (None, "")}}
+    if note:
+        row["note"] = clean(note, 300)
+    with _log_lock, suppress(OSError):
+        d = home()
+        d.mkdir(parents=True, exist_ok=True)
+        os.chmod(d, 0o700)
+        p = d / "log.jsonl"
+        with os.fdopen(os.open(p, os.O_WRONLY | os.O_CREAT | os.O_APPEND, 0o600), "a", encoding="utf8") as f:
+            f.write(json.dumps(row, ensure_ascii=False) + "\n")
+        if p.stat().st_size > LOG_MAX:
+            data = p.read_bytes()
+            rest = data[len(data) // 2:]
+            tmp = d / f".log.jsonl.{os.getpid()}.tmp"
+            with os.fdopen(os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600), "wb") as f:
+                f.write(rest[rest.find(b"\n") + 1:])
+            os.replace(tmp, p)
 
 
 # —— 目录 ——————————————————————————————————————————————————————————————
@@ -419,7 +491,13 @@ def catalog() -> dict[str, dict]:
 def catalog_json(e: dict, installed: bool) -> dict:
     return {"id": e["id"], "name": e["name"], "url": e["url"], "category": e["category"], "desc": text_of(e.get("desc")),
             "mono": str(e.get("mono") or initials(e["name"]))[:3], "bg": e.get("bg") or "#4B5563", "fg": e.get("fg") or "#FFFFFF",
-            "border": e.get("border"), "auth": e["auth"], "hint": text_of(e.get("hint")) or None, "installed": installed}
+            "border": e.get("border"), "auth": e["auth"], "hint": text_of(e.get("hint")) or None, "installed": installed,
+            "blocked": text_of(e.get("blocked")) or None}
+
+
+def blocked_of(aid: str | None) -> str:
+    """目录里标了 blocked 的（对方不让我们连）：给用户的那句话；没标就空。"""
+    return text_of((catalog().get(aid or "") or {}).get("blocked"))
 
 
 def initials(name: str) -> str:
@@ -595,7 +673,7 @@ async def post(c: httpx.AsyncClient, url: str, guard: Guard, **kw) -> httpx.Resp
     try:
         return await c.post(url, **kw)
     except httpx.HTTPError as e:
-        raise AppError(L(f"连不上 {urlsplit(url).hostname}（{reason(e)}）", f"Couldn't reach {urlsplit(url).hostname} ({reason(e)})")) from e
+        raise NetError(L(f"连不上 {urlsplit(url).hostname}（{reason(e)}）", f"Couldn't reach {urlsplit(url).hostname} ({reason(e)})")) from e
 
 
 def prm_candidates(hinted: str | None, url: str) -> list[str]:
@@ -655,7 +733,7 @@ async def _discover(url: str, guard: Guard) -> dict:
             if r.status_code == 401:
                 www = r.headers.get("www-authenticate") or ""
         except httpx.HTTPError as e:
-            raise AppError(L(f"连不上 {host}（{reason(e)}）", f"Couldn't reach {host} ({reason(e)})")) from e
+            raise NetError(L(f"连不上 {host}（{reason(e)}）", f"Couldn't reach {host} ({reason(e)})")) from e
         hinted, scope = header_field(www, "resource_metadata"), header_field(www, "scope")
         prm = None
         for u in prm_candidates(hinted, url):
@@ -691,17 +769,17 @@ async def _discover(url: str, guard: Guard) -> dict:
     return {"issuer": issuer, "as": meta, "resource": resource, "scope": scope}
 
 
-async def client_for(disc: dict, redirect_uri: str, guard: Guard, fresh: bool = False) -> dict:
-    """我们在这个授权服务器上的客户端：CIMD（配了 client_id_url、对方支持）→ 注册过的（clients.json）→ 现在动态注册一个。
-    fresh = 不用注册过的，重新注册（上一次授权没做完就又来了：多半是对方已经不认那个客户端，授权页直接报错、回不到我们这里）。"""
+async def client_for(disc: dict, redirect_uri: str, guard: Guard) -> dict:
+    """我们在这个授权服务器上的客户端：CIMD（配了 client_id_url、对方支持）→ 换到过令牌的（clients.json 里有 ok_at）→ 现在动态注册一个。
+    注册了还没用成过的不沿用：上一次没走完，多半是授权页报了错（对方清掉了一直没用的注册、不认这个客户端），用户只能关掉页面。"""
     meta, issuer = disc["as"], disc["issuer"]
     cid_url = str(cfg().get("client_id_url") or "")
     u = urlsplit(cid_url)
     if cid_url and u.scheme == "https" and u.path not in ("", "/") and meta.get("client_id_metadata_document_supported") is True:
         return {"client_id": cid_url, "token_endpoint_auth_method": "none"}
     key = f"{issuer}|{redirect_uri}"
-    known = None if fresh else load("clients.json").get(key)
-    if isinstance(known, dict) and known.get("client_id"):
+    known = load("clients.json").get(key)
+    if isinstance(known, dict) and known.get("client_id") and known.get("ok_at"):
         exp = known.get("client_secret_expires_at") or 0
         if not exp or exp > time.time() + 300:
             return known
@@ -722,7 +800,7 @@ async def client_for(disc: dict, redirect_uri: str, guard: Guard, fresh: bool = 
     except ValueError:
         info = {}
     if r.status_code not in (200, 201) or not isinstance(info, dict) or not info.get("client_id"):
-        raise AppError(L(f"注册客户端没成功（{oauth_error(info, r.status_code)}）", f"Client registration failed ({oauth_error(info, r.status_code)})"))
+        raise AppError(L(f"对方回了 {oauth_error(info, r.status_code)}", f"the server answered {oauth_error(info, r.status_code)}"))
     client = {"client_id": str(info["client_id"]), "token_endpoint_auth_method": str(info.get("token_endpoint_auth_method") or
                                                                                     ("client_secret_basic" if info.get("client_secret") else "none")),
               "registered_at": now_iso()}
@@ -736,12 +814,23 @@ async def client_for(disc: dict, redirect_uri: str, guard: Guard, fresh: bool = 
     return client
 
 
-def drop_client(issuer: str, redirect_uri: str) -> None:
-    """对方说不认这个客户端（invalid_client）：忘掉，下次重新注册。"""
+def forget_client(client_id: str) -> None:
+    """对方说不认这个客户端（invalid_client）：从 clients.json 拿掉，下次重新注册。"""
     with _lock:
         cs = load("clients.json")
-        if cs.pop(f"{issuer}|{redirect_uri}", None) is not None:
-            store("clients.json", cs)
+        keep = {k: v for k, v in cs.items() if not (isinstance(v, dict) and v.get("client_id") == client_id)}
+        if len(keep) != len(cs):
+            store("clients.json", keep)
+
+
+def prove_client(issuer: str, redirect_uri: str, client: dict) -> None:
+    """用这个客户端换到了令牌：记上 ok_at，以后连这个授权服务器就沿用它（CIMD 的不用记）。中途又注册过新的，也换回这个用成过的。"""
+    if not client.get("registered_at"):
+        return
+    with _lock:
+        cs = load("clients.json")
+        cs[f"{issuer}|{redirect_uri}"] = {**client, "ok_at": now_iso()}
+        store("clients.json", cs)
 
 
 def client_auth(client: dict, form: dict, headers: dict) -> None:
@@ -755,6 +844,15 @@ def client_auth(client: dict, form: dict, headers: dict) -> None:
         form.update(client_id=cid, client_secret=str(sec))
     else:
         form["client_id"] = cid
+
+
+def scrub(text: str, form: dict) -> str:
+    """对方的错误里原样带回了授权码、刷新令牌、client_secret 的，抹掉：这句话会进 apps.json、日志、回给 app。"""
+    for k in ("code", "code_verifier", "refresh_token", "client_secret"):
+        v = str(form.get(k) or "")
+        if len(v) >= 6:
+            text = text.replace(v, "…")
+    return text
 
 
 def oauth_error(body: Any, status: int) -> str:
@@ -776,7 +874,7 @@ async def token_request(endpoint: str, client: dict, form: dict, guard: Guard) -
     except ValueError:
         body = {}
     if r.status_code != 200 or not isinstance(body, dict) or not body.get("access_token"):
-        raise TokenError(oauth_error(body, r.status_code), code=str((body or {}).get("error") or "") if isinstance(body, dict) else "",
+        raise TokenError(scrub(oauth_error(body, r.status_code), form), code=str((body or {}).get("error") or "") if isinstance(body, dict) else "",
                          status=r.status_code)
     if str(body.get("token_type") or "bearer").lower() != "bearer":
         raise TokenError(L("对方给的不是 Bearer 令牌", "The server didn't issue a Bearer token"))
@@ -818,18 +916,114 @@ def keep_tokens(aid: str, body: dict, oauth: dict | None = None) -> None:
         store("secrets.json", s)
 
 
-async def begin(app: dict, redirect_uri: str) -> dict:
-    """开始授权：找授权服务器、拿客户端、记下这一次（state），给 app 一个授权网址。"""
+# —— 连接的几步 ————————————————————————————————————————————————————————————
+
+# 每一步：（叫什么，卡在这一步时的标题）。{name} 是连接器的名字
+STEPS = {
+    "discover": (("找授权服务器", "Find the authorization server"), ("找不到能用的授权服务器", "Couldn't find a usable authorization server")),
+    "register": (("注册这个应用", "Register this app"), ("注册没通过", "Registration was refused")),
+    "authorize": (("在 {name} 登录、同意", "Sign in and approve at {name}"), ("登录页报错", "The sign-in page returned an error")),
+    "token": (("换令牌", "Get a token"), ("换令牌失败", "Token exchange failed")),
+    "tools": (("列出工具", "List the tools"), ("列工具失败", "Couldn't list the tools")),
+}
+WHY = {  # 卡住的原因另有标题的
+    "net": ("连不上 {name}", "Couldn't reach {name}"),
+    "closed": ("登录页关掉了，没有带回授权", "The sign-in page was closed without finishing"),
+    "cancelled": ("你取消了授权", "You cancelled the sign-in"),
+    "timeout": ("授权超时", "The sign-in timed out"),
+}
+
+
+def headline(key: str, why: str, name: str) -> str:
+    zh, en = WHY.get(why) or STEPS[key][1]
+    return L(zh, en).format(name=name)
+
+
+def say(key: str, why: str, name: str, note: str) -> str:
+    """卡住时回给 app 的那句：标题 + 对方的话。连不上的用这一步的标题（那句话自己就说了连不上谁）。"""
+    h = headline(key, "" if why == "net" else why, name)
+    return L(f"{h}：{note}", f"{h}: {note}")
+
+
+class Attempt:
+    """一次连接走到哪了：id 是 state 的指纹；steps 每步 {key, ok（True 成 / False 卡住 / None 等着）, at, note, why}。每一步追加一行到
+    log.jsonl；json() 存进 apps.json 的 attempt（详情页照着说卡在哪一步，最近有动静的那次）和 pending.json（回调时接着记）。"""
+
+    def __init__(self, aid: str, sid: str, saved: Any = None):
+        saved = saved if isinstance(saved, dict) else {}
+        self.aid, self.sid = aid, sid
+        self.at, self.t = str(saved.get("at") or now_iso()), float(saved.get("t") or time.time())
+        self.steps = [s for s in saved.get("steps") or [] if isinstance(s, dict) and s.get("key") in STEPS]
+
+    def put(self, key: str, ok: bool | None, note: str = "", why: str = "", **log: Any) -> None:
+        row = {"key": key, "ok": ok, "at": now_iso(), **({"note": clean(note, 300)} if note else {}), **({"why": why} if why else {})}
+        self.steps = [s for s in self.steps if s["key"] != key] + [row]
+        log_step(self.aid, key, ok, note, attempt=self.sid, why=why, **log)
+
+    def fail(self, key: str, e: AppError, name: str) -> StepError:
+        why = "net" if isinstance(e, NetError) else ""
+        self.put(key, False, str(e), why)
+        return StepError(say(key, why, name, str(e)), self)
+
+    def json(self) -> dict:
+        return {"id": self.sid, "at": self.at, "t": self.t, "steps": self.steps}
+
+
+def epoch(iso: Any) -> float:
+    try:
+        return datetime.fromisoformat(str(iso)).timestamp()
+    except ValueError:
+        return 0.0
+
+
+def attempt_json(app: dict) -> dict | None:
+    """最近一次 OAuth 连接走到哪了（给详情页）：五步按顺序，每步 state 是 done / failed / waiting / todo，没过的那步带上对方的话；
+    title 是卡住的标题（没卡住是 None）。登录那步等了超过 30 分钟算授权超时。这次开始以后又连上过（connectedAt 更晚）就不给：
+    那是旧事了，现在的问题看 error。"""
+    a = app.get("attempt")
+    if app.get("auth") != "oauth" or not isinstance(a, dict) or epoch(app.get("connectedAt")) >= epoch(a.get("at")) > 0:
+        return None
+    name = app["name"]
+    got = {s.get("key"): s for s in a.get("steps") or [] if isinstance(s, dict)}
+    steps, title, failed = [], None, None
+    for key, (label, _) in STEPS.items():
+        s = got.get(key)
+        why, note = str((s or {}).get("why") or ""), str((s or {}).get("note") or "")
+        if s is None:
+            state = "todo"
+        elif s.get("ok") is True:
+            state, note = "done", ""
+        elif s.get("ok") is None and time.time() - float(a.get("t") or 0) < PENDING_TTL:
+            state = "waiting"
+        else:
+            state = "failed"
+            if s.get("ok") is None:
+                why, note = "timeout", L(f"{PENDING_TTL // 60} 分钟内没收到授权结果", f"No result came back within {PENDING_TTL // 60} minutes")
+        if state == "failed" and failed is None:
+            failed, title = key, headline(key, why, name)
+        steps.append({"key": key, "label": L(*label).format(name=name), "state": state, "note": note})
+    return {"at": a.get("at"), "failed": failed, "title": title, "steps": steps}
+
+
+async def begin(app: dict, redirect_uri: str) -> tuple[dict, Attempt]:
+    """开始授权：找授权服务器、拿客户端、记下这一次（state），给 app 一个授权网址 → ({authorizeUrl, state}, 走到哪了)。
+    哪一步不成抛 StepError（话前面是卡在哪一步）；存不存进 apps.json 由调用的定（新加的应用这时候还不在里面）。"""
+    name = app["name"]
+    state = secrets.token_urlsafe(24)
+    att = Attempt(app["id"], sid_of(state))
     guard = Guard(app["url"])
-    disc = await discover(app["url"], guard)
-    now = time.time()
-    # 上一次还没回来就又点了：多半是授权页报了错（对方不认缓存的客户端）。这次换一个新注册的，上一次作废（只换一次）
-    unfinished = [k for k, v in load("pending.json").items() if isinstance(v, dict) and v.get("app") == app["id"]
-                  and v.get("redirect_uri") == redirect_uri and now - (v.get("created") or 0) < PENDING_TTL]
-    client = await client_for(disc, redirect_uri, guard, fresh=bool(unfinished))
+    try:
+        disc = await discover(app["url"], guard)
+    except AppError as e:
+        raise att.fail("discover", e, name) from None
+    att.put("discover", True, issuer=disc["issuer"])
+    try:
+        client = await client_for(disc, redirect_uri, guard)
+    except AppError as e:
+        raise att.fail("register", e, name) from None
+    att.put("register", True, client="reused" if client.get("ok_at") else ("new" if client.get("registered_at") else "cimd"))
     verifier = secrets.token_urlsafe(64)
     challenge = base64.urlsafe_b64encode(hashlib.sha256(verifier.encode()).digest()).rstrip(b"=").decode()
-    state = secrets.token_urlsafe(24)
     params = {"response_type": "code", "client_id": client["client_id"], "redirect_uri": redirect_uri, "state": state,
               "code_challenge": challenge, "code_challenge_method": "S256", "resource": disc["resource"]}
     if disc.get("scope"):
@@ -838,60 +1032,165 @@ async def begin(app: dict, redirect_uri: str) -> dict:
     q = parse_qsl(ep.query, keep_blank_values=True) + list(params.items())
     url = urlunsplit((ep.scheme, ep.netloc, ep.path, urlencode(q, quote_via=quote), ""))
     meta = disc["as"]
-    with _lock:
+    att.put("authorize", None)
+    with _lock:  # 前几次没做完的留着（30 分钟内照样能做完）：又点一次多半是那边卡住了，可人也可能是切回去接着做
         now = time.time()
-        pend = {k: v for k, v in load("pending.json").items()
-                if isinstance(v, dict) and now - (v.get("created") or 0) < PENDING_TTL and k not in unfinished}
+        pend = _live(load("pending.json"), now)
         pend[state] = {"app": app["id"], "created": now, "verifier": verifier, "redirect_uri": redirect_uri, "issuer": disc["issuer"],
                        "client": client, "resource": disc["resource"], "scope": disc.get("scope"), "token_endpoint": str(meta["token_endpoint"]),
-                       "revocation_endpoint": str(meta.get("revocation_endpoint") or "") or None}
-        while len(pend) > 50:  # 点了又不做完的：最多留 50 个
-            pend.pop(min(pend, key=lambda k: pend[k]["created"]))
+                       "revocation_endpoint": str(meta.get("revocation_endpoint") or "") or None, "attempt": att.json()}
+        while len(pend) > 50:  # 点了又不做完的：最多留 50 个，挤掉的回调再来按超时说
+            old = min(pend, key=lambda k: pend[k]["created"])
+            _note_states({sid_of(old): {"app": pend.pop(old).get("app"), "at": now, "how": "expired"}})
         store("pending.json", pend)
-    return {"authorizeUrl": url, "state": state}
+    return {"authorizeUrl": url, "state": state}, att
+
+
+# —— 回调（幂等） ————————————————————————————————————————————————————————————
+
+def sid_of(state: str) -> str:
+    """state 的指纹：states.json 里只记它，不记 state 本身。"""
+    return hashlib.sha256(state.encode()).hexdigest()[:24]
+
+
+def _note_states(entries: dict[str, dict]) -> None:
+    """（拿着 _lock 调）几个 state 的结局写进 states.json，一天以前的顺手清掉。"""
+    now = time.time()
+    st = {k: v for k, v in load("states.json").items() if isinstance(v, dict) and now - (v.get("at") or 0) < STATE_KEEP}
+    st.update(entries)
+    store("states.json", st)
+
+
+def _live(pend: dict, now: float) -> dict:
+    """（拿着 _lock 调）pending 里还没过期的；过期的记成 expired，回调过后再来能说「授权超时」。"""
+    keep, gone = {}, {}
+    for k, v in pend.items():
+        if isinstance(v, dict) and now - (v.get("created") or 0) < PENDING_TTL:
+            keep[k] = v
+        elif isinstance(v, dict):
+            gone[sid_of(k)] = {"app": v.get("app"), "at": now, "how": "expired"}
+    if gone:
+        _note_states(gone)
+    return keep
+
+
+def end_state(sid: str, aid: str, how: str, status: int = 0, message: str = "") -> None:
+    """记下一次授权的结局：done 换到了令牌；failed 没成（status、message 是当时回给 app 的，同一个回调再来回同一句）；expired 超时。"""
+    with _lock:
+        _note_states({sid: {"app": aid, "at": time.time(), "how": how, **({"status": status, "message": message[:300]} if message else {})}})
+
+
+def timed_out() -> HTTPException:
+    return HTTPException(400, L(f"授权超时（要在 {PENDING_TTL // 60} 分钟内做完），请重新连接",
+                                f"The sign-in timed out (it has to be finished within {PENDING_TTL // 60} minutes). Please connect again"))
+
+
+def seen(sid: str) -> dict:
+    """pending 里没有这个 state：按 states.json 记的结局回。换过了 → 那个连接器（不算错）。"""
+    v = load("states.json").get(sid)
+    if not isinstance(v, dict):
+        raise HTTPException(400, L("这次授权已经失效了（服务器认不出它，可能隔得太久）。请重新连接",
+                                   "This sign-in is no longer valid (the server doesn't recognise it; it may be too old). Please connect again"))
+    if v.get("how") == "done":
+        if get(str(v.get("app") or "")) is None:
+            raise HTTPException(404, L("这个连接器已经删掉了", "This connector was removed"))
+        return detail(str(v["app"]))
+    if v.get("how") == "expired":
+        raise timed_out()
+    raise HTTPException(int(v.get("status") or 400), str(v.get("message") or L("这次授权没成功，请重新连接", "This sign-in didn't work. Please connect again")))
+
+
+_finishing: dict[str, asyncio.Task] = {}  # 正在换令牌的回调（按 state 的指纹）：同一个又来就等这一次的结果
 
 
 async def finish(state: str, code: str, error: str, error_description: str, iss: str) -> dict:
-    """授权回来了：认 state（一次性）、换令牌、存起来、列工具。→ 应用的详情。"""
-    with _lock:
-        pend = load("pending.json")
-        p = pend.pop(state, None) if state else None
-        store("pending.json", {k: v for k, v in pend.items() if isinstance(v, dict) and time.time() - (v.get("created") or 0) < PENDING_TTL})
-    if not isinstance(p, dict) or time.time() - (p.get("created") or 0) >= PENDING_TTL:
-        raise HTTPException(400, L("这次授权已经过期或者用过了：回到连接器重新连一次", "This authorization has expired or was already used: start again from Connectors"))
-    app = get(p["app"])
+    """授权回来了 → 应用的详情。幂等：同一个 state 正在换令牌就等那一次；换过了回那个连接器；没成的回当时那句话；
+    超时的说「授权超时」；不认得的说清楚。真正做事在 _finish，是个单独的任务：app 那头断了线也会做完、记下结局，app 重试时有答案
+    （10/21 Leo 连 Hugging Face：回调交到一半断网，再交一次只会得到「已经过期或者用过了」）。"""
+    if not state:
+        raise HTTPException(400, L("回调里没有 state", "The callback has no state"))
+    sid = sid_of(state)
+    task = _finishing.get(sid)
+    if task is None:
+        with _lock:
+            pend = load("pending.json")
+            p = pend.pop(state, None)
+            if p is not None:
+                store("pending.json", _live(pend, time.time()))
+        if not isinstance(p, dict):
+            return seen(sid)
+        if time.time() - (p.get("created") or 0) >= PENDING_TTL:
+            aid = str(p.get("app") or "")
+            end_state(sid, aid, "expired")
+            att = Attempt(aid, sid, p.get("attempt"))
+            att.put("authorize", False, L(f"授权结果过了 {PENDING_TTL // 60} 分钟才交回来", f"The result came back after {PENDING_TTL // 60} minutes"),
+                    "timeout")
+            change(aid, attempt=att.json())
+            raise timed_out()
+        task = asyncio.ensure_future(_finish(sid, p, code, error, error_description, iss))
+        _finishing[sid] = task
+
+        def done(t: asyncio.Task) -> None:
+            _finishing.pop(sid, None)
+            if not t.cancelled():
+                t.exception()  # 取一下：等它的请求断了线时，别报「异常没人取」
+
+        task.add_done_callback(done)
+    return await asyncio.shield(task)
+
+
+async def _finish(sid: str, p: dict, code: str, error: str, error_description: str, iss: str) -> dict:
+    """认过 state 以后：换令牌、存起来、列工具。每一步记进 attempt，结局记进 states.json。"""
+    aid = str(p.get("app") or "")
+    att = Attempt(aid, sid, p.get("attempt"))
+    app = get(aid)
     if not app:
-        raise HTTPException(404, L("这个连接器已经删掉了", "This connector was removed"))
-    aid, name, connected = app["id"], app["name"], app.get("status") == "connected"
-    if error:
+        gone = L("这个连接器已经删掉了", "This connector was removed")
+        log_step(aid, "authorize", False, gone, attempt=sid)
+        end_state(sid, aid, "failed", 404, gone)
+        raise HTTPException(404, gone)
+    name, connected = app["name"], app.get("status") == "connected"
+
+    def failed(key: str, note: str, why: str = "", status: int = 400, message: str = "") -> HTTPException:
+        """这一次没成：这一步记成卡住，结局记进 states.json（同一个回调再来回同一句）；没连上过的标 needs_auth。"""
+        message = message or say(key, why, name, note)
+        att.put(key, False, note, why)
+        end_state(sid, aid, "failed", status, message)
+        change(aid, attempt=att.json(), **({} if connected else {"status": "needs_auth", "error": message[:300]}))
+        return HTTPException(status, message)
+
+    if error:  # 对方的授权页带着错误跳回来了
+        note = clean(error, 60) + (f": {clean(error_description, 160)}" if error_description else "")
         if error == "access_denied":
-            why = L(f"你在 {name} 那边取消了", f"you cancelled at {name}")
-        else:
-            why = clean(error, 60) + (f": {clean(error_description, 160)}" if error_description else "")
-        if not connected:
-            mark(aid, "needs_auth", why)
-        raise HTTPException(400, L(f"{name} 没有授权：{why}", f"{name} didn't grant access: {why}"))
+            raise failed("authorize", note, "cancelled", message=L(f"你在 {name} 那边取消了授权", f"You cancelled the sign-in at {name}"))
+        raise failed("authorize", note)
     if iss and iss.rstrip("/") != str(p.get("issuer") or "").rstrip("/"):
-        raise HTTPException(400, L("回调里的 iss 和授权服务器对不上，没接受", "The callback's iss doesn't match the authorization server; not accepted"))
+        raise failed("authorize", L("回调里的 iss 和授权服务器对不上，没接受", "The callback's iss doesn't match the authorization server; not accepted"))
     if not code:
-        raise HTTPException(400, L("回调里没有 code", "The callback has no code"))
+        raise failed("authorize", L("回调里没有 code", "The callback has no code"))
+    att.put("authorize", True)
     form = {"grant_type": "authorization_code", "code": code, "redirect_uri": p["redirect_uri"], "code_verifier": p["verifier"],
             "resource": p["resource"]}
     try:
         body = await token_request(p["token_endpoint"], p["client"], form, Guard(app["url"]))
     except AppError as e:
         if isinstance(e, TokenError) and e.code == "invalid_client":
-            drop_client(p["issuer"], p["redirect_uri"])
-        if not connected:
-            mark(aid, "needs_auth", str(e))
-        raise HTTPException(502, L(f"向 {name} 换令牌没成功：{e}", f"Couldn't get a token from {name}: {e}")) from None
+            forget_client(str(p["client"].get("client_id") or ""))
+        raise failed("token", str(e), "net" if isinstance(e, NetError) else "", 502) from None
+    att.put("token", True)
     keep_tokens(aid, body, oauth={"issuer": p["issuer"], "token_endpoint": p["token_endpoint"], "revocation_endpoint": p.get("revocation_endpoint"),
                                   "resource": p["resource"], "scope": p.get("scope"), "client": p["client"]})
-    change(aid, status="connected", error="", connectedAt=now_iso(), account=account_of(body))
+    prove_client(p["issuer"], p["redirect_uri"], p["client"])
+    change(aid, status="connected", error="", connectedAt=now_iso(), account=account_of(body), attempt=att.json())
+    end_state(sid, aid, "done")
     try:
         await refresh_tools(aid)
     except AppError as e:
-        mark(aid, "error", str(e))
+        att.put("tools", False, str(e))
+        mark(aid, "error", say("tools", "", name, str(e)))
+    else:
+        att.put("tools", True)
+    change(aid, attempt=att.json())
     log_activity(L(f"连上了 {name}", f"Connected {name}"), "edit")
     return detail(aid)
 
@@ -933,12 +1232,21 @@ async def bearer(aid: str, stale: str | None = None) -> str | None:
             form["resource"] = oauth["resource"]
         try:
             body = await token_request(oauth["token_endpoint"], oauth.get("client") or {}, form, Guard(app["url"]))
-        except TokenError as e:
-            if e.status in (400, 401, 403) or e.code:
-                mark(aid, "needs_auth", expired)
-                raise AuthError(expired) from None
-            raise AppError(L(f"刷新 {name} 的授权没成功：{e}", f"Couldn't refresh {name}'s authorization: {e}")) from None
+        except AppError as e:
+            # 对方明确不认之前的授权了才请你重新连。对方自己出错（5xx、server_error、temporarily_unavailable）、连不上，
+            # 只报这一次：授权留着，下次调用再刷新（10/21 前带任何错误码的都标 needs_auth，对方打个嗝就得重新授权）
+            if isinstance(e, TokenError) and (e.code in DEAD_CODES or (not e.code and e.status in (400, 401, 403))):
+                log_step(aid, "refresh", False, str(e), then="reconnect")
+                if e.code in ("invalid_client", "unauthorized_client"):  # 重新连的时候别再拿这个客户端
+                    forget_client(str((oauth.get("client") or {}).get("client_id") or ""))
+                msg = L(f"{name} 的授权失效了（{e}）：请在 设置 → 连接器 → {name} 里重新连一下",
+                        f"{name}'s authorization has expired ({e}): reconnect it in Settings → Connectors → {name}")
+                mark(aid, "needs_auth", msg)
+                raise AuthError(msg) from None
+            log_step(aid, "refresh", False, str(e), then="retry")
+            raise AppError(L(f"刷新 {name} 的授权没成功（{e}），下次再试", f"Couldn't refresh {name}'s authorization ({e}); will retry next time")) from None
         keep_tokens(aid, body)
+        log_step(aid, "refresh", True, rotated=bool(body.get("refresh_token")))
         return str(body["access_token"])
 
 
@@ -1114,7 +1422,11 @@ def result_text(res: types.CallToolResult) -> tuple[str, bool]:
 
 
 async def call(aid: str, tool: str, args: dict) -> tuple[str, bool]:
-    return result_text(await remote(aid, call_op(tool, args)))
+    try:
+        return result_text(await remote(aid, call_op(tool, args)))
+    except AppError as e:  # 只记没调成的（不记参数）：连接器突然不好用了，日志里查得到从哪次开始
+        log_step(aid, "call", False, str(e), tool=tool)
+        raise
 
 
 def reads(name: str) -> bool:
@@ -1223,7 +1535,8 @@ def public(app: dict) -> dict:
             "account": app.get("account") or "", "connectedAt": app.get("connectedAt"), "createdAt": app.get("createdAt"),
             "updatedAt": app.get("updatedAt"), "toolsAt": app.get("toolsAt"), "toolCount": len(tools), "readCount": reads_n,
             "writeCount": len(tools) - reads_n, "offCount": sum(1 for t in tools if level_of(app, t) == "off"), "policy": policy_of(app),
-            "overrides": dict(app.get("overrides") or {}), "agents": list(app.get("agents") or [])}
+            "overrides": dict(app.get("overrides") or {}), "agents": list(app.get("agents") or []),
+            "blocked": blocked_of(app.get("catalog")) or None, "attempt": attempt_json(app)}
 
 
 def detail(aid: str) -> dict:
@@ -1542,10 +1855,12 @@ mcp_bridge.EXTRA.append((mcp_tools, mcp_call))
 
 @router.get("/api/apps")
 def list_apps():
-    """连着的应用、目录（installed = 已经加了）、能给权限的 Agent。"""
+    """连着的应用、目录（installed = 已经加了；连不了的 blocked 排在最后：老 app 不认得这个字段，「推荐」「先连常用的」取前几个就轮不到它们）、
+    能给权限的 Agent。"""
     apps = all_apps()
+    items = sorted(catalog().values(), key=lambda e: bool(text_of(e.get("blocked"))))
     return {"ok": True, "apps": [public(a) for a in sorted(apps.values(), key=lambda a: a.get("createdAt") or "")],
-            "catalog": [catalog_json(e, e["id"] in apps) for e in catalog().values()], "agents": agent_list()}
+            "catalog": [catalog_json(e, e["id"] in apps) for e in items], "agents": agent_list()}
 
 
 class AddIn(BaseModel):
@@ -1566,6 +1881,8 @@ async def add_app(body: AddIn):
         e = catalog().get(body.catalog.strip())
         if not e:
             raise HTTPException(404, L("目录里没有这个应用", "No such app in the catalog"))
+        if text_of(e.get("blocked")):
+            raise HTTPException(400, text_of(e.get("blocked")))
         aid, name, url, auth, custom = e["id"], e["name"], e["url"], e["auth"], False
     else:
         name = (body.name or "").strip()
@@ -1593,12 +1910,12 @@ async def add_app(body: AddIn):
         app.update(mono=initials(name), bg=TILE_COLORS[int(hashlib.sha256(aid.encode()).hexdigest(), 16) % len(TILE_COLORS)], fg="#FFFFFF")
     if auth == "oauth":
         try:
-            got = await begin(app, redirect)
-        except AppError as e:
+            got, att = await begin(app, redirect)
+        except StepError as e:
             if cur:
-                change(aid, error=str(e))
+                change(aid, error=str(e), attempt=e.attempt.json())
             raise HTTPException(502, str(e)) from None
-        put(app)
+        put({**app, "attempt": att.json()})
         log_activity(L(f"开始连接 {name}", f"Started connecting {name}"), "edit")
         return {"ok": True, "app": detail(aid), **got}
     put(app)
@@ -1635,6 +1952,38 @@ async def oauth_callback(body: CallbackIn):
                                             (body.error_description or "").strip(), (body.iss or "").strip())}
 
 
+class ClosedIn(BaseModel):
+    state: str = ""
+    how: str | None = None  # 登录页怎么结束的（expo-web-browser 的 cancel / dismiss），只进日志
+
+
+@router.post("/api/apps/oauth/closed")
+async def oauth_closed(body: ClosedIn):
+    """app 的应用内登录页关掉了、没带回授权 → {app}。这一次记成卡在登录那步；用的那个注册下次不沿用（有的服务清掉了一直没用的注册，
+    授权页只说 invalid_client，你只能关掉）。pending 留着：安卓上关掉和跳回来可能前后脚到，晚到的回调照样能做完。
+    正在换令牌、已经有结局、认不出的 state：什么都不改。"""
+    state = body.state.strip()
+    sid = sid_of(state) if state else ""
+    p = load("pending.json").get(state) if state else None
+    if not isinstance(p, dict) or sid in _finishing:
+        v = load("states.json").get(sid) if sid else None
+        aid = str(v.get("app") or "") if isinstance(v, dict) else ""
+        return {"ok": True, "app": detail(aid) if aid and get(aid) else None}
+    aid = str(p.get("app") or "")
+    app = get(aid)
+    if not app:
+        return {"ok": True, "app": None}
+    name, client = app["name"], p.get("client") or {}
+    if client.get("registered_at"):
+        forget_client(str(client.get("client_id") or ""))
+    att = Attempt(aid, sid, p.get("attempt"))
+    note = L(f"页面上要是报了错，多半是 {name} 不认这次的注册：再连一次会重新注册",
+             f"If the page showed an error, {name} probably didn't accept this registration; connecting again registers anew")
+    att.put("authorize", False, note, "closed", how=clean(body.how, 20))
+    change(aid, attempt=att.json(), **({} if app.get("status") == "connected" else {"error": say("authorize", "closed", name, note)}))
+    return {"ok": True, "app": detail(aid)}
+
+
 class ConnectIn(BaseModel):
     redirect_uri: str | None = None
     redirectUri: str | None = None
@@ -1647,11 +1996,15 @@ async def connect(aid: str, body: ConnectIn):
     app = must(aid)
     name = app["name"]
     if app["auth"] == "oauth":
+        if why := blocked_of(app.get("catalog")):
+            raise HTTPException(400, why)
         redirect = check_redirect(body.redirect_uri or body.redirectUri)
         try:
-            got = await begin(app, redirect)
-        except AppError as e:
+            got, att = await begin(app, redirect)
+        except StepError as e:  # 没连着的：错误也换成这一次的（详情页按 attempt 说卡在哪）；连着的（换账号没成）原来的授权照用
+            change(aid, attempt=e.attempt.json(), **({} if app.get("status") == "connected" else {"error": str(e)}))
             raise HTTPException(502, str(e)) from None
+        change(aid, attempt=att.json())
         return {"ok": True, "app": detail(aid), **got}
     if app["auth"] == "token":
         token = (body.token or "").strip()

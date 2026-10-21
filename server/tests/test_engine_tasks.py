@@ -15,7 +15,7 @@ import bridges
 from engine import ledger, runners, tasks
 from engine import tools as tools_mod
 from engine.loop import Control, ToolCtx
-from engine.session import DbSession, text_of
+from engine.session import DbSession, text_of, user
 from stored_values import ASSISTANT_ROLE
 from test_engine import FakeModel
 
@@ -778,3 +778,59 @@ def test_runner_is_picked_by_model_when_not_given(server_json, monkeypatch):
     with pytest.raises(tasks.ToolFailure, match="no API key for anthropic here"):
         tasks.pick_runner("engine", "anthropic/claude-opus-5-5", "t")  # 写了 runner 就是它：内核跑不了就说
     assert tasks.pick_runner("claude-code", "", "t")[:2] == ("claude-code", None)
+
+
+def test_a_claude_code_task_stays_on_the_plan_and_runs_in_engine(server_json, monkeypatch):
+    """对话模型是 claude-code 时，后台任务那一轮交给 claude_brain（我们的工具、我们的关卡），不落到按量，也不交给只读外援。
+    替外人答的那一轮派出来的不花：点名要套餐就说清楚，没写 model 换成按量的。点名 runner claude-code、没密钥的 anthropic/… 仍走外援。"""
+    from types import SimpleNamespace
+
+    from engine import claude_brain, compact, ledger
+    from engine.loop import Result
+    server_json({"claw": {"kind": "builtin"}, "engine": {"model": "deepseek/deepseek-flash", "models": ["deepseek/deepseek-flash"]}})
+    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+    monkeypatch.setattr(runners, "_found", {"claude-code": {"bin": "/x/claude", "auth": "claude.ai"}})  # 登录着：对话模型才留在可选列表里
+    import chat
+    chat.set_model(chat.ModelBody(thread="t-cc-task", model="claude-code/opus"))
+    assert tasks.model_for("t-cc-task") == "claude-code/opus"
+    assert tasks.pick_runner("", "", "t-cc-task", "user")[:2] == ("engine", "claude-code/opus")
+    assert tasks.pick_runner("", "claude-code/haiku", "t-cc-task", "user") == ("engine", "claude-code/haiku", None)
+    assert tasks.pick_runner("engine", "claude-code/opus", "t-cc-task", "user")[:2] == ("engine", "claude-code/opus")
+    with pytest.raises(tasks.ToolFailure, match="someone else"):
+        tasks.pick_runner("", "claude-code/opus", "t-cc-task", "mcp")
+    assert tasks.pick_runner("", "", "t-cc-task", "card")[:2] == ("engine", "deepseek/deepseek-flash")
+    runner, model, why = tasks.pick_runner("", "anthropic/claude-opus-5-5", "t-cc-task")
+    assert (runner, model) == ("claude-code", "claude-opus-5-5") and "read-only" in why
+    assert tasks.pick_runner("claude-code", "", "t-cc-task")[:2] == ("claude-code", None)
+
+    seen: list[dict] = []
+
+    async def maybe(session, spec, tid, incoming, render):
+        seen.append({"prepare": tid})
+        return None
+
+    async def once(agent, conversation, system, tools, prompt, **kw):
+        seen.append({"model": kw["model"], "origin": kw["origin"], "kind": kw["kind"], "names": [t.name for t in tools],
+                     "prefix": kw.get("prefix") or "", "system": system, "gate": kw.get("gate")})
+        return Result(turn="tn-cc-task", status="done", text="One page, twelve formulas.", messages=[], usage={"in": 3, "out": 4},
+                      model=kw["model"])
+
+    monkeypatch.setattr(compact, "maybe", maybe)
+    monkeypatch.setattr(claude_brain, "once", once)
+    row = {"id": "tk_cc_plan", "agent": "main", "thread": "t-cc-task", "model": "claude-code/opus", "depth": 1, "level": "undo",
+           "tools": 0, "timeout_s": 60, "label": "Sheet", "task": "Write the sheet."}
+    ledger.insert(**{**row, "parent": None, "turn": None, "call": None, "runner": "engine", "status": "running",
+                     "created_at": ledger.now_ms(), "delivery": "none", "retry_of": None, "inbox": None, "data": {}})
+    tool_list = tasks.child_tools(row)
+    session = DbSession.create("mousse:task:tk_cc_plan", kind="task", agent="main", model=row["model"], system=tasks.child_system(row, tool_list))
+    res = run(tasks._drive(row, session, tool_list, user("go"), Control()))
+    assert res.status == "done" and res.text == "One page, twelve formulas." and res.model == "claude-code/opus"
+    assert seen[0]["prepare"] == "task:tk_cc_plan" and seen[1]["model"] == "claude-code/opus" and seen[1]["origin"] == "task"
+    assert seen[1]["kind"] == "owner" and "inbox" not in seen[1]["names"] and "schedule" in seen[1]["names"]
+    assert "Background task" in seen[1]["system"]
+    note = run(seen[1]["gate"](SimpleNamespace(name="send_out", level=lambda _a: ("ask", "send")), {}, ctx("task:tk_cc_plan")))
+    assert note == tasks.NOT_HERE
+    saved = session.messages()
+    assert text_of(saved[0]) == "go" and "twelve formulas" in text_of(saved[-1]) and saved[-1]["provider"] == "claude-code"
+    res2 = run(tasks._drive(row, session, tool_list, user("shorter"), Control()))
+    assert "twelve formulas" in seen[-1]["prefix"] and res2.text == "One page, twelve formulas."

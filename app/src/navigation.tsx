@@ -1,6 +1,6 @@
-import React, { useEffect, useState } from 'react';
-import { Linking, Platform } from 'react-native';
-import { createNavigationContainerRef, DarkTheme, DefaultTheme, NavigationContainer } from '@react-navigation/native';
+import React, { useCallback, useEffect, useState } from 'react';
+import { AppState, Linking, Platform } from 'react-native';
+import { createNavigationContainerRef, DarkTheme, DefaultTheme, NavigationContainer, useFocusEffect } from '@react-navigation/native';
 import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
 import { Lightbulb, MessageCircle, Rings, Sparkles } from './components/icons';
@@ -34,9 +34,10 @@ import { ConnectScreen } from './screens/ConnectScreen';
 import { ClawScreen } from './screens/ClawScreen';
 import { AccountScreen, LoginScreen, loginSkipped } from './screens/AccountScreens';
 import { AppDetailScreen, AppGalleryScreen, CustomAppScreen, StarterScreen } from './screens/AppsScreens';
-import { loadServerConfig, parsePairing, serverConfigured } from './api/base';
+import { AuthError, HttpError, loadServerConfig, parsePairing, serverConfigured } from './api/base';
 import { accountsEnabled, loadAccount } from './api/account';
-import { appsApi, parseOAuthCallback } from './api/apps';
+import { appsApi, parseOAuthCallback, redirectUri, stateOf, type OAuthCallback } from './api/apps';
+import { readLocal, writeLocal } from './deviceStore';
 import { showError } from './components/ui';
 import { InboxScreen } from './screens/InboxScreen';
 import { TreeScreen } from './screens/TreeScreen';
@@ -242,16 +243,185 @@ export function openScanned(text: string): 'pair' | 'friend' | 'offline' | null 
 }
 
 // 连接器授权完跳回来（<scheme>://oauth/callback?code=…&state=…，见 api/apps.ts）：交给服务器换令牌，打开那个连接器的页面
-let queuedOAuth: ReturnType<typeof parseOAuthCallback> = null;
+let queuedOAuth: OAuthCallback | null = null;
 
-async function finishOAuth(cb: NonNullable<ReturnType<typeof parseOAuthCallback>>) {
-  if (!navigationRef.isReady()) { queuedOAuth = cb; return; }
+/** 等 app 回到前台（最多 maxMs）：从浏览器跳回来的那一下，iOS 还没把网络交回来。 */
+function untilActive(maxMs = 3000): Promise<void> {
+  if (AppState.currentState === 'active') return Promise.resolve();
+  return new Promise((resolve) => {
+    const done = () => { clearTimeout(timer); sub.remove(); resolve(); };
+    const timer = setTimeout(done, maxMs);
+    const sub = AppState.addEventListener('change', (st) => { if (st === 'active') done(); });
+  });
+}
+
+/** 把授权码交给服务器。跳回来的头一下常常断网（iOS：The network connection was lost，10/21 Leo 连 Hugging Face 撞上）：
+ *  传输层的错隔 1 秒、2.5 秒再试两次；服务器回的错（HttpError、AuthError）不重试：授权码只能用一次。 */
+async function sendOAuth(cb: OAuthCallback) {
+  for (let i = 0; ; i++) {
+    try {
+      return await appsApi.callback(cb);
+    } catch (e) {
+      if (e instanceof HttpError || e instanceof AuthError || i >= 2) throw e;
+      await new Promise((ok) => setTimeout(ok, i === 0 ? 1000 : 2500));
+    }
+  }
+}
+
+/**
+ * 没交到服务器的授权结果（10/21）：三次都断网的，存在本机（deviceStore），回到前台、打开连接器的几页、隔一阵子都再交一次，
+ * 交上了或服务器回了话才删。授权码只能用一次、几分钟就过期，离了服务器上的 PKCE 校验码也换不到令牌；
+ * 服务器那边这次登录只等 30 分钟，过了 35 分钟就不再交（服务器已经记成授权超时）。
+ */
+const OUTBOX = 'mousse.oauthOutbox';
+const OUTBOX_MS = 35 * 60_000;
+type Unsent = { cb: OAuthCallback; app?: string; at: number };
+
+function unsent(): Unsent[] {
+  try {
+    const xs: unknown = JSON.parse(readLocal(OUTBOX) || '[]');
+    const now = Date.now();
+    return Array.isArray(xs) ? xs.filter((x: Unsent) => typeof x?.cb?.state === 'string' && now - Number(x.at) < OUTBOX_MS) : [];
+  } catch {
+    return [];
+  }
+}
+
+function keepUnsent(xs: Unsent[]) { writeLocal(OUTBOX, xs.length ? JSON.stringify(xs) : ''); }
+
+/** 这个连接器有没有授权结果还没交到服务器（详情页说一句）。 */
+export function unsentFor(appId: string): boolean { return unsent().some((x) => x.app === appId); }
+
+/** state → 连接器 id（signInWith 记下：没交到的授权结果知道是哪个连接器的）。 */
+const appOfState = new Map<string, string>();
+/** 正在交的 state。 */
+const sending = new Set<string>();
+/** 有结局的 state：交上了，或服务器回了错（授权码只能用一次）。安卓上应用内登录的结果和深链接可能各来一次，只交一次。 */
+const doneStates = new Set<string>();
+/** 授权结果有了结局时要重读的连接器页（useOAuthOutbox）：后台重交的，或者正开着的就是这个连接器的详情页。 */
+const settledListeners = new Set<() => void>();
+
+function settle(state: string) {
+  doneStates.add(state);
+  keepUnsent(unsent().filter((x) => x.cb.state !== state));
+  settledListeners.forEach((f) => f());
+}
+
+/** quiet：后台重交（flushOAuth），不跳页、不弹窗；开着的连接器页照样重读。 */
+async function finishOAuth(cb: OAuthCallback, quiet = false) {
+  if (!quiet && !navigationRef.isReady()) { queuedOAuth = cb; return; }
+  if (doneStates.has(cb.state) || sending.has(cb.state)) return;
+  sending.add(cb.state);
+  if (!quiet) keepUnsent([...unsent().filter((x) => x.cb.state !== cb.state), { cb, app: appOfState.get(cb.state), at: Date.now() }]);
   try {
     await loadServerConfig();  // 冷启动时点进来：先把服务器地址和令牌读出来
-    const r = await appsApi.callback(cb);
-    navigationRef.navigate('AppDetail', { id: r.app.id, fresh: true, at: Date.now() });
+    await untilActive();
+    const r = await sendOAuth(cb);
+    settle(cb.state);
+    if (!quiet) navigationRef.navigate('AppDetail', { id: r.app.id, fresh: true, at: Date.now() });
   } catch (e) {
-    showError(L('连接失败', "Couldn't connect"), e);
+    if (e instanceof HttpError || e instanceof AuthError) {
+      settle(cb.state);  // 服务器记下了卡在哪一步，详情页看得到
+      if (!quiet) showError(L('连接失败', "Couldn't connect"), e);
+    } else {
+      if (!quiet) showError(L('授权结果未送达', 'Sign-in not delivered'), L('网络已断开，授权结果尚未送达服务器。恢复联网后将自动重新发送。', "The network dropped before the sign-in result reached your server. It will be sent again once you're back online."));
+      retryLater();
+    }
+  } finally {
+    sending.delete(cb.state);
+  }
+}
+
+let retryTimer: ReturnType<typeof setTimeout> | null = null;
+let retries = 0;
+
+/** 隔一阵子再交（5 秒、15 秒、30 秒，之后每分钟）；不在前台时不交，回到前台由 RootNavigator 交。 */
+function retryLater() {
+  if (retryTimer) return;
+  const ms = [5_000, 15_000, 30_000][retries] ?? 60_000;
+  retries += 1;
+  retryTimer = setTimeout(() => { retryTimer = null; flushOAuth().catch(() => {}); }, ms);
+}
+
+/** 把本机存着、还没交到的授权结果都再交一次。 */
+export async function flushOAuth(): Promise<void> {
+  if (!readLocal(OUTBOX)) { retries = 0; return; }
+  const xs = unsent();
+  if (!xs.length) { keepUnsent([]); retries = 0; return; }  // 都过期了
+  if (AppState.currentState !== 'active') return;
+  await Promise.all(xs.map((x) => finishOAuth(x.cb, true)));
+  if (!unsent().length) retries = 0;
+}
+
+/** 连接器的几页用：打开时把没交到的授权结果再交一次；授权结果有了结局（交上了或服务器回了错）就重读一遍。reload 要稳定（useCallback）。 */
+export function useOAuthOutbox(reload: () => void) {
+  useFocusEffect(useCallback(() => {
+    settledListeners.add(reload);
+    flushOAuth().catch(() => {});
+    return () => { settledListeners.delete(reload); };
+  }, [reload]));
+}
+
+type WebBrowserModule = typeof import('expo-web-browser');
+let webBrowserMod: WebBrowserModule | null | undefined;
+/** expo-web-browser：1.0.7 起的安装包才有原生的那半（照 locationModule() 的做法）；网页版、更早的安装包 → null，退回开浏览器、等深链接。 */
+function webBrowser(): WebBrowserModule | null {
+  if (webBrowserMod !== undefined) return webBrowserMod;
+  webBrowserMod = null;
+  if (Platform.OS !== 'web') {
+    try {
+      // eslint-disable-next-line @typescript-eslint/no-require-imports
+      const { requireOptionalNativeModule } = require('expo-modules-core') as typeof import('expo-modules-core');
+      // eslint-disable-next-line @typescript-eslint/no-require-imports
+      if (requireOptionalNativeModule('ExpoWebBrowser')) webBrowserMod = require('expo-web-browser') as WebBrowserModule;
+    } catch {
+      webBrowserMod = null;
+    }
+  }
+  return webBrowserMod;
+}
+
+/** 正开着一个登录页（连点两下只开一个）。 */
+let signingIn = false;
+
+/**
+ * 连接器授权（10/21，照 Grok Bot 的做法）：用系统的应用内登录（iOS 的 ASWebAuthenticationSession，安卓的 Custom Tabs），
+ * 不再把人送去外面的浏览器、靠切回 app 的深链接收尾（切回来那一下常断网，朋友连 Todoist、Leo 连 Hugging Face 都卡在这）。
+ * 对方跳回 <scheme>://oauth/callback 时系统直接把地址交回来，当场交给服务器。
+ * 关掉了、没带回授权：告诉服务器（详情页说卡在登录那步，下次重新注册）；安卓上跳回来的深链接可能比「关掉」晚一步，先等 1.5 秒。
+ * 这台装不了应用内登录（没有原生模块）、或系统打不开：退回老办法，开浏览器、等深链接（handleUrl）。
+ * appId：这次连的是哪个连接器（授权结果没交到时，详情页知道是它）。
+ */
+export async function signInWith(authorizeUrl: string, appId?: string): Promise<void> {
+  const state = stateOf(authorizeUrl);
+  if (state && appId) appOfState.set(state, appId);
+  const wb = webBrowser();
+  if (!wb) { await Linking.openURL(authorizeUrl); return; }
+  if (signingIn) return;
+  signingIn = true;
+  let r: Awaited<ReturnType<WebBrowserModule['openAuthSessionAsync']>>;
+  try {
+    r = await wb.openAuthSessionAsync(authorizeUrl, redirectUri(), { preferEphemeralSession: false });
+  } catch (e) {
+    // 已经开着一个（iOS：Another web browser is already open；安卓：WebBrowser is already open）：不再另开浏览器
+    if (!/already open/i.test(e instanceof Error ? e.message : String(e))) await Linking.openURL(authorizeUrl);
+    return;
+  } finally {
+    signingIn = false;
+  }
+  if (r.type === 'success' && r.url) {
+    const cb = parseOAuthCallback(r.url, state ?? undefined);
+    if (cb) await finishOAuth(cb);
+    return;
+  }
+  if (!state || (r.type !== 'cancel' && r.type !== 'dismiss')) return;
+  await new Promise((ok) => setTimeout(ok, 1500));
+  if (doneStates.has(state) || sending.has(state)) return;
+  try {
+    await loadServerConfig();
+    await appsApi.closed(state, r.type);
+  } catch {
+    // 服务器老（没有这个接口）或连不上：这次 30 分钟后算授权超时
   }
 }
 
@@ -294,7 +464,10 @@ export function RootNavigator() {
     if (Platform.OS === 'web') return undefined;
     Linking.getInitialURL().then(handleUrl).catch(() => {});
     const sub = Linking.addEventListener('url', (e) => handleUrl(e.url));
-    return () => sub.remove();
+    // 没交到服务器的授权结果：启动时（上次断网后 app 被关了）和每次回到前台再交
+    flushOAuth().catch(() => {});
+    const fg = AppState.addEventListener('change', (st) => { if (st === 'active') flushOAuth().catch(() => {}); });
+    return () => { sub.remove(); fg.remove(); };
   }, []);
   if (!configLoaded || acct === 'loading') return null;  // 先读本机的服务器配置和账号，决定首页是登录页、连接页还是 Tabs
   // 不配置 linking：导航状态只存在内存里，不读写浏览器地址栏，网页预览放在任何路径下都能跑。

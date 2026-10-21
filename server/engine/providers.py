@@ -1,11 +1,12 @@
 """按模型引用找到哪一家、怎么接：anthropic → provider_anthropic（官方 SDK），openai → provider_openai（兼容接口），
 openai-responses → provider_responses（OpenAI 的 Responses API）。
-codex/…、copilot/…（第 7 批）：用户自己登录的 Codex / Copilot 命令行，整次交给 engine/provider_cli.py（不经密钥、图那一套）。
+codex/…（第 7 批）：用户自己登录的 Codex 命令行，整次交给 engine/provider_cli.py（不经密钥、图那一套）。copilot/… 10/21 起不再支持。
 chatgpt/…（用户自己的 ChatGPT 套餐，engine/chatgpt_plan.py）：也走 provider_responses；每次调之前现取访问令牌（快过期先刷新，排队），
 回 401 就强制刷新一次再试，刷新过了还是 401 标「要重连」（用户在 ChatGPT 里断开不会通知我们）；别的错记成套餐最近一次的错（状态里给 app 看）。
 谁能用它不在这里管：loop.run_turn 先问过 models.may_spend。
 grok/…（10/20，用户自己的 Grok 订阅，engine/grok_plan.py）：同 chatgpt/…，也走 provider_responses；现取访问令牌，回 401 强制刷新一次再试，
 还是 401 标「要重登」，403 换成说清楚的一句（账号拿不到 OAuth、改用 API 密钥）；走 Grok CLI 的订阅代理时多带它要的请求头。
+kimi/…（10/21，Kimi 会员的 Kimi Code，engine/kimi_plan.py）：OpenAI 兼容，密钥是用户贴的，不刷新令牌；401 / 403 换成一句看得懂的，密钥不进这句。
 
 每家都是一个异步生成器，吐统一的事件：
   {"type": "text", "text"}       回复的字，一段段来
@@ -66,7 +67,7 @@ async def stream(ref: str, req: Request) -> AsyncIterator[dict]:
             yield ev
         return
     name, model_id = models.parse_ref(ref)
-    if name in models.CLI_PLANS:  # 第 7 批：用户自己登录的命令行（codex/…、copilot/…，engine/provider_cli.py）：没有密钥、没有地址，整次交给它
+    if name in models.CLI_PLANS:  # 第 7 批：用户自己登录的命令行（codex/…，engine/provider_cli.py）：没有密钥、没有地址，整次交给它
         from . import provider_cli
         async for ev in provider_cli.stream(models.provider(name), model_id, req):
             yield ev
@@ -80,7 +81,7 @@ async def stream(ref: str, req: Request) -> AsyncIterator[dict]:
         except EngineError as e:
             e.provider, e.key = name, p.get("key_id")
             raise
-    grok = name in models.API_PLANS
+    grok = models.subscription(ref) == "grok"
     if grok:  # 10/20：用户自己的 Grok 订阅：key 换成现在能用的访问令牌（choose_key 填的只是记号）
         from . import grok_plan
         try:
@@ -89,6 +90,14 @@ async def stream(ref: str, req: Request) -> AsyncIterator[dict]:
             e.provider, e.key = name, p.get("key_id")
             raise
         p["headers"] = {**(p.get("headers") or {}), **grok_plan.chat_headers(model_id)}
+    kimi = models.subscription(ref) == "kimi"
+    if kimi:  # 10/21：Kimi 会员：贴上的密钥、选中的站点、OpenMousse 自己的 User-Agent（盖住配置里写的）
+        from . import kimi_plan
+        try:
+            p = kimi_plan.prepare(p)
+        except EngineError as e:
+            e.provider, e.key = name, p.get("key_id")
+            raise
     req.key = p.get("key_id")
     mod = provider_anthropic if p["api"] == models.ANTHROPIC else provider_responses if p["api"] == models.RESPONSES else provider_openai
     sent = req
@@ -111,6 +120,8 @@ async def stream(ref: str, req: Request) -> AsyncIterator[dict]:
                 chatgpt_plan.note_ok()
             if grok:
                 grok_plan.note_ok()
+            if kimi:
+                kimi_plan.note_ok()
             return
         except EngineError as e:
             # 报错进库、进事件、进对话（还有套餐的 note_error）之前抹掉密钥和像密钥的串：这一次用的那把（套餐是访问令牌）和这一家配着的几把
@@ -132,6 +143,8 @@ async def stream(ref: str, req: Request) -> AsyncIterator[dict]:
                 continue
             if grok:  # 刷新过了还是 401 → 要重登；403 → 说清楚（账号拿不到 OAuth、改用 API 密钥）；别的记成最近一次的错
                 grok_plan.note_failure(e)
+            if kimi:  # 401 / 403 换成一句看得懂的（密钥不进这句）；别的记成最近一次的错
+                kimi_plan.note_failure(e)
             if plan and not started and e.status == 401 and not reauthed:  # 套餐的令牌被拒：强制刷新一次再试
                 reauthed = True
                 try:

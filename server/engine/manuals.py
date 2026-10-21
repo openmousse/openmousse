@@ -466,13 +466,28 @@ def _clean_phrasing(text) -> str:
 
 
 def rewrite_model() -> str | None:
-    """改写用哪个模型：engine.manuals.rewrite 写了模型就用它（套餐的不行）；true = engine.use.json 的路由，不写就用不花套餐的默认模型。"""
+    """改写用哪个模型：engine.manuals.rewrite 写了模型就用它；true = engine.use.json。是套餐时，这一问是用户自己的后台（来路 auto，
+    10/21）：自己的内核里 may_spend 认了才用，不认换成非套餐的。OpenClaw 不把 claude-code / chatgpt 交出去（和以前一样）。不写 → None。"""
+    import claw
+
     from . import models
     rw = setting("rewrite")
-    if isinstance(rw, str) and models.valid_ref(rw.strip()):
-        return rw.strip()
+
+    def pick(ref: str | None) -> str | None:
+        if not ref:
+            return None
+        if models.subscription(ref):
+            if claw.is_builtin() and models.may_spend(ref, kind="owner", origin="auto"):
+                return ref
+            if claw.is_builtin():
+                return models.outside(ref)
+            return ref if models.valid_ref(ref) else None  # OpenClaw：原来交得出去的（grok/…）照旧交，claude-code / chatgpt 不交
+        return ref if models.valid_ref(ref) else None
+
+    if isinstance(rw, str):
+        return pick(rw.strip())
     if rw is True:
-        return models.route("json") or models.outside()
+        return pick(models.route("json", kind="owner", origin="auto")) or models.outside()
     return None
 
 
@@ -485,7 +500,7 @@ async def rewrite(text: str, prev: str = "") -> list[str]:
     from .errors import EngineError
     try:
         v, _via = await oneshot.ask_json(REWRITE, {"message": text[-QUERY_MAX:], "previous": prev[-1000:]}, model=model, purpose="json",
-                                         required=("phrasings",), timeout=REWRITE_TIMEOUT, conversation="manuals", origin="manuals")
+                                         required=("phrasings",), timeout=REWRITE_TIMEOUT, conversation="manuals", origin="auto")
     except (EngineError, asyncio.TimeoutError) as e:
         print(f"[engine] 手册的改写没成：{str(e)[:120]}")
         return []

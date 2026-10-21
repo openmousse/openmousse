@@ -98,7 +98,8 @@ server.json 的 engine 段（不写这一段 = 内核不接管任何事，全部
 用户自己的套餐（第 11 项）：claude-code/<型号>（opus / sonnet / haiku 或完整 id，交给 --model）不经我们的接口，一轮交给本机用户自己登录的
 Claude Code 跑（engine/claude_brain.py），花的是他自己的套餐。subscription(ref) 认它。may_spend 看来路、不看 kind（10/21：能走套餐的应走尽走）：
 替用户自己干活的来路能花（OWNER_ORIGINS：user 用户本人、auto 他自己的定时和后台、relay 经中继的本人），不管这一轮是主对话、赛博、群里一位的
-发言、会议、一问一答还是写回。替外人答的来路不花（card 名片 Agent、doorman、butler 管家回外人、api / acp / openai / mcp 对外接口，以及没报来路）。
+发言、会议、一问一答还是写回。后台任务自己的来路 task，自己的内核里 claude-code 也认（10/21）；经 /mcp、替外人答的那一轮派出来的仍不花。
+替外人答的来路不花（card 名片 Agent、doorman、butler 管家回外人、api / acp / openai / mcp 对外接口，以及没报来路）。
 挑不到、这一轮不能花的换成 outside() 的非套餐模型，再没有就照调用方自己的退路。
 10/19 起一次性调用也能用（claude_brain.ask）：一问一答、llmjson.ask（会议纪要、播客、学习页……）、压缩摘要。调用方报上来路（origin），
 may_spend 认了才花；不报的当外人。kind 还留在参数里（事件表、OpenClaw 那条路），自己的内核里不再拿它挡套餐。
@@ -115,7 +116,12 @@ route() 这些地方），只在专门放行的地方跑，每一处都问 may_s
 providers.stream 跑，不用每一处另开一条路），可还是套餐：subscription() 回 "grok"（API_PLANS），may_spend 照 ChatGPT 套餐的规矩（替用户自己的
 能花；后台的要用户在设置里另外同意过，grok_plan.background_allowed，和 ChatGPT 的同意分开记；替外人答的一律不行），outside() / route()（card、
 doorman）/ chain_of / fallback.chain 都不把它当按量的；loop.run_turn 那一道照样挡。
+10/21：kimi/<型号> = 用户自己的 Kimi 会员（Kimi Code，engine/kimi_plan.py：控制台建的密钥，OpenAI 兼容；国内 api.kimi.com、海外 api.kimi.ai）。
+命名照 grok/ 和 xai/：kimi/ 是会员，moonshot/ 是开放平台按量。也是 valid_ref、也是套餐（API_PLANS），may_spend 照 ChatGPT 的规矩，
+后台同意单独记在 kimi_plan.background_allowed（默认不同意：条款写仅限个人交互式使用）。User-Agent 用 OpenMousse 自己的名字和版本号。
 OpenClaw 那条路（claw 不是 builtin）照旧只给 kind 是 owner 的回合花套餐：may_spend 里那一道还在，那边的行为不变。
+10/21：copilot/… 已不再支持。subscription 不认它，valid_ref 回 False（自定义的同名服务商也不接），解析走 outside()；
+配过的在校验和启动时提示换一个模型。Codex（codex/…）留着。
 """
 from __future__ import annotations
 
@@ -239,7 +245,9 @@ def valid_ref(ref: str | None) -> bool:
         name, _ = parse_ref(ref or "")
     except EngineError:
         return False
-    if name in API_PLANS:  # 10/20：Grok 订阅经 providers.stream 跑（见文件开头）；花不花照 may_spend
+    if name == "copilot":  # 10/21：Copilot 套餐已去掉，当它不存在（自定义的同名服务商也不接）
+        return False
+    if name in API_PLANS:  # Grok 订阅、Kimi 会员经 providers.stream 跑（见文件开头）；花不花照 may_spend
         return True
     return name not in SUBSCRIPTIONS and (name in PROVIDERS or name in CLI_PLANS or name in _openclaw_providers()
                                           or name in (cfg().get("providers") or {}))  # CLI_PLANS：第 7 批，engine/provider_cli.py 跑
@@ -264,8 +272,18 @@ def chain_of(v) -> list[str] | None:
     return out
 
 
+def retired_plan(ref: str | None) -> bool:
+    """copilot/… 已不再支持（10/21）。别名指到它的也算。当它不存在，解析走 outside()。"""
+    s = resolve(str(ref or "").strip())
+    return bool(s) and s.split("/", 1)[0] == "copilot"
+
+
 def default_model() -> str:
-    return _first(cfg().get("model"))
+    """engine.model。写成 copilot/… 的当它不存在，换成 outside() 挑的按量模型；一个都没有 → ""（调用方照「没模型」的退路，不崩）。"""
+    m = _first(cfg().get("model"))
+    if retired_plan(m):
+        return outside(m) or ""
+    return m
 
 
 def models() -> list[str]:
@@ -313,11 +331,17 @@ def route(purpose: str, override: str | None = None, *, kind: str = "outsider", 
         head, c = _first(v), chain_of(v)
         if subscription(head) and spend(head):
             return head
-        return c[0] if c else outside() if plan and subscription(head) else None
+        if c:
+            return c[0]
+        if retired_plan(head) or (plan and subscription(head)):  # copilot/… 当它不存在，走 outside()
+            return outside()
+        return None
     if isinstance(v, str) and valid_ref(v) and not subscription(v):
         return canonical(v)
     d = default_model()
     want = canonical(v) if isinstance(v, str) else d if v is True else ""
+    if retired_plan(want):  # 10/21：配成 copilot/… 的当它不存在
+        return outside()
     if subscription(want):
         return want if spend(want) else outside()
     return d if v is True and valid_ref(d) else None
@@ -378,14 +402,17 @@ def chain_after(ref: str) -> list[str]:
 # —— 用户自己的套餐（第 11 项）——————————————————————————————————————————————————————
 
 SUBSCRIPTIONS = {"claude-code": "claude-code", "chatgpt": "chatgpt"}  # provider → 哪家的套餐（chatgpt：第 11b 项，engine/chatgpt_plan.py）
-# 第 7 批：用户自己登录的官方命令行当模型（engine/provider_cli.py：codex/…、copilot/…）。和上面两家不同，它们是 valid_ref（经
-# providers.stream 跑），可还是用户自己的套餐：subscription 照样认出来，may_spend 照套餐的规矩，outside / route / fallback.chain 都不把它们当按量的
-CLI_PLANS = {"codex": "codex", "copilot": "copilot"}
-# 10/20：用户自己的套餐、我们自己拿着他的 OAuth 令牌调公开接口的（engine/grok_plan.py：grok/…）。也是 valid_ref、也是套餐（见文件开头）
-API_PLANS = {"grok": "grok"}
+# 第 7 批：用户自己登录的官方命令行当模型（engine/provider_cli.py：codex/…）。和上面两家不同，它是 valid_ref（经
+# providers.stream 跑），可还是用户自己的套餐：subscription 照样认出来，may_spend 照套餐的规矩，outside / route / fallback.chain 都不把它当按量的。
+# 10/21：copilot/… 从这里拿掉（retired_plan）。
+CLI_PLANS = {"codex": "codex"}
+# 用户自己的套餐、经 providers.stream 调公开接口的。也是 valid_ref、也是套餐（见文件开头）。
+# grok/…：OAuth 令牌（engine/grok_plan.py，10/20）。kimi/…：Kimi Code 控制台的密钥（engine/kimi_plan.py，10/21）。
+API_PLANS = {"grok": "grok", "kimi": "kimi"}
 # 能花套餐的来路（看这一轮替谁干活，不看 kind）：用户自己说的（user）、他自己的定时、心跳、收件箱、写回和后台接着做的（auto）、
 # 主对话转给 Agent 的（relay）。名片 Agent、Doorman、管家回外人（card / doorman / butler）、对外接口（api / acp / openai / mcp）不在这里。
-# 只认名单里的，新加的来路默认不能花。后台任务自己的来路 task 不在这份名单里（claude-code 照旧不花）；ChatGPT 那几家把 task 算后台，见下。
+# 只认名单里的，新加的来路默认不能花。后台任务自己的来路 task 不在这份名单里：自己的内核里 claude-code 在 may_spend 里单独认
+# （10/21；经 /mcp、替外人答的那一轮派出来的仍不花）。ChatGPT 那几家把 task 算后台，要用户同意过，见下。
 OWNER_ORIGINS = frozenset({"user", "auto", "relay"})
 # ChatGPT 套餐更严（条款：后台用之前要用户明确同意）：用户自己引出来的直接能花；后台的（auto、后台任务自己 task）要用户在设置里同意过
 PLAN_FOREGROUND = frozenset({"user", "relay"})
@@ -398,9 +425,9 @@ def subscription(ref: str | None) -> str | None:
     """这个模型花不花用户自己的套餐：claude-code/<型号> → "claude-code"；chatgpt/<型号> → "chatgpt"；别的 → None。所有「花用户套餐」的
     判断都用它。别名先解析（resolve）：指到套餐的别名一样算套餐。"""
     m = REF.match(resolve(ref))
-    if m and m.group(1) in CLI_PLANS:  # codex/…、copilot/… 是 valid_ref：型号写得怪（codex/a/b、codex/-c…）也算套餐，免得绕过 may_spend
+    if m and m.group(1) in CLI_PLANS:  # codex/… 是 valid_ref：型号写得怪（codex/a/b、codex/-c…）也算套餐，免得绕过 may_spend
         return CLI_PLANS[m.group(1)]
-    if m and m.group(1) in API_PLANS:  # 10/20：grok/… 同上（valid_ref，型号写得怪也算套餐）
+    if m and m.group(1) in API_PLANS:  # grok/…、kimi/… 同上（valid_ref，型号写得怪也算套餐）
         return API_PLANS[m.group(1)]
     return SUBSCRIPTIONS.get(m.group(1)) if m and NAME.match(m.group(2)) else None
 
@@ -433,9 +460,10 @@ def plan_class(origin: str | None, via: str | None = None) -> str:
 
 
 def may_spend(ref: str | None, *, kind: str, origin: str | None, via: str | None = None) -> bool:
-    """这一轮能不能用这个模型：不花套餐的都能。花套餐的看替谁干活（来路），不看 kind（10/21）。claude-code：来路在 OWNER_ORIGINS 里。
-    chatgpt / codex / copilot / grok：用户自己引出来的能花，后台的要用户同意过，替外人答的不行（plan_class，见文件开头）。
-    kind 还收着：OpenClaw 那条路照旧只放主人回合；自己的内核里它不参与判断。"""
+    """这一轮能不能用这个模型：不花套餐的都能。花套餐的看替谁干活（来路），不看 kind（10/21）。claude-code：来路在 OWNER_ORIGINS 里；
+    自己的内核里来路 task（后台任务那一轮）也认，via 更严、算 never 的仍不花。chatgpt / codex / grok / kimi：用户自己引出来的能花，
+    后台的要用户同意过，替外人答的不行（plan_class，见文件开头）。kind 还收着：OpenClaw 那条路照旧只放主人回合；自己的内核里它不参与判断。
+    copilot/… 不是套餐（10/21，已去掉）：subscription 是 None，这里当普通模型放行，调用方先把它解析走。"""
     sub = subscription(ref)
     if sub is None:
         return True
@@ -448,28 +476,32 @@ def may_spend(ref: str | None, *, kind: str, origin: str | None, via: str | None
             from . import chatgpt_plan
             return chatgpt_plan.background_allowed()
         return how == "foreground"
-    if sub == "copilot":  # copilot/…（第 7 批）：Copilot 的 AI 额度；后台的要 engine.copilot.background = true（engine/provider_cli.py）
-        how = plan_class(origin, via)
-        if how == "background":
-            from . import provider_cli
-            return provider_cli.background_allowed("copilot")
-        return how == "foreground"
     if sub == "grok":  # 10/20：Grok 订阅照 ChatGPT 套餐的规矩；后台的同意单独记（engine/grok_plan.py）
         how = plan_class(origin, via)
         if how == "background":
             from . import grok_plan
             return grok_plan.background_allowed()
         return how == "foreground"
+    if sub == "kimi":  # 10/21：Kimi 会员照同一条规矩；后台的同意单独记（engine/kimi_plan.py），默认不同意
+        how = plan_class(origin, via)
+        if how == "background":
+            from . import kimi_plan
+            return kimi_plan.background_allowed()
+        return how == "foreground"
+    if claw.is_builtin() and origin == "task":  # 后台任务那一轮：claude-code 也认（10/21）。经 /mcp、替外人答的（via）仍不花。
+        return plan_class(origin, via) != "never"
     return origin in OWNER_ORIGINS
 
 
 def outside(ref: str | None = None) -> str | None:
     """这一轮不能花套餐时用哪个模型（替外人答的、对外接口、来路不在 OWNER_ORIGINS 里、后台没同意的）：ref 是我们的接口能跑的就用它；
-    否则（是套餐的、没给的）用默认模型，默认的也是套餐就挑 engine.models 里第一个能跑的；都没有 → None（调用方照自己的退路：llm-task、不做……）。"""
-    if ref and valid_ref(ref) and not subscription(ref):  # 命令行的套餐（CLI_PLANS）也是 valid_ref：不给外面
+    否则（是套餐的、没给的、copilot/…）用 engine.model，那一个也是套餐或已去掉的 Copilot 就挑 engine.models 里第一个能跑的；
+    都没有 → None（调用方照自己的退路：llm-task、不做……）。不调用 default_model()：那边在模型是 copilot/… 时会回来问这里。"""
+    if ref and not retired_plan(ref) and valid_ref(ref) and not subscription(ref):  # 命令行的套餐（CLI_PLANS）也是 valid_ref：不给外面
         return resolve(ref)
-    for m in (default_model(), *(_first(x) for x in cfg().get("models") or [])):
-        if m and valid_ref(m) and not subscription(m):
+    raw = _first(cfg().get("model"))
+    for m in (raw, *(_first(x) for x in cfg().get("models") or [])):
+        if m and not retired_plan(m) and valid_ref(m) and not subscription(m):
             return m
     return None
 
@@ -493,6 +525,9 @@ def subscription_ready(ref: str | None) -> bool:
     if sub == "grok":  # 10/20：Grok 订阅登录着、没标要重登、没被 xAI 拒（grok_plan.usable，不连网）
         from . import grok_plan
         return grok_plan.usable()
+    if sub == "kimi":  # 10/21：Kimi 会员没关、贴了密钥（kimi_plan.usable，不连网）
+        from . import kimi_plan
+        return kimi_plan.usable()
     if sub != "claude-code" or claude_code_cfg().get("enabled") is False:
         return False
     from . import runners
@@ -516,7 +551,9 @@ def subscription_models() -> list[str]:
     out += [m for m in chatgpt_plan.model_ids() if m not in out]
     from . import grok_plan  # 10/20：grok/…（登录着才有：账号目录里对话的型号，默认的排最前）
     out += [m for m in grok_plan.model_ids() if m not in out]
-    return out + [m for m in provider_cli.offered() if m not in out]  # 第 7 批：codex/…、copilot/…（开了、登录着才有）
+    from . import kimi_plan  # 10/21：kimi/…（贴了密钥才有：选中的型号排最前）
+    out += [m for m in kimi_plan.model_ids() if m not in out]
+    return out + [m for m in provider_cli.offered() if m not in out]  # 第 7 批：codex/…（开了、登录着才有）
 
 
 def fallback_allowed() -> bool:
@@ -568,15 +605,22 @@ def provider(name: str) -> dict:
     """{"name", "api", "url", "key", "headers", …其余设置}。不认识的 provider 抛 EngineError(config)。key 可能是空的（本机模型不要密钥）。
     另有 keys = [(哪一把, 值)…]（key_env 写成列表时有好几把）和 key_name（key 是哪一把）：用哪一把由 engine/fallback.py 挑。
     chatgpt：用户自己的 ChatGPT 套餐（engine/chatgpt_plan.py）不连网的那一份，key 是空的（推理前 providers.stream 现取令牌）。"""
+    if name == "copilot":  # 10/21：套餐已去掉。不落到自定义的同名服务商，也不报「不认识的服务商」那种崩。
+        from i18n import L
+        raise EngineError(L("Copilot 套餐已不再支持，请在设置里换一个模型",
+                            "The Copilot plan is no longer supported. Pick another model in Settings"), kind="config")
     if name == "chatgpt":
         from . import chatgpt_plan
         return chatgpt_plan.provider_stub()
     if name in CLI_PLANS:  # 第 7 批：命令行自己存的登录，没有地址、没有密钥（engine/provider_cli.py）
         from . import provider_cli
         return provider_cli.stub(name)
-    if name in API_PLANS:  # 10/20：Grok 订阅不连网的那一份（engine/grok_plan.py），key 是空的：推理前 providers.stream 现取访问令牌
+    if name == "grok":  # 10/20：Grok 订阅不连网的那一份（engine/grok_plan.py），key 是空的：推理前 providers.stream 现取访问令牌
         from . import grok_plan
         return grok_plan.provider_stub()
+    if name == "kimi":  # 10/21：Kimi 会员（engine/kimi_plan.py）：OpenAI 兼容，key 是贴上的那把
+        from . import kimi_plan
+        return kimi_plan.provider_stub()
     p: dict = dict(PROVIDERS.get(name) or {})
     oc = _openclaw_providers().get(name)
     if isinstance(oc, dict):
@@ -620,7 +664,7 @@ def has_key(ref: str) -> bool:
     """这个模型能不能用：provider 认得、要密钥的有密钥（本机的 Ollama 这类不要密钥）。chatgpt/…：套餐连着、开了用套餐。"""
     if subscription(ref) in ("chatgpt", *CLI_PLANS.values()):
         return subscription_ready(ref)
-    if subscription(ref) in API_PLANS.values():  # 10/20：Grok 订阅登录着就算有
+    if subscription(ref) in API_PLANS.values():  # Grok 订阅登录着、Kimi 会员贴了密钥就算有
         return subscription_ready(ref)
     try:
         name, _ = parse_ref(ref)

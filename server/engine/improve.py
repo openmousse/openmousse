@@ -2,7 +2,7 @@
 
 用完提议改：上一轮真用过的技能、手册（engine/used.py 的记号）才在提醒里点名（engine/skill_write.py 的 nudge）；没用过的一个不提。
 改说明（describe / propose_describe）：每周修剪卡上「这个月没用上的」那一条选了「改说明」（../unused.py）→ 这里出一张提议卡。
-  先一次零工具的模型调用（engine/oneshot.py；engine.use.json 的路由，不写就用不花套餐的默认模型）照这一份的正文，把名字（只有手册改名字：
+  先一次零工具的模型调用（engine/oneshot.py；来路 auto，10/21：engine.use.json 是这一轮能花的套餐就用它，不写就用不花套餐的默认模型）照这一份的正文，把名字（只有手册改名字：
   技能的名字是文件夹）、「什么时候用」、一句说明改成用户平时会说的话；卡是收件箱 kind tool（engine/calls.py 的 describe，和写 skill
   先问的那种一样，app 不用改）：同意 = 照卡改一次（改之前留版本），拒绝 = 不动，改一下 = 写一句怎么改，下一周照着再出。
   手册：世界树的 manuals.edit（名字、when、about；留一版，history / restore 找得回来）；技能：skill_write.apply 的 edit（只换 frontmatter 的
@@ -78,8 +78,9 @@ def current(kind: str, name: str, agent: str = "main") -> dict | None:
 
 
 def _model() -> str | None:
+    """改说明用哪个模型：engine.use.json，这一问是用户自己的后台（来路 auto）。不写、或者这一轮花不了套餐 → 非套餐的默认模型。"""
     from . import models
-    return models.route("json") or models.outside()
+    return models.route("json", kind="owner", origin="auto") or models.outside()
 
 
 def clean(kind: str, cur: dict, got) -> dict:
@@ -112,7 +113,7 @@ async def describe(kind: str, name: str, *, agent: str = "main", why: str = "", 
     try:
         got, _via = await oneshot.ask_json(DESCRIBE, {"kind": kind, "name": cur["name"], "when": cur["when"], "about": cur["about"],
                                                       "body": cur["body"][:3000], "why": why, "note": note},
-                                           model=model, purpose="json", timeout=TIMEOUT, conversation="improve", origin="improve")
+                                           model=model, purpose="json", timeout=TIMEOUT, conversation="improve", origin="auto")
     except EngineError as e:
         raise ToolFailure(L(f"没写出来：{str(e)[:160]}", f"Couldn't write it: {str(e)[:160]}")) from e
     return clean(kind, cur, got)

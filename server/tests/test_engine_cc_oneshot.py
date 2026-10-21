@@ -82,10 +82,12 @@ def test_only_the_owners_own_one_shots_may_spend_the_plan(claude, server_json):
         assert models.route("compact", kind="owner", origin=origin) == "claude-code/haiku"
     assert models.route("json", kind="cyber", origin="user") == "claude-code/sonnet"  # 用户自己的赛博：一问一答也能花
     assert models.route("compact", kind="cyber", origin="auto") == "claude-code/haiku"  # 用户自己的后台（写回、回看）也能花
-    for kind, origin in (("owner", None), ("owner", "api"), ("owner", "acp"), ("owner", "mcp"), ("owner", "task"), ("cyber", "butler"),
+    for kind, origin in (("owner", None), ("owner", "api"), ("owner", "acp"), ("owner", "mcp"), ("cyber", "butler"),
                          ("outsider", "card"), ("outsider", "a2a"), ("outsider", "doorman")):
         assert models.route("json", kind=kind, origin=origin) == API, (kind, origin)  # 换成 outside() 挑的按量模型
         assert models.route("compact", kind=kind, origin=origin) == "moonshot/kimi-k3", (kind, origin)  # 套餐打头的列表：后面那个按量的
+    assert models.route("json", kind="owner", origin="task") == "claude-code/sonnet"  # 后台任务：claude-code 认 task
+    assert models.route("compact", kind="owner", origin="task") == "claude-code/haiku"
     assert models.route("json") == API  # 不报来路 = 当外人
     assert models.route("card") == models.route("doorman") == API  # 名片 Agent、Doorman 照旧按量
     assert models.route("json", "claude-code/opus", kind="owner", origin="user") == "claude-code/opus"  # 调用方指定的套餐：主人的才认
@@ -372,7 +374,8 @@ def chat_session(name: str) -> DbSession:
 
 def test_owner_compaction_is_summarised_on_the_plan(claude, server_json):
     use(server_json, compact="claude-code/haiku")
-    claude.scenario_([[{"say": "<summary>The fair is in the hall on Elm Street; snacks budget 300. Open request: none</summary>"}]])
+    claude.scenario_([[{"say": "<summary>The fair is in the hall on Elm Street; snacks budget 300. Open request: none</summary>"}],
+                      [{"say": "<summary>The fair is in the hall on Elm Street; snacks budget 300. Open request: none</summary>"}]])
     model = claude.fake_model([{"text": "<summary>From the pay-per-use model.</summary>"}])
     view = chat_session("cc-compact").view()
     spec = engine.Spec(kind="owner", model=API, conversation="t-cc-compact", agent="main", origin="user")
@@ -383,12 +386,12 @@ def test_owner_compaction_is_summarised_on_the_plan(claude, server_json):
     assert start["argv"][start["argv"].index("--effort") + 1] == "low" and "<conversation>" in text_in(claude.records("stdin")[-1])
     t = events.turns("compact:t-cc-compact")[0]
     assert t["id"] == turns[0] and (t["kind"], t["model"], t["origin"]) == ("owner", "claude-code/haiku", "user")
-    # 对外接口的一轮（origin api）、后台任务：不花套餐，换成 outside() 挑的
-    for origin in ("api", "task"):
-        summary, _, _ = run(compact.summarize(view, len(view.rows), dataclasses.replace(spec, origin=origin)))
-        assert summary == "From the pay-per-use model."
-        model.script.append({"text": "<summary>From the pay-per-use model.</summary>"})
-    assert len(claude.records("start")) == 1 and [r[0] for r in model.requests] == [API, API]
+    # 对外接口的一轮（origin api）不花套餐。后台任务（origin task）claude-code 认，摘要走套餐。
+    summary, _, _ = run(compact.summarize(view, len(view.rows), dataclasses.replace(spec, origin="api")))
+    assert summary == "From the pay-per-use model."
+    summary, _, _ = run(compact.summarize(view, len(view.rows), dataclasses.replace(spec, origin="task")))
+    assert summary.startswith("The fair is in the hall on Elm Street")
+    assert len(claude.records("start")) == 2 and [r[0] for r in model.requests] == [API]
 
 
 def test_a_failed_plan_summary_falls_back_to_the_turns_own_model(claude, server_json):
@@ -651,4 +654,4 @@ def test_course_one_shots_keep_where_the_request_came_from(server_json, monkeypa
             assert run(study.gen_json({"thread": "t"}, "notes", "", "Write the notes.", "materials")) == ({"ok": 1}, "builtin:test")
         finally:
             chat.REQUEST_VIA.reset(tok)
-    assert seen == ["user", "mcp", "task"]  # 经 /mcp、后台来的不当成主人自己问的，不花套餐
+    assert seen == ["user", "mcp", "task"]  # 来路原样带下去：mcp 不花套餐；task 是后台任务，claude-code 认

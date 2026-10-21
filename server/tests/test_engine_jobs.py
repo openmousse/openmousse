@@ -643,21 +643,30 @@ def test_heartbeat_reads_heartbeat_md_and_respects_hours_and_busy(builtin, fake,
     assert heartbeat.status()[aid]["checklist"] == "HEARTBEAT.md"
 
 
-def test_heartbeat_does_not_follow_the_chats_subscription_model(builtin, fake, pushes, server_json, monkeypatch):
-    """对话选的是用户自己的套餐（claude-code/…）：心跳不跟，换成非套餐的；心跳上写明 claude-code/… 才用；定时任务照旧跟对话。
-    只有套餐模型时这一次不跑、记成出错，一次模型都不调。"""
+def test_heartbeat_uses_a_spendable_chat_plan(builtin, fake, pushes, server_json, monkeypatch):
+    """没写心跳模型和 engine.use.background 时，对话模型是这一轮能花的套餐就用它。写了那两处仍以它们为准。定时任务照旧跟对话。
+    ChatGPT 没同意后台：换成非套餐的；只有套餐、又花不了时这一次不跑、记成出错，一次模型都不调。"""
     import chat
     from engine import runners
     monkeypatch.setattr(runners, "_found", {"claude-code": {"bin": "/bin/false", "auth": "claude.ai", "billing": "subscription"}})  # 登录了
     aid = agent("g-hb3")
     chat.set_model(chat.ModelBody(thread=aid, model="claude-code/haiku"))
     builtin({"heartbeat": {aid: {"every": "1m", "prompt": "Remind the user to stretch."}}})
-    assert heartbeat.model_of(aid, heartbeat.config()[aid]) == "deepseek/deepseek-flash"
+    assert heartbeat.model_of(aid, heartbeat.config()[aid]) == "claude-code/haiku"
     assert jobs.model_for(aid, None) == "claude-code/haiku"  # 定时任务照旧跟对话的模型
-    builtin({"heartbeat": {aid: {"every": "1m", "model": "claude-code/haiku"}}})
-    assert heartbeat.model_of(aid, heartbeat.config()[aid]) == "claude-code/haiku"  # 用户写明的：花他自己的套餐
-    server_json({"claw": {"kind": "builtin"},
-                 "engine": {"model": "claude-code/opus", "heartbeat": {aid: {"every": "1m", "prompt": "Remind the user to stretch."}}}})
+    builtin({"heartbeat": {aid: {"every": "1m", "model": "claude-code/opus"}}})
+    assert heartbeat.model_of(aid, heartbeat.config()[aid]) == "claude-code/opus"  # 心跳上写明的优先
+    builtin({"use": {"background": "deepseek/deepseek-flash"}, "heartbeat": {aid: {"every": "1m", "prompt": "Remind the user to stretch."}}})
+    assert heartbeat.model_of(aid, heartbeat.config()[aid]) == "deepseek/deepseek-flash"  # engine.use.background 优先
+    server_json({"claw": {"kind": "builtin"}, "engine": {"model": "claude-code/opus",
+                                                         "heartbeat": {aid: {"every": "1m", "prompt": "Remind the user to stretch."}}}})
+    assert heartbeat.model_of(aid, heartbeat.config()[aid]) == "claude-code/haiku"  # 只有套餐、这一轮花得了：用对话的
+    server_json({"claw": {"kind": "builtin"}, "engine": {"model": "chatgpt/gpt-test", "models": ["deepseek/deepseek-flash"],
+                                                         "heartbeat": {aid: {"every": "1m", "prompt": "Remind the user to stretch."}}}})
+    monkeypatch.setattr(runners, "_found", {})  # 对话上的 claude-code 不在可选列表里，心跳看到的是默认的 ChatGPT 套餐
+    assert heartbeat.model_of(aid, heartbeat.config()[aid]) == "deepseek/deepseek-flash"  # 没同意后台：换成按量的
+    server_json({"claw": {"kind": "builtin"}, "engine": {"model": "chatgpt/gpt-test",
+                                                         "heartbeat": {aid: {"every": "1m", "prompt": "Remind the user to stretch."}}}})
     assert heartbeat.model_of(aid, heartbeat.config()[aid]) == ""
     fake([])  # 调了模型 FakeModel 就报错
     t0 = when.now()

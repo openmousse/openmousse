@@ -163,7 +163,7 @@ async def _cyber_gate(tool, args, ctx) -> str | None:
 
 
 async def _dispatch(spec: Spec, session, prompt, *, on_event, control: Control | None) -> Result:
-    """按量的、chatgpt / grok / codex / copilot 走 run_turn（may_spend 已经按来路放过）。claude-code 不起 run_turn（那里直接拒），
+    """按量的、chatgpt / grok / codex / kimi 走 run_turn（may_spend 已经按来路放过）。claude-code 不起 run_turn（那里直接拒），
     交给 claude_brain.once：一次性的新会话，早先的对话整理成记录接在这句话前面。换了备用模型时 run_turn 已经把这句话写进会话，这里不再写。"""
     if models.subscription(spec.model) != "claude-code":
         return await run_turn(spec, session, prompt, on_event=on_event, control=control)

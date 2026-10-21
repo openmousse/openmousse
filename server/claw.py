@@ -94,7 +94,10 @@ def base_url() -> str:
 def model() -> str:
     if is_builtin():
         import engine
-        return str(cfg().get("model") or "").strip() or engine.default_model() or "default"
+        m = str(cfg().get("model") or "").strip() or engine.default_model() or "default"
+        if engine.retired_plan(m):  # 10/21：claw 段写了 copilot/… 也当它不存在
+            return engine.default_model() or "default"
+        return m
     return str(cfg().get("model") or "").strip() or "default"
 
 
@@ -107,9 +110,13 @@ def send_model() -> bool:
 def models() -> list[str]:
     """app 里能选的模型（通用 claw）：models 列表，没有就只有 model 一个。"""
     ms = [str(m).strip() for m in cfg().get("models") or [] if str(m).strip()]
-    if not ms and is_builtin():
-        from engine import models as engine_models
-        ms = engine_models.models()
+    if is_builtin():
+        import engine
+        if not ms:
+            from engine import models as engine_models
+            ms = engine_models.models()
+        else:
+            ms = [m for m in ms if not engine.retired_plan(m)]
     return ms or [model()]
 
 

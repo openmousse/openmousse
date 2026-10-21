@@ -18,6 +18,7 @@ import { L } from '../i18n';
 import { useStore } from '../store';
 import { radius, space, useTheme, type Theme } from '../theme';
 import { AppTile, ConnectHint, connectCatalog, statusChip } from './AppsScreens';
+import { useOAuthOutbox } from '../navigation';
 
 const ICONS: Record<string, typeof Plug> = {
   dumbbell: Dumbbell, 'heart-pulse': HeartPulse, graduation: GraduationCap, calendar: CalendarDays, mail: Mail, 'calendar-sync': CalendarSync,
@@ -88,6 +89,7 @@ export function ConnectorsScreen() {
       .catch((e) => { if (noApps(e)) setAppsOld(true); else setAppsErr(e instanceof Error ? e.message : String(e)); });
   }, [connected]);
   useFocusEffect(useCallback(() => { loadApps(); }, [loadApps]));
+  useOAuthOutbox(loadApps);
   useEffect(() => { if (connected) reload('connectors').catch(() => {}); }, [connected, reload]);  // 服务器缓存 60 秒，打开页面读一次
 
   const data = connectors?.kind === 'ok' ? connectors.data : null;
@@ -101,8 +103,9 @@ export function ConnectorsScreen() {
   }
 
   const installed = apps?.apps ?? [];
-  const recommended = (apps?.catalog ?? []).filter((c) => !c.installed).slice(0, 3);
+  const recommended = (apps?.catalog ?? []).filter((c) => !c.installed && !c.blocked).slice(0, 3);
   const connect = async (c: CatalogEntry) => {
+    if (busy) return;
     setBusy(c.id);
     try { await connectCatalog(c, nav); } finally { setBusy(null); loadApps(); }
   };

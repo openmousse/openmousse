@@ -405,6 +405,12 @@ def test_review_is_off_by_default_and_rate_limited(home, fake, runner):
     assert skill_write.review_model(MODEL) is None
     home.write({"engine": {"model": MODEL, "skills": {"review": "moonshot/kimi-k3"}, "tools": {"levels": {"skill_manage": "auto"}}}})
     assert skill_write.review_model(MODEL) == "moonshot/kimi-k3"
+    home.write({"claw": {"kind": "builtin"}, "engine": {"model": MODEL, "models": [MODEL], "use": {"json": "claude-code/haiku"},
+                                                        "skills": {"review": True}, "tools": {"levels": {"skill_manage": "auto"}}}})
+    assert skill_write.review_model(MODEL) == "claude-code/haiku"  # 用户自己的后台：套餐能用
+    home.write({"claw": {"kind": "builtin"}, "engine": {"model": MODEL, "models": [MODEL], "skills": {"review": "chatgpt/gpt-test"},
+                                                        "tools": {"levels": {"skill_manage": "auto"}}}})
+    assert skill_write.review_model(MODEL) == MODEL  # 没同意后台：换成按量的
     res = engine.Result(turn="t", status="done", text="", messages=[], usage={}, model=MODEL)
     skill_write._reviews[("main", skill_write.datetime.now(config.settings.tz).strftime("%Y-%m-%d"))] = skill_write.REVIEW_MAX
     skill_write.after_turn(res, agent="main", session=None, offered={"skill_manage"}, model=MODEL)

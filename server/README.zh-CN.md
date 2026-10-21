@@ -223,7 +223,7 @@ python3 run.py                   # 或按 openmousse-server.service.example 装�
 - 没配备用：套餐那一下没做成就当场报错，说清是哪一类（没登录、额度用完、命令坏了、到时间没答完、过载）、去哪换，别的什么都不跑：10/20 起 `llmjson` 在套餐没做成以后不再退回原来的路。那条路在默认模型也是套餐时会用同一个套餐再跑一遍（再等一个完整的超时），默认模型是按量的就是悄悄换了模型。现在只换你写了的备用（`use.json` 列表后面的，或者 `engine.fallbacks`），备用也没做成就两样都写进报错。用的不是套餐时，原来的退路照旧。没写 `use.compact`：摘要照旧用这个对话自己的模型；写了而套餐那一下没做成，按列表往下换（没写成列表就按 `engine.fallbacks`），最后是这个对话自己的模型。Zen 的草稿和会议的发言跟着对话的模型：是 `claude-code/…` 就走套餐。它拒答的不换别的模型去答。
 - 一台机器怎么分：一次性调用和对话一起算 `engine.claude_code.max_concurrent`（默认 2），但永远排在对话后面，同时最多 `engine.claude_code.max_oneshot` 个（默认比 `max_concurrent` 少一个、至少 1），后台一串打分也占不了留给对话的那个位子。10/20 起短的一次性调用（给它的时间不超过 120 秒，排队也算：挑谁发言、播客的建议、准备和提问、会议纪要、有备用时的压缩摘要）排在长的（学习页、课程大纲）前面；`engine.claude_code.burst`（默认 `0` = 不开，和以前一样）= 平常的位子都被占着时，短的最多再多开几个 `claude` 进程，学习页把一次性的位子占上十几分钟，45 秒的调用也不会排着排着就超时。对话和长的调用不用多开的位子；同时跑的最多 `max_concurrent + burst` 个（一个约 0.3 GB）。排队不另设上限：它本来就算在这次调用自己的时限里（有备用时只给一半）。
 - 本机的脚本（岗位打分、检查脚本）也能这样问：带 `local` 令牌 `POST /api/engine/oneshot {"prompt": "…", "input": {…}, "required": ["score"]}`，回 `{"json": …, "via": …}`。经 `/mcp` 来的（`X-Mousse-Via: mcp`）不花套餐。
-- 看得见、能手动换（feature `setup.purposes.oneshot`）：`GET /api/setup/purposes` 多了一问一答（`json`）和压缩摘要（`compact`）两行。每一行（老的几行也是）都说清：你自己引出来的这件事现在真用哪个（`effective`；没写 `use.json` 的一问一答走以前的退路，自己的内核下就是主对话的模型，`follows: "chat"`）、是谁家的套餐（`plan`：`claude-code`、`chatgpt`、`codex`、`copilot`……，按量的是 `null`）、这台电脑上现在跑不跑得了（`planReady`）、这件事能不能用套餐（`mayPlan`）、套餐没做成时按顺序换谁（`backups`：`use.<这件事>` 列表后面写的，没写成列表按这个模型自己的链或 `engine.fallbacks`，只列有密钥的），还有最近一次用套餐没做成、之后也没做成过的那次（`lastFailure`：`at`、`kind` = `auth` 没登录 / `quota` 额度用完 / `broken` 命令坏了 / `timeout` 超时 / `error` 别的，从内核的回合记录里找）。`backups` 是空的 = 不自动换：套餐出问题时自己去 app 里换（设置 → 按用途选模型 → 一问一答），或者 `PUT /api/setup/purposes {"json": "服务商/型号" | "default" | null, "compact": "服务商/型号" | "default" | null}`。`json` 的 `"default"` = 跟「后台和定时」一样，`null` = 去掉 `use.json`；`compact` 的两个都是跟这个对话自己的模型。能选套餐（真用的时候能不能花照旧是 `models.may_spend` 说了算）；原来写成列表的，换主模型时后面的备用照留。这两行只在自己的内核下能改（别的回 409；接 OpenClaw 时照样列出来，写明由 claw 管）。
+- 看得见、能手动换（feature `setup.purposes.oneshot`）：`GET /api/setup/purposes` 多了一问一答（`json`）和压缩摘要（`compact`）两行。每一行（老的几行也是）都说清：你自己引出来的这件事现在真用哪个（`effective`；没写 `use.json` 的一问一答走以前的退路，自己的内核下就是主对话的模型，`follows: "chat"`）、是谁家的套餐（`plan`：`claude-code`、`chatgpt`、`codex`、`kimi`……，按量的是 `null`）、这台电脑上现在跑不跑得了（`planReady`）、这件事能不能用套餐（`mayPlan`）、套餐没做成时按顺序换谁（`backups`：`use.<这件事>` 列表后面写的，没写成列表按这个模型自己的链或 `engine.fallbacks`，只列有密钥的），还有最近一次用套餐没做成、之后也没做成过的那次（`lastFailure`：`at`、`kind` = `auth` 没登录 / `quota` 额度用完 / `broken` 命令坏了 / `timeout` 超时 / `error` 别的，从内核的回合记录里找）。`backups` 是空的 = 不自动换：套餐出问题时自己去 app 里换（设置 → 按用途选模型 → 一问一答），或者 `PUT /api/setup/purposes {"json": "服务商/型号" | "default" | null, "compact": "服务商/型号" | "default" | null}`。`json` 的 `"default"` = 跟「后台和定时」一样，`null` = 去掉 `use.json`；`compact` 的两个都是跟这个对话自己的模型。能选套餐（真用的时候能不能花照旧是 `models.may_spend` 说了算）；原来写成列表的，换主模型时后面的备用照留。这两行只在自己的内核下能改（别的回 409；接 OpenClaw 时照样列出来，写明由 claw 管）。
 - 10/20 起的变化：`PUT /api/setup/purposes {"background": …}` 以前每次都把 `use.json` 改成同一个；现在只在一问一答还跟着「后台和定时」时才一起改：`use.json` 没写、是 `true`、或者和 `use.background` 一样，而且不是在 app 里单独选的（单独选过记在 `<data_dir>/setup/pins.json`）。
 
 ## 只跑脚本的定时任务（自己的内核）
@@ -713,15 +713,18 @@ mousse resume
 - **别名**（`engine.aliases`，不写就没有；[`engine/models.py`](engine/models.py)）：`{"fast": "deepseek/deepseek-flash", "smart": "moonshot/kimi-k3"}`。别名是不带斜杠的名字，指一个真的 `provider/model`（只认一层，别名不能指别名）。读模型引用的地方都先换成它指的那个（`engine.model`、`engine.models`、`engine.fallbacks`、`engine.use.*`、`/v1`、app 里换模型、`mousse agent --model`），改了别名，用它的地方一起变。指到按量模型的别名也出现在 app 的模型列表里。能不能花你自己的套餐（`may_spend`）永远照解析完的那个判：指到 `claude-code/…`、`chatgpt/…` 的别名和真的引用一样算套餐，外人回合、对外接口花不了；定时任务、心跳不认指到套餐的别名（那里写真的引用），app 里也不列它们。
 - **冷却重启后还在**（[`engine/fallback.py`](engine/fallback.py)）：限流、计费错、密钥不认、型号没了的冷却以前只记在进程里；现在也存进 `<data_dir>/engine/cooldowns.json`（0600、原子写），第一次用到时读回来，过了期的扔掉。里面只有密钥的记号（变量名 + 短指纹）、给人看的 label、原因、次数、时间，没有密钥。
 
-## 用你自己登录的 Codex 或 Copilot 当对话模型（自己的内核）
+## 用你自己登录的 Codex 当对话模型（自己的内核）
 
-默认关。服务器上装了 OpenAI 的 Codex 命令行或 GitHub 的 Copilot 命令行、你自己登录过，再写上 `engine.codex` / `engine.copilot`，app 的模型列表里就有 `codex/default`（Codex 自己默认的型号）、`codex/<型号>`、`copilot/auto`（让 Copilot 自己挑）或 `copilot/<型号>`，能当对话的模型（[`engine/provider_cli.py`](engine/provider_cli.py)）。和 Claude Code 一样，只起官方的命令、用它自己存的登录：OpenMousse 不读、不存、不传它的令牌，也不把一家命令行的登录借给另一家用；环境变量里像密钥的（`OPENAI_API_KEY`、`GH_TOKEN`、`GITHUB_TOKEN`……）和让它改连别处的（`OPENAI_BASE_URL`、`COPILOT_PROVIDER_*`……）都去掉，它没法悄悄改用密钥。每一次回复是起一次命令，在空的 `<data_dir>/<codex|copilot>/<agent>/` 里跑：对话从标准输入给，它自己的 shell、文件、上网、插件、hooks 都关掉，这个 Agent 的工具只经 OpenMousse 的 MCP 给（令牌只管这一次），关卡照旧。没登录、套餐额度用完：这一次换到备用链上。别人的回合、对外接口、备用链一律不用它们。这两家的长会话要压缩，得把 `engine.use.compact` 设成一个按量的模型。
+默认关。服务器上装了 OpenAI 的 Codex 命令行、你自己登录过，再写上 `engine.codex`，app 的模型列表里就有 `codex/default`（Codex 自己默认的型号）或 `codex/<型号>`，能当对话的模型（[`engine/provider_cli.py`](engine/provider_cli.py)）。和 Claude Code 一样，只起官方的命令、用它自己存的登录：OpenMousse 不读、不存、不传它的令牌，也不把一家命令行的登录借给另一家用；环境变量里像密钥的（`OPENAI_API_KEY`……）和让它改连别处的（`OPENAI_BASE_URL`……）都去掉，它没法悄悄改用密钥。每一次回复是起一次命令，在空的 `<data_dir>/codex/<agent>/` 里跑：对话从标准输入给，它自己的 shell、文件、上网、插件、hooks 都关掉，这个 Agent 的工具只经 OpenMousse 的 MCP 给（令牌只管这一次），关卡照旧。没登录、套餐额度用完：这一次换到备用链上。别人的回合、对外接口、备用链一律不用它。它的长会话要压缩，得把 `engine.use.compact` 设成一个按量的模型。
 
 - **Codex**（`codex exec --json --ephemeral`、只读沙箱、不读你的 `config.toml` 和 execpolicy 规则；拿 codex-cli 0.163.0 核对过）：用 ChatGPT 登录的花的是你的 ChatGPT 套餐，所以照 ChatGPT 套餐的规矩：你自己的回合能用，后台的要你在设置里同意过套餐在后台用。`codex login status` 说登录着才列出来。
-- **Copilot**（`copilot --output-format json`；拿 Copilot CLI 1.0.100 核对过）：每次回复花你 Copilot 套餐里的 AI 额度（老计费是 premium requests）。它只看得见 OpenMousse 的工具（`--available-tools`），shell、写文件、读文件、上网、记忆这几类权限都拒掉；不读自定义说明、不起自带的 GitHub MCP、不自动升级、不把会话导到 GitHub 网页；工作目录里的 `.github/copilot/settings.json` 写着 `disableAllHooks`，你自己的 Copilot hooks、插件的 hooks 都不跑（管理员的 policy hooks 照跑）。Copilot 每跑一次都在 `~/.copilot/session-state/` 记一份会话，OpenMousse 给每次一个自己的会话 id，跑完只删那一个目录。Copilot 没有查「登录了没有」的命令，所以装了、开了就列出来；没登录的话，第一次回复就换到备用链上。
 - **`engine.codex`**（可选，默认关）：`true`，或者 `{"models": ["codex/default", "codex/<型号>"], "max_concurrent": 2}` 列出给哪几个、同时最多跑几个（多的排队）。
-- **`engine.copilot`**（可选，默认关）：`true`，或者 `{"models": ["copilot/auto", "copilot/<型号>"], "max_concurrent": 2, "background": false, "max_ai_credits": 30, "bin": "/path/to/copilot"}`。`background: true` 让定时任务这些后台回合也能花它；`max_ai_credits`（至少 30）限一次回复最多花多少；`copilot` 不在服务的 `PATH` 里就写 `bin`。
+- **Copilot** 已不再支持。`copilot/…`，或者 server.json 里还留着 `engine.copilot`，都不当模型用：对话改走别的模型，配置校验和启动时提示到设置里换一个。
 - **没做的**：Gemini 命令行用 Google 账号登录的那种（Google 给它的条款，2026-04-10 版，说经别的软件用它的 OAuth 算违规，举的例子就是 OpenClaw；要用 Gemini 就把 Gemini 的 API 密钥当普通的服务商加）。Cursor、Qwen Code、Kimi 命令行也没做：没找到允许这样用的条款，或者那种登录已经停了。
+
+## Kimi 会员，Kimi Code（自己的内核）
+
+Kimi Code 会员（`kimi/<型号>`）和开放平台按量的 `moonshot/<型号>` 分开。设置里、已登录的工具那一栏，贴一把你在 Kimi Code 控制台建的密钥，再选站点：国内（`https://api.kimi.com/coding/v1`）或海外（`https://api.kimi.ai/coding/v1`）。没选过时跟 app 的语言走（中文 → 国内）。能选的型号：`k3`、`k3-256k`、`kimi-for-coding`、`kimi-for-coding-highspeed`。哪一档会员能用哪个以会员页为准；调用报权限错时给一句看得懂的话。不做 OAuth（官方那条只给它自己的客户端）。请求头里的 User-Agent 是 OpenMousse 自己的名字和版本号，不冒充 Kimi CLI 或 Claude Code。密钥的存法和别的 API 密钥一样，只在这台服务器上，不进日志、不进报错。你自己的回合能花。后台（定时任务、心跳、后台任务）要在设置里另外同意一次才花；那一处写明条款是「仅限个人交互式使用」，后台自动跑可能被限流，甚至封号。默认不同意。替别人答的回合不花。`engine.kimi: false` 关掉；`{"site": "cn", "model": "kimi-for-coding"}` 在 app 里存之前先定站点和型号。
 
 ## 简单的一句交给便宜的模型（自己的内核）
 
@@ -1301,7 +1304,8 @@ app 里「接下来会自动做的事」（`GET /api/upcoming`）列 OpenClaw �
 
 「设置 → 连接器」：经 MCP 连到这台服务器上的第三方应用（Notion、Linear……或者任何一个远端 MCP 地址）。你的 claw 经 `/mcp` 用它们的工具；令牌只在这台服务器上。见 [`apps.py`](apps.py)。
 
-- **连**按 MCP 授权规范：服务器找到应用的授权服务器（401 的 `WWW-Authenticate` → 资源元数据 → 授权服务器元数据；没有资源元数据的按旧规范，在 MCP 地址的同一个域上找），拿一个客户端（配了 `apps.client_id_url`、对方又支持 CIMD 就用它，否则动态注册，按授权服务器和回调地址记下来），给 app 一个授权网址（PKCE S256、`state`、`resource` = MCP 地址、对方宣称的 `scope`）。手机上登录，对方跳回 `<app 的 scheme>://oauth/callback?code&state`，app 交给 `/api/apps/oauth/callback`，服务器换令牌、列工具。一次授权 10 分钟内有效、只能用一次；上一次没做完又重新开始，就换一个新注册的客户端（对方可能已经不认旧的）。令牌快过期前刷新，收到 401 刷新一次；刷新不了，app 里显示要重新连。删掉时能撤销就到对方那里撤销令牌。
+- **连**按 MCP 授权规范：服务器找到应用的授权服务器（401 的 `WWW-Authenticate` → 资源元数据 → 授权服务器元数据；没有资源元数据的按旧规范，在 MCP 地址的同一个域上找），拿一个客户端（配了 `apps.client_id_url`、对方又支持 CIMD 就用它，否则动态注册，按授权服务器和回调地址记下来），给 app 一个授权网址（PKCE S256、`state`、`resource` = MCP 地址、对方宣称的 `scope`）。手机上登录，对方跳回 `<app 的 scheme>://oauth/callback?code&state`，app 交给 `/api/apps/oauth/callback`，服务器换令牌、列工具。一次授权 30 分钟内有效；回调可以来不止一次（网络断了 app 会重发）：正在换令牌时来的等同一个结果，成功以后来的拿到这个应用，失败以后来的拿到同样的错，过期的说授权超时（用过、过期的 state 只记指纹，`states.json` 留一天）。重新开始不会作废还没做完的那次。注册过的客户端换到过令牌才沿用，之前每次都重新注册，对方回 `invalid_client` 就忘掉它。令牌快过期前刷新，收到 401 刷新一次，同一个应用一次只刷一个。只有对方明确拒绝（`invalid_grant`、`invalid_client`、`unauthorized_client`、`invalid_scope` / `invalid_target`、`access_denied`、`unsupported_grant_type`，或不带错误码的 400 / 401 / 403）才显示要重新连；对方出错、连不上只算这一次没调成。删掉时能撤销就到对方那里撤销令牌。
+- **卡在哪**：每次 OAuth 连接记五步（找授权服务器、注册这个应用、在对方登录同意、换令牌、列出工具）。连上以前，app 的 `attempt` 按做完 / 卡住 / 等着 / 没开始列出来，卡住那步带对方的原话；登录那步等了 30 分钟还没结果算授权超时；应用内登录页没带结果就关了，app 报给 `/api/apps/oauth/closed`。每一步、每次刷新、没调成的调用、状态变化也追加到 `apps/log.jsonl`（超过 256 KB 留后一半），不记令牌、授权码和 state。
 - **用**：连上的应用的工具出现在 `/mcp` 上，叫 `<应用 id>__<工具名>`（多一个可选的 `agent` 参数；工具自己有 `agent` 参数时叫 `mousse_agent`）。每个工具一个档：`auto` 直接调；`ask` 每次调用是一张收件箱卡（kind `app`，响铃），点了同意就照原样调一次、结果发进那个 Agent 的对话，「改一下」让它换参数重新调；`off` 不给。默认读的 auto、写的 ask（看工具的 `readOnlyHint`，没写就看名字：get / list / search / read / fetch / find / query / view / describe / show / lookup 开头的算读）。哪些 Agent 能用按应用设（默认 main）；是谁：`mcp-<id>` 令牌绑的 Agent，否则 `agent` 参数，否则 main。按会话记工具列表的 claw 要重连才看到变化。
 - 调用：每次一个短的 MCP 会话（streamable HTTP，对方只有 SSE 就用 SSE），最长 60 秒，同时最多 4 个；文字最多 30,000 字，图片之类只说一句。
 - 只在 `server.json` 里（设置页还不能改）：`apps.<应用 id>.disabled_tools` / `enabled_tools`（工具名的列表；`enabled_tools` 写成空的 = 全关）让工具不出现在 `/mcp` 和内核里，调到关掉的会说是哪个键关的。用自己的内核时，工具说明掐到 `apps.desc_max` 字（600），`ask` 的卡 `apps.ask_ttl_hours` 小时（24）后过期，再批回 409；接 OpenClaw 或别的 claw 时说明照旧 8000 字，卡一直等到你回。
@@ -1309,18 +1313,19 @@ app 里「接下来会自动做的事」（`GET /api/upcoming`）列 OpenClaw �
 
 | 接口 | 做什么 |
 |---|---|
-| `GET /api/apps` | `{apps: [app], catalog: [{id, name, url, category, desc, mono, bg, fg, border, auth, hint, installed}], agents: [{id, name}]}`（main 在前） |
-| `POST /api/apps` | `{catalog, redirect_uri}` 或 `{name, url, auth: oauth / token / none, token?, redirect_uri?}` → oauth：`{app, authorizeUrl, state}`；token / none：现在就连、列工具 → `{app}`。已经连上的 409 |
-| `POST /api/apps/{id}/connect` | 重新连、换账号：`{redirect_uri}` → `{app, authorizeUrl, state}`；令牌方式的给 `{token}` → `{app}` |
-| `POST /api/apps/oauth/callback` | `{state, code?, error?, error_description?, iss?}` → `{app}`；不认识、用过、过期的 `state` → 400 |
+| `GET /api/apps` | `{apps: [app], catalog: [{id, name, url, category, desc, mono, bg, fg, border, auth, hint, blocked, installed}], agents: [{id, name}]}`（main 在前） |
+| `POST /api/apps` | `{catalog, redirect_uri}` 或 `{name, url, auth: oauth / token / none, token?, redirect_uri?}` → oauth：`{app, authorizeUrl, state}`；token / none：现在就连、列工具 → `{app}`。已经连上的 409；目录里标了 `blocked` 的 → 400，回那句为什么 |
+| `POST /api/apps/{id}/connect` | 重新连、换账号：`{redirect_uri}` → `{app, authorizeUrl, state}`；令牌方式的给 `{token}` → `{app}`；目录里标了 `blocked` 的 → 400 |
+| `POST /api/apps/oauth/callback` | `{state, code?, error?, error_description?, iss?}` → `{app}`；同一个 `state` 再来回同样的结果；过期的 → 400（授权超时），认不出的 → 400，应用删掉了 → 404 |
+| `POST /api/apps/oauth/closed` | `{state, how?}`：应用内登录页没带结果就关了。这一次记成卡在登录那步，用的那个注册下次不沿用；之后晚到的回调照样能做完 → `{app}` |
 | `GET /api/apps/{id}` | `{app}`，带 `tools: [{name, title, description, kind, level, overridden}]` |
 | `PATCH /api/apps/{id}` | `{policy?: {read?, write?}, overrides?: {工具名: auto / ask / off / null}, agents?: [id]}` → `{app}` |
 | `POST /api/apps/{id}/refresh` | 重新列工具 → `{app}` |
 | `DELETE /api/apps/{id}` | 撤销令牌（尽力而为），忘掉令牌和这一项，还在等你点头的卡撤回 → `{revoked}` |
 
-app：`{id, name, url, catalog, custom, category, desc, auth, mono, bg, fg, border, status: connected / needs_auth / error, error, account, connectedAt, createdAt, updatedAt, toolsAt, toolCount, readCount, writeCount, offCount, policy, overrides, agents}`。`app` 类的收件箱条目多带 `app: {app, appName, tool, args, agent, mono, bg, fg, border}`。
+app：`{id, name, url, catalog, custom, category, desc, auth, mono, bg, fg, border, status: connected / needs_auth / error, error, account, connectedAt, createdAt, updatedAt, toolsAt, toolCount, readCount, writeCount, offCount, policy, overrides, agents, blocked, attempt}`：`blocked` 是目录里那句为什么，没有是 null；`attempt` 是 `{at, failed, title, steps: [{key, label, state, note}]}`，这次以后连上过就是 null。`app` 类的收件箱条目多带 `app: {app, appName, tool, args, agent, mono, bg, fg, border}`。
 
-目录里是 2026-09-29 核对过的服务：Notion、Todoist、Atlassian、Canva、Figma、Linear、Sentry、Stripe、Hugging Face（OAuth），GitHub（个人访问令牌：它的授权服务器不支持动态注册），Cloudflare 文档、DeepWiki、Context7（不用登录）。`server.json` → `apps`：`catalog`（加、改、藏目录里的应用）、`client_id_url`、`redirect_uris`（网页版用的 http(s) 回调）、`allow_local`（只给测试）。状态在 `<data_dir>/apps/`（目录 700、文件 600）。
+目录里是 2026-09-29 核对过的服务：Notion、Todoist、Atlassian、Canva、Figma、Linear、Sentry、Stripe、Hugging Face（OAuth），GitHub（个人访问令牌：它的授权服务器不支持动态注册），Cloudflare 文档、DeepWiki、Context7（不用登录）。2026-10-21 体检以后，Canva（只收本机回调）、Figma（不让动态注册）、Stripe（只注册它白名单里的回调）标了 `blocked`：还列着、排在最后，加或连都回 400 和那句为什么；`apps.catalog {"<id>": {"blocked": null}}` 能放开。`server.json` → `apps`：`catalog`（加、改、藏目录里的应用）、`client_id_url`、`redirect_uris`（网页版用的 http(s) 回调）、`allow_local`（只给测试）。状态在 `<data_dir>/apps/`（目录 700、文件 600）。
 
 ## 思考空间和收藏
 

@@ -156,6 +156,8 @@ def act_of(r) -> str:
         return "task"
     if origin == "api" or conv.startswith("api:"):
         return "api"
+    if conv.startswith("skills:"):  # 技能「要不要存」：来路报 auto（套餐认后台），用途仍算回看 skill
+        return "skills"
     if kind == "outsider":
         if origin in ("card", "a2a"):
             return "card"
@@ -356,6 +358,11 @@ def provider_rows(refs: list[str]) -> list[dict]:
             out.append({"provider": pid, "name": catalog.text(catalog.LOGINS["grok"]["name"]),
                         "status": "ok" if gs["ready"] else "expired" if gs["needsReconnect"] else "denied" if gs["denied"] else "missing",
                         "subscription": True, "expires": None, "plan": None})
+        elif sub == "kimi":  # 10/21：Kimi 会员（engine/kimi_plan.py：贴了密钥才算连上，不回密钥）
+            from . import kimi_plan
+            ks = kimi_plan.status()
+            out.append({"provider": pid, "name": catalog.text(catalog.LOGINS["kimi"]["name"]),
+                        "status": "ok" if ks["ready"] else "missing", "subscription": True, "expires": None, "plan": None})
         else:
             e = catalog.entry(pid)
             name = catalog.text(e["name"]) if e else str(setup_api.over(pid).get("name") or pid)
@@ -379,6 +386,13 @@ async def purposes() -> list[dict]:
             row["parts"] = {k: {"value": v.get("value"), "effective": v.get("effective")} for k, v in r["parts"].items()}
         out.append(row)
     return out
+
+
+def _kimi_brief() -> dict:
+    """/api/models 的 kimi：开没开、贴没贴密钥、能不能用、站点、型号、后台同意没有（10/21，engine/kimi_plan.py）。不带密钥。"""
+    from . import kimi_plan
+    ks = kimi_plan.status()
+    return {k: ks[k] for k in ("enabled", "connected", "ready", "site", "model", "models")} | {"background": bool(ks["background"]["allowed"])}
 
 
 def _grok_brief() -> dict:
@@ -409,6 +423,7 @@ async def models_view(request: Request | None = None) -> dict:
            "chatgpt": {**{k: st[k] for k in ("enabled", "connected", "ready", "planEnabled", "plan", "needsReconnect", "models")},
                        "background": bool((st.get("background") or {}).get("allowed"))},
            "grok": _grok_brief(),  # 10/20：用户自己的 Grok 订阅（engine/grok_plan.py；不带令牌）
+           "kimi": _kimi_brief(),  # 10/21：Kimi 会员（engine/kimi_plan.py；不带密钥）
            "purposes": await purposes(), "usage": None}
     if is_owner(request):  # 花了多少只给主人的设备（同 /api/setup/usage）
         try:

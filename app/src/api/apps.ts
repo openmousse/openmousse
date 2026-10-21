@@ -4,6 +4,9 @@
 import Constants from 'expo-constants';
 import { Platform } from 'react-native';
 import { httpStatus, request } from './base';
+import type { OAuthCallback } from './oauthUrl';
+
+export { parseOAuthCallback, stateOf, type OAuthCallback } from './oauthUrl';
 
 export type AppLevel = 'auto' | 'ask' | 'off';
 export type AppStatus = 'connected' | 'needs_auth' | 'error';
@@ -11,6 +14,15 @@ export type AppAuth = 'oauth' | 'token' | 'none';
 
 /** 图标块：1–3 个字 + 底色 + 字色（目录里给的；自定义的没有，用名字的头一个字）。 */
 export interface AppLook { mono?: string | null; bg?: string | null; fg?: string | null; border?: string | boolean | null }
+
+/** 最近一次 OAuth 连接走到哪了（服务器的 attempt_json，2026-10-21）：五步按顺序，没过的那步带上对方的话；title 是卡住的标题（还在等就是 null）。
+ *  这次以后又连上过就不给。 */
+export interface AppAttempt {
+  at?: string | null;
+  failed?: string | null;
+  title?: string | null;
+  steps: { key: string; label: string; state: 'done' | 'failed' | 'waiting' | 'todo'; note?: string }[];
+}
 
 export interface AppSummary extends AppLook {
   id: string;
@@ -34,6 +46,9 @@ export interface AppSummary extends AppLook {
   desc?: string | null;
   custom?: boolean;
   category?: string | null;
+  /** 对方不让我们这样的应用登录时的一句话（目录里标了的，比如只认审核过的应用）：连不了 */
+  blocked?: string | null;
+  attempt?: AppAttempt | null;
 }
 
 export interface CatalogEntry extends AppLook {
@@ -45,6 +60,8 @@ export interface CatalogEntry extends AppLook {
   auth: AppAuth;
   hint?: string | null;
   installed: boolean;
+  /** 连不了的原因（对方只让审核过的应用登录、回调地址要进白名单……）：有就灰掉、不连 */
+  blocked?: string | null;
 }
 
 export interface AppTool { name: string; title?: string | null; description?: string | null; kind: 'read' | 'write'; level: AppLevel; overridden: boolean }
@@ -84,9 +101,12 @@ export const appsApi = {
   connect: (id: string, token?: string) => request<Added>(`/api/apps/${enc(id)}/connect`, {
     method: 'POST', body: token !== undefined ? { token } : { redirect_uri: redirectUri() }, timeoutMs: 60000,
   }),
-  /** 授权页跳回来的 code / state 交给服务器换令牌。 */
-  callback: (b: { state: string; code?: string; error?: string; error_description?: string }) =>
+  /** 授权页跳回来的 code / state 交给服务器换令牌。同一个 state 交两次没事：换过了服务器直接回那个连接器。 */
+  callback: (b: OAuthCallback) =>
     request<{ app: AppSummary }>('/api/apps/oauth/callback', { method: 'POST', body: b, timeoutMs: 90000 }),
+  /** 应用内登录页关掉了、没带回授权（how：cancel / dismiss）：服务器把这次记成卡在登录那步，下次重新注册。 */
+  closed: (state: string, how: string) =>
+    request<{ app: AppDetail | null }>('/api/apps/oauth/closed', { method: 'POST', body: { state, how }, timeoutMs: 15000 }),
   patch: (id: string, b: { policy?: Partial<Record<'read' | 'write', AppLevel>>; overrides?: Record<string, AppLevel | null>; agents?: string[] }) =>
     request<One>(`/api/apps/${enc(id)}`, { method: 'PATCH', body: b }).then((r) => r.app),
   refresh: (id: string) => request<One>(`/api/apps/${enc(id)}/refresh`, { method: 'POST', timeoutMs: 90000 }).then((r) => r.app),
@@ -96,17 +116,3 @@ export const appsApi = {
 
 /** 服务器老，还没有连接器（404 / 405）。 */
 export const noApps = (e: unknown) => [404, 405].includes(httpStatus(e) ?? 0);
-
-/** 从 <scheme>://oauth/callback?… 里取出 state、code 或 error。不是这种地址就 null。 */
-export function parseOAuthCallback(url: string): { state: string; code?: string; error?: string; error_description?: string } | null {
-  const m = /^[a-z][a-z0-9+.-]*:\/\/oauth\/callback\/?\?([^#]*)/i.exec(url || '');
-  if (!m) return null;
-  const q: Record<string, string> = {};
-  for (const kv of m[1].split('&')) {
-    const [k, v = ''] = kv.split('=');
-    if (!k) continue;
-    try { q[decodeURIComponent(k)] = decodeURIComponent(v.replace(/\+/g, ' ')); } catch { q[k] = v; }
-  }
-  if (!q.state) return null;
-  return { state: q.state, code: q.code || undefined, error: q.error || undefined, error_description: q.error_description || undefined };
-}

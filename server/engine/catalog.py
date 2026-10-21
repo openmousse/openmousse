@@ -367,6 +367,13 @@ LOGINS: dict[str, dict] = {
                 "third-party agents (the consent page may say Grok Build), and xAI may refuse it (403) at any time. If it does, use an API "
                 "key (XAI_API_KEY) instead."),
         "docs": "https://docs.x.ai/developers/quickstart"},
+    # Kimi 会员的 Kimi Code（engine/kimi_plan.py，10/21）：控制台建的密钥，不是 OAuth，也不是开放平台按量的 moonshot/
+    "kimi": {
+        "name": ("Kimi 会员（Kimi Code）", "Kimi membership (Kimi Code)"), "role": "chat", "prefix": "kimi",
+        "how": ("在 Kimi Code 控制台建一把密钥，贴到这里，再选国内或海外站点。密钥只存在这台服务器上。这是会员的 Kimi Code，不是开放平台按量的 moonshot/。",
+                "Create a key in the Kimi Code console, paste it here, and pick the China or overseas site. The key stays on this server. "
+                "This is the Kimi Code membership, not the pay-as-you-go moonshot/ platform."),
+        "docs": "https://www.kimi.com/code/docs/"},
     "codex": {
         "name": "Codex", "role": "helper",
         "how": ("在这台服务器上装好 Codex 命令行，自己登录一次（codex login）：后台任务能交给它做。",

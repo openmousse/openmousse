@@ -140,14 +140,19 @@ def notify_enabled() -> bool:
     return cfg().get("notify_done", True) is not False
 
 
+def _engine_model(m: str) -> bool:
+    """内核自己跑得了的：按量的、Grok 订阅和 Kimi 会员（valid_ref），以及 chatgpt / claude-code（不是 valid_ref，专门放行）。"""
+    return bool(m) and (models.valid_ref(m) or models.subscription(m) in ("chatgpt", "claude-code"))
+
+
 def model_for(thread: str) -> str:
     """子 Agent 默认用哪个模型：tasks.model（合法的才用）> engine.use.background（第 9 步「后台和定时」）> 派它的那个对话现在用的
-    > engine.model。ChatGPT 套餐（chatgpt/…）也认，花不花由 _model_arg 按后台的规矩定（用户同意过才花）。"""
+    > engine.model。ChatGPT 套餐（chatgpt/…）和 Claude Code（claude-code/…）也认，花不花由 _model_arg 按各自的规矩定。"""
     m = str(cfg().get("model") or "").strip()
-    if m and (models.valid_ref(m) or models.subscription(m) == "chatgpt"):
+    if _engine_model(m):
         return m
     m = models.background_model() or ""
-    if m and (models.valid_ref(m) or models.subscription(m) == "chatgpt"):
+    if _engine_model(m):
         return m
     try:
         import chat
@@ -155,7 +160,7 @@ def model_for(thread: str) -> str:
             m = chat.thread_model(conn, thread)
     except Exception:  # noqa: BLE001
         m = ""
-    return m if m and (models.valid_ref(m) or models.subscription(m) == "chatgpt") else models.default_model()
+    return m if _engine_model(m) else models.default_model()
 
 
 def today_ms() -> int:
@@ -387,19 +392,28 @@ PLAN_NO = ("后台任务默认不花你的 ChatGPT 套餐：用户在设置里�
 GROK_NO = ("后台任务默认不花用户的 Grok 订阅：他同意一次（python3 setup_ctl.py grok background on）以后才行；现在可以不写 model 用别的模型",
            "Background tasks don't use the user's Grok subscription until they allow it once (python3 setup_ctl.py grok background on); "
            "leave model out to use another model")  # 10/20：engine/grok_plan.py
+KIMI_NO = ("后台任务默认不花你的 Kimi 会员：在设置里同意一次（后台任务可以用我的套餐）以后才行；现在可以不写 model 用别的模型",
+           "Background tasks don't use your Kimi membership until you allow it once in Settings (background tasks can use my plan); "
+           "leave model out to use another model")  # 10/21：engine/kimi_plan.py
+CLAUDE_NO = ("这一轮是替外人答的，后台任务不花 Claude Code 套餐。不写 model 就用别的模型。",
+             "This turn answers for someone else, so the background task does not use the Claude Code plan. Leave model out to use another model.")
 
 
 def _model_arg(args: dict, runner: str, thread: str, parent: str | None = None) -> str | None:
     """parent：派它的那一轮的来路（ToolCtx.origin）：经 /mcp、对外接口引出来的那一轮派的任务，也不花 ChatGPT 套餐。"""
     m = str(args.get("model") or "").strip()
     if runner == ENGINE:
-        if m and not (models.valid_ref(m) or models.subscription(m) == "chatgpt"):
+        if m and not _engine_model(m):
             raise ToolFailure(L(f"不认识的模型 {m!r}：写成 provider/model（比如 deepseek/deepseek-flash），或者不写", f"Unknown model {m!r}: "
                                 "write provider/model (e.g. deepseek/deepseek-flash), or leave it out"))
         if m and models.subscription(m) == "chatgpt" and not models.may_spend(m, kind="owner", origin="task", via=parent):
             raise ToolFailure(L(*PLAN_NO))  # 点名要套餐、用户没同意（或者是 /mcp 引出来的）：说清楚，不悄悄换
         if m and models.subscription(m) == "grok" and not models.may_spend(m, kind="owner", origin="task", via=parent):
             raise ToolFailure(L(*GROK_NO))  # 10/20：Grok 订阅同上
+        if m and models.subscription(m) == "kimi" and not models.may_spend(m, kind="owner", origin="task", via=parent):
+            raise ToolFailure(L(*KIMI_NO))  # 10/21：Kimi 会员同上
+        if m and models.subscription(m) == "claude-code" and not models.may_spend(m, kind="owner", origin="task", via=parent):
+            raise ToolFailure(L(*CLAUDE_NO))  # 替外人答的那一轮派出来的：不花 Claude Code
         m = m or model_for(thread)
         if models.subscription(m) == "chatgpt" and not models.may_spend(m, kind="owner", origin="task", via=parent):
             m = models.outside(m) or ""  # 默认的是套餐、用户没同意后台用：换非套餐的
@@ -409,6 +423,14 @@ def _model_arg(args: dict, runner: str, thread: str, parent: str | None = None) 
             m = models.outside(m) or ""  # 10/20：默认的是 Grok 订阅、用户没同意后台用：换非套餐的
             if not m:
                 raise ToolFailure(L(*GROK_NO))
+        if models.subscription(m) == "kimi" and not models.may_spend(m, kind="owner", origin="task", via=parent):
+            m = models.outside(m) or ""  # 10/21：默认的是 Kimi 会员、用户没同意后台用：换非套餐的
+            if not m:
+                raise ToolFailure(L(*KIMI_NO))
+        if models.subscription(m) == "claude-code" and not models.may_spend(m, kind="owner", origin="task", via=parent):
+            m = models.outside(m) or ""  # 默认的是 Claude Code、这一轮是替外人答的：换非套餐的
+            if not m:
+                raise ToolFailure(L(*CLAUDE_NO))
         if not m:
             raise ToolFailure(L("没有可用的模型：server.json 的 engine.model 没配", "No model to use: engine.model isn't set in server.json"))
         return m
@@ -445,19 +467,23 @@ def pick_runner(explicit: str, model: str, thread: str, parent: str | None = Non
                                 f"{explicit} isn't available on this computer right now (not installed or not logged in); available: "
                                 f"{', '.join([ENGINE, *offered])}"))
         m = _model_arg({"model": model}, explicit, thread, parent)
-        if explicit == ENGINE and model and not models.has_key(m or ""):
+        if explicit == ENGINE and model and models.subscription(m) != "claude-code" and not models.has_key(m or ""):
             raise ToolFailure(L(f"这里没有 {model.split('/')[0]} 的密钥，内核跑不了 {model}", f"There's no API key for {model.split('/')[0]} here, "
                                 f"so the engine can't run {model}"))
         _plan_helper_ok(explicit, parent)
         return explicit, m, None
     if not model:
         m = _model_arg({}, ENGINE, thread, parent)
-        if models.subscription(m) in (None, "chatgpt"):  # ChatGPT 套餐内核自己跑（_model_arg 已经按后台的规矩挑过）
+        if models.subscription(m) in (None, "chatgpt", "claude-code"):  # 套餐内核自己跑（_model_arg 已经按后台的规矩挑过）
             return ENGINE, m, None
-        model = m  # 默认的就是本机的 Claude Code（engine.model 写的 claude-code/…）：内核跑不了，照下面交给它
+        model = m  # 默认的是本机命令行才跑得了的：照下面交给它
     if models.subscription(model) == "chatgpt":
         return ENGINE, _model_arg({"model": model}, ENGINE, thread, parent), None
     if models.subscription(model) == "grok":  # 10/20：Grok 订阅内核自己跑，照后台的规矩（_model_arg）
+        return ENGINE, _model_arg({"model": model}, ENGINE, thread, parent), None
+    if models.subscription(model) == "kimi":  # 10/21：Kimi 会员内核自己跑，照后台的规矩（_model_arg）
+        return ENGINE, _model_arg({"model": model}, ENGINE, thread, parent), None
+    if models.subscription(model) == "claude-code":  # 10/21：claude-code/… 交给 claude_brain，不再落到只读外援
         return ENGINE, _model_arg({"model": model}, ENGINE, thread, parent), None
     if models.valid_ref(model) and models.has_key(model):
         return ENGINE, model, None
@@ -872,9 +898,51 @@ def outcome_of(res: Result | None, live: Live) -> Outcome:
     return Outcome("failed", error=res.error or res.status, **base)
 
 
+def _on_claude(spec: Spec, session: DbSession, prompt: dict | list[dict], control: Control, on_event):
+    """后台任务这一轮的模型是 claude-code：不起 run_turn（那里直接拒），交给 claude_brain.once（10/21）。
+    带我们自己的工具、过我们的关卡（spec.gate）；太长了先走 spec.prepare。早先的子会话整理成记录接在这句话前面。
+    换了备用模型时 run_turn 已经把这句话写进会话，这里不再写。"""
+    import dataclasses
+
+    from . import claude_brain
+    from .session import text_of
+
+    async def go() -> Result:
+        msgs = list(prompt) if isinstance(prompt, list) else [prompt]
+        if spec.prepare is not None:
+            try:
+                msgs = list(await spec.prepare(spec.conversation or "task", msgs))
+            except Exception:  # noqa: BLE001 — 备料、压缩出错了这句话照原样进这一轮（同 loop._run）
+                pass
+        user_msg = next((m for m in msgs if isinstance(m, dict) and m.get("role") == "user"), user(""))
+        notes = [text_of(m) for m in msgs if isinstance(m, dict) and m.get("role") == "system" and text_of(m).strip()]
+        prefix = claude_brain.prompt_prefix("fresh", session.messages(), "\n\n".join(notes) or None)
+
+        async def switch(chain: list[str], failed: Result) -> Result:
+            res = await run_turn(dataclasses.replace(spec, model=chain[0], fallbacks=chain[1:] or None), session, msgs,
+                                 on_event=on_event, control=control)
+            res.models = [spec.model, *res.models]
+            return res
+
+        res = await claude_brain.once(spec.agent or "main", spec.conversation or "task", spec.system or "", list(spec.tools), user_msg,
+                                      model=spec.model, origin="task", on_event=on_event, control=control, switch=switch,
+                                      gate=spec.gate, kind="owner", prefix=prefix)
+        if models.subscription(res.model) == "claude-code":
+            for m in msgs:
+                session.append(m, res.turn)
+            if (res.text or "").strip():
+                session.append({"role": "assistant", "content": [{"type": "text", "text": res.text}], "api": None,
+                                "provider": "claude-code", "model": res.model,
+                                "stop": "end" if res.status == "done" else (res.status or "end"), "usage": res.usage or {}}, res.turn)
+        return res
+
+    return go()
+
+
 def _drive(row: dict, session: DbSession, tools: list[Tool], prompt: dict | list[dict], control: Control, *,
            on_text: Callable[[str], None] | None = None, on_event: Callable[[dict], None] | None = None):
-    """在子会话里跑一轮（第一轮、接着做的都是它）。每开始一个工具调用记进台账（任务卡上的「正在做哪一步」）。→ run_turn 的协程。
+    """在子会话里跑一轮（第一轮、接着做的都是它）。每开始一个工具调用记进台账（任务卡上的「正在做哪一步」）。→ 那一轮的协程。
+    模型是 claude-code/… 时交给 claude_brain（_on_claude：我们的工具、我们的关卡），不再落到按量，也不交给只读外援。
     太长了照主人回合压缩（第 4 项，engine/compact.py；Spec.prepare / recover 和 owner.respond 一样配）：开头按现在的样子重写
     （child_system：它是谁 + 后台任务的规矩 + 技能目录 + AGENTS.md），子会话不记备料的指纹。"""
     from . import compact
@@ -921,6 +989,8 @@ def _drive(row: dict, session: DbSession, tools: list[Tool], prompt: dict | list
             on_text(e["text"])
         if on_event is not None:
             on_event(e)
+    if models.subscription(spec.model) == "claude-code":
+        return _on_claude(spec, session, prompt, control, ev)
     return run_turn(spec, session, prompt, on_event=ev, control=control)
 
 

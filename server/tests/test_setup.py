@@ -177,7 +177,7 @@ def test_catalog_entries_have_every_required_field():
         assert e.get("test_model") or e["list"] != "none", pid
     for pid, e in catalog.LOCAL.items():
         assert e["key_env"] == "" and e["detect"]["path"].startswith("/") and e["url"].startswith("http://127.0.0.1:"), pid
-    assert set(catalog.LOGINS) == {"claude-code", "chatgpt", "codex", "grok"}  # grok：Grok 订阅（engine/grok_plan.py）
+    assert set(catalog.LOGINS) == {"claude-code", "chatgpt", "codex", "grok", "kimi"}  # grok：Grok 订阅；kimi：Kimi 会员
     from engine import web
     assert set(catalog.SEARCH) == set(web.PROVIDERS)  # 搜索的两半（请求怎么发 / 给人看的）对得上
     for eid, x in catalog.EMBEDDINGS.items():
@@ -353,7 +353,7 @@ def test_providers_list_covers_every_way_to_run_a_model(env):
         kinds.setdefault(row["kind"], []).append(row["id"])
     from engine import catalog
     assert kinds["cloud"] == list(catalog.CLOUD) and kinds["local"] == list(catalog.LOCAL)
-    assert kinds["login"] == ["claude-code", "chatgpt", "grok", "codex"]
+    assert kinds["login"] == ["claude-code", "chatgpt", "grok", "kimi", "codex"]
     ds = next(x for x in r["providers"] if x["id"] == "deepseek")
     assert ds["connected"] is False and ds["key"]["present"] is False and ds["keyUrl"].startswith("https://") and ds["caps"]["reasoning"] is True
     mo = next(x for x in r["providers"] if x["id"] == "moonshot")

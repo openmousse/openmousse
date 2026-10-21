@@ -366,7 +366,8 @@ class ReviseError(Exception):
 
 async def ask_reviser(prompt: str, input_: dict, required: tuple[str, ...]) -> dict:
     """重出一条：一次零工具的模型调用，算主人自己的一问一答（10/21）：kind owner，来路是这个请求的 REQUEST_VIA（app 里点的 = user）。
-    engine.use.json 是他自己的套餐时，app 里点的走套餐；经 /mcp、后台任务来的照 may_spend 不花，换成不花套餐的。server.json 的
+    engine.use.json 是他自己的套餐时，app 里点的走套餐；经 /mcp 来的照 may_spend 不花。来路 task（后台任务）claude-code 认（10/21），
+    ChatGPT 那几家仍要后台同意，不认的换成不花套餐的。server.json 的
     inbox.revise_model 指定模型（便宜的就行）；不写：内核（claw 是 builtin）用 engine.use.json 或不花套餐的默认模型，别的 claw 照 llmjson
     （engine.use.json / OpenClaw 的 llm-task）。拿不到模型、出错抛 ReviseError；套餐没做成照 llmjson 的说法（plan_failed），不悄悄换按量的。"""
     import engine

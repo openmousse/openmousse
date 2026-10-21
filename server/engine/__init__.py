@@ -150,8 +150,9 @@
                          主人的设备）、../setup_ctl.py grok
   grok_media.py          10/20：生图、生视频、朗读多一家「Grok 订阅」（engine.use.image / video_gen / tts 写 grok/<型号> 才用，默认关）：算订阅的额度、
                          不另付钱；这一轮能不能花照 may_spend
-  provider_cli.py        模型 codex/…、copilot/…（第 7 批，默认关）：用户自己登录的官方 Codex / Copilot 命令行当主人回合的模型
-                         （providers.stream 交过来）：一次回复起一次命令，关掉它自己的工具，我们的工具经 MCP 给；谁能花照 models.may_spend
+  provider_cli.py        模型 codex/…（第 7 批，默认关）：用户自己登录的官方 Codex 命令行当主人回合的模型
+                         （providers.stream 交过来）：一次回复起一次命令，关掉它自己的工具，我们的工具经 MCP 给；谁能花照 models.may_spend。
+                         copilot/… 10/21 起不再支持。
   auto.py                自动选模型（第 7 批，engine.auto，默认关）：主人自己说的简单的一句交给便宜的模型，同一轮粘住，没成回到主模型
                          （接在 providers.stream 最前面）
   a2a_api.py             主人自己的 A2A 1.0（第 7 批，engine.api.a2a，默认关）：/v1/a2a/<agent> 的 JSON-RPC（SendMessage、GetTask、ListTasks、
@@ -183,9 +184,10 @@ from __future__ import annotations
 
 from .errors import EngineError
 from .loop import Control, Result, Spec, Tool, ToolCtx, ToolFailure, ToolOutput, run_turn
-from .models import default_model, fallback_allowed, route, valid_ref
+from .models import default_model, fallback_allowed, retired_plan, route, valid_ref
 from .oneshot import ask_json
 from .session import DbSession, MemorySession, system_note, text_of, tool_result, user
 
 __all__ = ["EngineError", "Control", "Result", "Spec", "Tool", "ToolCtx", "ToolFailure", "ToolOutput", "run_turn", "default_model",
-           "fallback_allowed", "route", "valid_ref", "ask_json", "DbSession", "MemorySession", "system_note", "text_of", "tool_result", "user"]
+           "fallback_allowed", "retired_plan", "route", "valid_ref", "ask_json", "DbSession", "MemorySession", "system_note", "text_of",
+           "tool_result", "user"]

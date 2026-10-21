@@ -194,10 +194,10 @@ def test_an_api_key_sign_in_is_not_the_plan(cx, monkeypatch):
 
 
 def test_odd_model_names_are_still_the_plan(cx, monkeypatch):
-    """codex/a/b、codex/-c…、copilot/auto/x 也是 valid_ref：照样算套餐、照 may_spend 判（后台没同意就不能花）；型号名不对的不交给命令行。"""
+    """codex/a/b、codex/-c… 也是 valid_ref：照样算套餐、照 may_spend 判（后台没同意就不能花）；型号名不对的不交给命令行。"""
     from engine import chatgpt_plan
     monkeypatch.setattr(chatgpt_plan, "background_allowed", lambda: False)
-    for ref in ("codex/a/b", "codex/-cfoo=1", "copilot/auto/x"):
+    for ref in ("codex/a/b", "codex/-cfoo=1"):
         assert models.valid_ref(ref) and models.subscription(ref) == ref.split("/")[0], ref
         assert not models.may_spend(ref, kind="owner", origin="auto") and not models.may_spend(ref, kind="outsider", origin="card"), ref
     cx.cfg({"models": ["codex/default", "codex/-cfoo=1", "codex/a/b"]})

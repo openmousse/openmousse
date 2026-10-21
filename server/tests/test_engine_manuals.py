@@ -241,11 +241,24 @@ def test_rewrite_is_off_by_default_and_when_on_adds_cleaned_phrasings(home, fake
     assert not any("ignore" in p or "x" * 90 in p for p in note["phrasings"])
 
 
-def test_rewrite_never_uses_the_subscription(home, monkeypatch):
+def test_rewrite_uses_a_plan_only_as_the_users_own_background(home, monkeypatch):
+    """改写是用户自己的后台一问（来路 auto）：点名 claude-code 就用；没写 engine.use.json 时 true 仍落到按量。ChatGPT 没同意后台就换掉。"""
     home.write({"engine": {"model": "claude-code/sonnet", "manuals": {"rewrite": "claude-code/opus"}}})
-    assert manuals.rewrite_model() is None
+    assert manuals.rewrite_model() == "claude-code/opus"
     home.write({"engine": {"model": "claude-code/sonnet", "models": [MODEL], "manuals": {"rewrite": True}}})
     assert manuals.rewrite_model() == MODEL
+    home.write({"claw": {"kind": "builtin"}, "engine": {"model": MODEL, "use": {"json": "claude-code/haiku"}, "manuals": {"rewrite": True}}})
+    assert manuals.rewrite_model() == "claude-code/haiku" and improve._model() == "claude-code/haiku"
+    home.write({"claw": {"kind": "builtin"}, "engine": {"model": MODEL, "use": {"json": "chatgpt/gpt-test"}, "models": [MODEL],
+                                                        "manuals": {"rewrite": True}}})
+    assert manuals.rewrite_model() == MODEL and improve._model() == MODEL  # 没同意后台
+    seen: list[str | None] = []
+
+    async def fake_ask(*_a, **kw):
+        seen.append(kw.get("origin"))
+        return {"phrasings": ["准备推荐信材料"]}, "builtin:test"
+    monkeypatch.setattr(oneshot, "ask_json", fake_ask)
+    assert run(manuals.rewrite("下周要找教授帮忙")) == ["准备推荐信材料"] and seen == ["auto"]
 
 
 def test_clean_phrasing():

@@ -2,16 +2,17 @@
 // 重新授权、断开）、自定义（填一个 MCP 地址）。OAuth 的连接：点「连接」→ 服务器给授权页地址 → 跳浏览器 → 授权完跳回
 // <scheme>://oauth/callback（navigation.tsx 的 finishOAuth 接住，交给服务器换令牌，再打开这里的详情页）。
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
-import { ActivityIndicator, Alert, Linking, Pressable, ScrollView, StyleSheet, Switch, TextInput, View } from 'react-native';
+import { ActivityIndicator, Alert, Pressable, ScrollView, StyleSheet, Switch, TextInput, View } from 'react-native';
 import { useFocusEffect, useNavigation, useRoute } from '@react-navigation/native';
-import { ArrowUpRight, Check, Lock, Plus, RefreshCw, Search } from '../components/icons';
+import { ArrowUpRight, Check, Circle, CircleCheck, CircleX, Clock, Lock, Plus, RefreshCw, Search } from '../components/icons';
 import { Chip, Count, Group, GroupLabel, GroupNote, Row, SettingsHeader, Tile } from '../components/settings';
 import { useSheet } from '../components/Sheet';
 import { PullRefresh, Screen, Segmented, T, showError } from '../components/ui';
 import {
-  appsApi, descOf, oauthHere, type AppDetail, type AppLevel, type AppsList, type AppSummary, type CatalogEntry,
+  appsApi, descOf, oauthHere, type AppAttempt, type AppDetail, type AppLevel, type AppsList, type AppSummary, type CatalogEntry,
 } from '../api/apps';
 import { httpStatus } from '../api/base';
+import { signInWith, unsentFor, useOAuthOutbox } from '../navigation';
 import { L } from '../i18n';
 import { useStore } from '../store';
 import { radius, space, type, useTheme } from '../theme';
@@ -28,10 +29,17 @@ export function AppTile({ a, size = 36 }: { a: { name: string; mono?: string | n
   return <Tile size={size} mono={a.mono || a.name.slice(0, 1).toUpperCase()} bg={a.bg} fg={a.fg} border={a.border} />;
 }
 
+/** 状态的一句话。从没连上过的（第一次授权没走完）不是「重新」授权。 */
+export function statusText(a: AppSummary): string {
+  if (a.status === 'needs_auth') return a.connectedAt ? L('需重新授权', 'Reconnect') : L('未完成授权', 'Not signed in');
+  if (a.status === 'error') return L('错误', 'Error');
+  return a.toolCount ? L(`${a.toolCount} 个工具`, `${a.toolCount} tools`) : L('已连接', 'Connected');
+}
+
 export function statusChip(a: AppSummary) {
-  if (a.status === 'needs_auth') return <Chip label={L('需重新授权', 'Reconnect')} tone="warn" />;
-  if (a.status === 'error') return <Chip label={L('错误', 'Error')} tone="bad" />;
-  return a.toolCount ? <Count n={a.toolCount} label={L(`${a.toolCount} 个工具`, `${a.toolCount} tools`)} /> : <Chip label={L('已连接', 'Connected')} tone="good" />;
+  if (a.status === 'needs_auth') return <Chip label={statusText(a)} tone="warn" />;
+  if (a.status === 'error') return <Chip label={statusText(a)} tone="bad" />;
+  return a.toolCount ? <Count n={a.toolCount} label={statusText(a)} /> : <Chip label={statusText(a)} tone="good" />;
 }
 
 /**
@@ -39,6 +47,7 @@ export function statusChip(a: AppSummary) {
  * 网页版接不住授权页跳回来，OAuth 的请在手机 app 里连。
  */
 export async function connectCatalog(c: CatalogEntry, nav: { navigate: (s: string, p?: object) => void }): Promise<void> {
+  if (c.blocked) { showError(L(`无法连接 ${c.name}`, `Can't connect ${c.name}`), c.blocked); return; }
   if (c.auth === 'token') { nav.navigate('CustomApp', { name: c.name, url: c.url, auth: 'token', hint: c.hint ?? '' }); return; }
   if (c.auth === 'oauth' && !oauthHere()) {
     showError(L('请在手机 app 中连接', 'Connect it in the phone app'), L('授权页无法返回网页版：请在手机上打开「设置 → 连接器」，点击「连接」。', "The sign-in page can't return to the web version: on your phone open Settings → Connectors and tap Connect."));
@@ -46,7 +55,7 @@ export async function connectCatalog(c: CatalogEntry, nav: { navigate: (s: strin
   }
   try {
     const r = await appsApi.addCatalog(c.id);
-    if (r.authorizeUrl) { await Linking.openURL(r.authorizeUrl); return; }
+    if (r.authorizeUrl) { await signInWith(r.authorizeUrl, r.app?.id); return; }
     nav.navigate('AppDetail', { id: r.app.id, fresh: true });
   } catch (e) {
     if (httpStatus(e) === 409) { nav.navigate('AppDetail', { id: c.id }); return; }
@@ -76,6 +85,7 @@ export function AppGalleryScreen() {
   const [busy, setBusy] = useState<string | null>(null);
   const load = useCallback(() => appsApi.list().then((r) => { setData(r); setErr(null); }).catch((e) => setErr(e instanceof Error ? e.message : String(e))), []);
   useFocusEffect(useCallback(() => { load(); }, [load]));
+  useOAuthOutbox(load);
 
   const cats = useMemo(() => {
     const names: Record<string, string> = { common: L('常用', 'Popular'), dev: L('开发', 'Developer'), data: L('资料', 'Knowledge') };
@@ -84,11 +94,26 @@ export function AppGalleryScreen() {
   }, [data]);
   const list = (data?.catalog ?? []).filter((c) => (cat === 'all' || c.category === cat)
     && (!q.trim() || `${c.name} ${descOf(c.desc, zh())}`.toLowerCase().includes(q.trim().toLowerCase())));
-  const featured = (data?.catalog ?? []).filter((c) => USES[c.id] && !c.installed).slice(0, 3);
+  const featured = (data?.catalog ?? []).filter((c) => USES[c.id] && !c.installed && !c.blocked).slice(0, 3);
+  const appOf = new Map((data?.apps ?? []).map((a) => [a.id, a]));
 
   const connect = async (c: CatalogEntry) => {
+    if (busy) return;
     setBusy(c.id);
     try { await connectCatalog(c, nav); } finally { setBusy(null); load(); }
+  };
+  /** 目录里一行右边：在连 → 转圈；连不了 → 「暂不可用」；装了但没连上 → 状态；连上了 → 勾；没装 → 加号。 */
+  const rightOf = (c: CatalogEntry) => {
+    const a = appOf.get(c.id);
+    if (busy === c.id) return <ActivityIndicator color={t.ink3} />;
+    if (c.blocked && !c.installed) return <Chip label={L('暂不可用', 'Unavailable')} />;
+    if (c.installed) return a && a.status !== 'connected' ? statusChip(a) : <Check size={20} color={t.good} />;
+    return <View style={[styles.plus, { borderColor: t.line }]}><Plus size={18} color={t.ink} /></View>;
+  };
+  const labelOf = (c: CatalogEntry) => {
+    const a = appOf.get(c.id);
+    if (c.installed) return `${c.name}${L('，', ', ')}${a ? statusText(a) : L('已连接', 'Connected')}`;
+    return c.blocked ? L(`${c.name}，暂不可用`, `${c.name}, unavailable`) : L(`连接 ${c.name}`, `Connect ${c.name}`);
   };
 
   return (
@@ -128,12 +153,10 @@ export function AppGalleryScreen() {
         {data ? (
           <Group style={{ marginTop: space.md }}>
             {list.map((c, i) => (
-              <Row key={c.id} first={i === 0} icon={<AppTile a={c} />} title={c.name} sub={descOf(c.desc, zh()) || undefined} chevron={false}
+              <Row key={c.id} first={i === 0} icon={<AppTile a={c} />} title={c.name} chevron={false}
+                sub={(c.blocked && !c.installed ? c.blocked : descOf(c.desc, zh())) || undefined}
                 onPress={c.installed ? () => nav.navigate('AppDetail', { id: c.id }) : () => connect(c)}
-                label={c.installed ? L(`${c.name}，已连接`, `${c.name}, connected`) : L(`连接 ${c.name}`, `Connect ${c.name}`)}
-                right={busy === c.id ? <ActivityIndicator color={t.ink3} /> : c.installed ? <Check size={20} color={t.good} /> : (
-                  <View style={[styles.plus, { borderColor: t.line }]}><Plus size={18} color={t.ink} /></View>
-                )} />
+                label={labelOf(c)} right={rightOf(c)} />
             ))}
             {!list.length ? <Row first title={L('未找到', 'Nothing found')} sub={L('可在「自定义连接器」中填写其 MCP 地址。', 'You can add its MCP address under Custom connector.')} /> : null}
           </Group>
@@ -150,6 +173,30 @@ export function AppGalleryScreen() {
 
 // —— 一个连接器 ——————————————————————————————————————————————————————————————
 
+const UNSENT = () => L('授权结果尚未送达服务器：恢复联网后将自动重新发送。', "The sign-in result hasn't reached your server yet. It will be sent again once you're back online.");
+
+/** 最近一次连接走到哪了：卡住的标题，再一步一行（过了 ✓、卡住 ✕ 带对方的话、在等 ◷、没走到 ○）。 */
+function AttemptSteps({ a }: { a: AppAttempt }) {
+  const t = useTheme();
+  const icon = (s: AppAttempt['steps'][number]['state']) => s === 'done' ? <CircleCheck size={16} color={t.good} />
+    : s === 'failed' ? <CircleX size={16} color={t.bad} /> : s === 'waiting' ? <Clock size={16} color={t.warn} /> : <Circle size={16} color={t.ink3} />;
+  const said = { done: L('已完成', 'done'), failed: L('失败', 'failed'), waiting: L('等待中', 'waiting'), todo: L('未开始', 'not started') };
+  return (
+    <View style={{ gap: 8 }}>
+      {a.title ? <T v="callout" color={t.warn} style={{ fontWeight: '600' }}>{a.title}</T> : null}
+      {a.steps.map((s) => (
+        <View key={s.key} style={{ flexDirection: 'row', gap: 10 }} accessible accessibilityLabel={`${s.label}${L('，', ', ')}${said[s.state]}${s.state === 'failed' && s.note ? `${L('：', ': ')}${s.note}` : ''}`}>
+          <View style={{ paddingTop: 2 }}>{icon(s.state)}</View>
+          <View style={{ flex: 1, minWidth: 0, gap: 2 }}>
+            <T v="callout" color={s.state === 'todo' ? t.ink3 : t.ink}>{s.label}</T>
+            {s.state === 'failed' && s.note ? <T v="caption" color={t.ink2} style={{ fontWeight: '400', lineHeight: 17 }}>{s.note}</T> : null}
+          </View>
+        </View>
+      ))}
+    </View>
+  );
+}
+
 export function AppDetailScreen() {
   const t = useTheme();
   const nav = useNavigation<any>();
@@ -162,14 +209,17 @@ export function AppDetailScreen() {
   const [err, setErr] = useState<string | null>(null);
   const [each, setEach] = useState(false);
   const [busy, setBusy] = useState(false);
+  const [unsent, setUnsent] = useState(false);
 
   const load = useCallback(async () => {
     try {
       const [d, l] = await Promise.all([appsApi.get(id), appsApi.list()]);
       setApp(d); setAgents(l.agents); setErr(null);
     } catch (e) { setErr(e instanceof Error ? e.message : String(e)); }
+    setUnsent(unsentFor(id));
   }, [id]);
   useFocusEffect(useCallback(() => { load(); }, [load]));
+  useOAuthOutbox(load);
 
   const patch = async (b: Parameters<typeof appsApi.patch>[1]) => {
     try { setApp(await appsApi.patch(id, b)); } catch (e) { showError(L('修改失败', "Couldn't change it"), e); load(); }
@@ -201,8 +251,9 @@ export function AppDetailScreen() {
     if (!oauthHere()) { showError(L('请在手机 app 中连接', 'Connect it in the phone app'), ''); return; }
     try {
       const r = await appsApi.connect(id);
-      if (r.authorizeUrl) await Linking.openURL(r.authorizeUrl);
+      if (r.authorizeUrl) await signInWith(r.authorizeUrl, id);
     } catch (e) { showError(L('无法打开授权页', "Couldn't open the sign-in page"), e); }
+    load();  // 关掉了登录页、没交到服务器、卡在哪一步：都在这页上说
   };
 
   const refresh = async () => {
@@ -223,6 +274,7 @@ export function AppDetailScreen() {
       <Screen>
         <SettingsHeader title={L('连接器', 'Connector')} onBack={() => nav.goBack()} />
         {err ? <T v="callout" color={t.bad} style={{ margin: space.lg }}>{err}</T> : <ActivityIndicator style={{ marginTop: space.xl }} color={t.ink3} />}
+        {err && unsent ? <T v="callout" color={t.warn} style={{ marginHorizontal: space.lg }}>{UNSENT()}</T> : null}
       </Screen>
     );
   }
@@ -246,10 +298,12 @@ export function AppDetailScreen() {
             </View>
             {app.status === 'connected' ? <Chip label={route.params?.fresh ? L('刚刚连接', 'Just connected') : L('已连接', 'Connected')} tone="good" /> : statusChip(app)}
           </View>
-          {app.status !== 'connected' && app.error ? <T v="callout" color={t.warn}>{app.error}</T> : null}
+          {app.status !== 'connected' && unsent ? <T v="callout" color={t.warn}>{UNSENT()}</T> : null}
+          {app.status !== 'connected' && app.attempt ? <AttemptSteps a={app.attempt} />
+            : app.status !== 'connected' && app.error ? <T v="callout" color={t.warn}>{app.error}</T> : null}
           <View style={{ flexDirection: 'row', gap: 10 }}>
             <Pressable onPress={reconnect} accessibilityRole="button" style={({ pressed }) => [styles.btn, { borderColor: t.line, opacity: pressed ? 0.6 : 1 }, app.status === 'needs_auth' ? { backgroundColor: t.cyan, borderColor: t.cyan } : null]}>
-              <T v="callout" color={app.status === 'needs_auth' ? t.onCyan : t.ink} style={{ fontWeight: '600' }}>{app.status === 'needs_auth' ? L('重新连接', 'Reconnect') : app.auth === 'oauth' ? L('切换账号', 'Switch account') : app.auth === 'token' ? L('更换令牌', 'Change token') : L('重新加载', 'Reload')}</T>
+              <T v="callout" color={app.status === 'needs_auth' ? t.onCyan : t.ink} style={{ fontWeight: '600' }}>{app.status === 'needs_auth' ? (app.connectedAt ? L('重新连接', 'Reconnect') : L('连接', 'Connect')) : app.auth === 'oauth' ? L('切换账号', 'Switch account') : app.auth === 'token' ? L('更换令牌', 'Change token') : L('重新加载', 'Reload')}</T>
             </Pressable>
             <Pressable onPress={remove} accessibilityRole="button" style={({ pressed }) => [styles.btn, { borderColor: t.line, opacity: pressed ? 0.6 : 1 }]}>
               <T v="callout" color={t.bad} style={{ fontWeight: '600' }}>{L('断开', 'Disconnect')}</T>
@@ -342,7 +396,7 @@ export function CustomAppScreen() {
     setBusy(true); setMsg(null);
     try {
       const r = await appsApi.addCustom({ name: name.trim() || u.replace(/^https?:\/\//, '').split(/[/.]/)[0], url: u, auth, token: auth === 'token' ? token.trim() : undefined });
-      if (r.authorizeUrl) { await Linking.openURL(r.authorizeUrl); nav.goBack(); return; }
+      if (r.authorizeUrl) { nav.goBack(); await signInWith(r.authorizeUrl, r.app?.id); return; }
       nav.replace('AppDetail', { id: r.app.id, fresh: true });
     } catch (e) { setMsg(e instanceof Error ? e.message : String(e)); } finally { setBusy(false); }
   };
@@ -399,8 +453,9 @@ export function StarterScreen() {
   const done = useCallback(() => nav.reset({ index: 0, routes: [{ name: 'Tabs' }] }), [nav]);
   const load = useCallback(() => appsApi.list().then(setData).catch(() => done()), [done]);
   useFocusEffect(useCallback(() => { load(); }, [load]));
-  const list = (data?.catalog ?? []).filter((c) => c.auth !== 'token').slice(0, 4);
+  const list = (data?.catalog ?? []).filter((c) => c.auth !== 'token' && !c.blocked).slice(0, 4);
   const connect = async (c: CatalogEntry) => {
+    if (busy) return;
     setBusy(c.id);
     try { await connectCatalog(c, nav); } finally { setBusy(null); load(); }
   };

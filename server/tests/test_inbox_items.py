@@ -159,8 +159,8 @@ def test_the_reviser_is_a_tool_free_call(monkeypatch, server_json):
 
 
 def test_the_owner_s_own_click_can_use_the_plan_and_mcp_or_a_task_can_t(monkeypatch, server_json):
-    """10/21：「修改」算主人自己的一问一答：app 里点的照 engine.use.json 走他的套餐；经 /mcp、后台任务来的（REQUEST_VIA）换成按量的。
-    套餐没做成照一问一答的说法报，不悄悄换。"""
+    """10/21：「修改」算主人自己的一问一答：app 里点的照 engine.use.json 走他的套餐；经 /mcp 来的换成按量的。
+    来路 task（后台任务）claude-code 认。套餐没做成照一问一答的说法报，不悄悄换。"""
     import chat
     import engine
     got: list[tuple] = []
@@ -177,7 +177,7 @@ def test_the_owner_s_own_click_can_use_the_plan_and_mcp_or_a_task_can_t(monkeypa
         finally:
             chat.REQUEST_VIA.reset(tok)
     assert got == [("claude-code/sonnet", "owner", "user"), ("deepseek/deepseek-flash", "owner", "mcp"),
-                   ("deepseek/deepseek-flash", "owner", "task")]
+                   ("claude-code/sonnet", "owner", "task")]
 
     async def signed_out(prompt, input_, **kw):
         raise engine.EngineError("claude: not logged in", kind="auth")

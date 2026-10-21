@@ -208,20 +208,17 @@ exit 1
     h.fake("claude", 'echo \'{"loggedIn": false}\'\n')
     checks = {c.id: c for c in doctor.check_logins(doctor.ctx())}
     assert checks["login.claude-code"].status == "error"
-    # codex/…、copilot/… 当对话模型（第 7 批，默认关）：主对话用着却没开 ✗；copilot 开了只看装了没有
+    # copilot/… 已不再支持（10/21）：配过的给一条提示，不查装了没有，也不报「没开」
     assert "login.copilot" not in checks
     cfg["engine"]["model"] = "copilot/auto"
     h.write(cfg)
     checks = {c.id: c for c in doctor.check_logins(doctor.ctx())}
-    assert checks["login.copilot.off"].status == "error" and checks["login.copilot.off"].fix == "mousse config set engine.copilot true"
-    cfg["engine"]["copilot"] = {"bin": str(h.root / "no-such-copilot")}
-    h.write(cfg)
-    checks = {c.id: c for c in doctor.check_logins(doctor.ctx())}
-    assert "login.copilot.off" not in checks and checks["login.copilot"].status == "error"
+    assert "login.copilot.off" not in checks and checks["login.copilot"].status == "warn"
+    assert "不再支持" in checks["login.copilot"].detail or "no longer supported" in checks["login.copilot"].detail
     cfg["engine"]["copilot"] = {"bin": str(h.fake("copilot", "exit 0\n"))}
     h.write(cfg)
     checks = {c.id: c for c in doctor.check_logins(doctor.ctx())}
-    assert checks["login.copilot"].status == "ok"
+    assert checks["login.copilot"].status == "warn" and "login.copilot.off" not in checks
 
 
 def test_status_one_screen(h, capsys, monkeypatch):

@@ -21,6 +21,7 @@ rewind()：app 里撤回 / 重新编辑（/api/chat/rewind）= 会话换叶子�
 模型是 chatgpt/…（第 11b 项，用户自己的 ChatGPT 套餐，engine/chatgpt_plan.py）：就在这里跑（Responses API），也只给 app 自己的对话；
   models.may_spend 不放（后台的来路没同意过、via mcp……）就换成 models.outside() 挑的，挑不到报错说清楚。
 模型是 grok/…（10/20，用户自己的 Grok 订阅，engine/grok_plan.py）：同 chatgpt/…（后台的同意单独记）。
+模型是 kimi/…（10/21，Kimi 会员的 Kimi Code，engine/kimi_plan.py）：同 chatgpt/…（后台的同意单独记，默认不同意）。
 进度、插话、停（chat.py 接，第 3 项）：on_event 把内核的事件交出去（chat.note_engine 画成 app 的「在想 / 在做」）；插话 =
   control.steer(user_message(…, ref))，这一批工具做完带着再问模型，没赶上的在 Result.pending 里（chat.py 让它们变成下一轮）；
   停 = control.abort()：已经出来的字留着、正在跑的工具收到取消（子进程一起杀掉）、会话补完整，等点头的收件箱卡不受影响。
@@ -499,6 +500,17 @@ async def respond(thread: str, day: str, content: str | list, model: str | None,
                                     f"This turn can't use your Grok subscription ({chosen}): background runs need your OK first (python3 "
                                     "setup_ctl.py grok background on), and outside programs or other people never can; set a model with an API "
                                     "key (engine.model) for this"),
+                                  kind="config")
+    elif sub == "kimi":  # 10/21：Kimi 会员（engine/kimi_plan.py）：同 ChatGPT 套餐的规矩，不能花就换 outside() 挑的
+        if models.may_spend(chosen, kind="owner", origin=origin, via=via) and in_app:
+            model = chosen
+        else:
+            model = models.outside(chosen)
+            if not model:
+                raise EngineError(L(f"这一轮不能花你的 Kimi 会员（{chosen}）：后台的要先在设置里同意，外面的程序、别人引出来的一律不行；"
+                                    "给它配一个用 API 密钥的模型（engine.model）",
+                                    f"This turn can't use your Kimi membership ({chosen}): background runs need your OK in Settings first, and "
+                                    "outside programs or other people never can; set a model with an API key (engine.model) for this"),
                                   kind="config")
     ref_model = model if model and (models.valid_ref(model) or models.subscription(model) == "chatgpt") else models.default_model()
     if not ref_model:

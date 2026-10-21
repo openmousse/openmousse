@@ -151,6 +151,19 @@ async def pick(agent: str, requested: str | None, via: str | None) -> str:
         if not models.subscription_ready(ref):
             raise Refused(403, "plan_not_connected", str(grok_plan._not_ready()))
         return ref
+    if sub == "kimi":  # 10/21：Kimi 会员（engine/kimi_plan.py）：may_spend 认这一轮（经 /mcp、后台来的不放）、贴了密钥
+        from . import kimi_plan
+        if not models.may_spend(ref, kind="owner", origin=ORIGIN, via=via):
+            raise Refused(403, "plan_not_allowed", L("这一次不能花你的 Kimi 会员：请求是经 MCP 或者后台引出来的，不算你自己在命令行里说的",
+                                                     "This request can't use your Kimi membership: it came through MCP or a background run, "
+                                                     "not from you on the command line"))
+        if not models.subscription_ready(ref):
+            raise Refused(403, "plan_not_connected", kimi_plan.unavailable_text())
+        bare = ref.split("/", 1)[1]
+        if bare not in kimi_plan.MODELS:
+            raise Refused(400, "plan_model_unknown", L(f"Kimi 会员没有 {ref}。能用的：{'、'.join(kimi_plan.MODELS)}",
+                                                       f"{ref} isn't a Kimi membership model. Available: {', '.join(kimi_plan.MODELS)}"))
+        return ref
     if sub == "claude-code":
         if not models.may_spend(ref, kind="owner", origin=ORIGIN, via=via) or not models.subscription_ready(ref):
             raise Refused(403, "claude_code_unavailable", L(f"这台电脑上没有你自己登录好的 Claude Code，跑不了 {ref}（或者 server.json 关掉了 "

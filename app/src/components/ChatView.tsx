@@ -254,8 +254,10 @@ const ReplyText = React.memo(function ReplyText({ text, resolveQuote, onJump, se
  * 一条消息。memo，不读 store（头像、Agent 列表由外面传进来）：store 一变（流式回复每来一段字都变）读 store 的组件全都要重画，
  * 一天几十条长回复每段字都重新排一遍版。回调要稳定（ChatView 用 handlers ref 包着），onLongPress 收到的是这条消息。
  */
-export const Bubble = React.memo(function Bubble({ m, avatar, groupIds, showAvatar, onLongPress, onPassage, before, from, highlight, onJump, resolveQuote }: {
+export const Bubble = React.memo(function Bubble({ m, avatar, face, groupIds, showAvatar, onLongPress, onPassage, before, from, highlight, onJump, resolveQuote }: {
   m: Message; showAvatar: boolean; onLongPress?: (m: Message) => void;
+  /** 回复旁边的头像（赛博一对一传它自己的）；不给 = avatar（主对话的 LensAvatar） */
+  face?: (size: number) => React.ReactNode;
   /** 回复里选中一段字后点了系统菜单里的「引用这段 / 收藏这段 / 转发这段」（只有能选字的回复有） */
   onPassage?: (m: Message, what: PassageAction, text: string) => void;
   avatar: AvatarConfig;
@@ -339,7 +341,7 @@ export const Bubble = React.memo(function Bubble({ m, avatar, groupIds, showAvat
   const selectable = selectReplies();
   return (
     <Pressable onLongPress={long} delayLongPress={350} style={{ flexDirection: 'row', gap: space.sm }}>
-      <View style={{ width: 28 }}>{showAvatar || before ? <LensAvatar size={28} config={avatar} /> : null}</View>
+      <View style={{ width: 28 }}>{showAvatar || before ? (face ? face(28) : <LensAvatar size={28} config={avatar} />) : null}</View>
       <View style={{ flex: 1 }}>
         {before ? <View style={{ gap: 8, marginBottom: 8 }}>{before}</View> : null}
         <ReplyText text={m.body.text} resolveQuote={resolveQuote} onJump={onJump} selectable={selectable} onPick={onPassage && m.id.startsWith('db') ? pick : undefined} />
@@ -385,8 +387,10 @@ export function Action({ icon: Icon, label, note, danger, onPress }: { icon: typ
   );
 }
 
-export function ChatView({ threadId, placeholder, empty, welcome, quote: quoteProp, quoteAt = 0, focus, focusAt = 0, hideHistoryLink, composerTop, intercept, study }: {
+export function ChatView({ threadId, placeholder, empty, welcome, quote: quoteProp, quoteAt = 0, focus, focusAt = 0, hideHistoryLink, composerTop, intercept, study, face }: {
   threadId: string; placeholder: string; empty?: string;
+  /** 回复旁边、空白页和「正在回复」那里的头像（赛博一对一传它自己的）；不给 = 主对话的 LensAvatar */
+  face?: (size: number) => React.ReactNode;
   /** 对话空着时放在最上面、代替空白提示的一张卡（主对话在新实例上：「从这里开始」）。它在的时候不显示「这里只有今天的」：还没有历史 */
   welcome?: React.ReactNode;
   /** 不显示顶上「这里只有今天的」（思考主题整段都给） */
@@ -674,7 +678,7 @@ export function ChatView({ threadId, placeholder, empty, welcome, quote: quotePr
         {msgs.map((m, i) => {
           const above = placed.above.get(i);
           const bubble = (
-            <Bubble m={m} avatar={avatar} groupIds={groupIds} showAvatar={m.role === ASSISTANT_ROLE && msgs[i - 1]?.role !== ASSISTANT_ROLE} onLongPress={onLong} onPassage={onPassage}
+            <Bubble m={m} avatar={avatar} face={face} groupIds={groupIds} showAvatar={m.role === ASSISTANT_ROLE && msgs[i - 1]?.role !== ASSISTANT_ROLE} onLongPress={onLong} onPassage={onPassage}
               before={above?.length ? above.map((c) => <HandoffChip key={c.id} card={c} />) : undefined}
               from={m.role === 'auto' ? incoming.find((h) => h.relayId === m.id) : undefined} highlight={flash === m.id}
               onJump={onJump} resolveQuote={findQuote} />
@@ -698,7 +702,7 @@ export function ChatView({ threadId, placeholder, empty, welcome, quote: quotePr
           );
         })}
     </>
-  ), [msgs, placed, slots, incoming, flash, threadId, avatar, groupIds, onLong, onPassage, onRevise, onJump, findQuote, picking, picked, toggle]);
+  ), [msgs, placed, slots, incoming, flash, threadId, avatar, face, groupIds, onLong, onPassage, onRevise, onJump, findQuote, picking, picked, toggle]);
 
   // 「从这里开始」只在对话还空着时出现，占住空白提示的位置；发出第一条就没了
   const showWelcome = !!welcome && !msgs.length && !busy;
@@ -731,7 +735,7 @@ export function ChatView({ threadId, placeholder, empty, welcome, quote: quotePr
         ) : null}
         {showWelcome ? welcome : !msgs.length && !busy ? (
           <View style={{ alignItems: 'center', gap: space.sm, paddingVertical: space.xxl, paddingHorizontal: space.lg }}>
-            <LensAvatar size={40} config={avatar} />
+            {face ? face(40) : <LensAvatar size={40} config={avatar} />}
             <T v="callout" color={t.ink3} style={{ textAlign: 'center' }}>
               {booting ? L('正在连接服务器…', 'Connecting to the server…') : !connected ? L('未连接服务器。请检查「我 → 服务器」后返回此页。', 'Not connected to the server. Check Me → Server, then return to this page.') : empty ?? L('暂无对话。', 'No messages yet.')}
             </T>
@@ -742,7 +746,7 @@ export function ChatView({ threadId, placeholder, empty, welcome, quote: quotePr
         {messageList}
         {busy ? (
           <View style={{ flexDirection: 'row', gap: space.sm, alignItems: 'flex-start' }}>
-            <LensAvatar size={28} config={avatar} />
+            {face ? face(28) : <LensAvatar size={28} config={avatar} />}
             <View style={{ flex: 1, gap: 8 }}>
               {/* 这次回复里正在转给 Agent 的：先问，问完它再接着写 */}
               {liveHandoffs.map((c) => <HandoffChip key={c.id} card={c} />)}

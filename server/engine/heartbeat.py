@@ -9,9 +9,9 @@
     active  活跃时段 [开始, 结束]（HH:MM，按 server.json 的时区，能跨午夜，结束可以写 24:00；不写 = 全天；写错了 = 全天；
             开始等于结束 = 从不）——OpenClaw 的 activeHours，同样的规矩
     level   有话说时的推送档位（默认 quiet）
-    model   默认用这个 Agent 对话的模型；心跳一天几十次，挑个便宜的就省下来了。对话选的是用户自己的套餐（claude-code/…、chatgpt/…）时
-            心跳不跟：换成 engine.models 里非套餐的那个（一个都没有就不跑、记成出错）；写明 claude-code/… 才花套餐（chatgpt/… 还要
-            用户同意过后台用，engine/unattended.py）
+    model   默认用这个 Agent 对话的模型；心跳一天几十次，挑个便宜的就省下来了。没写、也没写 engine.use.background 时，对话模型是
+            这一轮能花的套餐就用它（10/21，来路 auto：claude-code 直接能花；chatgpt / grok / kimi 要在设置里同意过后台用）。花不了、
+            或者是已去掉的 copilot/…，就换成 engine.models 里非套餐的（一个都没有就不跑、记成出错）。心跳上写了 model 仍以它为准。
     light   默认 true：开头只放它是谁和规矩，不放工作区文件、档案、世界树、技能目录（OpenClaw 的 lightContext）
     prompt  清单写在这里（代替工作区的 HEARTBEAT.md）
     session 第 4 批：isolated（默认，新会话、不带聊天记录）/ chat（在这个 Agent 的对话今天的会话里跑，照 chat.trigger 那条路：
@@ -323,14 +323,19 @@ async def settle(timeout: float = 30) -> None:
 
 
 def model_of(agent: str, c: dict) -> str:
-    """这一次用哪个模型：心跳上写了的用它（写 claude-code/… 就花用户的套餐，他自己定的）；没写跟这个 Agent 对话的模型，但不跟套餐：
-    对话选的是 claude-code/… 就换成非套餐的（models.outside），一个都没有 → ""（这一次记成出错，不花套餐）。定时任务照旧跟对话的模型。"""
+    """这一次用哪个模型：心跳上写了的用它；没写、engine.use.background 写了就用那个。都没写就跟这个 Agent 对话的模型：是套餐、这一轮
+    （来路 auto）花得了就用它（10/21）；花不了（ChatGPT / Grok / Kimi 没同意后台）换成非套餐的，一个都没有 → ""（这一次记成出错）。
+    对话模型是已去掉的 copilot/… 时同样换成非套餐的，不把 copilot/… 交回去。定时任务照旧跟对话的模型（jobs.model_for），不在这里改。"""
     from . import jobs
     if c["model"] and models.known(c["model"]):
         return c["model"]
     if bg := models.background_model():  # 第 9 步「后台和定时」选的：用户自己定的，套餐也照用
         return bg
     m = jobs.model_for(jobs_own_thread(agent), None)
+    if models.retired_plan(m):  # 10/21：copilot/… 当它不存在
+        return models.outside(m) or ""
+    if models.subscription(m) and models.may_spend(m, kind="owner", origin="auto"):
+        return m
     return (models.outside(m) or "") if models.subscription(m) else m
 
 
@@ -365,11 +370,11 @@ async def run(agent: str, c: dict, text: str, source: str, at: datetime) -> str:
     fm, im = unattended.marks()
     if not model:
         out = unattended.Outcome(status="error", error=L(
-            f"心跳没写模型，这个对话用的又是你自己的套餐（claude-code/…、chatgpt/…）：心跳默认不花套餐。在 engine.heartbeat.{agent}.model "
-            "写一个模型（写 claude-code/… 就用套餐），或者在 engine.models 里加一个非套餐的",
-            f"The heartbeat has no model and this chat uses your own subscription (claude-code/… or chatgpt/…), which heartbeats don't "
-            f"spend by default. Set engine.heartbeat.{agent}.model (claude-code/… to use the subscription) or add a non-subscription model "
-            "to engine.models"))
+            f"心跳没写模型。这个对话用的套餐这一轮不能花（后台还没同意），也没有别的模型可换。写 engine.heartbeat.{agent}.model，"
+            "或在设置里同意后台使用套餐，或在 engine.models 里加一个非套餐的模型。",
+            f"The heartbeat has no model. This chat's plan can't be spent on this run (background use isn't allowed), and there is no "
+            f"other model to switch to. Set engine.heartbeat.{agent}.model, allow background use in Settings, or add a non-plan model "
+            "to engine.models."))
     else:
         idle = min(jobs.idle_timeout(), max(60.0, c["every"] * 60.0))
         words = prompt_for(agent, c, text, source, at, extra or None)

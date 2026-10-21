@@ -334,8 +334,11 @@ ENGINE = Obj({
     # 10/20：用户自己的 Grok 订阅（engine/grok_plan.py）：型号可以不带 grok/；route = api / proxy；search = false：搜网页不走订阅；x_search = true：搜 X 才走订阅
     "grok": OneOf(Bool(), Obj({"models": ListOf(Str(nonempty=True)), "route": Enum("api", "proxy"), "headers": DictOf(Str()), "search": Bool(), "x_search": Bool(),
                                "enabled": Bool()}, open=True)),
-    # 第 7 批：codex/…、copilot/… 当模型（engine/provider_cli.py，默认关）
+    # 10/21：Kimi 会员的 Kimi Code（engine/kimi_plan.py）：false = 关掉；site = cn / intl；model 可以不带 kimi/
+    "kimi": OneOf(Bool(), Obj({"site": Enum("cn", "intl"), "model": Str(nonempty=True), "headers": DictOf(Str()), "enabled": Bool()}, open=True)),
+    # 第 7 批：codex/… 当模型（engine/provider_cli.py，默认关）
     "codex": OneOf(Bool(), Obj({"models": ListOf(Ref()), "max_concurrent": Int(1), "enabled": Bool()}, open=True)),
+    # 10/21：Copilot 套餐已去掉。键还留着，免得旧配置被说成「不认识的键」；提示在 validate() 里那一条。
     "copilot": OneOf(Bool(), Obj({"models": ListOf(Ref()), "max_concurrent": Int(1), "background": Bool(), "max_ai_credits": Int(30), "bin": PATH,
                                   "enabled": Bool()}, open=True)),
     "auto": Obj({"cheap": Ref(), "max_chars": Int(1), "max_words": Int(1), "keywords": ListOf(Str()), "enabled": Bool()}, open=True),  # 第 7 批：engine/auto.py
@@ -394,6 +397,34 @@ KEYS = Obj({
 })
 
 
+def copilot_gone() -> str:
+    """配过 Copilot 套餐时给用户的那一句（校验、启动、doctor 共用）。"""
+    return L("Copilot 套餐已不再支持，请在设置里换一个模型",
+             "The Copilot plan is no longer supported. Pick another model in Settings")
+
+
+def _copilot_ref(v) -> bool:
+    if isinstance(v, str):
+        return v.strip().startswith("copilot/")
+    if isinstance(v, dict):
+        return any(_copilot_ref(x) for x in v.values())
+    if isinstance(v, list):
+        return any(_copilot_ref(x) for x in v)
+    return False
+
+
+def copilot_leftover_text(data) -> str | None:
+    """server.json 里还写着 Copilot 套餐（engine.copilot，或 engine 底下的 copilot/…）→ 那一句提示；没有 → None。"""
+    if not isinstance(data, dict):
+        return None
+    eng = data.get("engine")
+    if not isinstance(eng, dict):
+        return None
+    if "copilot" in eng or _copilot_ref(eng):
+        return copilot_gone()
+    return None
+
+
 def validate(data) -> list[Finding]:
     """整份查一遍 → 找到的（✗ error、! warn）。不是一个 JSON 对象 = 一条 error。"""
     out: list[Finding] = []
@@ -406,6 +437,9 @@ def validate(data) -> list[Finding]:
         KEYS.check(data, "", out)
     finally:
         _ALIASES.reset(token)
+    if copilot_leftover_text(data):  # 一条就够：键和 copilot/… 引用不各报一次
+        where = "engine.copilot" if isinstance(eng, dict) and "copilot" in eng else "engine"
+        out.append(Finding(where, "warn", copilot_gone()))
     return out
 
 

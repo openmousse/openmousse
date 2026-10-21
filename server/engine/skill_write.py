@@ -903,12 +903,29 @@ REVIEW = ("You review one finished turn of a conversation between a user and the
 
 
 def review_model(default: str) -> str | None:
+    """要不要存这一轮，用哪个模型。开了（true）走 engine.use.json；写了模型就用它。这一问是用户自己的后台（来路 auto，10/21）：
+    套餐 may_spend 认了才用，不认换成非套餐的。关着 → None。"""
+    import claw
+
     from . import models
     v = cfg().get("review")
-    if v is True:  # 后台回看不花用户的套餐（ChatGPT 套餐的后台用要同意；回看是外人回合，干脆不碰）：默认的是套餐就换非套餐的
-        return models.route("json") or (models.outside(default) if models.subscription(default) else default)
-    if isinstance(v, str) and models.valid_ref(v):
-        return v
+
+    def pick(ref: str | None, fallback: str | None) -> str | None:
+        if not ref:
+            return fallback
+        if models.subscription(ref):
+            if claw.is_builtin() and models.may_spend(ref, kind="owner", origin="auto"):
+                return ref
+            if claw.is_builtin():
+                return models.outside(ref) or fallback
+            return ref if models.valid_ref(ref) else None
+        return ref if models.valid_ref(ref) else fallback
+
+    if v is True:
+        return pick(models.route("json", kind="owner", origin="auto"),
+                    models.outside(default) if models.subscription(default) else default)
+    if isinstance(v, str):
+        return pick(v.strip(), None)
     return None
 
 
@@ -940,7 +957,7 @@ async def _review(agent: str, session, msgs: list[dict], ref: str) -> None:
         transcript = "\n\n".join(compact.serialize(msgs))[-12_000:]
         have = tools_mod.list_skills(agent, set())
         v, _via = await oneshot.ask_json(REVIEW, {"conversation": transcript, "existing_skills": {n: d for n, (d, _p) in sorted(have.items())}},
-                                         model=ref, purpose="skills", timeout=120, conversation=f"skills:{agent}", origin="skill-review")
+                                         model=ref, purpose="skills", timeout=120, conversation=f"skills:{agent}", origin="auto")
         if not isinstance(v, dict) or v.get("save") is not True:
             return
         name = str(v.get("name") or "").strip().lower()

@@ -30,10 +30,13 @@ export interface LocalRow {
   mac: boolean; caps: Caps; cost: string | null;
 }
 export interface LoginRow {
-  id: 'claude-code' | 'chatgpt' | 'codex'; kind: 'login'; role: 'chat' | 'helper'; name: string; ready: boolean;
+  id: 'claude-code' | 'chatgpt' | 'codex' | 'grok' | 'kimi'; kind: 'login'; role: 'chat' | 'helper'; name: string; ready: boolean;
   auth?: string | null; billing?: string | null; plan?: string | null; models?: string[]; enabled?: boolean; checking?: boolean;
   connected?: boolean; planEnabled?: boolean; needsReconnect?: boolean; lastError?: { code?: string; message?: string; at?: string } | null;
   how: string | null; docs: string | null; cost?: string | null;
+  /** Kimi 会员：贴的密钥（没有原文）、站点、现在用的型号、后台同意。Grok 也带 background。 */
+  key?: KeyInfo | null; site?: string | null; sites?: { id: string; label: string; url: string }[]; url?: string | null; model?: string | null;
+  background?: { allowed: boolean; since?: string | null; risk?: string | null } | null;
 }
 export interface CustomRow {
   id: string; kind: 'custom'; name: string; api: string; url: string; keyEnv: string | null; key: KeyInfo | null; keyless: boolean;
@@ -177,6 +180,21 @@ export const planApi = {
   callback: (url: string) => request<PlanStatus>('/api/engine/chatgpt/callback', { method: 'POST', body: { url }, timeoutMs: 60000 }),
 };
 
+/** Kimi 会员（Kimi Code，server/engine/kimi_plan.py）：控制台建的密钥贴进来，选国内或海外站点。密钥只往服务器送一次。 */
+export interface KimiView {
+  ok: boolean; enabled: boolean; connected: boolean; ready: boolean; key: KeyInfo; site: string; url: string;
+  sites: { id: string; label: string; url: string }[]; model: string; models: string[]; defaultModel: string;
+  background: { allowed: boolean; since: string | null; risk: string }; lastError: { code?: string; message?: string; at?: string } | null; docs: string;
+}
+
+export const kimiApi = {
+  status: () => request<KimiView>('/api/engine/kimi'),
+  save: (body: { key?: string; site?: string; model?: string }) => request<KimiView>('/api/engine/kimi', { method: 'PUT', body, timeoutMs: 45000 }),
+  background: (allow: boolean) => request<KimiView>('/api/engine/kimi/background', { method: 'PUT', body: { allow } }),
+  test: (body: { key?: string; site?: string; model?: string } = {}) => result<TestResult & { site?: string; model?: string }>('/api/engine/kimi/test', body),
+  remove: () => request<Removed>('/api/engine/kimi', { method: 'DELETE' }),
+};
+
 /** 给助手起名字（server/naming.py，features 里有 naming 才有）：名字 = server.json 的 app_name，vibe = IDENTITY.md 里一行性格。 */
 export interface Naming { ok: boolean; name: string; vibe: string; applies: boolean; backup?: string | null }
 
@@ -185,8 +203,8 @@ export const namingApi = {
   save: (b: { name?: string; vibe?: string }) => request<Naming>('/api/naming', { method: 'PUT', body: b }),
 };
 
-/** 套餐来的模型（claude-code/…、chatgpt/…）：外人回合（名片 Agent、Doorman）花不了。 */
-export const isPlanRef = (ref: string | null | undefined) => !!ref && /^(claude-code|chatgpt)\//.test(ref);
+/** 套餐来的模型（claude-code/…、chatgpt/…、kimi/…）：外人回合（名片 Agent、Doorman）花不了。 */
+export const isPlanRef = (ref: string | null | undefined) => !!ref && /^(claude-code|chatgpt|kimi)\//.test(ref);
 
 /** 一家的名字缩成字母块里的一两个字（OpenAI → O、DeepSeek → D、通义千问 → 通）。 */
 export function monoOf(name: string): string {

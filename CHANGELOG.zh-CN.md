@@ -25,9 +25,10 @@ OpenMousse 每一版改了什么，新的在上面。一版按发版日期命名
   - **Claude Code：** 主对话可以交给服务器上你自己登录的 Claude Code（`claude-code/opus`、`sonnet`、`haiku`）。找到登录好的 Claude Code 才列出来。用的是你的 Claude Pro / Max 套餐，只给你自己的回合用，同时最多 2 个，其余的排队。
   - **ChatGPT：** ChatGPT Plus / Pro 套餐在 app 里点 **Continue with ChatGPT** 连（`chatgpt/<型号>`），令牌只存在你的服务器上。后台的活要你先同意（`PUT /api/engine/chatgpt/background`）才用套餐。
   - **Grok：** SuperGrok / X Premium+ 订阅（`grok/<型号>`）。在服务器上跑 `setup_ctl.py grok login` 登录，app 里还登不了。令牌只存在你的服务器上，`setup_ctl.py grok` 能看额度用了多少。这不是 xAI 支持 OpenMousse 的登录方式，xAI 可能拒（403）：那就改用 `XAI_API_KEY` 配 `xai/<型号>`，花你的密钥。后台的活要先跑 `setup_ctl.py grok background on` 才用订阅；`engine.grok: false` 全部关掉。
-  - **Codex、Copilot：** 你命令行里的登录也能拿来跑对话。关着：`engine.codex: true`、`engine.copilot: true`。
+  - **Kimi：** Kimi Code 会员（`kimi/<型号>`：`k3`、`k3-256k`、`kimi-for-coding`、`kimi-for-coding-highspeed`）。在设置里贴一把 Kimi Code 控制台的密钥，选国内（`api.kimi.com`）或海外（`api.kimi.ai`）；没选过跟 app 语言走。按量的仍是 `moonshot/<型号>`。请求用 OpenMousse 自己的 User-Agent。你自己的回合能用；后台要另外同意，那一处写明自动跑可能被限流或封号。替别人答的不用。`engine.kimi: false` 关掉。
+  - **Codex：** 你命令行里的登录也能拿来跑对话。关着：`engine.codex: true`。Copilot 套餐已不再支持；配过的 `copilot/…` 会提示换一个模型。
   - **一问一答也走 Claude 套餐：** 总结、纪要这种一问一答的也能走 Claude 套餐，后面接按量付费的备用（`engine.use.json` / `engine.use.compact` = `["claude-code/sonnet", …]`）。
-  - **在 app 里选：** 设置 → 密钥 → 按用途选模型 里多了「一问一答」「压缩摘要」两行，写着用哪个模型、花套餐还是按量、出问题时换成哪个。Codex、Copilot 的套餐不在可选的里面。
+  - **在 app 里选：** 设置 → 密钥 → 按用途选模型 里多了「一问一答」「压缩摘要」两行，写着用哪个模型、花套餐还是按量、出问题时换成哪个。Codex 不在可选的里面。Copilot 套餐已不再支持。
   - **套餐没做成时**，说清是什么问题，只换你写了的备用：不再把套餐重跑一遍，也不自己换成按量付费的模型。有备用时，套餐最多只给一半的时间。
   - **短的调用多开几个位子。** 关着：`engine.claude_code.burst: <个数>`。平常的位子都占着时，短的调用最多再多开这么多个 Claude Code 进程，花你的套餐，每个约占 0.3 GB 内存。
   - 名片 Agent、Doorman 和对外的接口从来不用套餐。

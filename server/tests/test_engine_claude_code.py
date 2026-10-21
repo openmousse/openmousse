@@ -227,6 +227,10 @@ def test_outsiders_cyber_and_external_interfaces_never_spend_the_subscription(cc
     assert cyber.fallbacks_of({"id": "c1", "model": ["claude-code/opus", "deepseek/deepseek-flash"]}, "claude-code/opus") == ["deepseek/deepseek-flash"]
     assert models.outside("claude-code/opus") == "deepseek/deepseek-flash" and models.outside("moonshot/kimi-k3") == "moonshot/kimi-k3"
     assert models.may_spend("claude-code/opus", kind="owner", origin="user") and models.may_spend("claude-code/opus", kind="owner", origin="auto")
+    assert models.may_spend("claude-code/opus", kind="owner", origin="task")  # 后台任务自己的那一轮也花
+    assert not models.may_spend("claude-code/opus", kind="owner", origin="task", via="mcp")  # 替外人、经 /mcp 派出来的不花
+    assert not models.may_spend("claude-code/opus", kind="owner", origin="task", via="card")
+    assert models.may_spend("claude-code/opus", kind="owner", origin="user", via="mcp")  # 原来就能花的，via 不改这一条
     assert models.may_spend("claude-code/opus", kind="cyber", origin="user")  # 用户自己的赛博：看来路，不看 kind
     for kind, origin in (("owner", "api"), ("owner", "openai"), ("owner", "acp"), ("owner", None), ("cyber", "butler"), ("outsider", "card"),
                          ("outsider", "a2a")):
@@ -260,6 +264,7 @@ def test_outsiders_cyber_and_external_interfaces_never_spend_the_subscription(cc
     server_json({"claw": {"kind": "openclaw"}, "engine": {"model": "deepseek/deepseek-flash"}})  # OpenClaw 那条路照旧只给主人回合
     assert not models.may_spend("claude-code/opus", kind="cyber", origin="user")
     assert models.may_spend("claude-code/opus", kind="owner", origin="user")
+    assert not models.may_spend("claude-code/opus", kind="owner", origin="task")  # OpenClaw 不认后台任务这一条
 
 
 def test_the_v1_api_never_spends_the_subscription(cc, server_json):

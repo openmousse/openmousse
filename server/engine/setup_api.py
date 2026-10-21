@@ -442,6 +442,14 @@ def login_rows() -> list[dict]:
                           "cli": "python3 setup_ctl.py grok login"},
                 "how": catalog.text(catalog.LOGINS["grok"]["how"]), "docs": catalog.LOGINS["grok"]["docs"],
                 "cost": catalog.text(catalog.KIND_NOTES["plan"])})
+    from . import kimi_plan  # Kimi 会员（10/21）：控制台密钥 + 站点（engine/kimi_plan.py）
+    ks = kimi_plan.status()
+    out.append({"id": "kimi", "kind": "login", "role": "chat", "name": catalog.text(catalog.LOGINS["kimi"]["name"]),
+                "ready": bool(ks["ready"]), "connected": ks["connected"], "enabled": ks["enabled"], "key": ks["key"],
+                "site": ks["site"], "sites": ks["sites"], "url": ks["url"], "model": ks["model"], "models": ks["models"],
+                "defaultModel": ks["defaultModel"], "background": ks["background"], "lastError": ks["lastError"],
+                "how": catalog.text(catalog.LOGINS["kimi"]["how"]), "docs": catalog.LOGINS["kimi"]["docs"],
+                "cost": catalog.text(catalog.KIND_NOTES["plan"])})
     cx = runners.available().get("codex")
     out.append({"id": "codex", "kind": "login", "role": "helper", "name": "Codex", "ready": cx is not None, "auth": (cx or {}).get("auth"),
                 "billing": (cx or {}).get("billing"), "viaPlan": bool((cx or {}).get("chatgpt_plan")), "enabled": runners.enabled("codex"),
@@ -453,7 +461,7 @@ def custom_ids() -> list[str]:
     """engine.providers 里目录没有的（自定义的地址）；chatgpt、claude-code 这些名字不算。"""
     p = models.cfg().get("providers")
     names = [str(k) for k, v in (p.items() if isinstance(p, dict) else []) if isinstance(v, dict)]
-    return [n for n in names if catalog.entry(n) is None and n not in models.SUBSCRIPTIONS]
+    return [n for n in names if catalog.entry(n) is None and n not in models.SUBSCRIPTIONS and n not in catalog.LOGINS]
 
 
 def custom_row(pid: str) -> dict:
@@ -470,7 +478,7 @@ def openclaw_rows() -> list[dict]:
     """openclaw.json 里配的、目录和 engine.providers 都没有的（只读：在 OpenClaw 里改）。"""
     out = []
     for pid in sorted(models._openclaw_providers()):  # noqa: SLF001
-        if catalog.entry(pid) or pid in over_names() or pid in models.SUBSCRIPTIONS:
+        if catalog.entry(pid) or pid in over_names() or pid in models.SUBSCRIPTIONS or pid in catalog.LOGINS:
             continue
         p = effective(pid)
         if p is None:
@@ -1102,6 +1110,9 @@ async def test_provider(pid: str, request: Request):
         st = chatgpt_plan.status()
         return {"ok": bool(st["ready"]), "via": "login", "models": st["models"], "count": len(st["models"]), "listed": True, "ms": 0,
                 "error": None if st["ready"] else probe.error("auth", L("ChatGPT 套餐没连上，或者要重连", "The ChatGPT plan isn't connected, or needs reconnecting"))}
+    if pid == "kimi":  # 10/21：设置页的「测试」走这一家自己的探测（用存下的密钥；body 里的还没存）
+        from . import kimi_plan
+        return await kimi_plan.run_test(_key(b), _str(b, "site", 40), _str(b, "model", 80))
     if pid in catalog.LOCAL:
         e = catalog.LOCAL[pid]
         url = _url(b) or local_url(pid)
@@ -1127,6 +1138,9 @@ async def test_provider(pid: str, request: Request):
 async def delete_provider(pid: str):
     """删掉：app 里存的密钥；自定义的连同 engine.providers.<id>；本机的去掉改过的地址。进程环境、env_file 里的这里删不了（409，说在哪）。
     → {"ok", "removed": {"key", "config"}, "affected": [还指着这一家的用途], "backup"}"""
+    if pid == "kimi":  # 10/21：删的是 app 里存的 Kimi Code 密钥（进程环境里的删不了）
+        from . import kimi_plan
+        return kimi_plan.remove_key()
     e = catalog.entry(pid)
     custom = e is None and pid in custom_ids()
     if e is None and not custom:
@@ -1302,7 +1316,7 @@ def last_plan_failure(purpose: str, ref: str | None) -> dict | None:
 
 
 def plan_fields(purpose: str, ref: str | None, may_plan: bool) -> dict:
-    """每一行都多给的（10/20）：plan = ref 是谁家的套餐（models.subscription：claude-code / chatgpt / codex / copilot……，不是套餐 = None）、
+    """每一行都多给的（10/20）：plan = ref 是谁家的套餐（models.subscription：claude-code / chatgpt / codex / grok / kimi……，不是套餐 = None）、
     planReady = 这台机器上现在跑不跑得了（models.subscription_ready）、mayPlan = 这件事能不能用套餐、backups = 出问题时按顺序换谁、
     lastFailure = 最近一次用套餐没做成（last_plan_failure）。"""
     sub = models.subscription(ref) if ref else None

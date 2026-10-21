@@ -74,7 +74,7 @@ async def ask_json(prompt: str, input_: Any, *, model: str, purpose: str = "json
                                      effort=effort, max_tokens=max_tokens, conversation=conversation, origin=origin, kind=kind, via=via,
                                      chain=chain)
     owner = sub == "chatgpt"  # 主人自己的、能花 ChatGPT 套餐（上面问过）：照主人回合跑，零工具
-    owner = owner or sub == "grok"  # 10/20：Grok 订阅同上
+    owner = owner or sub in ("grok", "kimi")  # Grok 订阅、Kimi 会员同上
     spec = Spec(kind="owner" if owner else "outsider", model=model, system=prompt.rstrip() + JSON_RULE, conversation=conversation or purpose,
                 origin=origin if owner else (None if kind == "owner" else origin) or purpose, via=via if owner else None,
                 effort=effort or models.effort(purpose), max_tokens=max_tokens, json=True, max_steps=1, cache_tail=False, fallbacks=chain)
@@ -135,7 +135,7 @@ async def ask_text(prompt: str, text: str, *, model: str, purpose: str = "text",
                                   conversation=conversation, origin=origin, kind=kind, via=via, fallbacks=spare[1:])
         raise last
     owner = sub == "chatgpt"
-    owner = owner or sub == "grok"  # 10/20：Grok 订阅同 ChatGPT 套餐
+    owner = owner or sub in ("grok", "kimi")  # Grok 订阅、Kimi 会员同 ChatGPT 套餐
     spec = Spec(kind="owner" if owner else "outsider", model=model, system=system, conversation=conversation or purpose,
                 origin=origin if owner else (None if kind == "owner" else origin) or purpose, via=via if owner else None,
                 effort=effort or models.effort(purpose), max_tokens=max_tokens, max_steps=1, cache_tail=False, fallbacks=chain)

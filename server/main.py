@@ -151,6 +151,11 @@ async def lifespan(_app: FastAPI):
         settle.start()  # 从 app 派的后台任务做完后，派它的对话里那一轮回话接回 app（实时接管 + 从 chat.history 补漏）
     chat.resume_engine()  # 自己的内核上次停机时还在跑的回合：标成 aborted、会话补完整，app 那句补「没拿到回复」（没用过内核什么都不做）
     chat.resume_queued()  # 上次重启前还排着没发的消息：接着发
+    if claw.is_builtin():  # 10/21：配过 copilot/… 的，启动时说一声（解析已经换成别的模型，这里只提示）
+        from config import raw as config_raw
+        from ops import confcheck
+        if note := confcheck.copilot_leftover_text(config_raw()):
+            print(f"[engine] {note}")
     if claw.is_builtin():  # 自己内核的后台任务（第 5 项）：上次没跑完的标成被重启打断、做完还没交的交回原对话；在后台查本机的 Claude Code / Codex
         from engine import runners as engine_runners
         from engine import tasks as engine_tasks

@@ -73,6 +73,7 @@ from . import agent_cli, agent_skills, ask, chatgpt_plan, events, fallback, hear
 from . import commands, history
 from . import intents, plugins, skill_market, user_hooks  # 第 5 批
 from . import grok_plan  # 10/20：用户自己的 Grok 订阅
+from . import kimi_plan  # 10/21：Kimi 会员的 Kimi Code
 from . import bg, estop, flows, mailwatch, spend, triggers, webhooks
 from .errors import EngineError
 
@@ -86,6 +87,7 @@ router.include_router(plugins.router)  # 第 5 批：/api/setup/plugins…（带
 router.include_router(jobs.router)  # 定时任务（第 6 项）
 router.include_router(chatgpt_plan.router)  # 第 11b 项：/api/engine/chatgpt…（用户自己的 ChatGPT 套餐）
 router.include_router(grok_plan.router)  # 10/20：/api/engine/grok…（用户自己的 Grok 订阅，只认主人的设备）
+router.include_router(kimi_plan.router)  # 10/21：/api/engine/kimi…（Kimi 会员的 Kimi Code，只认主人的设备）
 router.include_router(mcp_client.router)  # 第 13 步：GET /api/engine/mcp（你配的 MCP 服务）
 router.include_router(mcp_client.setup_router)  # 第 5 批：/api/setup/mcp…（加、改、删、试连你配的 MCP 服务，只认主人的设备）
 router.include_router(ask.router)  # ⑫b：POST /api/engine/answer

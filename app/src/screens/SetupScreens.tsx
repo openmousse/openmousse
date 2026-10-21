@@ -6,7 +6,7 @@
 // 每一步都能「以后再说」：记在这台设备上（welcome.ts），设置首页照样看得到哪一层没配。
 // 设置里的「添加服务商」「换密钥」用同一个选择器和同一张填密钥的页：from = settings，不画进度环、没有「以后再说」，做完回到 returnTo。
 import React, { useCallback, useEffect, useRef, useState } from 'react';
-import { AccessibilityInfo, Linking, Pressable, StyleSheet, View } from 'react-native';
+import { AccessibilityInfo, Linking, Pressable, StyleSheet, Switch, View } from 'react-native';
 import { useFocusEffect, useNavigation, useRoute } from '@react-navigation/native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { agentName, setAgentName } from '../brand';
@@ -24,7 +24,7 @@ import { Screen, Segmented, T, showError } from '../components/ui';
 import { defaultBase, getBase, persistAgentName } from '../api/base';
 import { probe } from '../api/live';
 import {
-  isPlanRef, monoOf, namingApi, planApi, setupApi, type AutoChoice, type CloudRow, type CustomRow, type EmbeddingChoice, type LocalRow, type LoginRow,
+  isPlanRef, kimiApi, monoOf, namingApi, planApi, setupApi, type AutoChoice, type CloudRow, type CustomRow, type EmbeddingChoice, type LocalRow, type LoginRow,
   type MemoryView, type ModelChoice, type ProbeError, type ProviderRow, type ProvidersList, type Purposes, type SearchRow, type SearchView, type TestResult,
 } from '../api/setup';
 import { setServerInfo, supports } from '../api/version';
@@ -130,10 +130,19 @@ const SHORT: Record<string, () => string> = {
   openai: () => 'OpenAI', anthropic: () => 'Anthropic', google: () => 'Gemini', deepseek: () => 'DeepSeek', openrouter: () => 'OpenRouter',
   moonshot: () => 'Kimi', dashscope: () => L('通义千问', 'Qwen'), mistral: () => 'Mistral', ollama: () => 'Ollama', lmstudio: () => 'LM Studio',
   mlx: () => 'MLX', chatgpt: () => L('ChatGPT 套餐', 'ChatGPT plan'),
+  kimi: () => L('Kimi 会员（Kimi Code）', 'Kimi membership (Kimi Code)'),
 };
 const MONO: Record<string, () => string> = {
-  openrouter: () => 'OR', lmstudio: () => 'LM', dashscope: () => L('通', 'Q'), moonshot: () => 'K', 'claude-code': () => 'C', chatgpt: () => 'G',
+  openrouter: () => 'OR', lmstudio: () => 'LM', dashscope: () => L('通', 'Q'), moonshot: () => 'K', 'claude-code': () => 'C', chatgpt: () => 'G', kimi: () => 'K',
 };
+
+/** 登录这一行右边的状态。Kimi 会员是贴密钥，不是登录命令行。 */
+function loginValue(r: LoginRow): string {
+  if (r.id === 'kimi') return r.ready ? L('已保存', 'Saved') : L('没贴密钥', 'No key');
+  if (r.ready) return r.id === 'chatgpt' ? L('已连接', 'Connected') : L('已登录', 'Signed in');
+  if (r.needsReconnect) return L('要重连', 'Reconnect');
+  return r.id === 'chatgpt' ? L('没连接', 'Not connected') : L('没登录', 'Not signed in');
+}
 export const shortName = (r: { id: string; name: string }) => SHORT[r.id]?.() ?? r.name;
 export const monoFor = (r: { id: string; name: string }) => MONO[r.id]?.() ?? monoOf(shortName(r));
 
@@ -233,8 +242,7 @@ export function SetupModelsScreen() {
               <KitCard>
                 {logins.map((r, i) => (
                   <KitRow key={r.id} first={i === 0} icon={<Tile size={28} mono={monoFor(r)} />} title={shortName(r)} onPress={() => open(r.id, 'login')}
-                    value={r.ready ? (r.id === 'chatgpt' ? L('已连接', 'Connected') : L('已登录', 'Signed in')) : r.needsReconnect ? L('要重连', 'Reconnect') : r.id === 'chatgpt' ? L('没连接', 'Not connected') : L('没登录', 'Not signed in')}
-                    tone={r.ready ? 'good' : r.needsReconnect ? 'warn' : 'muted'} />
+                    value={loginValue(r)} tone={r.ready ? 'good' : r.id === 'kimi' || r.needsReconnect ? 'warn' : 'muted'} />
                 ))}
               </KitCard>
             </>
@@ -340,6 +348,10 @@ export function SetupProviderScreen() {
   const [verify, setVerify] = useState<Verify>(null);
   const [plan, setPlan] = useState<string | null>(null);  // ChatGPT 授权进行中：授权网址
   const [pasted, setPasted] = useState('');
+  const [kimiSite, setKimiSite] = useState<'cn' | 'intl'>('cn');
+  const [kimiModel, setKimiModel] = useState('kimi-for-coding');
+  const [kimiBg, setKimiBg] = useState(false);
+  const [kimiRisk, setKimiRisk] = useState('');
   const poll = useRef(0);
   useEffect(() => () => { poll.current += 1; }, []);  // 走了就不再等授权
 
@@ -358,6 +370,11 @@ export function SetupProviderScreen() {
         setName(r.name);
         setUrl(r.url);
         setApi(r.api === 'anthropic' ? 'anthropic' : 'openai');
+      } else if (r?.kind === 'login' && r.id === 'kimi') {
+        setKimiSite(r.site === 'intl' ? 'intl' : 'cn');
+        setKimiModel(bare(r.model || 'kimi/kimi-for-coding'));
+        setKimiBg(!!r.background?.allowed);
+        setKimiRisk(r.background?.risk || '');
       }
     }).catch((e) => { if (live) setErr(errText(e)); });
     return () => { live = false; };
@@ -442,6 +459,15 @@ export function SetupProviderScreen() {
         replaceRow(s.provider);
         setKey('');
         await finish(id, s.auto, res);
+      } else if (row?.kind === 'login' && row.id === 'kimi') {  // Kimi 会员：用这一把、这个站点、这个型号测；通了再存
+        const k = key.trim();
+        const res = await kimiApi.test({ ...(k ? { key: k } : {}), site: kimiSite, model: kimiModel });
+        setTest(res);
+        if (!res.ok) { failed(res); return; }
+        await kimiApi.save({ ...(k ? { key: k } : {}), site: kimiSite, model: kimiModel });
+        setKey('');
+        setList(await setupApi.providers({ probe: false, check: true }));
+        await finish('kimi', null, res);
       } else if (row) {  // 本机的（探一遍、列它装着的模型）、已登录的工具（现查一遍）
         const res = await setupApi.test(row.id, {});
         setTest(res);
@@ -542,7 +568,8 @@ export function SetupProviderScreen() {
   const needsModel = !!cloud && !cloud.canList && !model.trim();
   const ownUrl = !!cloud && ownAddress(cloud);
   const planWaiting = !!plan;
-  const canTest = kind === 'custom' ? !!url.trim() : cloud ? !needsKey && !needsModel && !(ownUrl && !url.trim()) : !!row && !(lstat?.macOnly);
+  const canTest = login?.id === 'kimi' ? !!(key.trim() || login.key?.present)
+    : kind === 'custom' ? !!url.trim() : cloud ? !needsKey && !needsModel && !(ownUrl && !url.trim()) : !!row && !(lstat?.macOnly);
   const kindLine = cloud ? `${L('云端', 'Cloud')} · ${cloud.cost || L('按用量付费', 'Pay as you go')}`
     : local ? `${L('本机', 'Local')} · ${local.url.replace(/^https?:\/\//, '').replace(/\/v1$/, '')}`
       : login ? L('已登录的工具 · 花你自己的套餐', 'Signed-in tool · uses your own plan')
@@ -648,7 +675,12 @@ export function SetupProviderScreen() {
 
       {login && phase !== 'ok' ? (
         <KitCard style={styles.infoCard}>
-          {login.ready ? (
+          {login.id === 'kimi' ? (
+            <>
+              {login.key?.present ? <OkLine text={login.key.hint ? L(`已保存 ${login.key.hint}`, `Saved ${login.key.hint}`) : L('已保存', 'Saved')} /> : <T v="callout" color={t.ink2}>{login.how || ''}</T>}
+              {login.docs ? <GoldLink label={L('看说明', 'Read the guide')} onPress={() => { Linking.openURL(login.docs!).catch(() => {}); }} /> : null}
+            </>
+          ) : login.ready ? (
             <OkLine text={login.id === 'chatgpt' ? L(`已连接${login.plan ? ` · ${login.plan}` : ''}`, `Connected${login.plan ? ` · ${login.plan}` : ''}`)
               : L(`已登录${login.plan ? ` · ${login.plan}` : ''}`, `Signed in${login.plan ? ` · ${login.plan}` : ''}`)} />
           ) : (
@@ -676,10 +708,49 @@ export function SetupProviderScreen() {
         </KitCard>
       ) : null}
 
+      {login?.id === 'kimi' && phase !== 'ok' ? (
+        <>
+          <GroupHead title={L('API 密钥', 'API key')} />
+          <View style={{ gap: space.sm }}>
+            {login.key?.present ? (
+              <T v="caption" color={t.ink2} style={{ fontWeight: '400' }}>
+                {[login.key.hint ? L(`已存 ${login.key.hint}`, `Saved ${login.key.hint}`) : L('已存', 'Saved'), sourceText(login.key.source), dayOf(login.key.savedAt)].filter(Boolean).join(' · ')}
+              </T>
+            ) : null}
+            <KeyField value={key} onChange={(v) => { setKey(v); if (phase === 'fail') setPhase('form'); }} label={L('API 密钥', 'API key')}
+              placeholder={login.key?.present ? L('换一把新的（不填就用存下的）', 'A new one (leave empty to keep the saved key)') : L('粘贴你的 API 密钥', 'Paste your API key')} />
+            <T v="caption" color={t.ink3} style={styles.note}>{L('密钥只存在你的服务器上。存好以后，这里只显示后四位。', 'The key is stored only on your server. Once saved, only its last four characters show here.')}</T>
+          </View>
+          <GroupHead title={L('站点', 'Site')} />
+          <Segmented options={[{ value: 'cn' as const, label: L('国内', 'China') }, { value: 'intl' as const, label: L('海外', 'Overseas') }]} value={kimiSite}
+            onChange={(v) => { setKimiSite(v); if (phase !== 'testing') setPhase('form'); }} />
+          <T v="caption" color={t.ink3} style={styles.note}>{login.sites?.find((s) => s.id === kimiSite)?.url || login.url || ''}</T>
+          <GroupHead title={L('型号', 'Model')} note={L('哪一档会员能用哪个，以会员页为准', 'Which tier includes which model is on the membership page')} />
+          <KitCard>
+            {(login.models?.length ? login.models : ['kimi/k3', 'kimi/k3-256k', 'kimi/kimi-for-coding', 'kimi/kimi-for-coding-highspeed']).map((ref, i) => (
+              <KitRow key={ref} first={i === 0} title={bare(ref)} mono chevron={false}
+                right={bare(ref) === kimiModel ? <Check size={18} color={t.gold} /> : undefined}
+                onPress={() => { setKimiModel(bare(ref)); if (phase !== 'testing') setPhase('form'); }} />
+            ))}
+          </KitCard>
+          <GroupHead title={L('后台', 'Background')} note={kimiRisk || L('Kimi Code 的条款写「仅限个人交互式使用」。后台自动跑可能被限流，甚至封号。默认不同意。',
+            "Kimi Code's terms allow personal interactive use only. Unattended background runs may be rate-limited or the account banned. Off unless you agree.")} />
+          <KitCard>
+            <KitRow first title={L('后台任务可以用我的套餐', 'Background tasks can use my plan')} chevron={false}
+              right={<Switch value={kimiBg} onValueChange={(v) => {
+                const prev = kimiBg;
+                setKimiBg(v);
+                kimiApi.background(v).then((s) => { setKimiBg(!!s.background?.allowed); if (s.background?.risk) setKimiRisk(s.background.risk); })
+                  .catch((e) => { setKimiBg(prev); showError(L('保存失败', "Couldn't save"), e); });
+              }} accessibilityLabel={L('后台任务可以用我的套餐', 'Background tasks can use my plan')} trackColor={{ true: t.cyan, false: t.track }} thumbColor="#FFFFFF" />} />
+          </KitCard>
+        </>
+      ) : null}
+
       {phase === 'fail' ? (
         <View style={{ marginTop: space.lg }}>
           <TestFail error={test?.error ?? null} busy={false} onRetry={run}
-            onChangeKey={cloud || kind === 'custom' ? () => { setKey(''); setPhase('form'); } : undefined} />
+            onChangeKey={cloud || kind === 'custom' || login?.id === 'kimi' ? () => { setKey(''); setPhase('form'); } : undefined} />
         </View>
       ) : null}
 

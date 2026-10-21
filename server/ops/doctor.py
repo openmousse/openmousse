@@ -222,15 +222,21 @@ def check_config_valid(c: Ctx) -> list[Check]:
         return []
     from . import confcheck
     found = confcheck.validate(c.cfg)
-    bad, unknown = confcheck.errors(found), [f for f in found if f.level == "warn"]
+    gone = confcheck.copilot_gone()
+    retired = [f for f in found if f.message == gone]
+    bad, unknown = confcheck.errors(found), [f for f in found if f.level == "warn" and f not in retired]
     title = L("server.json 的内容", "server.json contents")
     if bad:
         detail = "; ".join(f"{f.path}: {f.message}" for f in bad[:3]) + (L(f"……共 {len(bad)} 处", f" … {len(bad)} in all") if len(bad) > 3 else "")
         return [Check("config.valid", "error", title, detail, "mousse config validate")]
     if unknown:
-        return [Check("config.valid", "info", title, L(f"都对；{len(unknown)} 个不认识的键（{', '.join(f.path for f in unknown[:3])}）：新版本加的、或者拼错了",
-                                                      f"valid; {len(unknown)} unknown keys ({', '.join(f.path for f in unknown[:3])}): added by a newer version, or a typo"),
-                      "mousse config validate")]
+        detail = L(f"都对；{len(unknown)} 个不认识的键（{', '.join(f.path for f in unknown[:3])}）：新版本加的、或者拼错了",
+                   f"valid; {len(unknown)} unknown keys ({', '.join(f.path for f in unknown[:3])}): added by a newer version, or a typo")
+        if retired:
+            detail = f"{gone}；{detail}"
+        return [Check("config.valid", "warn" if retired else "info", title, detail, "mousse config validate")]
+    if retired:
+        return [Check("config.valid", "warn", title, gone, L("在设置里换一个模型", "Pick another model in Settings"))]
     return [Check("config.valid", "ok", title, L("整份校验过了", "the whole file validates"))]
 
 
@@ -345,9 +351,12 @@ def check_logins(c: Ctx) -> list[Check]:
 
 
 def _cli_models(chat: str | None) -> list[Check]:
-    """codex/…、copilot/… 当对话模型（engine/provider_cli.py，默认关）：主对话用着它却没开；copilot 开了却没装（它没有查登录的命令，只看装了没有）。"""
+    """codex/… 当对话模型（engine/provider_cli.py，默认关）：主对话用着它却没开。
+    copilot/… 已不再支持（10/21）：配过的给一条提示，不查装了没有。"""
     try:
+        from config import raw
         from engine import models, provider_cli
+        from . import confcheck
     except Exception:  # noqa: BLE001
         return []
     out = []
@@ -356,15 +365,9 @@ def _cli_models(chat: str | None) -> list[Check]:
         out.append(Check(f"login.{sub}.off", "error", provider_cli.NAMES[sub], L(f"主对话用的是 {chat}，可 engine.{sub} 没开",
                                                                               f"the main chat uses {chat}, but engine.{sub} is off"),
                          f"mousse config set engine.{sub} true"))
-    if provider_cli.enabled("copilot"):
-        title = provider_cli.NAMES["copilot"]
-        if provider_cli.bin_of("copilot"):
-            out.append(Check("login.copilot", "ok", title, L("装了（登录了没有它自己查不了：第一次回复就知道）",
-                                                             "installed (it can't report whether you're signed in; the first reply will tell)")))
-        else:
-            out.append(Check("login.copilot", "error" if sub == "copilot" else "warn", title, L("开了，没装", "turned on, not installed"),
-                             L("装 GitHub Copilot CLI（copilot），或在 engine.copilot.bin 写它在哪", "install the GitHub Copilot CLI (copilot), "
-                               "or set engine.copilot.bin")))
+    if models.retired_plan(chat) or confcheck.copilot_leftover_text(raw()):
+        out.append(Check("login.copilot", "warn", "Copilot", confcheck.copilot_gone(),
+                         L("在设置里换一个模型", "Pick another model in Settings")))
     return out
 
 
