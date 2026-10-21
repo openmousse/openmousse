@@ -142,6 +142,15 @@ async def pick(agent: str, requested: str | None, via: str | None) -> str:
     if sub == "chatgpt":
         await plan_ready(ref, via, mine=requested is None)
         return ref
+    if sub == "grok":  # 10/20：用户自己的 Grok 订阅（engine/grok_plan.py）：may_spend 认这一轮（经 /mcp、后台来的不放）、登录着
+        from . import grok_plan
+        if not models.may_spend(ref, kind="owner", origin=ORIGIN, via=via):
+            raise Refused(403, "plan_not_allowed", L("这一次不能花你的 Grok 订阅：请求是经 MCP 或者后台引出来的，不算你自己在命令行里说的",
+                                                     "This request can't use your Grok subscription: it came through MCP or a background run, "
+                                                     "not from you on the command line"))
+        if not models.subscription_ready(ref):
+            raise Refused(403, "plan_not_connected", str(grok_plan._not_ready()))
+        return ref
     if sub == "claude-code":
         if not models.may_spend(ref, kind="owner", origin=ORIGIN, via=via) or not models.subscription_ready(ref):
             raise Refused(403, "claude_code_unavailable", L(f"这台电脑上没有你自己登录好的 Claude Code，跑不了 {ref}（或者 server.json 关掉了 "

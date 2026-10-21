@@ -1,6 +1,6 @@
 """接 OpenAI 兼容的 POST <url>/chat/completions（Kimi、DeepSeek、Qwen、Gemini、OpenRouter、Ollama、LM Studio、vLLM…）：httpx 流式，SSE 自己解析。
 
-各家不一样的地方（10/16 对照 pi、OpenClaw、Hermes 的源码 + 真调核对，见 ~/openmousse-wt/engine/research/），按 provider 的设置走（models.py）：
+各家不一样的地方（10/16 对照 pi、OpenClaw、Hermes 的源码 + 真调核对），按 provider 的设置走（models.py）：
   reasoning_replay  思考（reasoning_content / reasoning）怎么发回去：all = 同一型号的每一轮都带（DeepSeek V4、Kimi K3，三家鼻祖都这么做）
                     / turn = 只带这一轮工具来回中间的（默认）/ none = 都不带（Mistral、Groq 收到会报错）
   mid_system        对话中间的 role=system 能不能直接发（Kimi 能）；不能的折进旁边那条 user，写成 <system-reminder>

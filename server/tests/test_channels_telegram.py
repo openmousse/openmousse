@@ -21,6 +21,7 @@ from channels import accounts, hub, owner, people, store
 from channels import telegram as tgmod
 from engine import providers
 from fake_telegram import FakeTelegram
+from stored_values import ASSISTANT_ROLE
 from test_engine import FakeModel
 
 import channels  # noqa: E402
@@ -217,7 +218,7 @@ def test_forum_topics_get_their_own_session(tg, fake):
     assert out["message_thread_id"] == 42
     thread = owner.group_thread("telegram", acc_id, f"{FORUM}:42")
     with chat._lock, chat.db() as conn:
-        assert conn.execute("SELECT 1 FROM messages WHERE thread=? AND role='grava'", (thread,)).fetchone()
+        assert conn.execute(f"SELECT 1 FROM messages WHERE thread=? AND role='{ASSISTANT_ROLE}'", (thread,)).fetchone()
 
 
 def test_bots_edits_and_joins_are_ignored(tg, fake):

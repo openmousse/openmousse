@@ -6,9 +6,9 @@
       参数和 /mcp 一样：args（脚本名后面的词）、input（标准输入）；多一个可选的 why（只在要用户点头时写上卡）。
       没有 agent 参数：在哪个工作区跑、脚本认成谁，由这一轮的 Agent 定（ctx.agent → MOUSSE_AGENT）；args 里用 --source / --by 冒充
       别人、Agent 用 --agent 动别人的看板 / 页面都不跑（一个 Agent 碰不到别的 Agent 的东西，同 mcp-<id> 令牌）。主对话自己没有看板，
-      它是前台：board / page 可以 --agent <某个 Agent> 帮那个 Agent 搭（Grava 里也是这样）。tasks 不走命令行（tasks_ctl.py 只会看额度）：
+      它是前台：board / page 可以 --agent <某个 Agent> 帮那个 Agent 搭（OpenClaw 那条路上也是这样）。tasks 不走命令行（tasks_ctl.py 只会看额度）：
       换成内核自己的 tasks 工具（第 5 项，engine/tasks.py：派后台任务、看、接着说、停、重派、额度）；
-      handoff、proposals、agents、settings 只给主对话（Grava 里这几个 skill 也只有 main 有）。第 1 批 b 起 handoff 也给 Agent（Agent → Agent：
+      handoff、proposals、agents、settings 只给主对话（OpenClaw 那条路上这几个 skill 也只有 main 有）。第 1 批 b 起 handoff 也给 Agent（Agent → Agent：
       转给 main 或别的 Agent；会议 --meet 还是只有主对话发起；跳数和圈见 engine/sessions.py；engine.handoff.agents = false 退回只给 main）。
   sessions_list / sessions_history / session_status  只读：看别的会话（第 1 批 b，engine/sessions.py：范围按 engine.sessions，读到的标成
           [Inter-session message]、当资料）。
@@ -271,7 +271,7 @@ VALUE_OPTS = {
 # 说「我是谁」的选项：谁都只许写成自己（MOUSSE_AGENT 已经告诉脚本了；活动记录、改动卡上记的是它）
 IDENTITY = {"inbox": ("--source",), "goals": ("--source",), "project": ("--source",), "schedule": ("--source",), "study": ("--source",),
             "diet": ("--by",), "proposals": ("--source",)}
-# 说「动谁的」的选项：Agent 只能是自己；主对话（前台，Grava 里也是它帮着搭 Agent 的看板）可以指定某个 Agent
+# 说「动谁的」的选项：Agent 只能是自己；主对话（前台，OpenClaw 那条路上也是它帮着搭 Agent 的看板）可以指定某个 Agent
 TARGET = {"board": ("--agent",), "page": ("--agent",)}
 # core skill → 它要的工具：这个 Agent 没有那个工具，就不列这个 skill
 SKILL_NEEDS = {"agent-builder": "agents", "board": "board", "dispatch": "tasks", "goals": "goals", "handoff": "handoff", "inbox": "inbox",
@@ -579,9 +579,7 @@ def connector_tool(apps, name: str, app: dict, t: dict, me: str) -> Tool:
     schema["type"] = "object"
     if not isinstance(schema.get("properties"), dict):
         schema["properties"] = {}
-    desc = (t.get("description") or t.get("title") or t["name"]).strip()
-    if len(desc) > apps.MAX_DESC:
-        desc = desc[: apps.MAX_DESC] + "…"
+    desc = apps.clip_desc(t.get("description") or t.get("title") or t["name"])  # 连接器说明上限（默认 600）；mcp_servers 仍用 MAX_DESC
     ask = apps.level_of(app, t) == "ask"
     desc = f"[{app['name']}] {desc}"
     if ask:
@@ -590,10 +588,11 @@ def connector_tool(apps, name: str, app: dict, t: dict, me: str) -> Tool:
                            "the server makes exactly that call and posts the result into your chat.)")
 
     async def run(args: dict, ctx: ToolCtx) -> str:
-        cur = apps.exposed().get(name)  # 每次现查：可能刚断开、刚改了档位
+        cur = apps.exposed().get(name)  # 每次现查：可能刚断开、刚改了档位、或在 server.json 里关掉了
         if cur is None:
-            raise ToolFailure(L(f"没有 {name} 这个工具了：连接器可能断开了，或者这个工具在 设置 → 连接器 里关掉了",
-                                f"{name} isn't available: the connector may be disconnected, or the tool turned off in Settings → Connectors"))
+            raise ToolFailure(apps.blocked_reason(name) or L(
+                f"没有 {name} 这个工具了：连接器可能断开了，或者这个工具在 设置 → 连接器 里关掉了",
+                f"{name} isn't available: the connector may be disconnected, or the tool turned off in Settings → Connectors"))
         capp, ct = cur
         try:
             text = await apps.run_tool(capp, ct, dict(args), {"token": None, "agent": ctx.agent or "main"})
@@ -947,10 +946,11 @@ async def submit_card(name: str, args_json: str, stdin: str | None, card: dict, 
     cid = "c_" + uuid.uuid4().hex[:16]
     thread = thread or thread_for(ctx.conversation, who)
     with store.tx() as conn:
-        conn.execute("""INSERT INTO engine_calls(id, inbox, dedupe, tool, args, input, agent, thread, turn, call, card, status, created_at)
-            VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)""", (cid, None, dedupe, name, args_json, stdin, who, thread, ctx.turn,
+        # kind、origin：交卡那一轮的（origin 已经和 via 取过更严的）：同意以后照做的那一次照它算谁能花套餐（handkit.run_approved）
+        conn.execute("""INSERT INTO engine_calls(id, inbox, dedupe, tool, args, input, agent, thread, turn, call, card, status, created_at,
+            kind, origin) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""", (cid, None, dedupe, name, args_json, stdin, who, thread, ctx.turn,
                                                   ctx.call_id, card_hash(card["title"], card["why"], card["changes"], card["detail"]), "asking",
-                                                  store.now_iso()))
+                                                  store.now_iso(), ctx.kind, ctx.origin))
     try:
         res = await inbox.add(inbox.ItemIn(kind="tool", source=who, thread=thread, dedupe=dedupe, **card))
     except HTTPException as e:

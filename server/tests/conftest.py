@@ -16,6 +16,13 @@ from pathlib import Path
 import pytest
 
 SERVER = Path(__file__).resolve().parent.parent
+# 这棵树的代码在仓库的 tree/（venv 里是一份旧拷贝）。测试认这一份；写回起的 mousse-tree 子进程也靠 PYTHONPATH。
+_TREE = SERVER.parent / "tree"
+if str(_TREE) not in sys.path:
+    sys.path.insert(0, str(_TREE))
+_py = os.environ.get("PYTHONPATH", "")
+if str(_TREE) not in _py.split(os.pathsep):
+    os.environ["PYTHONPATH"] = str(_TREE) + (os.pathsep + _py if _py else "")
 _BOOT = Path(tempfile.mkdtemp(prefix="mousse-test-"))
 atexit.register(shutil.rmtree, _BOOT, ignore_errors=True)
 (_BOOT / "server.json").write_text(json.dumps({

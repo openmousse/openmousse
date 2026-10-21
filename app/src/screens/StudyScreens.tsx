@@ -286,7 +286,7 @@ function PathTab({ u, reload, onAsk, onTab }: { u: study.StudyUnit; reload: () =
                   <Pressable onPress={() => setOpen(expanded ? -1 : i)} style={styles.stepRow} accessibilityRole="button">
                     <Pressable onPress={() => toggle(i)} hitSlop={8} accessibilityRole="checkbox" accessibilityState={{ checked: on }} accessibilityLabel={(on ? L('取消勾选：', 'Untick: ') : L('勾选：', 'Tick: ')) + s.title}
                       style={[styles.check, { borderColor: on ? t.cyan : t.ink3, backgroundColor: on ? t.cyan : t.surface }]}>
-                      {on ? <Check size={13} color="#fff" /> : null}
+                      {on ? <Check size={13} color={t.onCyan} /> : null}
                     </Pressable>
                     <T v="body" numberOfLines={2} color={on ? t.ink3 : t.ink} style={[{ flex: 1, fontSize: 15, fontWeight: i === cur ? '600' : '400' }, on && { textDecorationLine: 'line-through' }]}>{`${i + 1}. ${s.title}`}</T>
                     {s.minutes ? <T v="caption" color={t.ink3}>{L(`${s.minutes} 分钟`, `${s.minutes} min`)}</T> : null}

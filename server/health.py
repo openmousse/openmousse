@@ -1,4 +1,4 @@
-"""Apple 健康：手机上的原生 app 读 HealthKit，按天汇总后推到这里，存进 grava.db 的 health_daily。
+"""Apple 健康：手机上的原生 app 读 HealthKit，按天汇总后推到这里，存进 mousse.db 的 health_daily。
 
 - health_daily：恢复卡用的睡眠分期、HRV、静息心率等；health_metrics：全部类型按天汇总，一天一个指标一行。
 - health_sleep：睡眠是唯一存原始样本的（一段一行），用来看早上几点醒、有没有睡回笼觉（算法在 apple_health.py 的 night_detail / wake）。

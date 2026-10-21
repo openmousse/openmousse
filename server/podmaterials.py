@@ -1,6 +1,6 @@
 """播客的素材（2026-09-28）：一期播客可以放进一些素材，录前聊天、主持人追问、录完整理、费曼对照都参考。
 
-素材（grava.db pod_materials，id pm-xxxxxxxx）：
+素材（mousse.db pod_materials，id pm-xxxxxxxx）：
 - chat    对话里的一条（主对话或 Agent 的线程；你说的、它回的都行）：ref = <线程>:<消息 id>
 - friend  和朋友的聊天里的一条（你说的、朋友说的）：ref = <好友 id>:<消息 id>。朋友说的只在这一期里用（2026-09-28 定）：
           提纲、追问不原话引用朋友的话；存进库的笔记只写「参考了和 X 的聊天」，不写朋友的原话；不进世界树。
@@ -231,6 +231,17 @@ def add(eid: str, m: dict) -> dict | None:
         return mat_json(conn.execute("SELECT * FROM pod_materials WHERE id=?", (mid,)).fetchone())
 
 
+def upsert(eid: str, m: dict) -> dict | None:
+    """同 add，但同一个来源已经有了就换成新的字（录前讨论群的群记忆每轮写回一次，podprep.write_summary）。"""
+    with _lock, mdb() as conn:
+        old = conn.execute("SELECT id FROM pod_materials WHERE episode=? AND kind=? AND ref=?", (eid, m["kind"], m.get("ref") or "")).fetchone()
+        if old:
+            conn.execute("UPDATE pod_materials SET title=?, text=?, at=?, meta=? WHERE id=?",
+                         (m.get("title") or "", m.get("text") or "", m.get("at"), json.dumps(m.get("meta") or {}, ensure_ascii=False), old["id"]))
+            return mat_json(conn.execute("SELECT * FROM pod_materials WHERE id=?", (old["id"],)).fetchone())
+    return add(eid, m)
+
+
 def listing(eid: str) -> list[dict]:
     with _lock, mdb() as conn:
         rows = conn.execute("SELECT * FROM pod_materials WHERE episode=? ORDER BY created_at DESC", (eid,)).fetchall()
@@ -256,7 +267,14 @@ def for_prompt(eid: str, budget: int, friends: bool = True) -> list[dict]:
     [{id, kind, from, when, title, text}]。from：me（你自己说的 / 写的）/ assistant / friend:<名字> / source（收藏、文件，别人的东西）。
     friends=False：不带朋友说的（llmjson 退回带工具的对话回合时用：外人写的字不进那种回合）。"""
     with _lock, mdb() as conn:
-        rows = conn.execute("SELECT * FROM pod_materials WHERE episode=? ORDER BY created_at DESC", (eid,)).fetchall()
+        return rows_for_prompt(conn, eid, budget, friends=friends)
+
+
+def rows_for_prompt(conn: sqlite3.Connection, eid: str, budget: int, friends: bool = True) -> list[dict]:
+    """同 for_prompt，用传进来的连接（已经拿着锁的：录前讨论群拼成员这一次读的，podprep.material_for）。表还没建 → 空。"""
+    if not conn.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='pod_materials'").fetchone():
+        return []
+    rows = conn.execute("SELECT * FROM pod_materials WHERE episode=? ORDER BY created_at DESC", (eid,)).fetchall()
     out, left = [], budget
     for r in rows:
         if left < 200:

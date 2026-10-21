@@ -11,7 +11,8 @@ restore）和 Hermes 的 hermes_cli/backup_sqlite.py、archive_safe.py（SQLite 
   config        server.json（里面有接入令牌）
   secrets       secrets.env（默认带上；--no-secrets 不带）
   data          data_dir 整个：SQLite（mousse.db、recall.db、nutrition.db……）用 sqlite3 的 backup() 在线拷一个一致的样子，不直接复制正在写的文件；
-                -wal / -shm / *.lock / *.tmp 不要。里面也算密钥的跟着 --no-secrets 走：chatgpt/（ChatGPT 套餐的凭据）、apps/（连接器的
+                -wal / -shm / *.lock / *.tmp 不要。里面也算密钥的跟着 --no-secrets 走：chatgpt/（ChatGPT 套餐的凭据）、grok/（Grok
+                订阅的令牌，engine/grok_plan.py）、apps/（连接器的
                 OAuth 令牌）、sentinel/（Doorman 代位的密钥和证书）、gateway-device.json（设备私钥）、social/identity.json（朋友认你的钥匙）。
                 engine/browser-profiles/（沙箱浏览器留着的登录配置档：各网站的 cookie，浏览器开着时锁着）一概不带，恢复以后在沙箱浏览器里重新登录。
                 别的程序把库锁住了（独占）的：等 15 秒还拷不出来就报错、说是哪个文件（common.sqlite_copy），不会卡死
@@ -58,7 +59,7 @@ KEEP = 5
 SNAP_KEEP = 5
 SKIP_SUFFIX = (".lock", "-wal", "-shm", "-journal", ".tmp")
 SKIP_NAMES = {".DS_Store"}
-DATA_SECRETS = ({"chatgpt", "apps", "sentinel"}, {"gateway-device.json", "social/identity.json"})  # 目录（第一层）、文件
+DATA_SECRETS = ({"chatgpt", "grok", "apps", "sentinel"}, {"gateway-device.json", "social/identity.json"})  # 目录（第一层）、文件
 DATA_SKIP = {"engine/browser-profiles"}  # 一概不进包：沙箱浏览器留着的登录配置档（engine/sandbox.py，各网站的登录 cookie；浏览器开着时独占锁着）
 CHUNK = 1 << 20
 

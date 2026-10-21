@@ -20,6 +20,7 @@ rewind()：app 里撤回 / 重新编辑（/api/chat/rewind）= 会话换叶子�
   没调工具：换上备用链里下一个不是套餐的（engine/fallback.backup），在这里照常答这一句（model_switch 事件，app 照 fallbackFrom 标出来）。
 模型是 chatgpt/…（第 11b 项，用户自己的 ChatGPT 套餐，engine/chatgpt_plan.py）：就在这里跑（Responses API），也只给 app 自己的对话；
   models.may_spend 不放（后台的来路没同意过、via mcp……）就换成 models.outside() 挑的，挑不到报错说清楚。
+模型是 grok/…（10/20，用户自己的 Grok 订阅，engine/grok_plan.py）：同 chatgpt/…（后台的同意单独记）。
 进度、插话、停（chat.py 接，第 3 项）：on_event 把内核的事件交出去（chat.note_engine 画成 app 的「在想 / 在做」）；插话 =
   control.steer(user_message(…, ref))，这一批工具做完带着再问模型，没赶上的在 Result.pending 里（chat.py 让它们变成下一轮）；
   停 = control.abort()：已经出来的字留着、正在跑的工具收到取消（子进程一起杀掉）、会话补完整，等点头的收件箱卡不受影响。
@@ -37,11 +38,13 @@ from __future__ import annotations
 import asyncio
 import json
 import re
+import time
 from collections.abc import Callable
 from datetime import datetime
 
 from config import raw, settings
 from i18n import L
+from stored_values import ASSISTANT_ROLE
 
 from . import compact, context, manuals, mcp_client, memgate, models, recall, reset, skill_write, store, think, user_hooks
 from . import tools as tools_mod
@@ -204,11 +207,11 @@ def seed(thread: str, day: str, before: int | None) -> list[dict]:
     since = chat.day_bounds(day)[0]
     with chat._lock, chat.db() as conn:  # 按真时间比（时区改过偏移就不一样，见 chat.day_bounds）；斜杠命令那几行、压缩的提示（第 2 批）不是对话，不抄
         rows = conn.execute("SELECT id, role, text, gw_text FROM messages WHERE thread=? AND id<? AND julianday(ts)>=julianday(?) "
-                            "AND role IN ('user','auto','grava') AND IFNULL(origin, '') NOT IN ('command', 'btw', 'notice') ORDER BY id DESC LIMIT ?",
+                            f"AND role IN ('user','auto','{ASSISTANT_ROLE}') AND IFNULL(origin, '') NOT IN ('command', 'btw', 'notice') ORDER BY id DESC LIMIT ?",
                             (thread, before, since, SEED_TURNS * 2)).fetchall()
     merged: list[dict] = []
     for row in reversed(rows):
-        role = "assistant" if row["role"] == "grava" else "user"
+        role = "assistant" if row["role"] == ASSISTANT_ROLE else "user"
         text = (row["gw_text"] if role == "user" and row["gw_text"] else row["text"]) or ""
         if merged and merged[-1]["role"] == role:
             merged[-1]["content"] += "\n\n" + text
@@ -485,6 +488,18 @@ async def respond(thread: str, day: str, content: str | list, model: str | None,
                                     f"This turn can't use your ChatGPT plan ({chosen}): background runs need your OK in Settings first, and "
                                     "outside programs or other people never can; set a model with an API key (engine.model) for this"),
                                   kind="config")
+    elif sub == "grok":  # 10/20：用户自己的 Grok 订阅（engine/grok_plan.py）：同 ChatGPT 套餐的规矩，不能花就换 outside() 挑的
+        if models.may_spend(chosen, kind="owner", origin=origin, via=via) and in_app:
+            model = chosen
+        else:
+            model = models.outside(chosen)
+            if not model:
+                raise EngineError(L(f"这一轮不能花你的 Grok 订阅（{chosen}）：后台的要先同意（python3 setup_ctl.py grok background on），"
+                                    "外面的程序、别人引出来的一律不行；给它配一个用 API 密钥的模型（engine.model）",
+                                    f"This turn can't use your Grok subscription ({chosen}): background runs need your OK first (python3 "
+                                    "setup_ctl.py grok background on), and outside programs or other people never can; set a model with an API "
+                                    "key (engine.model) for this"),
+                                  kind="config")
     ref_model = model if model and (models.valid_ref(model) or models.subscription(model) == "chatgpt") else models.default_model()
     if not ref_model:
         raise EngineError("no model: set engine.model in server.json", kind="config")
@@ -608,7 +623,8 @@ async def stream(messages: list[dict], key: str, model: str | None, on_delta: Ca
     """一问一答：messages 最后一条是这次说的话，前面是带过来的记录。零工具、不存会话。→ 整段回复。出错抛 EngineError。
     origin：这一问是谁引出来的。主人自己的（user / auto / relay：Zen「想完了」、会议的发言、llmjson 退回这里的）model 是他自己的套餐时
     照 may_spend 花：claude-code/… 交给他自己登录的 Claude Code 一次性地跑（claude_brain.ask），整段答完一次交给 on_delta；它没做成、
-    备用链里有按量的就换，没有照旧报错。不给 = 当外人：套餐换成 outside() 挑的（llmjson 的退路也走这里，资料里可能有别人的话）。"""
+    备用链里有按量的就换（有备用时它最多等一半的时间，换上的拿剩下的），没有照旧报错。不给 = 当外人：套餐换成 outside() 挑的
+    （llmjson 的退路也走这里，资料里可能有别人的话）。"""
     chosen = model if model and (models.valid_ref(model) or models.subscription(model)) else models.default_model()
     sub = models.subscription(chosen)
     plan = bool(sub) and models.may_spend(chosen, kind="owner", origin=origin)
@@ -622,11 +638,13 @@ async def stream(messages: list[dict], key: str, model: str | None, on_delta: Ca
     conv = m.group(1) if m else (key or "main")
     fallbacks: list[str] | None = None
     if plan and sub == "claude-code":
+        deadline = time.monotonic() + timeout
         got, fallbacks = await _ask_claude_code(msgs, ref, origin, conv, timeout)
         if fallbacks is None:
             on_delta(got)
             return got
         ref, fallbacks = fallbacks[0], fallbacks[1:]
+        timeout = max(3.0, deadline - time.monotonic())  # 换上的那个拿剩下的时间（套餐有备用时只给了一半）
     spec = Spec(kind="owner", model=ref, system=system_prompt(), conversation=conv, origin=origin or "user",
                 display="summarized", timeout=timeout, cache_ttl="1h", fallbacks=fallbacks)
     res = await run_turn(spec, MemorySession(msgs[:-1]), msgs[-1],
@@ -640,17 +658,19 @@ async def stream(messages: list[dict], key: str, model: str | None, on_delta: Ca
 
 async def _ask_claude_code(msgs: list[dict], model: str, origin: str | None, conv: str, timeout: float) -> tuple[str, list[str] | None]:
     """一问一答交给用户自己登录的 Claude Code（claude_brain.ask）：带过来的记录接在这句话前面。→ (回答, None)；没做成而备用链里有按量的
-    → ("", [换上的, 它后面的…])；没有就抛 EngineError（说清是哪一类，claude_brain.advice）。"""
-    from . import claude_brain, fallback
+    → ("", [换上的, 它后面的…])；没有就抛 EngineError（说清是哪一类，claude_brain.advice）。有备用时它最多等一半的时间（10/20，照
+    oneshot.ask_json：它卡住不答，剩下的一半还来得及换），没备用照给满；剩下不到 3 秒就不换了，照报它的错。"""
+    from . import claude_brain, fallback, oneshot
     *before, last = msgs
     if before:
         rec = claude_brain.record(before)
         last = {**last, "content": [{"type": "text", "text": f"[Earlier in this conversation:]\n<conversation_record>\n{rec}\n"
                                                              "</conversation_record>\n\n[The message:]\n"}, *(last.get("content") or [])]}
-    res = await claude_brain.ask(system_prompt(), last, model=model, origin=origin, conversation=conv, timeout=timeout)
+    spare = fallback.backup(model, kind="owner", origin=origin)
+    t0 = time.monotonic()
+    res = await claude_brain.ask(system_prompt(), last, model=model, origin=origin, conversation=conv, timeout=timeout / 2 if spare else timeout)
     if res.status == "done":
         return res.text, None
-    chain = fallback.backup(model, kind="owner", origin=origin) if res.error_kind not in ("rule", "refusal") else []
-    if not chain:
+    if not spare or (res.error_kind or "") in oneshot.NO_SWITCH or timeout - (time.monotonic() - t0) < 3:
         raise EngineError(res.error or f"{model} didn't answer", kind=res.error_kind or "http")
-    return "", chain
+    return "", spare

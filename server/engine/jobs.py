@@ -207,7 +207,7 @@ def ready() -> None:
 
 def exists() -> bool:
     """库里有定时任务的表吗。只读地看一眼、不建表（store.connect 会建内核的表）：claw 不是 builtin 时收件箱的钩子也会来问，
-    没用过内核的库（比如 OpenClaw 的 Grava）什么都不碰（和第 3 项的 store.exists 一个规矩）。"""
+    没用过内核的库（比如一直跑 OpenClaw 的实例）什么都不碰（和第 3 项的 store.exists 一个规矩）。"""
     import sqlite3
     if str(settings.db) in _ready:
         return True

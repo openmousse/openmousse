@@ -8,7 +8,7 @@
   到点主对话在一轮没人看的主人回合里照 tree-prune skill 做：tree 工具跑 prune-context 看可剪的；没有就回 [SILENT]；
   有就写好计划，用 prune-plan 交（mousse-tree 校验、存进 ~/.mousse-tree/prune/<那周周日>.json）。
 - 出卡：tree 工具跑完 prune-plan，bridges.AFTER 接到这里（after_tree → submitted）：有可剪的才出一张收件箱卡（kind tree，静默，
-  dedupe tree:prune:<那周周日>，一周后过期；同一周再交一份 = 原地换掉这张卡）。表 tree_prune（grava.db）一张卡一行：
+  dedupe tree:prune:<那周周日>，一周后过期；同一周再交一份 = 原地换掉这张卡）。表 tree_prune（mousse.db）一张卡一行：
   哪一周、计划的指纹、卡上内容的指纹、状态、结果。
 - 卡是一张卡多条（2026-10-17，inbox.py 的 items，itemsKind tree-prune）：一步一条（id = 第几步），data 是这一步交计划时的写法。
   合并、改写、并进档案的那几步先回原话核对（openmousse_tree.provenance；对话记录在这台服务器的 messages 表里的才查得到，
@@ -17,9 +17,9 @@
   做过的跳过；合并、并进档案记下来源）；同意的那几步里有在卡上「修改」过的，先把同意的这几步重新交成这周的计划再做。卡片标完成写上结果，
   不往对话里发话。拒绝 / 撤回：计划作废。改一下（整张卡，inbox.REVISE_TEXT / REPLY_TEXT）：让主对话按你说的改好计划重新交。
 - 「修改」一条（inbox.ITEM_REVISE["tree-prune"]，revise_step）：一次零工具的模型调用按你写的那句改这一步，照计划的规矩再校验
-  （和卡上别的几步一起算：一片叶子只能在一步里），换掉那一条、重新核对原话，回到没定。作者那份（Grava 的 memory_tree.py）交的卡
+  （和卡上别的几步一起算：一片叶子只能在一步里），换掉那一条、重新核对原话，回到没定。工作区那份（scripts/memory_tree.py）交的卡
   也是 tree-prune 的条目：校验交给脚本的 prune_revise（有它才行）。
-- 每周修剪的定时任务、出卡只给开源版世界树：作者那份（workspace 的 memory_tree.py，Grava）自己修剪、自己经 inbox_ctl 交卡。
+- 每周修剪的定时任务、出卡只给开源版世界树：工作区那份（scripts/memory_tree.py）自己修剪、自己经 inbox_ctl 交卡。
 - 13c（2026-10-19）：卡上多一节「这个月没用上的」（unused.py：手册、技能，一份一条，id u1、u2……，默认不动；同意 = 交 ⑬ 改说明，
   修改写「停用」= 停用）。这周没有可剪的（交的计划是空的、定时任务跑完没交计划）也出一张只有这一节的卡（after_job）。
 接口（app 的界面等设计出了图再做）：GET /api/tree/prune（最近一份计划和卡的状态）、GET /api/tree/prune/context（这周可剪的）。
@@ -145,7 +145,7 @@ def where_of(thread: str, day: str | None) -> str:
 
 
 def find_said(row: dict) -> dict | None:
-    """openmousse_tree.provenance 的 find：叶子的出处是这台服务器上的对话（platform 是 openmousse / grava、有 thread）就去 messages 表找
+    """openmousse_tree.provenance 的 find：叶子的出处是这台服务器上的对话（platform 是 openmousse / TREE_SOURCE、有 thread）就去 messages 表找
     用户说过的话；别的平台的对话这里没有 → None（没法核对）。记了消息 id：看那一条和它前面两条；没记：叶子写下之前一周、之后一小时里找。
     Zen 想完写的（platform zen，2026-10-19）：回 think 的存储（那个主题的想法碎片、聊聊里用户的话）找，找不到算 missing（think.find_said）。"""
     th, q = str(row.get("thread") or ""), str(row.get("quote") or "")
@@ -377,7 +377,7 @@ async def on_decided(it: dict, action: str) -> dict | None:
 # —— 卡上「修改」一步（inbox.ITEM_REVISE["tree-prune"]）———————————————————————————————————
 
 def package_format() -> str:
-    """开源包修剪计划一步的写法（给「修改」的模型看）。作者那份（Grava）的写法由脚本的 prune_revise_info 给（format）。"""
+    """开源包修剪计划一步的写法（给「修改」的模型看）。工作区那份的写法由脚本的 prune_revise_info 给（format）。"""
     return LS("op 只能是 merge（ids 至少两片、text 合成的一句）/ rewrite（id、text）/ archive（id）/ promote（id、section、text）/ "
               "branch（id、to）/ sprout（name、parent、about、move），每步可以带 why。",
               "op is one of merge (ids, at least two; text, the merged sentence) / rewrite (id, text) / archive (id) / promote (id, section, text) / "
@@ -407,7 +407,7 @@ def _week_of(card: dict) -> str:
 
 
 def _step_info(mt, op: dict) -> dict:
-    """给模型看的：这一步动到的叶子、有哪些枝、档案的小节。开源版直接读包；作者那份（Grava）交给脚本的 prune_revise_info。"""
+    """给模型看的：这一步动到的叶子、有哪些枝、档案的小节。开源版直接读包；工作区那份交给脚本的 prune_revise_info。"""
     with contextlib.closing(mt.connect(sync=False)) as conn:
         if not getattr(mt, "PACKAGE", False):
             return mt.prune_revise_info(conn, op)
@@ -573,7 +573,7 @@ def start() -> None:
 
 @router.get("/api/tree/prune")
 def get_prune():
-    """最近一份修剪计划（每一步、做没做）和它的卡。没接世界树：200 + missing_source（同 /api/tree）；作者那份：404。"""
+    """最近一份修剪计划（每一步、做没做）和它的卡。没接世界树：200 + missing_source（同 /api/tree）；工作区那份：404。"""
     sources.require("tree")
     mt = tree()
     if mt is None:

@@ -14,6 +14,10 @@ llm-task 不许覆盖模型（Plugin LLM completion cannot override the target m
   Claude Code（claude-code/…）时交给它一次性地跑（零工具、不存会话，走他的套餐；跑不了有按量的备用就换）；builtin 没配
   engine.use.json、退回 think.complete 的那条路也带上来路（engine/owner.stream：模型是他的 Claude Code 就走套餐）。不报的当外人：
   一律不花用户的套餐（route() 换成按量的，owner.stream 也换）。
+套餐没做成（10/20，主人 10/19 定的：套餐出问题不自动退到按量的）：内核那条路用的是套餐，它没做成（没登录、额度用完、命令坏了、超时、
+  过载……）就不再往下走：以前退回 via_complete → think.complete → owner.stream，默认模型也是套餐时同一个套餐再跑一遍、再等一个完整的
+  超时；默认模型是按量的就是悄悄换了模型。现在只按配置里写了的备用换（engine.use.json 列表后面的、engine.fallbacks，engine/oneshot.py
+  里换），都没有就当场报错，说清是套餐的哪一类问题、去「按用途选模型」换（plan_failed）。它拒答的照旧不换。用的不是套餐时，老的退路照旧。
 失败抛 LLMError（带一句原因，不带令牌）。
 """
 from __future__ import annotations
@@ -30,6 +34,9 @@ import chat
 import claw
 import engine
 from config import settings
+from engine import models
+from i18n import L
+from stored_values import SESSION_TAG
 
 _no_task_until = 0.0
 
@@ -98,7 +105,7 @@ async def via_complete(prompt: str, input_: dict, schema: dict | None, timeout: 
     import think  # 放这里：think 也会用到这个模块，免得互相导入
     text = (prompt + "\n\nINPUT_JSON:\n" + json.dumps(input_, ensure_ascii=False, indent=1)
             + "\n\nReply with ONE JSON value only, no other text, no tools." + (f"\nJSON Schema:\n{json.dumps(schema, ensure_ascii=False)}" if schema else ""))
-    key = f"agent:main:grava:json-{uuid.uuid4().hex[:10]}"
+    key = f"agent:main:{SESSION_TAG}:json-{uuid.uuid4().hex[:10]}"
     try:
         out = await think.complete(text, key, chat.DEFAULT_MODEL if claw.is_openclaw() else claw.model(), timeout, origin=origin)
     except Exception as e:  # noqa: BLE001 — 连不上、Gateway 报错都算这一次没成
@@ -110,6 +117,24 @@ async def via_complete(prompt: str, input_: dict, schema: dict | None, timeout: 
             except Exception:  # noqa: BLE001
                 pass
     return parse_json(out), "complete"
+
+
+def plan_failed(ref: str, e: engine.EngineError) -> str:
+    """一问一答用的套餐（ref）没做成时的那句（见文件开头）：哪一类问题、没有悄悄换、去哪换。配了备用、备用也没做成的，e 是备用的错，
+    套餐那一下的记在 e.plan_failure 上（engine/oneshot.py）。"""
+    first = getattr(e, "plan_failure", None)
+    plan_err = first if isinstance(first, engine.EngineError) else e
+    what = {"auth": L("登录掉了", "is signed out"), "quota": L("额度用完了", "hit its usage limit"),
+            "broken": L("跑不起来（claude 命令坏了）", "won't run (the claude command is broken)"), "timeout": L("到时间还没答完", "didn't answer in time"),
+            "http": L("这次没答成（过载或连不上）", "didn't answer (overloaded or unreachable)"), "config": L("用不了", "can't be used"),
+            "output": L("回的不是要的 JSON", "didn't reply with the JSON asked for")}.get(plan_err.kind, L("没做成", "didn't work"))
+    detail = " ".join(str(e).split())[:240]
+    where = L("可在「设置 → 按用途选模型 → 一问一答」里更换。", "Switch it under Settings → Models by purpose → One-shot answers.")
+    if plan_err is not e:
+        return L(f"一问一答用的套餐（{ref}）{what}，换上的备用也没做成（{detail}）。{where}",
+                 f"Your plan for one-shot answers ({ref}) {what}, and the backup didn't work either ({detail}). {where}")
+    return L(f"一问一答用的套餐（{ref}）{what}，没有换别的模型。{where}（{detail}）",
+             f"Your plan for one-shot answers ({ref}) {what}; no other model was used. {where} ({detail})")
 
 
 async def ask(prompt: str, input_: dict, schema: dict | None = None, *, timeout: float = 90, thinking: str = "low",
@@ -130,6 +155,8 @@ async def ask(prompt: str, input_: dict, schema: dict | None = None, *, timeout:
                                          effort=thinking if thinking in ("low", "medium", "high") else None, max_tokens=max_tokens,
                                          kind=kind, origin=origin)
         except engine.EngineError as e:
+            if models.subscription(ref):  # 套餐没做成：配了的备用 ask_json 里已经换过，不再退回老路（见文件开头）
+                raise LLMError(str(e)[:200] if e.kind == "refusal" else plan_failed(ref, e)) from e
             if not engine.fallback_allowed():
                 raise LLMError(str(e)[:200]) from e
     if claw.is_openclaw() and time.time() >= _no_task_until:

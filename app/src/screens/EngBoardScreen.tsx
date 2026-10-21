@@ -1,4 +1,5 @@
-// 工程看板（2026-10-15，画布「待办合进今天」第 11 张；server/engboard.py）：Claude Code 的交接本 todos.md 单向同步过来，只读。
+// 工程看板（2026-10-15，画布「待办合进今天」第 11 张；server/engboard.py）：服务器单向同步过来，只读。来源两种都可能：
+// Claude Code 的交接本 todos.md，或 GitHub 的看板（engboard.py 的 source = github，10/19 起）；页面不分，顶上只写「从工程看板同步」。
 // 工程的事不进「今天」的待处理、没有截止日：手机上只看做了哪些、没做哪些、进度到哪；拍板、动手、改状态都在电脑上的 Claude Code 里。
 // 顶上三个数（这周做完 / 没做 / 等你），两个视图：进度（主线分格 + 各条线做完 / 总数和状态）、看板（没做 / 等你 / 这周做完三列，点一张看原文）。
 // 从「今天」报告里的工程看板卡点进来；网页版 ?screen=EngBoard。
@@ -45,7 +46,7 @@ export function EngBoardScreen() {
         <View style={{ flex: 1, gap: 1 }}>
           <T v="headline" style={{ fontSize: 20, fontWeight: '700' }}>{L('工程看板', 'Engineering')}</T>
           <T v="caption" color={t.ink3} style={{ fontWeight: '400' }} numberOfLines={1}>
-            {[L('从 todos.md 同步 · 只读，处理在电脑上', 'Synced from todos.md · read only; work happens on the computer'), synced ? L(`更新于 ${synced}`, `updated ${synced}`) : ''].filter(Boolean).join(' · ')}
+            {[L('从工程看板同步 · 只读，处理在电脑上', 'Synced from the engineering board · read only; work happens on the computer'), synced ? L(`更新于 ${synced}`, `updated ${synced}`) : ''].filter(Boolean).join(' · ')}
           </T>
         </View>
       </View>

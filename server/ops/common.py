@@ -136,6 +136,11 @@ def chatgpt_dir(c: dict | None = None) -> Path:
     return data_dir(c) / "chatgpt"
 
 
+def grok_dir(c: dict | None = None) -> Path:
+    """Grok 订阅的令牌目录（10/20，engine/grok_plan.py 的 data_path）：也算密钥。"""
+    return data_dir(c) / "grok"
+
+
 def workspaces(c: dict | None = None) -> dict[str, Path]:
     """各 Agent 的工作区：main = server.json 的 workspace（默认 <openclaw_home>/workspace），加上 agent_workspaces。"""
     c = cfg() if c is None else c

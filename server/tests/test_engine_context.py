@@ -13,6 +13,7 @@ import config
 from engine import compact, context, events, owner, provider_anthropic, providers
 from engine.errors import EngineError
 from engine.session import NO_RESULT, SUMMARY_PREFIX, DbSession, View, day_key, repair, text_of, user, with_time
+from stored_values import ASSISTANT_ROLE
 from test_engine import FakeModel
 
 MODEL = "deepseek/deepseek-flash"
@@ -260,8 +261,8 @@ def test_new_day_brings_yesterdays_digest_and_where_it_ended(home, fake, runner)
     import chat
     thread = "g-fit"
     with chat._lock, chat.db() as conn:
-        for role, text, status in (("user", "Plan my week please", "ok"), ("grava", "Mon push, Wed pull, Fri legs.", "ok"),
-                                   ("auto", context.AUTO_TRIGGER + "日结", "ok"), ("grava", "digest reply", "ok"),
+        for role, text, status in (("user", "Plan my week please", "ok"), (ASSISTANT_ROLE, "Mon push, Wed pull, Fri legs.", "ok"),
+                                   ("auto", context.AUTO_TRIGGER + "日结", "ok"), (ASSISTANT_ROLE, "digest reply", "ok"),
                                    ("user", "Move Friday to Saturday?", "ok")):
             conn.execute("INSERT INTO messages(thread, role, text, ts, status) VALUES(?,?,?,?,?)", (thread, role, text, "2026-10-14T20:00:00+00:00",
                                                                                                 status))
@@ -288,8 +289,8 @@ def test_moving_time_zones_keeps_where_it_ended_and_todays_messages(home, fake, 
         monkeypatch.setattr(chat, "TZ", tz)
         monkeypatch.setattr(config.settings, "tz", tz)
         with chat._lock, chat.db() as conn:
-            rows = ([("user", "Plan my week please", "2026-10-16T20:30:00+01:00"), ("grava", "Mon push, Wed pull.", "2026-10-16T20:31:00+01:00"),
-                     ("user", "And Friday?", "2026-10-16T21:40:00+01:00"), ("grava", "Friday legs.", "2026-10-16T21:41:00+01:00")]
+            rows = ([("user", "Plan my week please", "2026-10-16T20:30:00+01:00"), (ASSISTANT_ROLE, "Mon push, Wed pull.", "2026-10-16T20:31:00+01:00"),
+                     ("user", "And Friday?", "2026-10-16T21:40:00+01:00"), (ASSISTANT_ROLE, "Friday legs.", "2026-10-16T21:41:00+01:00")]
                     if tz.key == "Europe/Lisbon" else [("user", "Friday again?", "2026-10-17T04:45:00+08:00")])
             ids = [conn.execute("INSERT INTO messages(thread, role, text, ts, status) VALUES(?,?,?,?,'ok')", (thread, *r)).lastrowid for r in rows]
     f = fake([{"text": "Still legs."}])

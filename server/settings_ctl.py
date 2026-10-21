@@ -6,7 +6,7 @@
   python3 settings_ctl.py user-name ""       清掉，回到默认的「用户」
 
 只改这一项，别的设置原样留着；先写临时文件再换名，写到一半断了也不会留下半个文件。
-称呼同时记进档案 USER.md（settings.profile，也是世界树的主干）：一行「- 称呼：小林 [L] 日期」，格式和 app 里改档案一样；
+称呼同时记进档案 USER.md（settings.profile，也是世界树的主干）：一行「- 称呼：小林 [U] 日期」，格式和 app 里改档案一样（见 profile_tags.py）；
 已有这一行就改它，没有就加在「基本信息」一类的小节（没有就第一个小节）末尾，一个小节都没有就新开一节；清掉称呼就删掉这一行。
 改之前的那一行记进 profile-history.md（和 app 一样）。
 """
@@ -19,6 +19,7 @@ import sys
 from datetime import datetime
 from pathlib import Path
 
+import profile_tags
 from config import CONFIG_PATH, TZ, save, settings
 from i18n import L
 
@@ -37,7 +38,7 @@ def usage() -> str:
 
 Only this setting changes and everything else stays as it is; the file is written to a temporary file and renamed, so an interrupted write never leaves half a file.
 The name also goes into the profile USER.md (settings.profile, which is also the memory tree's trunk) as one line,
-"- Preferred name: Alex [L] date", the same format the app uses when you edit the profile: that line is updated if it's
+"- Preferred name: Alex [U] date", the same format the app uses when you edit the profile: that line is updated if it's
 already there, otherwise added at the end of a "Basics"-like section (or the first section), or in a new section if the file has none;
 clearing the name deletes the line. The line it replaces goes into profile-history.md, as in the app.
 """)
@@ -66,14 +67,14 @@ def write_profile(name: str) -> str | None:
     except FileNotFoundError:
         lines = []
     today = datetime.now(TZ).date().isoformat()
-    new = f"- {L('称呼：', 'Preferred name: ')}{name} [L] {today}" if name else None
+    new = f"- {L('称呼：', 'Preferred name: ')}{name} {profile_tags.confirmed(today)}" if name else None
     at = next((i for i, ln in enumerate(lines) if NAME_LINE.match(ln)), None)
     if at is not None:
         end = at  # 要点下面缩进的子行算同一条（和 app 读档案一样）
         while end + 1 < len(lines) and lines[end + 1].startswith(("  ", "\t")) and lines[end + 1].strip():
             end += 1
         old = "\n".join(lines[at:end + 1])
-        if new and end == at and NAME_LINE.sub("", lines[at]).split(" [L]")[0].strip() == name:
+        if new and end == at and profile_tags.strip_tail(NAME_LINE.sub("", lines[at])).strip() == name:
             return None  # 已经是这个称呼
         section = section_at(lines, at)
         lines[at:end + 1] = [new] if new else []

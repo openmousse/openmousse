@@ -11,6 +11,9 @@
   local/<命令>        本机的命令（PATH 上找得到才有），比如 piper、espeak-ng：{"model": "local/piper", "args": ["--model", "/…/voice.onnx",
                       "--output_file", "{out}"], "stdin": true, "format": "wav"}；args 里 {out} = 写到哪、{text_file} = 字存成的文件、{text} = 字本身、
                       {voice} = 声音；stdin = 字从标准输入给。不花钱、不出门
+  grok/<型号>         10/20：用户自己的 Grok 订阅（engine/grok_media.py：POST /v1/tts，声音 eve / ara / leo / rex / sal，mp3 / wav；算订阅的
+                      额度、不另付钱；登录了才能选）。这一轮能不能花照 models.may_spend：speak 照它那一轮；「用语音回」算后台（同意过才念）；
+                      不说是谁的（渠道）= 不能
   对象里还能写 voice、format（mp3 / wav / opus，看那一家收不收）、instructions、speed、url、timeout。
   Hermes 默认的免费 edge-tts 不接：那是微软 Edge「大声朗读」的非公开接口（WebSocket + 会变的 Sec-MS-GEC 令牌），要多装 edge-tts 这个包、
   没有给服务器用的条款、微软一改就坏；要免费的用本机的 piper / espeak-ng（local/<命令>）。
@@ -82,9 +85,9 @@ def _fmt(c: media.Choice, want: str | None, allowed: tuple[str, ...], default: s
 
 
 async def synthesize(text: str, *, voice: str | None = None, format: str | None = None, instructions: str | None = None,
-                     conversation: str | None = None, agent: str | None = None) -> Speech:
+                     conversation: str | None = None, agent: str | None = None, kind: str | None = None, origin: str | None = None) -> Speech:
     """给第 6 批（渠道发语音）和 speak 用：一段字 → Speech（音频的字节、类型、扩展名、多长）。按 engine.use.tts；没配抛 MediaError(config)。
-    出错抛 media.MediaError（报错里不带密钥）。每次记一行花费。"""
+    出错抛 media.MediaError（报错里不带密钥）。每次记一行花费。kind / origin（10/20）：这一轮是谁的：grok 照它看能不能花订阅（不给 = 不能）。"""
     c = media.choice("tts")
     if c is None:
         raise media.MediaError("config", L("朗读没配（engine.use.tts）", "Speech isn't set up (engine.use.tts)"))
@@ -93,6 +96,9 @@ async def synthesize(text: str, *, voice: str | None = None, format: str | None 
         raise media.MediaError("bad", L("没有要念的字", "There's no text to read"))
     if len(text) > TEXT_MAX:
         raise media.MediaError("bad", L(f"太长了：一次最多 {TEXT_MAX} 字，分成几段", f"Too long: {TEXT_MAX} characters at a time, split it up"))
+    if c.provider == media.GROK:  # 10/20：Grok 订阅：这一轮不能花就不念（不记花费）
+        from . import grok_media
+        grok_media.check(kind, origin)
     voice = voice or (str(c.opts["voice"]) if c.opts.get("voice") else None) or DEFAULT_VOICE.get(c.provider)
     with media.Meter("tts", c, conversation, agent) as m:
         m.unit, m.units = "char", float(len(text))
@@ -110,6 +116,10 @@ async def synthesize(text: str, *, voice: str | None = None, format: str | None 
         elif c.provider == media.LOCAL:
             data, ext = await _local(c, text, voice, format)
             m.cost = 0.0
+        elif c.provider == media.GROK:  # 10/20：Grok 订阅（engine/grok_media.py）：算订阅的额度，钱记 0
+            from . import grok_media
+            data, ext = await grok_media.speech(c, text, voice, format)
+            m.cost = 0.0
         else:
             raise media.MediaError("config", L(f"{c.provider} 不会朗读（能写的：openai、elevenlabs、google、deepgram、local/<命令>）",
                                                f"{c.provider} can't read text aloud (use openai, elevenlabs, google, deepgram or local/<command>)"))
@@ -118,9 +128,9 @@ async def synthesize(text: str, *, voice: str | None = None, format: str | None 
 
 
 async def speech_file(text: str, *, voice: str | None = None, format: str | None = None, folder: Path | None = None,
-                      conversation: str | None = None, agent: str | None = None) -> Speech:
+                      conversation: str | None = None, agent: str | None = None, kind: str | None = None, origin: str | None = None) -> Speech:
     """synthesize 再存成一个文件（folder 不给 = <data_dir>/engine/speech/）：渠道要的是文件路径和格式。→ Speech（path 填好）。"""
-    s = await synthesize(text, voice=voice, format=format, conversation=conversation, agent=agent)
+    s = await synthesize(text, voice=voice, format=format, conversation=conversation, agent=agent, kind=kind, origin=origin)
     d = folder or settings.data_dir / "engine" / "speech"
     d.mkdir(parents=True, exist_ok=True)
     import hashlib
@@ -273,7 +283,7 @@ async def after_reply(thread: str, message_id: int, text: str) -> dict | None:
     if not say:
         return None
     try:
-        s = await synthesize(say, voice=want.get("voice"), conversation=thread)
+        s = await synthesize(say, voice=want.get("voice"), conversation=thread, kind="owner", origin="auto")  # 10/20：不知道来路，算后台
     except media.MediaError as e:
         print(f"[engine] 语音回复没合成：{str(e)[:160]}")
         return None
@@ -311,7 +321,7 @@ def tool(agent: str) -> Tool | None:
         try:
             s = await synthesize(text, voice=str(args.get("voice") or "").strip() or None, format=str(args.get("format") or "").strip() or None,
                                  instructions=" ".join(str(args.get("instructions") or "").split())[:300] or None,
-                                 conversation=ctx.conversation, agent=ctx.agent)
+                                 conversation=ctx.conversation, agent=ctx.agent, kind=ctx.kind, origin=ctx.origin)
         except media.MediaError as e:
             raise ToolFailure(L(f"没念成（{c0.ref if c0 else 'tts'}）：{e}", f"Speech failed ({c0.ref if c0 else 'tts'}): {e}")) from None
         import files

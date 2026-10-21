@@ -26,6 +26,8 @@ export interface ComposerHandle {
   set: (text: string) => void;
   /** 输入框空着才填（任务卡「接着做」先填一句） */
   fill: (text: string) => void;
+  /** 放到已有的字前面（回复里选中一段点「引用这段」：那段在最前面，草稿留着） */
+  prepend: (text: string) => void;
   focus: () => void;
 }
 
@@ -81,6 +83,7 @@ export const Composer = React.memo(function Composer({ handle, threadId, placeho
   useImperativeHandle(handle, () => ({
     set: (text) => setDraft(text),
     fill: (text) => setDraft((d) => (d.trim() ? d : text)),
+    prepend: (text) => setDraft((d) => `${text}${d}`),
     focus: () => input.current?.focus(),
   }), []);
 

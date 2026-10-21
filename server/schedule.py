@@ -4,9 +4,9 @@
 要记得的 = 课程 ddl（study.deadlines_cmd）+ 邮件里抽出来的事（server.json 的 remember.mail）+ 求职 / 申请的 ddl（applications）
 + 自己加的截止。一件事只出现一次：到期那天在那天的时间线里（带勾），之前在「要记得的」里；没日期的钱 / 状态类邮件折成「邮件动态」。
 
-表（grava.db）
+表（mousse.db）
 - schedule_items：自己的日程。kind = event（一段安排）/ deadline（截止，进「要记得的」）/ todo（待办：可以没有日子，没日子的收在「无日期」）。
-  source = 谁加的（leo / main / Agent id）；category = 加的时候给的类别（学习 / 生活 / 工作，见 todocat.py；没给按来源和字面分）；
+  source = 谁加的（你自己 = config.owner_id()：老的安装是 leo，新装是 owner，两种都认 / main / Agent id）；category = 加的时候给的类别（学习 / 生活 / 工作，见 todocat.py；没给按来源和字面分）；
   key = Agent 的幂等键，同一个 key 再加一次就是改那一条（比如 fitness:training:2026-09-28）。删除是软删（deleted_at），能撤销。
   过去的记实际发生的：attended（1 做了 / 0 没做）、actual_start / actual_end。
 - schedule_marks：源头改不了的东西在这一层的标记，按 ref 一行。课：skip 不去（1）/ 照去（0，盖过每周那一行）、改地点、备注、
@@ -25,13 +25,13 @@ ref 的写法（Agent 用 schedule_ctl.py day / remember 的输出，不用自�
 - mail:<条目 id>                         邮件条目（remember.mail.items 那个 JSON）
 - app:<id>                               求职 / 申请（applications 表）
 
-打勾 = 做完了或不用管：从「要记得的」、ddl 推送、起床报告里去掉（Grava 的 suggestion_watcher 直接读 schedule_marks）；
+打勾 = 做完了或不用管：从「要记得的」、ddl 推送、起床报告里去掉（工作区里提醒的脚本可以直接读 schedule_marks）；
 邮件条目同时写回来源（remember.mail.cmd --done / --undo）。改邮件条目（抽错了，main 在对话里改）走 remember.mail.cmd --edit。
 
 server.json（都可选；没有哪一项，那一类就没有）
   "remember": {"mail": {"items": "条目 JSON 的路径", "cmd": ["python3", ".../mail_digest.py"],
                         "sources": {"来源键": "显示名，空字符串 = 「邮件」"}, "link": "原文链接模板，{thread_id} 换成邮件会话 id"}}
-iPhone 日历订阅的令牌和四类开关存 grava.db 的 settings（schedule_feed）；GET /cal/<令牌>.ics 在 /api 之外，不要认证，令牌就是密码。
+iPhone 日历订阅的令牌和四类开关存 mousse.db 的 settings（schedule_feed）；GET /cal/<令牌>.ics 在 /api 之外，不要认证，令牌就是密码。
 每次来取记下时间和粗分的日历种类（settings 的 schedule_feed_seen，「我 → 连接」据此看订阅通不通）。
 """
 from __future__ import annotations
@@ -57,7 +57,7 @@ import sources
 import study
 import todocat
 from chat import _lock, db, now_iso
-from config import TZ, raw, settings
+from config import TZ, is_owner, owner_id, owner_ids, raw, settings
 from i18n import L
 
 router = APIRouter()
@@ -81,7 +81,7 @@ _ready = False
 
 ITEMS_TABLE = """CREATE TABLE IF NOT EXISTS {name} (id TEXT PRIMARY KEY, kind TEXT NOT NULL DEFAULT 'event', title TEXT NOT NULL,
             date TEXT, start TEXT, end TEXT, location TEXT NOT NULL DEFAULT '', note TEXT NOT NULL DEFAULT '',
-            source TEXT NOT NULL DEFAULT 'leo', key TEXT, attended INTEGER, actual_start TEXT, actual_end TEXT,
+            source TEXT NOT NULL DEFAULT '{owner}', key TEXT, attended INTEGER, actual_start TEXT, actual_end TEXT,
             created_at TEXT NOT NULL, updated_at TEXT NOT NULL, deleted_at TEXT, category TEXT)"""
 
 
@@ -89,7 +89,7 @@ def sdb() -> sqlite3.Connection:
     global _ready
     conn = db()
     if not _ready:
-        conn.executescript(ITEMS_TABLE.format(name="schedule_items") + """;
+        conn.executescript(ITEMS_TABLE.format(name="schedule_items", owner=owner_id()) + """;
         CREATE INDEX IF NOT EXISTS schedule_items_date ON schedule_items(date);
         CREATE INDEX IF NOT EXISTS schedule_items_key ON schedule_items(key);
         CREATE TABLE IF NOT EXISTS schedule_marks (ref TEXT PRIMARY KEY, skip INTEGER, location TEXT, note TEXT, done_at TEXT,
@@ -113,7 +113,7 @@ def migrate(conn: sqlite3.Connection) -> None:
     if cols["date"][3]:  # notnull
         old = ", ".join(cols)  # 新表的列是老表的超集
         conn.executescript(f"""BEGIN;
-        {ITEMS_TABLE.format(name="schedule_items_v2")};
+        {ITEMS_TABLE.format(name="schedule_items_v2", owner=owner_id())};
         INSERT INTO schedule_items_v2({old}) SELECT {old} FROM schedule_items;
         DROP TABLE schedule_items;
         ALTER TABLE schedule_items_v2 RENAME TO schedule_items;
@@ -223,7 +223,7 @@ def group_names(conn: sqlite3.Connection) -> dict[str, str]:
 
 def who_name(by: str | None, names: dict[str, str]) -> str:
     """谁加的，显示用：你自己加的不写；主对话写助手的名字；Agent 写它的名字。"""
-    if not by or by == "leo":
+    if not by or is_owner(by):
         return ""
     if by == "main":
         return settings.app_name
@@ -651,7 +651,10 @@ def with_projects(entries: list[dict]) -> None:
 # —— 改动、日志、卡片 ——————————————————————————————————————————————————
 
 def actor_of(source: str | None) -> str:
-    s = (source or "leo").strip() or "leo"
+    """谁在改：不给 = 你自己（owner_id()）；给了 leo / owner（新旧都认）也算你自己，记成 owner_id()；别的是 main 或 Agent 的 id。"""
+    s = (source or "").strip()
+    if not s or is_owner(s):
+        return owner_id()
     if not ID_RE.match(s):
         raise HTTPException(400, L("source 只能是 Agent 的 id", "source must be an agent id"))
     return s
@@ -659,7 +662,7 @@ def actor_of(source: str | None) -> str:
 
 def run_of(actor: str) -> chat.Run | None:
     """Agent 改的：它这会儿正在回复的那一次（改动卡挂在那条回复下面）。你在 app 里改的没有。"""
-    if actor == "leo":
+    if is_owner(actor):
         return None
     live = [r for t, r in chat.RUNS.items() if not r.done and not t.startswith(("task:", "study-")) and chat.agent_of(t) == actor]
     return max(live, key=lambda r: r.t0) if live else None
@@ -695,7 +698,7 @@ def announce(log_id: int, run: chat.Run | None, actor: str) -> dict | None:
     if run is not None and not run.done:
         import cards  # 延迟导入：cards 在 /api/chat/cards 里也要用本模块
         cards.publish(run, card)
-    if actor != "leo":
+    if not is_owner(actor):
         chat.log_activity(L(f"改了日程：{row['title']} · {row['summary']}", f"Changed the schedule: {row['title']} · {row['summary']}"),
                           "schedule", who_name(actor, names) or actor)
     return card
@@ -849,9 +852,10 @@ async def add_item(body: ItemIn):
             after = {**before, "title": title, "kind": kind, "date": d, "start": s, "end": e, "location": body.location.strip()[:200],
                      "note": body.note.strip()[:500], "updated_at": ts, "category": cat if cat_sent else before.get("category")}
             # 用户自己挪过的时间，Agent 重排时不覆盖（改名字、备注照改）
-            if actor != "leo" and (before["date"], before["start"], before["end"]) != (d, s, e) and conn.execute(
-                    "SELECT 1 FROM schedule_log WHERE target=? AND actor='leo' AND action='move' AND undone_at IS NULL LIMIT 1",
-                    (f"item:{old['id']}",)).fetchone():
+            mine = owner_ids()
+            if not is_owner(actor) and (before["date"], before["start"], before["end"]) != (d, s, e) and conn.execute(
+                    f"SELECT 1 FROM schedule_log WHERE target=? AND actor IN ({','.join('?' * len(mine))}) AND action='move' AND undone_at IS NULL LIMIT 1",  # noqa: S608
+                    (f"item:{old['id']}", *mine)).fetchone():
                 after.update(date=before["date"], start=before["start"], end=before["end"])
                 kept.append("time")
                 try:

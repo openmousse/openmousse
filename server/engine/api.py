@@ -11,6 +11,8 @@
                                    chatgpt = 用户自己的 ChatGPT 套餐：连没连、哪个套餐、令牌快过期没有、最近一次的错、后台同意没有
                                    （第 11b 项，engine/chatgpt_plan.py；不带令牌）；helpers = 后台任务能用的外援和它们登录的是什么（第 5 项）
   …/api/engine/chatgpt…            ChatGPT 套餐的授权、回调、断开、后台同意（engine/chatgpt_plan.py 的接口）
+  …/api/engine/grok…               Grok 订阅（10/20）：xAI 的设备码登录、退出、状态（engine/grok_plan.py；只认主人的设备）；/api/engine/status 的
+                                   grok 是同一份状态（不带令牌）
   GET  /api/engine/turns           最近的一轮轮（?conversation= 只看一个对话）
   GET  /api/engine/turns/{tid}     一轮的每一步
   GET  /api/engine/heartbeat       心跳（第 6 项）：哪些 Agent 开了、下一次、上一次怎样
@@ -70,6 +72,7 @@ from . import cyber as cyber_mod
 from . import agent_cli, agent_skills, ask, chatgpt_plan, events, fallback, heartbeat, jobs, mcp_client, memgate, models, plan, sandbox, setup_api, used, writeback
 from . import commands, history
 from . import intents, plugins, skill_market, user_hooks  # 第 5 批
+from . import grok_plan  # 10/20：用户自己的 Grok 订阅
 from . import bg, estop, flows, mailwatch, spend, triggers, webhooks
 from .errors import EngineError
 
@@ -82,6 +85,7 @@ router.include_router(intents.router)  # 第 5 批：GET /api/engine/intents、D
 router.include_router(plugins.router)  # 第 5 批：/api/setup/plugins…（带代码的插件：列、预览、装、同意、开关、删；只认主人的设备）
 router.include_router(jobs.router)  # 定时任务（第 6 项）
 router.include_router(chatgpt_plan.router)  # 第 11b 项：/api/engine/chatgpt…（用户自己的 ChatGPT 套餐）
+router.include_router(grok_plan.router)  # 10/20：/api/engine/grok…（用户自己的 Grok 订阅，只认主人的设备）
 router.include_router(mcp_client.router)  # 第 13 步：GET /api/engine/mcp（你配的 MCP 服务）
 router.include_router(mcp_client.setup_router)  # 第 5 批：/api/setup/mcp…（加、改、删、试连你配的 MCP 服务，只认主人的设备）
 router.include_router(ask.router)  # ⑫b：POST /api/engine/answer
@@ -172,6 +176,7 @@ def status():
     return {"configured": bool(c), "model": models.default_model() or None, "models": models.models(),
             "use": {k: models.route(k) for k in ("card", "doorman", "json", "cyber")} | {k: v for k, v in use.items() if k not in ("card", "doorman", "json", "cyber")},
             "fallback": models.fallback_allowed(), "providers": providers, "claudeCode": claude_brain.status(), "chatgpt": chatgpt_plan.status(),
+            "grok": grok_plan.status(),  # 10/20：Grok 订阅（不带令牌）
             "helpers": {n: {k: (found.get(n) or {}).get(k) for k in ("auth", "billing", "plan")} for n in runners.offered()},
             "turns": events.turns(limit=10),
             "fallbacks": models.fallbacks(), "cooldowns": fallback.status(),  # 第 13 步：默认备用链、正在冷却的密钥 / 型号

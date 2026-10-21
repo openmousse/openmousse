@@ -384,6 +384,9 @@ async def act(args: dict, ctx: ToolCtx, *, me: str, depth: int, parent: str | No
 PLAN_NO = ("后台任务默认不花你的 ChatGPT 套餐：用户在设置里同意一次（后台任务可以用我的套餐）以后才行；现在可以不写 model 用别的模型",
            "Background tasks don't use the user's ChatGPT plan until they allow it once in Settings (background tasks can use my plan); "
            "leave model out to use another model")
+GROK_NO = ("后台任务默认不花用户的 Grok 订阅：他同意一次（python3 setup_ctl.py grok background on）以后才行；现在可以不写 model 用别的模型",
+           "Background tasks don't use the user's Grok subscription until they allow it once (python3 setup_ctl.py grok background on); "
+           "leave model out to use another model")  # 10/20：engine/grok_plan.py
 
 
 def _model_arg(args: dict, runner: str, thread: str, parent: str | None = None) -> str | None:
@@ -395,11 +398,17 @@ def _model_arg(args: dict, runner: str, thread: str, parent: str | None = None) 
                                 "write provider/model (e.g. deepseek/deepseek-flash), or leave it out"))
         if m and models.subscription(m) == "chatgpt" and not models.may_spend(m, kind="owner", origin="task", via=parent):
             raise ToolFailure(L(*PLAN_NO))  # 点名要套餐、用户没同意（或者是 /mcp 引出来的）：说清楚，不悄悄换
+        if m and models.subscription(m) == "grok" and not models.may_spend(m, kind="owner", origin="task", via=parent):
+            raise ToolFailure(L(*GROK_NO))  # 10/20：Grok 订阅同上
         m = m or model_for(thread)
         if models.subscription(m) == "chatgpt" and not models.may_spend(m, kind="owner", origin="task", via=parent):
             m = models.outside(m) or ""  # 默认的是套餐、用户没同意后台用：换非套餐的
             if not m:
                 raise ToolFailure(L(*PLAN_NO))
+        if models.subscription(m) == "grok" and not models.may_spend(m, kind="owner", origin="task", via=parent):
+            m = models.outside(m) or ""  # 10/20：默认的是 Grok 订阅、用户没同意后台用：换非套餐的
+            if not m:
+                raise ToolFailure(L(*GROK_NO))
         if not m:
             raise ToolFailure(L("没有可用的模型：server.json 的 engine.model 没配", "No model to use: engine.model isn't set in server.json"))
         return m
@@ -447,6 +456,8 @@ def pick_runner(explicit: str, model: str, thread: str, parent: str | None = Non
             return ENGINE, m, None
         model = m  # 默认的就是本机的 Claude Code（engine.model 写的 claude-code/…）：内核跑不了，照下面交给它
     if models.subscription(model) == "chatgpt":
+        return ENGINE, _model_arg({"model": model}, ENGINE, thread, parent), None
+    if models.subscription(model) == "grok":  # 10/20：Grok 订阅内核自己跑，照后台的规矩（_model_arg）
         return ENGINE, _model_arg({"model": model}, ENGINE, thread, parent), None
     if models.valid_ref(model) and models.has_key(model):
         return ENGINE, model, None

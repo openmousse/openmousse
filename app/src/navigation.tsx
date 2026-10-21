@@ -3,10 +3,11 @@ import { Linking, Platform } from 'react-native';
 import { createNavigationContainerRef, DarkTheme, DefaultTheme, NavigationContainer } from '@react-navigation/native';
 import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
-import { Lightbulb, MessageCircle, Sparkles, Target } from './components/icons';
+import { Lightbulb, MessageCircle, Rings, Sparkles } from './components/icons';
+import { memoryBadge } from './components/memory/RecentCard';
 import { ChatArchiveScreen, ChatScreen, ThreadScreen, useChatBadge } from './screens/ChatScreen';
 import { InfoScreen } from './screens/InfoScreen';
-import { GoalsScreen } from './screens/GoalsScreen';
+import { MemorySectionScreen, MemoryTabScreen } from './screens/MemoryTabScreen';
 import { GroupScreen } from './screens/GroupScreen';
 import { MeScreen, SettingsOtherScreen } from './screens/MeScreen';
 import { SettingsHandsScreen, SettingsMemoryScreen, SettingsProvidersScreen, SettingsSearchScreen, SettingsUsageScreen } from './screens/SettingsCenter';
@@ -59,6 +60,22 @@ import { VizKitScreen } from './screens/VizKitScreen';
 import { SetupDoneScreen, SetupGate, SetupMemoryScreen, SetupModelsScreen, SetupNameScreen, SetupProviderScreen, SetupSearchKeyScreen, SetupSearchScreen } from './screens/SetupScreens';
 import { stepTransition } from './components/setupKit';
 import { MeetingScreen, NewMeetingScreen } from './screens/MeetingScreens';
+import { ContactsScreen } from './screens/agents/ContactsScreen';
+import { NewCyberScreen } from './screens/agents/NewCyberScreen';
+import { CyberAvatarScreen } from './screens/agents/CyberAvatarScreen';
+import { CyberProfileScreen } from './screens/agents/CyberProfileScreen';
+import { CyberMemoryScreen } from './screens/agents/CyberMemoryScreen';
+import { CyberModelScreen } from './screens/agents/CyberModelScreen';
+import { CyberChatScreen } from './screens/agents/CyberChatScreen';
+import { GroupChatScreen } from './screens/agents/GroupChatScreen';
+import { GroupInfoScreen } from './screens/agents/GroupInfoScreen';
+import { GroupMemoryScreen } from './screens/agents/GroupMemoryScreen';
+import { NewRoomScreen } from './screens/agents/NewRoomScreen';
+import { MeetingRecordsScreen } from './screens/agents/MeetingRecordsScreen';
+import { PodDiscussScreen } from './screens/agents/PodDiscussScreen';
+import { ButlerScreen } from './screens/agents/ButlerScreen';
+import { ButlerSaidScreen } from './screens/agents/ButlerSaidScreen';
+import { FriendGroupScreen } from './screens/agents/FriendGroupScreen';
 import { findCode } from './api/friends';
 import type { PushTarget } from './data/types';
 import { L } from './i18n';
@@ -73,12 +90,15 @@ const Stack = createNativeStackNavigator();
 
 function Tabs() {
   const t = useTheme();
-  const { inbox, unread } = useStore();
+  const { inbox, unread, tree, held } = useStore();
   const insets = useSafeAreaInsets();
-  // 未读（青色）：「对话」= Grava 一边（Agent、主对话、会议、项目，只算给你的回复）+ 好友，免打扰的不算；「Zen」（路由名「思考」）= 聊聊里的回复。「今天」（金色）= 等你点头的。
+  // 未读（青色）：「对话」= 助手一边（Agent、主对话、会议、项目，只算给你的回复）+ 好友，免打扰的不算；「Zen」（路由名「思考」）= 聊聊里的回复。
+  // 金色 = 等你点头的：「今天」= 收件箱；「记忆」= 待确认的记忆（你说的待确认 + 别人说的待定，周日加上修剪卡上的条数）。
   const chatUnread = useChatBadge();
   const thinkUnread = Object.entries(unread.threads).reduce((sum, [tid, u]) => sum + (tid.startsWith('tp-') ? u.n : 0), 0);
+  const memoryPending = memoryBadge(tree, held, inbox);
   const cyanBadge = { backgroundColor: t.cyan, color: t.surface };
+  const goldBadge = { backgroundColor: t.goldFill, color: t.onGold };
   // Tab 的 name 是路由标识（深链 ?screen=今天、navigate 都用它），不翻译；界面上显示的是 tabBarLabel。
   return (
     <Tab.Navigator
@@ -96,8 +116,10 @@ function Tabs() {
       <Tab.Screen name="思考" component={ThinkScreen}
         options={{ tabBarLabel: 'Zen', tabBarIcon: ({ color, size }) => <Lightbulb color={color} size={size} />, tabBarBadge: thinkUnread || undefined, tabBarBadgeStyle: cyanBadge }} />
       <Tab.Screen name="今天" component={TodayScreen}
-        options={{ tabBarLabel: L('今天', 'Today'), tabBarIcon: ({ color, size }) => <Sparkles color={color} size={size} />, tabBarBadge: inbox.length || undefined, tabBarBadgeStyle: { backgroundColor: t.goldFill, color: t.onGold } }} />
-      <Tab.Screen name="目标" component={GoalsScreen} options={{ tabBarLabel: L('目标', 'Goals'), tabBarIcon: ({ color, size }) => <Target color={color} size={size} /> }} />
+        options={{ tabBarLabel: L('今天', 'Today'), tabBarIcon: ({ color, size }) => <Sparkles color={color} size={size} />, tabBarBadge: inbox.length || undefined, tabBarBadgeStyle: goldBadge }} />
+      {/* 第四格 2026-10-20 起是「记忆」（原来的「目标」挪进来，成了第二张卡「方向」）；老链接 ?screen=目标 转到这里 */}
+      <Tab.Screen name="记忆" component={MemoryTabScreen}
+        options={{ tabBarLabel: L('记忆', 'Memory'), tabBarIcon: ({ color, size }) => <Rings color={color} size={size} />, tabBarBadge: memoryPending || undefined, tabBarBadgeStyle: goldBadge }} />
     </Tab.Navigator>
   );
 }
@@ -106,10 +128,11 @@ function Tabs() {
 function initialFromQuery() {
   if (Platform.OS !== 'web' || typeof window === 'undefined') return undefined;
   const q = new URLSearchParams(window.location.search);
-  const screen = q.get('screen');
-  if (!screen) return undefined;
+  const raw = q.get('screen');
+  if (!raw) return undefined;
+  const screen = raw === '目标' ? '记忆' : raw;  // 第四格 2026-10-20 前叫「目标」
   const params = Object.fromEntries([...q.entries()].filter(([k]) => k !== 'screen'));
-  const tabs = ['对话', '思考', '今天', '目标'];  // Agents tab 2026-10-13 起并进了「对话」
+  const tabs = ['对话', '思考', '今天', '记忆'];  // Agents tab 2026-10-13 起并进了「对话」
   if (screen === 'Agents') return undefined;
   if (tabs.includes(screen)) return { routes: [{ name: 'Tabs', state: { routes: tabs.map((name) => ({ name })), index: tabs.indexOf(screen) } }] };
   return { routes: [{ name: 'Tabs' }, { name: screen, params }], index: 1 };
@@ -325,6 +348,8 @@ export function RootNavigator() {
         <Stack.Screen name="NewGroup" component={NewGroupScreen} options={{ presentation: 'modal' }} />
         <Stack.Screen name="EditGroup" component={EditGroupScreen} options={{ presentation: 'modal' }} />
         <Stack.Screen name="Identity" component={IdentityScreen} />
+        {/* 记忆页排法二（MemoryTabScreen 的 LAYOUT）：「方向」「全部记忆」各一页 */}
+        <Stack.Screen name="MemorySection" component={MemorySectionScreen} />
         <Stack.Screen name="Tree" component={TreeScreen} />
         <Stack.Screen name="Connectors" component={ConnectorsScreen} />
         <Stack.Screen name="Memory" component={MemoryScreen} />
@@ -384,6 +409,29 @@ export function RootNavigator() {
         {/* Agent 会议（2026-10-13）：会议页、发起会议（「+」进来）。会议资料是 Info（kind meeting），已结束的会议是 ChatArchive */}
         <Stack.Screen name="Meeting" component={MeetingScreen} />
         <Stack.Screen name="NewMeeting" component={NewMeetingScreen} options={{ presentation: 'modal' }} />
+        {/* 赛博和通讯录（主线第三步，2026-10-21）：对话页 Agent 栏最前面的「通讯录」、「+」里的新建赛博；服务器没开赛博就进不来 */}
+        <Stack.Screen name="Contacts" component={ContactsScreen} />
+        <Stack.Screen name="NewCyber" component={NewCyberScreen} options={{ presentation: 'modal' }} />
+        <Stack.Screen name="CyberAvatarEdit" component={CyberAvatarScreen} options={{ presentation: 'modal' }} />
+        <Stack.Screen name="CyberProfile" component={CyberProfileScreen} getId={({ params }: { params?: { id?: string } }) => params?.id} />
+        <Stack.Screen name="CyberMemory" component={CyberMemoryScreen} />
+        <Stack.Screen name="CyberModel" component={CyberModelScreen} />
+        {/* 和赛博一对一：每位一页（getId），同 Chat */}
+        <Stack.Screen name="CyberChat" component={CyberChatScreen} getId={({ params }: { params?: { id?: string } }) => params?.id} />
+        {/* 群聊（主线第三步第二段）：群聊页（每个群一页）、群资料、群记忆、新建群聊（「+」和赛博资料页的「拉进群聊」进来）；服务器没开群聊就进不来 */}
+        <Stack.Screen name="GroupChat" component={GroupChatScreen} getId={({ params }: { params?: { id?: string } }) => params?.id} />
+        <Stack.Screen name="GroupInfo" component={GroupInfoScreen} />
+        <Stack.Screen name="GroupMemory" component={GroupMemoryScreen} />
+        <Stack.Screen name="NewRoom" component={NewRoomScreen} options={{ presentation: 'modal' }} />
+        {/* 会议记录（主线第三步）：主对话资料页的「会议记录」 */}
+        <Stack.Screen name="MeetingRecords" component={MeetingRecordsScreen} />
+        {/* 播客的「先讨论」（主线第三步）：选录法、嘉宾、素材，建这一期的录前讨论群 */}
+        <Stack.Screen name="PodDiscuss" component={PodDiscussScreen} />
+        {/* 管家（主线第三步第三段）：资料页、说过的话；通讯录顶上那一行和「我的名片 Agent」（有管家时）进来，服务器没开管家就进不来 */}
+        <Stack.Screen name="Butler" component={ButlerScreen} />
+        <Stack.Screen name="ButlerSaid" component={ButlerSaidScreen} />
+        {/* 好友群（第三段）：好友一边的群聊页（每个群一页）；新建群聊勾上好友、好友一边的群那一行进来 */}
+        <Stack.Screen name="FriendGroup" component={FriendGroupScreen} getId={({ params }: { params?: { id?: string } }) => params?.id} />
       </Stack.Navigator>
       {/* 已经在用的安装还没有能用的模型：在对话页上时带进三步（一次打开一次，点过「以后再说」就不再带） */}
       <SetupGate />

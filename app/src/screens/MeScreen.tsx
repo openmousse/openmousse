@@ -1,7 +1,8 @@
 // 设置（从对话页右上角进来；2026-09-29 照 Claude 的设置页改版，2026-10-19 第 9 批照设计指挥部第 17 张改排法，原来的东西一样都不删）：
 // 顶上一张状态卡（这台 claw 在不在线、东西都存在哪）→ 连接（授权登录、MCP 服务、技能、记忆、手）→ 密钥（模型、按用途选模型、向量、搜索、
-// 语音、用量）→ 通用（安全、外观）→ 其他（SettingsOtherScreen：账号、我的 claw、档案、日志、朋友画像、形象、活动、任务、分享、语言、通知、
+// 语音、用量）→ 通用（安全、外观）→ 其他（SettingsOtherScreen：账号、我的 claw、名字、形象、活动、任务、分享、语言、通知、
 // 硬件、日程订阅、关于……）。数字从 /api/setup 总览和 /api/setup/usage 读（只认主人的设备）。
+// 「连接」里的「记忆」点了去底栏的记忆页（2026-10-20）；基础档案、记忆条目、日志、朋友画像也挪进了记忆页的「全部记忆」，路由照旧。
 // 老服务器（features 里没有 setup）不放新的那几页：只有授权登录、记忆、按用途选模型、安全、外观和其他。
 // MCP 服务、技能（第 5 批）、语音（第 3 批）是别的批的页：navigation 里有那个路由才能点进去，没有就只显示数、不带箭头；语音要服务器有语音设置才显示。
 import React, { useCallback, useEffect, useState, useSyncExternalStore } from 'react';
@@ -9,8 +10,9 @@ import { Alert, Platform, Pressable, ScrollView, View } from 'react-native';
 import Constants from 'expo-constants';
 import { useFocusEffect, useNavigation } from '@react-navigation/native';
 import { agentName } from '../brand';
-import { Activity, Bell, Bluetooth, BookOpen, Brain, CalendarDays, ChartColumn, Check, ClipboardList, Globe, IdCard, Info, LogOut, Palette, Plus, Server, ShareIcon, Sparkles, User } from '../components/icons';
+import { Activity, Bell, Bluetooth, CalendarDays, ChartColumn, Check, ClipboardList, Globe, Info, LogOut, Palette, Plus, Server, ShareIcon, Sparkles, User } from '../components/icons';
 import { LensAvatar } from '../components/LensAvatar';
+import { Mark } from '../components/Mark';
 import { Chevron, Dot, Group, GroupLabel, GroupNote, Row, SettingsHeader, Tile } from '../components/settings';
 import { GroupHead, KitCard, KitRow } from '../components/setupKit';
 import { useSheet } from '../components/Sheet';
@@ -19,7 +21,6 @@ import { accountsEnabled, currentAccount, initialsOf, loadAccount, onAccountChan
 import { appsApi, noApps, type AppSummary } from '../api/apps';
 import { activeClawId, listClaws, pingClaw, switchToClaw, touchClaw, type Claw } from '../api/claws';
 import { defaultBase, getBase } from '../api/base';
-import { podFeatures } from '../api/podcast';
 import { setupApi, type Overview, type Purposes, type SearchView, type Usage } from '../api/setup';
 import { flipperState, onFlipper } from '../hardware/flipper';
 import { serverOutdated, supports } from '../api/version';
@@ -76,7 +77,7 @@ export function MeScreen() {
   const setup = connected && supports('setup');
   const builtin = claw.kind === 'builtin';
 
-  // 世界树不在启动时读（见 store 的 STARTUP_KEYS）：第一次来这一页时读
+  // 世界树不跟启动那一批读（见 store 的 STARTUP_KEYS，那一批读完才读）：这一页再读一次，「记忆」那行的数是新的
   useEffect(() => { if (connected) reload('tree').catch(() => {}); }, [connected, reload]);
 
   // 数字：/api/setup 总览、用量、按用途（连上了几家、主对话用哪个）、搜索（用的那家叫什么）。老服务器没有：授权登录照旧读 /api/apps
@@ -145,7 +146,7 @@ export function MeScreen() {
               value={conn.mcpErrors ? L(`${conn.mcp ?? 0} 个 / ${conn.mcpErrors} 个出错`, `${conn.mcp ?? 0} / ${conn.mcpErrors} failing`) : L(`${conn.mcp ?? 0} 个`, `${conn.mcp ?? 0}`)} />
           ) : null}
           {setup && conn ? <KitRow title={L('技能', 'Skills')} value={L(`${conn.skills ?? 0} 个`, `${conn.skills ?? 0}`)} onPress={go('Skills')} /> : null}
-          <KitRow title={L('记忆', 'Memory')} tone={leaves?.pending ? 'warn' : undefined} onPress={() => nav.navigate('Tree')}
+          <KitRow title={L('记忆', 'Memory')} tone={leaves?.pending ? 'warn' : undefined} onPress={() => nav.navigate('Tabs', { screen: '记忆' }, { pop: true })}
             value={leaves?.pending ? L(`${leaves.pending} 条待确认`, `${leaves.pending} waiting`) : memories != null ? L(`${memories} 条`, `${memories}`) : null} />
           {setup ? (
             <KitRow title={L('手', 'Hands')} disabled={!builtin} value={!builtin ? by : handsN != null ? L(`${handsN} 个 Agent`, `${handsN} Agent${handsN === 1 ? '' : 's'}`) : null}
@@ -187,7 +188,7 @@ export function MeScreen() {
         <GroupHead title={L('其他', 'More')} />
         <KitCard>
           <KitRow first title={L('账号、我的 claw 和更多', 'Account, claws and more')}
-            sub={L('档案、日志、形象、活动、任务、分享、语言、通知、硬件、日程订阅、关于', 'Profile, journal, look, activity, tasks, sharing, language, notifications, hardware, calendar feed, about')}
+            sub={L('形象、活动、任务、分享、语言、通知、硬件、日程订阅、关于', 'Look, activity, tasks, sharing, language, notifications, hardware, calendar feed, about')}
             onPress={() => nav.navigate('SettingsOther')} />
         </KitCard>
 
@@ -204,22 +205,18 @@ export function MeScreen() {
   );
 }
 
-/** 设置 → 其他：账号卡、我的 claw（连过的几台，点「换到这台」切换）、这个助手的（档案、记忆、日志、朋友画像、形象）、活动、应用（语言、通知、硬件……）。
- *  原来设置首页上的这些一样都没删，只是收到这一页。 */
+/** 设置 → 其他：账号卡、我的 claw（连过的几台，点「换到这台」切换）、这个助手的（名字和性格、形象）、活动、应用（语言、通知、硬件……）。
+ *  原来设置首页上的这些一样都没删，只是收到这一页；基础档案、记忆条目、日志、朋友画像 2026-10-20 挪进了记忆页（底栏第四格）。 */
 export function SettingsOtherScreen() {
   const t = useTheme();
   const nav = useNavigation<any>();
   const sheet = useSheet();
   const pick = usePicker();
-  const { avatar, profile, memories, connected, booting, authFailed, appName, tasks, journal, claw, server, refreshLive } = useStore();
+  const { avatar, connected, booting, authFailed, appName, tasks, claw, server, refreshLive } = useStore();
   const { pref, setPref } = useLang();
   const acct = useAccount();
   const flipper = useSyncExternalStore(onFlipper, flipperState).device;  // 硬件页记住的那台 Flipper
   const running = tasks.filter((x) => x.status === '进行中').length;
-
-  // 朋友画像（播客记的，只有你看得到）：服务器有才显示
-  const [people, setPeople] = useState(false);
-  useEffect(() => { if (connected) podFeatures().then((f) => setPeople(f.people)).catch(() => {}); }, [connected]);
 
   // 我的 claw：这台设备连过的几台；正在用的那台顺手更新名字，别的几台看一眼在不在
   const [claws, setClaws] = useState<Claw[]>([]);
@@ -248,6 +245,7 @@ export function SettingsOtherScreen() {
 
   const activeId = activeClawId(claws);
   const web = Platform.OS === 'web';
+  const naming = supports('naming') && claw.kind === 'builtin' && hasRoute('SetupName');
 
   const switchTo = (c: Claw) => {
     Alert.alert(L(`切换到「${c.name}」？`, `Switch to ${c.name}?`), L('此设备将改为连接该 claw，对话和记忆将切换为其上的数据。', "This device will use that claw: chats and memory switch to its own."), [
@@ -271,6 +269,7 @@ export function SettingsOtherScreen() {
     title: L('关于', 'About'),
     content: (close) => (
       <View style={{ gap: space.sm }}>
+        <Mark size={64} decorative />
         <T v="body">{`${Constants.expoConfig?.name ?? 'OpenMousse'} ${version}`}</T>
         <T v="callout" color={t.ink2}>{L('开源（AGPL-3.0）：github.com/openmousse/openmousse。你的对话、记忆和数据均保存在你自己的 claw 上。',
           'Open source (AGPL-3.0): github.com/openmousse/openmousse. Your chats, memory and data are stored on your own claw.')}</T>
@@ -348,15 +347,12 @@ export function SettingsOtherScreen() {
 
         <GroupLabel>{agentName()}</GroupLabel>
         <Group>
-          <Row first icon={<IdCard size={22} color={t.cyan} />} title={L('基础档案', 'Profile')} value={profile.length ? L(`${profile.length} 条`, `${profile.length}`) : undefined} onPress={() => nav.navigate('Identity')} />
-          <Row icon={<Brain size={22} color={t.cyan} />} title={L('记忆条目', 'Memory notes')} value={memories.length ? L(`${memories.length} 条`, `${memories.length}`) : undefined} onPress={() => nav.navigate('Memory')} />
-          <Row icon={<BookOpen size={22} color={t.cyan} />} title={L('日志', 'Journal')} value={journal.length ? L(`${journal.length} 条`, `${journal.length}`) : undefined} onPress={() => nav.navigate('Journal')} />
-          {people ? <Row icon={<User size={22} color={t.cyan} />} title={L('朋友画像', 'Friend notes')} onPress={() => nav.navigate('People')} /> : null}
-          {supports('naming') && claw.kind === 'builtin' && hasRoute('SetupName') ? (
-            <Row icon={<Sparkles size={22} color={t.cyan} />} title={L('名字和性格', 'Name and character')} value={agentName()} onPress={() => nav.navigate('SetupName', { from: 'settings' })} />
+          {naming ? (
+            <Row first icon={<Sparkles size={22} color={t.cyan} />} title={L('名字和性格', 'Name and character')} value={agentName()} onPress={() => nav.navigate('SetupName', { from: 'settings' })} />
           ) : null}
-          <Row icon={<Palette size={22} color={t.cyan} />} title={L('形象', 'Look')} right={<LensAvatar size={24} config={avatar} />} onPress={() => nav.navigate('Avatar')} />
+          <Row first={!naming} icon={<Palette size={22} color={t.cyan} />} title={L('形象', 'Look')} right={<LensAvatar size={24} config={avatar} />} onPress={() => nav.navigate('Avatar')} />
         </Group>
+        <GroupNote>{L('基础档案、记忆条目、日志和朋友画像在底栏的「记忆」里。', 'Profile, memory notes, journal and friend notes are on the Memory tab.')}</GroupNote>
 
         <GroupLabel>{L('活动', 'Activity')}</GroupLabel>
         <Group>

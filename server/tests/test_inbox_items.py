@@ -141,12 +141,12 @@ def test_the_reviser_is_a_tool_free_call(monkeypatch, server_json):
     import llmjson
     got: list[tuple] = []
 
-    async def fake_ask_json(prompt, input_, *, model, purpose, required, timeout):
-        got.append(("engine", model, purpose))
+    async def fake_ask_json(prompt, input_, *, model, purpose, required, timeout, kind, origin):
+        got.append(("engine", model, purpose, kind, origin))
         return {"text": "ok"}, f"builtin:{model}"
 
-    async def fake_llm(prompt, input_, schema, *, timeout, model, tool_free_only):
-        got.append(("llmjson", model, tool_free_only))
+    async def fake_llm(prompt, input_, schema, *, timeout, model, tool_free_only, kind, origin):
+        got.append(("llmjson", model, tool_free_only, kind, origin))
         return {"text": "ok"}, "llm-task"
     monkeypatch.setattr(engine, "ask_json", fake_ask_json)
     monkeypatch.setattr(llmjson, "ask", fake_llm)
@@ -155,7 +155,36 @@ def test_the_reviser_is_a_tool_free_call(monkeypatch, server_json):
     assert run(inbox.ask_reviser("p", {"x": 1}, ("text",))) == {"text": "ok"}
     monkeypatch.setattr(claw, "is_builtin", lambda: False)
     run(inbox.ask_reviser("p", {"x": 1}, ("text",)))
-    assert got == [("engine", "deepseek/deepseek-flash", "json"), ("llmjson", "deepseek/deepseek-flash", True)]
+    assert got == [("engine", "deepseek/deepseek-flash", "json", "owner", "user"), ("llmjson", "deepseek/deepseek-flash", True, "owner", "user")]
+
+
+def test_the_owner_s_own_click_can_use_the_plan_and_mcp_or_a_task_can_t(monkeypatch, server_json):
+    """10/21：「修改」算主人自己的一问一答：app 里点的照 engine.use.json 走他的套餐；经 /mcp、后台任务来的（REQUEST_VIA）换成按量的。
+    套餐没做成照一问一答的说法报，不悄悄换。"""
+    import chat
+    import engine
+    got: list[tuple] = []
+
+    async def fake_ask_json(prompt, input_, *, model, purpose, required, timeout, kind, origin):
+        got.append((model, kind, origin))
+        return {"text": "ok"}, f"builtin:{model}"
+    monkeypatch.setattr(engine, "ask_json", fake_ask_json)
+    server_json({"claw": {"kind": "builtin"}, "engine": {"model": "deepseek/deepseek-flash", "use": {"json": "claude-code/sonnet"}}})
+    for via in (None, "mcp", "task"):
+        tok = chat.REQUEST_VIA.set(via)
+        try:
+            assert run(inbox.ask_reviser("p", {"x": 1}, ("text",))) == {"text": "ok"}
+        finally:
+            chat.REQUEST_VIA.reset(tok)
+    assert got == [("claude-code/sonnet", "owner", "user"), ("deepseek/deepseek-flash", "owner", "mcp"),
+                   ("deepseek/deepseek-flash", "owner", "task")]
+
+    async def signed_out(prompt, input_, **kw):
+        raise engine.EngineError("claude: not logged in", kind="auth")
+    monkeypatch.setattr(engine, "ask_json", signed_out)
+    with pytest.raises(inbox.ReviseError) as e:
+        run(inbox.ask_reviser("p", {"x": 1}, ("text",)))
+    assert "claude-code/sonnet" in str(e.value) and ("登录掉了" in str(e.value) or "signed out" in str(e.value))
 
 
 def test_items_can_be_switched_off_and_the_old_way_still_works(kicks, server_json):

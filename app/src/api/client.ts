@@ -1,15 +1,16 @@
-// Grava 对话的客户端接口。两种实现：
+// 和助手对话的客户端接口。两种实现：
 // - HttpApi：真实对话。走 server/chat.py，SSE 流式，主对话与 Telegram 共用 main 会话。
 // - OfflineApi：没连上服务器时用，不假装回复。
 import { fetch as expoFetch } from 'expo/fetch';
+import { ASSISTANT_ROLE } from '../data/stored';
 import type { Attachment, ChatCard, Message, PendingFile } from '../data/types';
 import { L } from '../i18n';
 import { authHeaders, fileUrl, getBase, HttpError } from './base';
-import { setReplyProgress, type ReplyProgress } from './progress';
+import { setModelSwitch, setReplyProgress, type ReplyProgress } from './progress';
 
-export interface GravaApi {
+export interface ChatApi {
   readonly connected: boolean;
-  /** 发一条消息，拿回 Grava 的回复。threadId 为 'main'、groupId 或项目 id。onDelta 在流式输出时逐段回调。
+  /** 发一条消息，拿回助手的回复。threadId 为 'main'、groupId 或项目 id。onDelta 在流式输出时逐段回调。
    *  extra.inboxId：这条是对收件箱里某件事的修改意见（从「去对话里说」带过来的引用），老服务器不认、忽略。
    *  extra.ref：说的是日程或「要记得的」里的哪一条（「不对？跟它说」带过来的），模型另外看到是哪一条。
    *  extra.onCard：回复进行中出的转交卡、任务卡（SSE 的 card 事件；同一张卡状态变了会再来一次）。 */
@@ -18,13 +19,14 @@ export interface GravaApi {
   transcribe(file: PendingFile): Promise<string>;
   /** 读线程的历史记录（真实接入后从服务器取）。inFlight 表示服务端还在回上一条。 */
   history(threadId: string, day?: string): Promise<{ messages: Message[]; modelId: string; inFlight?: { text: string; modelId: string } | null } | null>;
-  /** 重新接上服务端正在进行的回复（这次回复里已经出的卡会补发给 onCard）。没有的话返回 null。 */
-  attach(threadId: string, onDelta?: (partial: string) => void, onCard?: (card: ChatCard) => void): Promise<Message | null>;
+  /** 重新接上服务端正在进行的回复（这次回复里已经出的卡会补发给 onCard）。没有的话返回 null。
+   *  onMissed：插进这一轮的几条没赶上（steer_missed，见 SendExtra）。 */
+  attach(threadId: string, onDelta?: (partial: string) => void, onCard?: (card: ChatCard) => void, onMissed?: (userIds: string[]) => void): Promise<Message | null>;
   /** 记住这个线程默认用哪个模型。 */
   setModel(threadId: string, modelId: string): Promise<void>;
-  /** 只从对话记录里删掉这一条，Grava 的上下文不变。 */
+  /** 只从对话记录里删掉这一条，助手的上下文不变。 */
   deleteMessage(threadId: string, msgId: string): Promise<void>;
-  /** 会话退回到这条用户消息之前（它和之后的都去掉，Grava 也忘掉），返回原文。 */
+  /** 会话退回到这条用户消息之前（它和之后的都去掉，助手也忘掉），返回原文。 */
   rewind(threadId: string, msgId: string): Promise<string>;
   /** 停掉这个对话正在进行的回复（已经说了的留着）。排着的消息接着发。 */
   stop(threadId: string): Promise<void>;
@@ -38,6 +40,15 @@ export interface SendExtra {
   /** 学习台旁边的对话（加一门课那几步）：「课|第几步」，服务器给模型带上一句在哪门课、哪一步 */
   study?: string;
   onQueued?: (userId: string, steer: boolean) => void; onDequeued?: () => void;
+  /** 自己的内核（10/20）：插进这一轮的几条（"db<id>"）没来得及用上它就结束了，排到下一轮（SSE steer_missed）。
+   *  在这一轮的连接上收到：那几条不一定是这次发的这条，按对话找 */
+  onMissed?: (userIds: string[]) => void;
+}
+
+/** 一条回复流上的回调（send 和 attach 共用 consume）。 */
+interface StreamHooks {
+  onDelta?: (partial: string) => void; onStart?: (userId: string) => void; onCard?: (card: ChatCard) => void;
+  onQueued?: (userId: string, steer: boolean) => void; onDequeued?: () => void; onMissed?: (userIds: string[]) => void;
 }
 
 const now = () => {
@@ -46,7 +57,7 @@ const now = () => {
 };
 
 /** 没连上服务器时用：什么都不假装，发消息直接报错。 */
-export class OfflineApi implements GravaApi {
+export class OfflineApi implements ChatApi {
   readonly connected = false;
   async send(): Promise<Message> { throw new Error(L('未连接服务器：请检查「我 → 服务器」中的地址和令牌，然后下拉刷新', 'Not connected to the server. Check the address and token in Me → Server, then pull to refresh.')); }
   async transcribe(): Promise<string> { throw new Error(L('未连接服务器', 'Not connected to the server')); }
@@ -80,8 +91,8 @@ export async function readSse(body: ReadableStream<Uint8Array>, onEvent: (event:
   }
 }
 
-async function consume(thread: string, r: Response, onDelta?: (partial: string) => void, onStart?: (userId: string) => void, onCard?: (card: ChatCard) => void,
-  onQueued?: (userId: string, steer: boolean) => void, onDequeued?: () => void): Promise<Message> {
+async function consume(thread: string, r: Response, h: StreamHooks): Promise<Message> {
+  const { onDelta, onStart, onCard, onQueued, onDequeued, onMissed } = h;
   if (!r.ok) {
     const j = await r.json().catch(() => ({}));
     throw new Error(j.detail ?? j.error ?? `HTTP ${r.status}`);
@@ -91,20 +102,23 @@ async function consume(thread: string, r: Response, onDelta?: (partial: string) 
   let done: any = null;
   let queued = false;  // 排队的：start 带的是合成那一轮的 id，不是这条的
   let command = false;  // 斜杠命令的回答（start 带 command）：同一个对话里可能还有一条回复在跑，流里的字和进度都不碰它的
-  // progress：在想什么、做到哪一步（只在 Gateway 对话通道上有），这条流结束就清掉
+  // progress：在想什么、做到哪一步（Gateway 对话通道、自己的内核），这条流结束就清掉
   await readSse(r.body as unknown as ReadableStream<Uint8Array>, (event, data) => {
-    // queued：排队（steer = 插进了正在跑的那一轮）；text：整段换掉（对话通道的 replace / 最终文字和流出来的不一样）
+    // queued：排队（steer = 插进了正在跑的那一轮）；text：整段换掉（对话通道的 replace / 最终文字和流出来的不一样）；
+    // steer_missed：插进这一轮的几条没赶上（自己的内核），它们变成下一轮；model_switch：备用链换了模型（同一个型号换钥匙的不算）
     if (event === 'queued') { queued = true; onQueued?.(data.userId, !!data.steer); }
     else if (event === 'start') { command = !!data.command; if (queued) onDequeued?.(); else onStart?.(data.userId); }
     else if (command) { if (event === 'done') done = data; }
     else if (event === 'delta') { partial += data.text; onDelta?.(partial); }
     else if (event === 'text') { partial = data.text ?? ''; onDelta?.(partial); }
-    else if (event === 'done') { done = data; setReplyProgress(thread, null); }
+    else if (event === 'steer_missed') { if (data && Array.isArray(data.userIds)) onMissed?.(data.userIds.map(String)); }
+    else if (event === 'model_switch') { if (data?.from && data.to && data.from !== data.to) setModelSwitch(thread, { from: String(data.from), to: String(data.to), reason: String(data.reason ?? '') }); }
+    else if (event === 'done') { done = data; setReplyProgress(thread, null); setModelSwitch(thread, null); }
     else if (event === 'progress' && data && Array.isArray(data.steps)) setReplyProgress(thread, data as ReplyProgress);
     else if (event === 'card' && data && (data.kind === 'handoff' || data.kind === 'task' || data.kind === 'schedule' || data.kind === 'project' || data.kind === 'course' || data.kind === 'meeting')) onCard?.(data as ChatCard);
-  }).finally(() => { if (!command) setReplyProgress(thread, null); });
+  }).finally(() => { if (!command) { setReplyProgress(thread, null); setModelSwitch(thread, null); } });
   if (!done) throw new Error(L('回复流中断', 'Reply stream cut off'));
-  return { id: done.id, role: 'grava', time: done.time, modelId: done.modelId, fallbackFrom: done.fallbackFrom ?? undefined,
+  return { id: done.id, role: ASSISTANT_ROLE, time: done.time, modelId: done.modelId, fallbackFrom: done.fallbackFrom ?? undefined, fallbackReason: done.fallbackReason ?? undefined,
     body: { type: 'text', text: done.text, ...(done.attachments ? { attachments: withBase(done) } : {}) }, error: done.status === 'error' ? done.error : undefined,
     ...(command ? { command: true } : {}) };
 }
@@ -146,7 +160,7 @@ async function uploadFiles(threadId: string, files: PendingFile[]): Promise<Atta
 
 const withBase = (m: any): Attachment[] | undefined => (m.attachments ? (m.attachments as Attachment[]).map((a) => ({ ...a, url: fileUrl(a.url) })) : undefined);
 
-export class HttpApi implements GravaApi {
+export class HttpApi implements ChatApi {
   readonly connected = true;
   async send(threadId: string, text: string, modelId: string, onDelta?: (partial: string) => void, onStart?: (userId: string) => void, files?: PendingFile[], extra?: SendExtra): Promise<Message> {
     const attachments = files?.length ? (await uploadFiles(threadId, files)).map((a) => a.id) : [];
@@ -162,24 +176,25 @@ export class HttpApi implements GravaApi {
     const started = (id: string) => { userId = id; onStart?.(id); };
     const queuedAs = (id: string, steer: boolean) => { userId = id; extra?.onQueued?.(id, steer); };
     try {
-      return await consume(threadId, r as unknown as Response, onDelta, started, extra?.onCard, queuedAs, extra?.onDequeued);
+      return await consume(threadId, r as unknown as Response,
+        { onDelta, onStart: started, onCard: extra?.onCard, onQueued: queuedAs, onDequeued: extra?.onDequeued, onMissed: extra?.onMissed });
     } catch (e) {
       // 流断了（切后台、锁屏、5G/Wi-Fi 切换）：服务端照样跑完。先重新接上（15 分钟内回完的也接得上）；
       // 再不行就去历史记录里找这条之后的回复。只有都找不到才算真的没发出去。
-      const again = await this.attach(threadId, onDelta, extra?.onCard).catch(() => null);
+      const again = await this.attach(threadId, onDelta, extra?.onCard, extra?.onMissed).catch(() => null);
       if (again) return again;
       const h = await this.history(threadId).catch(() => null);
       const msgs = h?.messages ?? [];
       const mine = userId ? msgs.findIndex((m) => m.id === userId) : msgs.map((m) => m.body.text.trim() === text.trim() && m.role === 'user').lastIndexOf(true);
-      const reply = mine >= 0 ? msgs.slice(mine + 1).find((m) => m.role === 'grava') : null;
+      const reply = mine >= 0 ? msgs.slice(mine + 1).find((m) => m.role === ASSISTANT_ROLE) : null;
       if (reply) return reply;
       throw e;
     }
   }
-  async attach(threadId: string, onDelta?: (partial: string) => void, onCard?: (card: ChatCard) => void): Promise<Message | null> {
+  async attach(threadId: string, onDelta?: (partial: string) => void, onCard?: (card: ChatCard) => void, onMissed?: (userIds: string[]) => void): Promise<Message | null> {
     const r = await expoFetch(`${getBase()}/api/chat/stream?thread=${encodeURIComponent(threadId)}`, { headers: { Accept: 'text/event-stream', ...authHeaders() } });
     if (r.status === 204) return null;
-    return consume(threadId, r as unknown as Response, onDelta, undefined, onCard);
+    return consume(threadId, r as unknown as Response, { onDelta, onCard, onMissed });
   }
   async history(threadId: string, day?: string) {
     const r = await expoFetch(`${getBase()}/api/chat/history?thread=${encodeURIComponent(threadId)}${day ? `&day=${day}` : ''}`, { headers: { Accept: 'application/json', ...authHeaders() } });

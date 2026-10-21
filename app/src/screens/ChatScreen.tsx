@@ -8,15 +8,20 @@ import { agentName } from '../brand';
 import { Keyboard, Platform, Pressable, ScrollView, StyleSheet, TextInput, View } from 'react-native';
 import { useFocusEffect, useIsFocused, useNavigation, useRoute } from '@react-navigation/native';
 import { ChatView } from '../components/ChatView';
-import { Archive, ArchiveRestore, Bell, BellOff, CirclePlus, FolderKanban, MessagesSquare, Pencil, Pin, PinOff, Plus, ScanLine, Search, Trash2, User, UserPlus, X } from '../components/icons';
+import { Archive, ArchiveRestore, Bell, BellOff, BookUser, CirclePlus, FolderKanban, MessagesSquare, Pencil, Pin, PinOff, Plus, ScanLine, Search, Trash2, User, UserPlus, UserRoundPlus, UsersRound, X } from '../components/icons';
 import { AgentFace, ChatHeader, ChatRowView, ConfirmDelete, MenuItem, PillTabs, ProjectFace, RoomFace, StateFace, SwipeRow, rowTime, type Member, type SwipeAction } from '../components/ChatParts';
 import { LensAvatar } from '../components/LensAvatar';
+import { CyberAvatar } from '../components/agents/CyberAvatar';
+import { GroupFaces } from '../components/agents/GroupBits';
+import { useCybersOn } from '../api/cybers';
+import { useGroupsOn } from '../api/groups';
 import { NewProjectSheet, ProjectPanel, leftWords, projectLine } from '../components/ProjectCard';
 import { useSheet } from '../components/Sheet';
 import { Btn, Card, NavHeader, PullRefresh, Screen, T, showError } from '../components/ui';
 import { FriendsHome } from './FriendsScreens';
 import { chatsApi, fallbackList, overlay, type ChatAgent, type ChatList, type ChatRow } from '../api/chats';
 import { supports } from '../api/version';
+import { ASSISTANT_ROLE } from '../data/stored';
 import { hasRoute, type ChatQuote } from '../navigation';
 import { L } from '../i18n';
 import { useStore, useThreadOnScreen } from '../store';
@@ -25,7 +30,7 @@ import { hideWelcome, welcomeHidden } from '../welcome';
 import { useAccount } from './MeScreen';
 import { initialsOf } from '../api/account';
 
-/** Grava 一边的列表：服务器那份（或老服务器上拼的）叠上本机更新的状态和已读。 */
+/** 助手一边的列表：服务器那份（或老服务器上拼的）叠上本机更新的状态和已读。 */
 export function useChatList(): ChatList {
   const { chats, groups, sideChats, unread, typing, inbox, threads } = useStore();
   // 老服务器才用得上 threads（拼最后一句）：有服务器那份时不跟着 threads 重算
@@ -33,7 +38,7 @@ export function useChatList(): ChatList {
   return useMemo(() => overlay(chats ?? fallbackList(groups, sideChats, unread, local ?? {}), typing, inbox, unread), [chats, groups, sideChats, unread, typing, inbox, local]);
 }
 
-/** 「对话」tab 角标：Grava 一边没免打扰的未读 + 好友发来没看的（免打扰的不算）。 */
+/** 「对话」tab 角标：助手一边没免打扰的未读 + 好友发来没看的（免打扰的不算）。 */
 export function useChatBadge(): number {
   const list = useChatList();
   const { unread } = useStore();
@@ -58,7 +63,9 @@ function WelcomeCard({ onStart, onDismiss }: { onStart: () => void; onDismiss: (
   );
 }
 
-type Side = 'grava' | 'friends';
+/** 「对话」tab 的两边。助手一边的值也是路由参数 side 认的（通知、老链接带着它），别改 */
+const ASSISTANT_SIDE = 'grava';
+type Side = typeof ASSISTANT_SIDE | 'friends';
 
 /** 顶上一个圆按钮（搜索、新建、设置）。 */
 function RoundBtn({ label, onPress, gold, on, children }: { label: string; onPress: () => void; gold?: boolean; on?: boolean; children: React.ReactNode }) {
@@ -83,11 +90,17 @@ function SearchBox({ value, onChange, placeholder }: { value: string; onChange: 
   );
 }
 
-/** 一排 Agent：点 = 进它的对话，长按 = 置顶 / 免打扰 / 编辑 / 删除。 */
-function AgentBar({ agents, onOpen, onMenu, onNew }: { agents: ChatAgent[]; onOpen: (a: ChatAgent) => void; onMenu: (a: ChatAgent) => void; onNew: () => void }) {
+/** 一排 Agent：点 = 进它的对话，长按 = 置顶 / 免打扰 / 编辑 / 删除。onContacts：最前面一格「通讯录」（主线第三步，赛博开着才有）。 */
+function AgentBar({ agents, onOpen, onMenu, onNew, onContacts }: { agents: ChatAgent[]; onOpen: (a: ChatAgent) => void; onMenu: (a: ChatAgent) => void; onNew: () => void; onContacts?: () => void }) {
   const t = useTheme();
   return (
     <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.bar} style={{ flexGrow: 0, borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: t.line }}>
+      {onContacts ? (
+        <Pressable onPress={onContacts} accessibilityRole="button" accessibilityLabel={L('通讯录', 'Contacts')} style={({ pressed }) => [styles.barItem, { opacity: pressed ? 0.7 : 1 }]}>
+          <View style={[styles.contactsFace, { backgroundColor: t.surface2 }]}><BookUser size={21} color={t.ink} /></View>
+          <T v="caption" color={t.ink2} numberOfLines={1} style={{ fontSize: 11, fontWeight: '500' }}>{L('通讯录', 'Contacts')}</T>
+        </Pressable>
+      ) : null}
       {agents.map((a) => (
         <Pressable key={a.id} onPress={() => onOpen(a)} onLongPress={() => onMenu(a)} delayLongPress={400} accessibilityRole="button"
           accessibilityHint={L('长按可置顶、免打扰、编辑或删除', 'Long-press to pin, mute, edit or delete')}
@@ -137,6 +150,9 @@ export function useChatActions() {
     const spec = r.kind === 'project'
       ? { title: L(`删除项目「${name}」？`, `Delete the project "${name}"?`), label: L('删除项目', 'Delete project'),
           body: L('对话记录和项目卡将被删除，项目的截止日期从日程中移除。需要保留结论时，请先在资料页归档。', 'The conversation and the project card are deleted, and its deadlines leave your schedule. To keep a summary, archive it from its details page first.') }
+      : r.kind === 'group'
+        ? { title: L(`删除群聊「${name}」？`, `Delete the group chat "${name}"?`), label: L('删除群聊', 'Delete group chat'),
+            body: L('群聊记录和群记忆将被删除。成员不受影响：赛博记下的、你在收件箱里点过的都保留。', "The group chat's messages and memory are deleted. Members aren't affected: what the Cybers kept and what you approved in the inbox stay.") }
       : r.kind === 'room'
         ? { title: L(`删除群聊「${name}」？`, `Delete the group "${name}"?`), label: L('删除群聊', 'Delete group'),
             body: L('群聊记录将被删除。成员 Agent 和它们的记忆不受影响；已确认的待办保留在日程和相关 Agent 的看板中。', "The group's messages are deleted. Its Agents and their memory stay; confirmed to-dos stay in your schedule and on the Agents' dashboards.") }
@@ -170,9 +186,11 @@ export function ChatScreen() {
   const list = useChatList();
   const members = useMembers();
   const { prefs, deleteRow, deleteAgent } = useChatActions();
+  const cybers = useCybersOn() === true;  // 主线第三步：赛博开着才有通讯录、「+」里的六项、赛博的对话行
+  const groups = useGroupsOn() === true;  // 「+」里的「新建群聊」：群聊开着才有
   const server = list.server;
   // 调试用：网页版 ?friends=1 打开就在好友一边
-  const [side, setSide] = useState<Side>(() => (Platform.OS === 'web' && typeof window !== 'undefined' && new URLSearchParams(window.location.search).get('friends') === '1' ? 'friends' : 'grava'));
+  const [side, setSide] = useState<Side>(() => (Platform.OS === 'web' && typeof window !== 'undefined' && new URLSearchParams(window.location.search).get('friends') === '1' ? 'friends' : ASSISTANT_SIDE));
   // 从通知 / 别处跳到「对话」tab 时带 side
   const wantSide = route.params?.side as Side | undefined;
   const wantAt = (route.params?.at as number | undefined) ?? 0;
@@ -183,7 +201,7 @@ export function ChatScreen() {
   const [welcomeOff, setWelcomeOff] = useState(welcomeHidden);
   const friendsOn = unread.friends !== undefined;  // 服务器的未读里有 friends 才有好友功能
   const friendsN = Object.values(unread.friends ?? {}).reduce((sum, u) => sum + (u.muted ? 0 : u.n), 0);
-  const gravaN = [...list.agents, ...list.rows].reduce((sum, x) => sum + (x.muted ? 0 : x.unread), 0);
+  const assistantN = [...list.agents, ...list.rows].reduce((sum, x) => sum + (x.muted ? 0 : x.unread), 0);
 
   // 列表跟着未读、正在回复、收件箱变：重读（服务器那份；老服务器不用读，拼的跟着 store 走）。在屏幕上时有 Agent 在做就每 30 秒再读一次（后台任务做完）
   const focused = useIsFocused();
@@ -199,7 +217,9 @@ export function ChatScreen() {
   }, [focused, anyWorking, reload]);
 
   const openRow = (r: ChatRow) => {
-    if (r.kind === 'main' || r.kind === 'project') nav.navigate('Chat', { id: r.id });
+    if (r.kind === 'cyber') nav.navigate('CyberChat', { id: r.id });
+    else if (r.kind === 'group' && hasRoute('GroupChat')) nav.navigate('GroupChat', { id: r.id });
+    else if (r.kind === 'main' || r.kind === 'project') nav.navigate('Chat', { id: r.id });
     else if (hasRoute('Meeting')) nav.navigate('Meeting', { id: r.id });
     else showError(L('无法打开会议', "Couldn't open the meeting"), L('当前版本的 app 尚不支持会议。', "This version of the app can't open meetings yet."));
   };
@@ -213,7 +233,7 @@ export function ChatScreen() {
           onPress={() => { close(); prefs(r.id, { pinned: !r.pinned }); }} /> : null}
         {server ? <MenuItem icon={r.muted ? Bell : BellOff} title={r.muted ? L('取消免打扰', 'Unmute') : L('免打扰', 'Mute')} desc={r.muted ? undefined : L('不推送通知，未读不计入角标', "No notifications; unread doesn't count in the badge")}
           onPress={() => { close(); prefs(r.id, { muted: !r.muted }); }} /> : null}
-        {r.kind !== 'main' ? <MenuItem icon={Trash2} danger title={L('删除', 'Delete')} onPress={() => { close(); setTimeout(() => deleteRow(r), 250); }} /> : null}
+        {r.kind !== 'main' && r.kind !== 'cyber' ? <MenuItem icon={Trash2} danger title={L('删除', 'Delete')} onPress={() => { close(); setTimeout(() => deleteRow(r), 250); }} /> : null}
         {r.kind === 'main' && !server ? <T v="callout" color={t.ink2}>{L('主对话固定在第一行，不能删除。', 'The main chat stays on the first row and can’t be deleted.')}</T> : null}
       </View>
     ),
@@ -225,7 +245,7 @@ export function ChatScreen() {
       acts.push({ key: 'pin', label: r.pinned ? L('取消置顶', 'Unpin') : L('置顶', 'Pin'), tone: 'plain', icon: r.pinned ? <PinOff size={18} color={t.ink} /> : <Pin size={18} color={t.ink} />, onPress: () => prefs(r.id, { pinned: !r.pinned }) });
       acts.push({ key: 'mute', label: r.muted ? L('取消免打扰', 'Unmute') : L('免打扰', 'Mute'), tone: 'gold', icon: r.muted ? <Bell size={18} color={t.onGold} /> : <BellOff size={18} color={t.onGold} />, onPress: () => prefs(r.id, { muted: !r.muted }) });
     }
-    acts.push({ key: 'del', label: L('删除', 'Delete'), tone: 'danger', icon: <Trash2 size={18} color="#FFFFFF" />, onPress: () => deleteRow(r) });
+    if (r.kind !== 'cyber') acts.push({ key: 'del', label: L('删除', 'Delete'), tone: 'danger', icon: <Trash2 size={18} color="#FFFFFF" />, onPress: () => deleteRow(r) });
     return acts;
   };
   const agentMenu = (a: ChatAgent) => sheet.open({
@@ -253,6 +273,29 @@ export function ChatScreen() {
       ) });
       return;
     }
+    if (cybers) {
+      sheet.open({ title: L('新建', 'New'), sub: agentName(), content: (close) => (
+        <View>
+          {supports('meetings') && hasRoute('NewMeeting') ? (
+            <MenuItem icon={MessagesSquare} title={L('发起会议', 'Start a meeting')} desc={L('议事：每轮一次，纪要确认后进日程和看板', 'To decide: one round each, minutes go to your schedule and boards once confirmed')} chevron
+              onPress={() => { close(); nav.navigate('NewMeeting'); }} />
+          ) : null}
+          {groups && hasRoute('NewRoom') ? (
+            <MenuItem icon={UsersRound} title={L('新建群聊', 'New group chat')} desc={L('碰撞想法：@所有 Agent 讨论一轮', 'To think it through: @all Agents for one round')} chevron
+              onPress={() => { close(); nav.navigate('NewRoom'); }} />
+          ) : null}
+          <MenuItem icon={UserRoundPlus} title={L('新建赛博', 'New Cyber')} desc={L('一句话开始，陪你想的', 'Start from one sentence; it thinks with you')} chevron
+            onPress={() => { close(); nav.navigate('NewCyber'); }} />
+          <MenuItem icon={CirclePlus} title={L('新建功能 Agent', 'New Agent')} desc={L('一句话开始，做事的', 'Start from one sentence; it gets things done')} chevron
+            onPress={() => { close(); nav.navigate('NewGroup'); }} />
+          <MenuItem icon={FolderKanban} title={L('新建项目', 'New project')} desc={L('想得比较大的，先讨论方案', 'For bigger ideas: talk the plan through first')} chevron
+            onPress={() => { close(); setTimeout(() => sheet.open({ title: L('新建项目', 'New project'), content: (c) => <NewProjectSheet close={c} onCreated={(id) => { reload('chats').catch(() => {}); nav.navigate('Chat', { id }); }} /> }), 250); }} />
+          <MenuItem icon={ScanLine} title={L('扫一扫', 'Scan')} desc={scanDesc(L('配对和加好友', 'Pair a device or add a friend'))} off={!canScan} chevron
+            onPress={() => { close(); nav.navigate('Scan'); }} />
+        </View>
+      ) });
+      return;
+    }
     sheet.open({ title: L('新建', 'New'), sub: agentName(), content: (close) => (
       <View>
         {supports('meetings') && hasRoute('NewMeeting') ? (
@@ -269,7 +312,7 @@ export function ChatScreen() {
     ) });
   };
 
-  // 搜索：Grava 一边在本机按名字和最后一句筛，另有一行去历史里搜全部聊天记录；好友一边用 FriendsHome 自己的（名字 + 聊天记录）
+  // 搜索：助手一边在本机按名字和最后一句筛，另有一行去历史里搜全部聊天记录；好友一边用 FriendsHome 自己的（名字 + 聊天记录）
   const words = q.trim().toLowerCase().split(/\s+/).filter(Boolean);
   const hit = (...s: string[]) => words.every((w) => s.join(' ').toLowerCase().includes(w));
   const searching = searchOpen && words.length > 0;
@@ -283,7 +326,8 @@ export function ChatScreen() {
   ) : null;
 
   const face = (r: ChatRow) => {
-    const inner = r.kind === 'main' ? <LensAvatar size={46} config={avatar} /> : r.kind === 'project' ? <ProjectFace /> : <RoomFace members={members(r.members)} avatar={avatar} />;
+    const inner = r.kind === 'main' ? <LensAvatar size={46} config={avatar} /> : r.kind === 'project' ? <ProjectFace /> : r.kind === 'cyber' ? <CyberAvatar avatar={r.avatar} size={46} />
+      : r.kind === 'group' ? <GroupFaces members={r.faces ?? []} size={46} /> : <RoomFace members={members(r.members)} avatar={avatar} />;
     return <StateFace state={r.state}>{inner}</StateFace>;
   };
   const lineOf = (r: ChatRow) => {
@@ -297,6 +341,7 @@ export function ChatScreen() {
   };
   const tagOf = (r: ChatRow): { tag?: string; tone?: 'cyan' | 'warn' } => {
     if (r.kind === 'meeting') return { tag: L('会议', 'Meeting') };
+    if (r.kind === 'group') return { tag: L('群聊', 'Group') };
     if (r.kind === 'project') {
       const next = sideChats.find((c) => c.id === r.id)?.next;
       if (next && next.left != null && next.left <= 3) return { tag: next.left < 0 ? leftWords(next.left) : L(`${leftWords(next.left)}截止`, `due ${leftWords(next.left)}`), tone: 'warn' };
@@ -321,12 +366,13 @@ export function ChatScreen() {
       {header}
       {friendsOn ? (
         <PillTabs<Side> value={side} onChange={(v) => { Keyboard.dismiss(); setSide(v); setQ(''); }} style={{ marginHorizontal: space.lg, marginTop: 14 }}
-          options={[{ value: 'grava', label: agentName(), count: gravaN }, { value: 'friends', label: L('好友', 'Friends'), count: friendsN }]} />
+          options={[{ value: ASSISTANT_SIDE, label: agentName(), count: assistantN }, { value: 'friends', label: L('好友', 'Friends'), count: friendsN }]} />
       ) : null}
       {side === 'friends' && friendsOn ? <FriendsHome searchOpen={searchOpen} /> : (
         <>
           {searchOpen ? <View style={{ paddingHorizontal: space.lg, paddingTop: space.md }}><SearchBox value={q} onChange={setQ} placeholder={L('搜索 Agent 和对话', 'Search Agents and chats')} /></View> : null}
-          {agents.length || !searching ? <AgentBar agents={agents} onOpen={openAgent} onMenu={agentMenu} onNew={() => nav.navigate('NewGroup')} /> : null}
+          {agents.length || !searching ? <AgentBar agents={agents} onOpen={openAgent} onMenu={agentMenu} onNew={() => nav.navigate('NewGroup')}
+            onContacts={cybers && !searching ? () => nav.navigate('Contacts') : undefined} /> : null}
           <ScrollView contentContainerStyle={{ paddingBottom: space.xxl }} refreshControl={<PullRefresh onRefresh={() => reload('chats', 'groups', 'sideChats', 'unread', 'inbox')} />}
             keyboardShouldPersistTaps="handled" keyboardDismissMode={Platform.OS === 'web' ? 'none' : 'on-drag'}>
             {!connected ? (
@@ -341,7 +387,7 @@ export function ChatScreen() {
               return (
                 <SwipeRow key={r.id} actions={swipeActions(r)}>
                   <ChatRowView face={face(r)} title={title} tag={tg.tag} tagTone={tg.tone} pinned={r.pinned} muted={r.muted} time={rowTime(r.at)}
-                    line={lineOf(r)} unread={r.unread} last={i === rows.length - 1 && !list.ended && !list.archived}
+                    line={lineOf(r)} unread={r.unread} last={i === rows.length - 1 && !list.ended && !list.archived && !list.endedGroups}
                     onPress={() => openRow(r)} onLongPress={() => rowMenu(r)}
                     hint={r.kind === 'main' ? undefined : L('左滑或长按可置顶、免打扰、删除', 'Swipe left or long-press to pin, mute or delete')} />
                 </SwipeRow>
@@ -357,6 +403,12 @@ export function ChatScreen() {
               <Pressable onPress={() => nav.navigate('ChatArchive', { kind: 'meeting' })} accessibilityRole="button" style={({ pressed }) => [styles.foot, { opacity: pressed ? 0.6 : 1 }]}>
                 <Archive size={18} color={t.ink3} />
                 <T v="callout" color={t.ink3} style={{ flex: 1 }}>{L(`已结束的会议 · ${list.ended}`, `Ended meetings · ${list.ended}`)}</T>
+              </Pressable>
+            ) : null}
+            {!searching && list.endedGroups ? (
+              <Pressable onPress={() => nav.navigate('ChatArchive', { kind: 'group' })} accessibilityRole="button" style={({ pressed }) => [styles.foot, { opacity: pressed ? 0.6 : 1 }]}>
+                <Archive size={18} color={t.ink3} />
+                <T v="callout" color={t.ink3} style={{ flex: 1 }}>{L(`已结束的群聊 · ${list.endedGroups}`, `Ended group chats · ${list.endedGroups}`)}</T>
               </Pressable>
             ) : null}
             {!searching && list.archived ? (
@@ -382,6 +434,8 @@ export function ThreadScreen() {
   const side = sideChats.find((c) => c.id === id);
   const [welcomeOff, setWelcomeOff] = useState(welcomeHidden);
   useThreadOnScreen(id);
+  // 群聊的线程（gc-…，主线第三步）从横幅、通知点过来会落到这里：换成群聊页
+  useEffect(() => { if (id.startsWith('gc-') && hasRoute('GroupChat')) nav.replace('GroupChat', { id }); }, [id, nav]);
   const isMain = id === 'main';
   const welcome = isMain && connected && firstRun && !welcomeOff ? (
     <WelcomeCard onStart={() => send('main', L('我第一次用，带我走一遍。', "It's my first time here. Walk me through it."))}
@@ -410,11 +464,11 @@ export function ThreadScreen() {
   );
 }
 
-/** 已结束的会议 / 已归档的项目（列表底下的入口，params kind）。 */
+/** 已结束的会议 / 已结束的群聊 / 已归档的项目（列表底下的入口，params kind）。 */
 export function ChatArchiveScreen() {
   const t = useTheme();
   const nav = useNavigation<any>();
-  const { kind } = (useRoute<any>().params ?? {}) as { kind?: 'meeting' | 'project' };
+  const { kind } = (useRoute<any>().params ?? {}) as { kind?: 'meeting' | 'project' | 'group' };
   const { avatar, sideChats, restoreProject, archiveSideChat, reload } = useStore();
   const members = useMembers();
   const { deleteRow } = useChatActions();
@@ -427,16 +481,16 @@ export function ChatArchiveScreen() {
   useEffect(() => { if (server) load(); }, [server, load, sideChats]);
   // 老服务器：只有已归档的项目，直接用 sideChats
   const rows = server ? fetched : sideChats.filter((c) => c.archived).sort((a, b) => b.updatedAt - a.updatedAt).map((c): ChatRow => ({
-    kind: 'project', id: c.id, title: c.title, line: c.lastLine, lineRole: 'grava', at: new Date(c.updatedAt).toISOString(), unread: 0, pinned: false, muted: false, state: null }));
-  const shown = (rows ?? []).filter((r) => (kind === 'project' ? r.kind === 'project' : roomKind(r)));
+    kind: 'project', id: c.id, title: c.title, line: c.lastLine, lineRole: ASSISTANT_ROLE, at: new Date(c.updatedAt).toISOString(), unread: 0, pinned: false, muted: false, state: null }));
+  const shown = (rows ?? []).filter((r) => (kind === 'project' ? r.kind === 'project' : kind === 'group' ? r.kind === 'group' : roomKind(r)));
   const restore = (r: ChatRow) => restoreProject(r.id).catch(() => archiveSideChat(r.id, false)).then(() => { load(); reload('chats').catch(() => {}); })
     .catch((e) => showError(L('恢复失败', "Couldn't restore"), e));
   return (
     <Screen>
-      <NavHeader title={kind === 'project' ? L('已归档的项目', 'Archived projects') : L('已结束的会议', 'Ended meetings')} onBack={() => nav.goBack()} />
+      <NavHeader title={kind === 'project' ? L('已归档的项目', 'Archived projects') : kind === 'group' ? L('已结束的群聊', 'Ended group chats') : L('已结束的会议', 'Ended meetings')} onBack={() => nav.goBack()} />
       <ScrollView contentContainerStyle={{ paddingBottom: space.xxl }} refreshControl={<PullRefresh onRefresh={load} />}>
         {err ? <Card style={{ margin: space.lg }}><T v="callout" color={t.bad}>{L(`无法加载：${err}`, `Couldn't load: ${err}`)}</T></Card> : null}
-        {rows && !shown.length ? <T v="callout" color={t.ink3} style={{ padding: space.lg }}>{kind === 'project' ? L('暂无已归档的项目。', 'No archived projects.') : L('暂无已结束的会议。', 'No ended meetings.')}</T> : null}
+        {rows && !shown.length ? <T v="callout" color={t.ink3} style={{ padding: space.lg }}>{kind === 'project' ? L('暂无已归档的项目。', 'No archived projects.') : kind === 'group' ? L('暂无已结束的群聊。', 'No ended group chats.') : L('暂无已结束的会议。', 'No ended meetings.')}</T> : null}
         {shown.map((r, i) => {
           const p = sideChats.find((c) => c.id === r.id);
           const acts: SwipeAction[] = [
@@ -445,10 +499,10 @@ export function ChatArchiveScreen() {
           ];
           return (
             <SwipeRow key={r.id} actions={acts}>
-              <ChatRowView face={r.kind === 'project' ? <ProjectFace archived /> : <RoomFace members={members(r.members)} avatar={avatar} />} title={r.title} time={rowTime(r.at)}
+              <ChatRowView face={r.kind === 'project' ? <ProjectFace archived /> : r.kind === 'group' ? <GroupFaces members={r.faces ?? []} size={46} /> : <RoomFace members={members(r.members)} avatar={avatar} />} title={r.title} time={rowTime(r.at)}
                 line={(p?.closing ? L('正在撰写结论…', 'Writing the summary…') : p?.hasSummary ? L('已归档 · 有结论', 'Archived · with summary') : '') || r.line}
                 last={i === shown.length - 1} hint={L('左滑可恢复或删除', 'Swipe left to restore or delete')}
-                onPress={() => (r.kind === 'project' ? nav.navigate('Chat', { id: r.id }) : hasRoute('Meeting') ? nav.navigate('Meeting', { id: r.id }) : undefined)} />
+                onPress={() => (r.kind === 'project' ? nav.navigate('Chat', { id: r.id }) : r.kind === 'group' ? nav.navigate('GroupChat', { id: r.id }) : hasRoute('Meeting') ? nav.navigate('Meeting', { id: r.id }) : undefined)} />
             </SwipeRow>
           );
         })}
@@ -464,6 +518,7 @@ const styles = StyleSheet.create({
   bar: { gap: 4, paddingHorizontal: 10, paddingTop: 14, paddingBottom: 12 },
   barItem: { width: 64, alignItems: 'center', gap: 5 },
   newFace: { width: 46, height: 46, borderRadius: 23, borderWidth: 1, borderStyle: 'dashed', alignItems: 'center', justifyContent: 'center', margin: 4 },
+  contactsFace: { width: 46, height: 46, borderRadius: 23, alignItems: 'center', justifyContent: 'center', margin: 4 },
   offline: { margin: space.lg, marginBottom: 0, padding: space.md, borderRadius: radius.md, flexDirection: 'row', alignItems: 'center' },
   foot: { flexDirection: 'row', alignItems: 'center', gap: 10, height: 52, paddingLeft: 20, paddingRight: 16 },
 });

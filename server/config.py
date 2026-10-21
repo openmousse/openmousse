@@ -4,6 +4,8 @@
 
 字段（都可省略）：
   app_name          界面上助手的名字（默认 OpenMousse）
+  owner_id          你自己改的东西在库里记成什么（日程、目标、项目、饮食的 source / actor）：新装的写 "owner"；不写 = "leo"（老安装的值）。
+                    两个值读的时候都算你自己；库里的老值要换：mousse owner migrate（见下面的 owner_id()）
   user_name         你的称呼：给模型的中文说明里用它指你（默认「用户」；settings_ctl.py user-name 改，每次读文件，不用重启）
   timezone          IANA 时区，逻辑日和时间显示都按它算
   language          "zh" 或 "en"：没带 Accept-Language 的请求、推送、定时器用的语言（默认 en；app 的请求按它自己的语言）
@@ -75,15 +77,24 @@
                     share.public_port（朋友经小服务的 /f 找到你）。每次读文件，不用重启
   podcast           播客（见 podcast.py，全部可选）：{"dir": 原声放哪（默认 <data_dir>/podcast）, "text_model": "gpt-transcribe",
                     "time_model": "whisper-1"（"" = 不要逐句时间）, "thinking": "low", "model": llm-task 的模型覆盖}。每次读文件，不用重启
-  mcp               MCP 入口（/mcp，见 mcp_bridge.py）：{"scripts": {"工具名": ["命令", "参数"…] 或 null}}：换掉 / 加 / 关掉一个工具背后的命令
-                    （令牌是 auth.tokens 里的 mcp、mcp-<agent id>，这几把只能用在 /mcp 上，/api 不认；改了工具要重启）
+  mcp               MCP 入口（/mcp，见 mcp_bridge.py）：{"scripts": {"工具名": ["命令", "参数"…] 或 null}, "allowed_hosts": ["host 或 host:port", …]}。
+                    scripts：换掉 / 加 / 关掉一个工具背后的命令（令牌是 auth.tokens 里的 mcp、mcp-<agent id>，这几把只能用在 /mcp 上，
+                    /api 不认；改了工具要重启）。allowed_hosts：DNS 重绑定防护额外放行的 Host（默认只有本机的名字 127.0.0.1、
+                    localhost、[::1]，任何端口，加上 bind 里写明的监听地址；share.public_url 的主机也放行，Origin 用它的 http/https）。
+                    不在名单里的 Host 回 421，Origin 对不上回 403。allowed_hosts 每次读文件，不用重启
   apps              连接器（见 apps.py）：{"catalog": 加 / 改 / 藏目录里的应用, "client_id_url": CIMD 用的 client_id 网址,
-                    "redirect_uris": [网页版用的 http(s) 回调], "allow_local": 只给测试}。每次读文件，不用重启
+                    "redirect_uris": [网页版用的 http(s) 回调], "allow_local": 只给测试, "desc_max": 给模型看的工具说明最多多少字（默认 600，只在 claw 是 builtin 时；别的 claw 照旧 8000）,
+                    "ask_ttl_hours": 「先问我」的卡几小时过期（默认 24，过了不能再批；只在 claw 是 builtin 时，别的 claw 照旧不过期）,
+                    "<连接器 id>": {"disabled_tools": [远端工具名], "enabled_tools": [白名单]}}。每次读文件，不用重启
   mcp_servers       你自己配的 MCP 服务，接进自己内核的主人回合（见 engine/mcp_client.py；也认 mcpServers：Claude Code / Claude Desktop
                     的那一段原样贴进来就能用）：{"名字": {"command", "args", "env", "cwd"}（本机 stdio）或 {"type": "http" | "sse", "url",
                     "headers"}（远端，写好令牌的；要 OAuth 的走连接器），外加 "agents": ["main"]（默认只有 main）、"tools": {"工具": "auto" |
                     "ask" | "off"}、"timeout"、"idle"、"startup_timeout"、"resources"、"disabled"}。密钥只能写成 ${变量名}（从环境或 env_file
                     取）。每次读文件，不用重启
+  upcoming          「接下来会自动做的事」里起好认的名字（见 data.py）：{"titles": {"<定时任务的名字或 systemd 定时器单元>": {"zh", "en", "repeat"}},
+                    "reminder_prefix": "<一次性提醒的单元名前缀>"}。不写 = 定时器一个都不列、定时任务用它自己的名字（每次读文件）
+  connectors        连接页认的 systemd 用户单元和跟踪课程的文件（见 connectors.py）：{"units": {"browser", "mail", "obsidian", "tree"},
+                    "canvas_courses": "…"}，不叫默认那个名字时才写（每次读文件）
   wake              起床信号：{"notify_cmd": [...], "notify_hours": ["05:30", "13:00"]}：早上收到信号（快捷指令、app 回到前台、「我起来了」）
                     时跑一下这个命令，比如立刻跑一次出起床报告的定时脚本（见 health.py；每次读文件，不用重启）
 
@@ -93,6 +104,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
@@ -235,6 +247,34 @@ class Settings:
 
 settings = Settings()
 TZ = settings.tz
+
+
+# —— 「主人」（你自己：app 里点的、命令行不带 --source 的）在库里记成什么 ——————————————————————
+# 日程、目标、项目、饮食的 source / actor / created_by 这几列里，你自己改的记成一个 id（别的值是 main 或 Agent 的 id）。
+# 老的安装、库里的老数据、老的 app 和你自己的脚本（schedule_ctl.py … --source leo）都认 'leo'：这个值不能改，读的时候一直算主人。
+# 新装的写 'owner'（安装器把 owner_id 写进新的 server.json；和世界树 tree/ 里你自己写的一样）。server.json 没写 owner_id = 'leo'，
+# 已有的安装一个字节不变。把库里的老值换成新值：mousse owner migrate（ops/owner.py，只给出来，不自动跑）。
+OWNER_ID_LEGACY = "leo"   # 老数据、老 app、老脚本认这个值，别改
+OWNER_ID_NEW = "owner"    # 新装用的
+OWNER_IDS = (OWNER_ID_NEW, OWNER_ID_LEGACY)
+OWNER_RE = re.compile(r"^[a-z0-9_-]{1,40}$")  # 和 Agent 的 id 一个写法（schedule.ID_RE）
+
+
+def owner_id() -> str:
+    """写进库里的「主人」：server.json 的 owner_id（写错了、写成 main 都不算），没写 = 'leo'。每次读文件（按 mtime 缓存）。"""
+    v = raw().get("owner_id")
+    v = v.strip() if isinstance(v, str) else ""
+    return v if OWNER_RE.match(v) and v != "main" else OWNER_ID_LEGACY
+
+
+def is_owner(x: object) -> bool:
+    """是不是主人：'owner'、'leo'（新旧都认）和 server.json 配的那个。"""
+    return isinstance(x, str) and (x in OWNER_IDS or x == owner_id())
+
+
+def owner_ids() -> tuple[str, ...]:
+    """所有算主人的值（给 SQL 的 IN (…)）：配的那个在前。"""
+    return tuple(dict.fromkeys((owner_id(), *OWNER_IDS)))
 
 
 def user_word() -> str:

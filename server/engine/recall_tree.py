@@ -1,13 +1,13 @@
 """世界树的叶子进记忆检索（2026-10-16）：配了向量（engine.recall.embeddings）才有，和记忆文件、对话一起按意思和关键词排。
 
 读哪一份：sources.py 选中的那一份，读法和 engine/context.py 的 tree_part 一样 ——
-  作者实例的 workspace scripts/memory_tree.py，或开源包 openmousse_tree（treelib.py 包好的）：connect(sync=False) 只读它的索引（世界树服务
+  工作区里自己写的 scripts/memory_tree.py，或开源包 openmousse_tree（treelib.py 包好的）：connect(sync=False) 只读它的索引（世界树服务
   自己每几秒刷一次，这里不抢锁、不重建、不导出），tree 表里当前的叶子（active / pending；档案要点不算：档案文件本身就在共享资料里），
   branch_tree 的枝。
   读不了（模块里没有这些、库打不开）：退回读它的 TREE.md 导出（server.json engine.recall.tree_md 写路径；没写就用开源包配置里的
   export_path）。导出里一行一片、只有已确认的，没有 id 和枝：id 用字的指纹，挂在主干上 —— 只有主对话搜得到。
   平时读得了的那一份这会儿读不了（库正在重建……）：索引里的旧叶子先留着，不换成没有枝的导出（不然功能 Agent 的叶子一会儿没了、
-  一会儿又回来，向量也跟着重算）。真的换了一份（作者的脚本 ↔ 开源包 ↔ 导出）：旧的清掉，字一样的叶子接着用原来的向量。
+  一会儿又回来，向量也跟着重算）。真的换了一份（工作区的脚本 ↔ 开源包 ↔ 导出）：旧的清掉，字一样的叶子接着用原来的向量。
 一片叶子一段：sources.root = tree、path = 叶子 id、day = observed_at（事情发生的那天）；leaves 表记它在哪一枝、谁写的、什么类、确认没有，
   还有它的出处（原话、来自哪个平台的哪次对话、哪条消息，2026-10-17）。信几分（13d，2026-10-19）按它算：用户自己写的、带用户原话的
   → quoted，别的 → inferred（tier_of / engine/memgate.py 的 tier）；搜出来、memory_get 读到的都写上这一档。
@@ -35,7 +35,7 @@ from i18n import L, LS
 ROOT = "tree"
 REF = "tree:"
 MODULES = ("package", "script")  # 从模块读的那两种（导出是 export:<路径>）
-PROV = ("quote", "platform", "thread", "message")  # 叶子的出处（世界树的 tree 表有这几列才读：开源包 0.4、作者那份 10/17 起）
+PROV = ("quote", "platform", "thread", "message")  # 叶子的出处（世界树的 tree 表有这几列才读：开源包 0.4、工作区那份 10/17 起）
 
 
 @dataclass
@@ -71,7 +71,7 @@ class Leaf:
 
 @dataclass
 class Snapshot:
-    origin: str                 # package（开源包）/ script（作者的 memory_tree.py）/ export:<路径>（TREE.md）
+    origin: str                 # package（开源包）/ script（工作区的 memory_tree.py 脚本）/ export:<路径>（TREE.md）
     leaves: list[Leaf]
     branches: list[dict]        # [{"name", "parent", "agents": [...]}]（先序）
     trunk: str
@@ -135,7 +135,7 @@ def _from_module(mt) -> Snapshot:
     return Snapshot("package" if getattr(mt, "PACKAGE", False) else "script", leaves, out, str(getattr(mt, "TRUNK", "") or ""))
 
 
-# TREE.md 的一行：- 字 #标签 [来源 日期]（待确认）（用得上：a；b）—— openmousse_tree.store.export 的写法（作者的实例导出的是同一个样子）
+# TREE.md 的一行：- 字 #标签 [来源 日期]（待确认）（用得上：a；b）—— openmousse_tree.store.export 的写法（工作区那份脚本导出的也是这个样子）
 _LINE = re.compile(r"^- (?P<text>.+?)(?: #(?P<tags>[^\s\[\]]+))? \[(?P<source>[^\]\s]+) (?P<day>\d{4}-\d{2}-\d{2})\]"
                    r"(?P<pending>（待确认）| \(pending\))?(?:（用得上：(?P<zh>[^）]*)）| \(useful when: (?P<en>[^)]*)\))?\s*$")
 _KINDS = ("preference", "decision", "fact", "event")
@@ -182,7 +182,7 @@ def read() -> tuple[Snapshot | None, str | None]:
             snap = _from_module(mt)
             snap.read_at = at
             return snap, None
-        except Exception as e:  # noqa: BLE001 — 作者的脚本、开源包的库都可能出各种错：退回读导出
+        except Exception as e:  # noqa: BLE001 — 工作区的脚本、开源包的库都可能出各种错：退回读导出
             note = f"{type(e).__name__}: {str(e)[:160]}"
     path = export_path(mt)
     if path is not None and path.is_file():

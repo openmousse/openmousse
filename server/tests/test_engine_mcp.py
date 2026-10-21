@@ -443,8 +443,12 @@ def test_who_gets_the_tools(env):
         assert "owner's own turns" in await tools.gate(echo, {"text": "x"}, ctx_for(kind="cyber"))
         await mcp_client.shutdown()
     run(go())
-    from engine import cyber
-    assert not engine.Spec(kind="cyber", model="deepseek/x").tools and cyber.system_prompt({"id": "c"})  # 赛博回合没有工具
+    from engine import cyber, cyber_tools
+    # 赛博回合只有装载工具（和 manual）：MCP 的工具一个都不给（上面 kinds 只有 owner）；装载的 ask_agent 只给赛博回合，没装载就零工具
+    ask = cyber_tools.ask_agent_tool({"id": "c", "name": "C"}, [{"id": "g-notes", "name": "Notes"}], thread="cy-0000abcd", ask=None)
+    assert ask.kinds == ("cyber",) and "You have no tools" in cyber.system_prompt({"id": "c"})
+    assert cyber_tools.ask_agent_tool({"id": "c", "name": "C"}, [], thread="cy-0000abcd", ask=None) is None
+    assert cyber_tools.propose_tool(propose=None).kinds == ("cyber",)  # 提改法的也只给赛博回合
 
 
 def test_sandboxed_agents_and_background_tasks_get_none(env):

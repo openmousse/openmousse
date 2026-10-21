@@ -1,4 +1,4 @@
-"""评测（内核第 10 项）：假模型服务器 + 题库 + 跑法。交接见 ~/openmousse-wt/engine/README.md「第 10 项」。
+"""评测（内核第 10 项）：假模型服务器 + 题库 + 跑法。
 
   fakemodel.py   本机的假模型服务器：会说 OpenAI 兼容接口和 Claude 的接口（都能流式），还有 Gateway 的 llm-task，按剧本回放
   harness.py     题库怎么读、每一路（内核 + 某个模型 / OpenClaw 的 llm-task）怎么调、怎么判、出表

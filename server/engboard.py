@@ -3,7 +3,7 @@
 两种来源，都只读（拍板、动手、改状态都在电脑上的 Claude Code 里）：交接本 todos.md，或 GitHub 的看板（2026-10-19，见后面）。
 
 交接本：数据从 Claude Code 的交接本 todos.md 单向同步过来，
-记进 grava.db 的 eng_lines / eng_items：整节挪进 archive 以后，记过的「做完了」照样看得到。
+记进 mousse.db 的 eng_lines / eng_items：整节挪进 archive 以后，记过的「做完了」照样看得到。
 - 一条线 = todos.md 的一节（## 标题）。名字取标题里括号和冒号前面那段；主线（标题以「主线」开头）按节里的粗体小标题分格。
 - 一条事 = 一个勾选框（- [ ] / - [x]）。状态：[x] = 做完；没打勾、写着要你的（你 = server.json 的 user_name：等你、<名字> 定 / 选 / 看、
   拍板 ·、你做 ·……）= 等你；
@@ -75,7 +75,7 @@ BOLD_HEAD = re.compile(r"^\*\*(.+?)\*\*")
 STATUS_LINE = re.compile(r"^>?\s*\**状态\**\s*[:：]\s*\**(在做|等你|排队|做完|暂停)")
 START_HERE = re.compile(r"(下一个|下个) ?session 从这里开始|在做|进行中")
 START_HERE_BODY = re.compile(r"(下一个|下个) ?session 从这里开始")
-# 「→ 已搬到 Grava（item:…）」「→ 剩下的已搬到…」「→ 已在 Grava」「→ 不搬：…」= 挪到别处或别处已经有了；写在括号里的（「（体脂这一半 → 已搬到…）」）
+# 「→ 已搬到日程（item:…）」「→ 剩下的已搬到…」「→ 已在日程里」「→ 不搬：…」= 挪到别处或别处已经有了；写在括号里的（「（提醒这一半 → 已搬到…）」）
 # 只说了一半，这一条还算开着
 MOVED = re.compile(r"→[^→（(]{0,8}?(已在|不搬|已?(搬|挪|移|并)(到|进))")
 DROPPED_NOTE = re.compile(r"[（(]\s*(\d{1,2}/\d{1,2}\s*核对\s*[:：]\s*)?不做了")  # 「（不做了：…）」「（10/15 核对：不做了，…）」
@@ -165,7 +165,7 @@ def line_name(heading: str) -> str:
     h = re.sub(r"^\d{4}-\d{2}-\d{2}\s*新增[:：]\s*", "", h)
     h = re.split(r"[（(]", h, maxsplit=1)[0].strip()
     m = re.search(r"[:：]", h)
-    if m and len(CJK.findall(h[:m.start()])) >= 4:  # 冒号前是一个够说明白的中文名（「开发设备分工：Mac、…」）；「求职：Acme」「Zen：…」整个留着
+    if m and len(CJK.findall(h[:m.start()])) >= 4:  # 冒号前是一个够说明白的中文名（「测试设备分工：平板、…」）；「上架：Acme」「Zen：…」整个留着
         h = h[:m.start()].strip()
     return h[:40] or plain(heading)[:40]
 

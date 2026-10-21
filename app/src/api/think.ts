@@ -16,7 +16,7 @@ export interface Fragment {
 export interface TopicBrief {
   id: string; title: string; count: number; /** 聊的时候「只记下」的几句（不算在 count 里） */ notes: number; status: 'open' | 'done' | 'deleted'; createdAt: string; updatedAt: string; talked: number; lastLine: string;
   lastAt: string | null; draftStatus: string | null; notePath: string | null;
-  /** 谁最后说的（user / grava）、写成笔记的时间：老服务器没有 */ lastRole?: string | null; doneAt?: string | null;
+  /** 谁最后说的（user / 助手的 role，data/stored.ts）、写成笔记的时间：老服务器没有 */ lastRole?: string | null; doneAt?: string | null;
 }
 export interface DraftPoint { text: string; from: string[] }
 export interface Draft {

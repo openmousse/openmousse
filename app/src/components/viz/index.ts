@@ -36,3 +36,6 @@ export { BeforeAfter, CompareList, TargetBar } from './Compare';
 export type { CompareItem, ComparePoint } from './Compare';
 export { NutritionRing, SleepStages, Streak, durText } from './Health';
 export type { SleepSeg, SleepStage, StreakDay } from './Health';
+// 记忆页（2026-10-20）
+export { MemoryRings } from './MemoryRings';
+export type { RingDot } from './MemoryRings';

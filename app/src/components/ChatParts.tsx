@@ -1,6 +1,6 @@
 // 对话页（2026-10-13）的几样零件：头像外圈的状态（在做 = 青色弧，等你点头 = 琥珀点，未读数）、会议 / 群的拼图头像、
 // 统一的聊天页头（返回 / 头像 / 名字 + 副标题 / ⓘ）、左滑露出的按钮、删除前的确认。
-// 好友列表和 Grava 一边的列表共用 SwipeRow，四种聊天页（主对话、项目、Agent、好友）共用 ChatHeader。
+// 好友列表和助手一边的列表共用 SwipeRow，四种聊天页（主对话、项目、Agent、好友）共用 ChatHeader。
 import React, { useEffect, useRef, useState } from 'react';
 import { Animated, Easing, Platform, Pressable, ScrollView, StyleSheet, View } from 'react-native';
 import Svg, { Circle } from 'react-native-svg';
@@ -152,7 +152,7 @@ export function ChatHeader({ title, sub, subTone, onSub, face, onBack, onInfo, i
 }
 
 /**
- * 列表里的一行（Grava 一边和好友一边一样）：72 高，左边 54 见方的头像位，右边两行：
+ * 列表里的一行（助手一边和好友一边一样）：72 高，左边 54 见方的头像位，右边两行：
  * 名字 + 标签 …… 置顶钉 + 时间；最后一句（有未读时深色）…… 免打扰铃 + 未读数（免打扰灰色）。分隔线从文字开始。
  */
 export function ChatRowView({ face, title, tag, tagTone = 'cyan', pinned, muted, time, line, unread = 0, onPress, onLongPress, hint, last }: {
@@ -221,7 +221,7 @@ export function SwipeRow({ children, actions }: { children: React.ReactNode; act
   );
 }
 
-/** 设计稿里的分段（对话页 Grava | 好友、资料页 看板 | 记忆 | 设置、Zen 想法 | 播客）：深色底上选中的一格浅一点；count 是青色的未读数，
+/** 设计稿里的分段（对话页 助手 | 好友、资料页 看板 | 记忆 | 设置、Zen 想法 | 播客）：深色底上选中的一格浅一点；count 是青色的未读数，
  * dot 是琥珀点（那一边有等你处理的）。 */
 export function PillTabs<V extends string>({ options, value, onChange, style }: {
   options: { value: V; label: string; count?: number; dot?: boolean; dotLabel?: string }[]; value: V; onChange: (v: V) => void; style?: object;

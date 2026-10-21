@@ -1129,7 +1129,6 @@ const KIND_LABEL = () => ({ textbook: L('教材', 'Textbook'), case: 'Case', art
 function statusOf(r) {
   if (r.status === 'have') return ['✓', ''];
   if (r.status === 'skipped') return ['⤼', L('跳过了（学习页会写明没读到）', "skipped (the notes say it wasn't read)")];
-  if (r.status === 'needs_leo') return ['✋', L('等你提供', 'needs you')];
   if (r.status === 'blocked') return ['⛔', L('网站打不开：可以在自己电脑上打开链接存成 PDF 发我', "site blocked: open the link yourself and send a PDF")];
   if (r.status === 'optional') return ['○', L('选读，没下载', 'optional, not downloaded')];
   return ['✗', L('还没有', 'missing')];
@@ -1277,7 +1276,7 @@ async function renderRecs(my) {
   const v = $('#view');
   v.innerHTML = '';
   const wrap = h('div', { class: 'rlist' });
-  wrap.append(h('div', { class: 'note' }, L('录播字幕只供你自己学习（学校规定不能分享录播和其中的内容）。点时间会在 Panopto 里跳到那一刻。', 'Captions are for your own study only (college policy: recordings and their content may not be shared). Click a time to jump there in Panopto.')));
+  wrap.append(h('div', { class: 'note' }, L('录播字幕只供你自己学习（很多学校不允许分享录播和其中的内容）。点时间会在录播平台里跳到那一刻。', 'Captions are for your own study only (many schools don\'t allow sharing recordings or their content). Click a time to jump there on the recording platform.')));
   const find = h('input', { class: 'tfind', placeholder: L('在字幕里找…（比如 exam、Nash）', 'Search the captions… (e.g. exam, Nash)') });
   wrap.append(find);
   const lines = [];

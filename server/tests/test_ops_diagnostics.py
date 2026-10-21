@@ -48,7 +48,7 @@ def h(tmp_path, monkeypatch):
              "engine": {"model": "deepseek/deepseek-flash", "fallbacks": ["moonshot/kimi-k3"], "aliases": {"fast": "deepseek/deepseek-flash"},
                         "providers": {"custom": {"api": "openai", "url": "https://llm.alex-family.example/v1", "key": INLINE},
                                       "local": {"api": "openai", "url": "http://127.0.0.1:11434/v1", "key_env": "LOCAL_KEY"}}},
-             "nutrition_targets": {"kcal": 2100, "protein": 120}, "share": {"private_words": ["secret project"]},
+             "nutrition_targets": {"kcal": 1800, "protein": 100}, "share": {"private_words": ["secret project"]},
              "transcribe_prompt": "Alex Example talks about Pixel the cat", "social": {"email": "alex@example.com"}})
     (h.mousse / "secrets.env").write_text(f"DEEPSEEK_API_KEY={ENVKEY}\n", encoding="utf8")
     os.chmod(h.mousse / "secrets.env", 0o600)
@@ -144,11 +144,11 @@ def test_clean_text():
 def test_hosts_paths_and_names_stay_out(h, tmp_path, monkeypatch):
     """claw 的名字和 Tailscale 地址（doctor、status）、Funnel 的主机名（audit）、配对来的设备令牌名、~ 底下自己的目录：包里一样都不能有。"""
     cfg = h.read()
-    cfg["claw"] = {"kind": "openai", "name": "Alex Hermes", "url": "https://alex-box.tail9f3e.ts.net/v1"}
+    cfg["claw"] = {"kind": "openai", "name": "Alex Hermes", "url": "https://alex-box.example-tailnet.ts.net/v1"}
     cfg["auth"]["tokens"]["device-alex-pixel-10191230"] = "tok-device-0123456789abcdef"
     cfg["engine"]["recall"] = {"extra": [{"path": str(D.C.home() / "Documents" / "Alex diary"), "name": "diary"}]}
     h.write(cfg)
-    monkey = {"funnel": "Funnel exposes alex-box.tail9f3e.ts.net:443/api", "ip": "bind 100.101.102.103 · lan 192.168.1.20 · ok 127.0.0.1:8080",
+    monkey = {"funnel": "Funnel exposes alex-box.example-tailnet.ts.net:443/api", "ip": "bind 100.101.102.103 · lan 192.168.1.20 · ok 127.0.0.1:8080",
               "v6": "fd7a:115c:a1e0::12 at 12:30:45", "remote": "git@github.com:alex/openmousse.git", "where": str(D.C.home() / "Documents" / "notes.md")}
     monkeypatch.setattr(D, "update_part", lambda: monkey)  # 当一份「会漏的」输出
     out = tmp_path / "hosts.zip"
@@ -156,7 +156,7 @@ def test_hosts_paths_and_names_stay_out(h, tmp_path, monkeypatch):
     files = bundle(out)
     assert set(files) == FILES, set(files) ^ FILES  # 换干净了：一份都没被最后那道查扔掉
     text = "\n".join(files.values())
-    for bad in ("Alex Hermes", "alex-box", "tail9f3e", "ts.net", "alex-pixel", "Documents", "Alex diary", "100.101.102.103", "192.168.1.20",
+    for bad in ("Alex Hermes", "alex-box", "example-tailnet", "ts.net", "alex-pixel", "Documents", "Alex diary", "100.101.102.103", "192.168.1.20",
                 "fd7a:", "github.com:alex", "tok-device-"):
         assert bad not in text, bad
     upd = json.loads(files["update.json"])

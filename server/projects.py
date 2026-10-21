@@ -13,7 +13,7 @@ Agent 管一整块领域、一直在；项目做完就归档；任务是一次�
 - 归档：app 里「写结论并归档」= 马上收进已归档 + 在项目线程里发「【自动触发】项目归档」，它写结论（project_ctl.py conclude）、写记忆；
   最后一个截止过了 ARCHIVE_AFTER_DAYS 天，日结时问一次（收件箱，静音），同意 = 同样的流程。
 
-表（grava.db）
+表（mousse.db）
 - side_chats 补的列：goal 目标、progress / progress_at 进度（日结时更新）、summary / summary_at 结论（JSON：done 做成了 / decided 定过的 /
   learned 下次记得 / saved 存到了哪）、rev 卡片版本（改一次 +1）、fed_rev / fed_at 上次带给模型的版本和时间、archived_at、
   closing_at（在写结论）、inbox_id（从哪张提案开的）、archive_asked（问过「归档？」的时间）
@@ -39,7 +39,7 @@ import chat
 import inbox
 import schedule
 from chat import _lock, log_activity, now_iso
-from config import TZ, settings
+from config import TZ, is_owner, owner_id, settings
 from i18n import L, LS
 
 router = APIRouter()
@@ -62,15 +62,15 @@ _ready = False
 
 
 def pdb() -> sqlite3.Connection:
-    """grava.db（带日程层的表）+ 本模块的表。side_chats 缺的列补上，只查一次。"""
+    """mousse.db（带日程层的表）+ 本模块的表。side_chats 缺的列补上，只查一次。"""
     global _ready
     conn = schedule.sdb()
     if not _ready:
-        conn.executescript("""
+        conn.executescript(f"""
         CREATE TABLE IF NOT EXISTS side_chats (id TEXT PRIMARY KEY, title TEXT NOT NULL, purpose TEXT,
             archived INTEGER NOT NULL DEFAULT 0, created_at TEXT NOT NULL, updated_at TEXT NOT NULL);
         CREATE TABLE IF NOT EXISTS project_items (id TEXT PRIMARY KEY, project TEXT NOT NULL, kind TEXT NOT NULL, text TEXT NOT NULL DEFAULT '',
-            ref TEXT, due_date TEXT, due_time TEXT, done_at TEXT, source TEXT NOT NULL DEFAULT 'leo', position REAL NOT NULL DEFAULT 0,
+            ref TEXT, due_date TEXT, due_time TEXT, done_at TEXT, source TEXT NOT NULL DEFAULT '{owner_id()}', position REAL NOT NULL DEFAULT 0,
             created_at TEXT NOT NULL, updated_at TEXT NOT NULL, deleted_at TEXT);
         CREATE INDEX IF NOT EXISTS project_items_project ON project_items(project, kind);
         CREATE TABLE IF NOT EXISTS project_log (id INTEGER PRIMARY KEY AUTOINCREMENT, at TEXT NOT NULL, actor TEXT NOT NULL,
@@ -378,7 +378,7 @@ def actor_of(source: str | None) -> str:
 
 def run_for(pid: str, actor: str) -> chat.Run | None:
     """Agent 改的：优先这个项目自己正在回复的那一次，其次那个 Agent 最近开始的回复（main 在主对话里改项目卡）。"""
-    if actor == "leo":
+    if is_owner(actor):
         return None
     cur = chat.RUNS.get(pid)
     if cur and not cur.done and chat.agent_of(pid) == actor:
@@ -429,7 +429,7 @@ def announce(log_id: int, run: chat.Run | None, actor: str) -> dict | None:
     if run is not None and not run.done:
         import cards  # 延迟导入
         cards.publish(run, card)
-    if actor != "leo":
+    if not is_owner(actor):
         log_activity(L(f"改了项目「{card['projectTitle']}」：{row['title']} · {row['summary']}",
                        f'Changed the project "{card["projectTitle"]}": {row["title"]} · {row["summary"]}'), "edit",
                      schedule.who_name(actor, names) or actor)
@@ -885,7 +885,7 @@ async def create_project(body: ProjectIn, inbox_id: str | None = None) -> dict:
         lid = log(conn, actor, run, pid, "create", "create", L("开了项目", "Opened a project"), what, None, None)
         who = schedule.who_name(actor, schedule.group_names(conn))
     log_activity(L(f"开了项目「{title}」", f'Opened the project "{title}"'), "edit", who or None)
-    card = announce(lid, run, "leo")  # 活动上面记过了，这里只发卡
+    card = announce(lid, run, owner_id())  # 活动上面记过了，这里只发卡
     relayed = relay_brief(pid, body.brief)
     return {"ok": True, "id": pid, "card": card, "relay": relayed or None}
 
@@ -994,7 +994,7 @@ async def on_project_decided(it: dict, action: str) -> dict | None:
         return {"result": L(f"开好了：{body.title}", f"Opened: {body.title}"), "project": res["id"]}
     if p["action"] == "archive" and p["project"]:
         # 只收起来、标上「在写结论」；收件箱照常把「已同意」发进项目线程，它照 project skill 写结论、再报 done（只跑一轮）
-        archive_state(p["project"], "leo", summarize=True)
+        archive_state(p["project"], owner_id(), summarize=True)
     return None
 
 
@@ -1078,7 +1078,7 @@ async def archive(pid: str, body: ArchiveIn):
     actor = actor_of(body.source)
     lid, title, run, write = archive_state(pid, actor, body.summarize)
     started = await kick_close(pid, title) if write else ""  # 已经有结论了（先写过）就不再写
-    return {"ok": True, "summarizing": write, "run": started or None, "card": announce(lid, run, "leo")}
+    return {"ok": True, "summarizing": write, "run": started or None, "card": announce(lid, run, owner_id())}
 
 
 def mark_archived(pid: str, archived: bool) -> None:
@@ -1135,7 +1135,7 @@ async def conclude(pid: str, body: ConcludeIn):
         bump(conn, pid, run)
         title = r["title"]
     log_activity(L(f"项目「{title}」写了结论", f'Wrote the summary for "{title}"'), "edit")
-    return {"ok": True, "card": announce(lid, run, "leo")}
+    return {"ok": True, "card": announce(lid, run, owner_id())}
 
 
 # —— 日结时看一眼：该问「归档？」的 ————————————————————————————————————————————

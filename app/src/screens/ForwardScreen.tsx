@@ -43,9 +43,11 @@ export function ForwardScreen() {
   const sheet = useSheet();
   const { groups } = useStore();
   const fromBasket = !!route.params?.basket;
+  // 回复里选中一段点了「转发这段」（ChatView）：这段当那一行概括（转给朋友时看得到），也标成引用放进给 Agent 的补充说明
+  const passage: string = typeof route.params?.note === 'string' ? route.params.note : '';
   const [refs, setRefs] = useState<string[]>(route.params?.refs ?? []);
   const [pv, setPv] = useState<ForwardPreview | null>(null);
-  const [gist, setGist] = useState<string>(route.params?.gist ?? '');
+  const [gist, setGist] = useState<string>(route.params?.gist ?? (passage.length > 60 ? `${passage.slice(0, 59)}…` : passage));
   const [err, setErr] = useState('');
   const [dest, setDest] = useState<Dest>('friends');
   const [done, setDone] = useState('');
@@ -58,7 +60,9 @@ export function ForwardScreen() {
   // Agent
   const [agent, setAgent] = useState('main');
   const [intent, setIntent] = useState<ForwardIntent>('remember');
-  const [note, setNote] = useState('');
+  // 那段是回复里的原话，不是你说的：服务器把补充说明写成「TA 补了一句：…」，不标成引用，里面的话会被当成你说的、甚至你的指令
+  const quoted = passage.length > 270 ? `${passage.slice(0, 269)}…` : passage;
+  const [note, setNote] = useState(quoted ? L(`关于这段：「${quoted}」`, `About this passage: "${quoted}"`) : '');
 
   const startRefs: string[] | undefined = route.params?.refs;
   const startGist: string | undefined = route.params?.gist;

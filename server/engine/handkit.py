@@ -52,13 +52,15 @@ LABELS = {"read_file": ("读文件", "Read a file"), "list_dir": ("看文件夹"
           "video_analyze": ("看视频", "Watch a video"), "chrome": ("用你自己的 Chrome", "Use your own Chrome"),
           "video_generate": ("生成视频", "Generate a video"), "music_generate": ("生成音乐", "Generate music"),
           "llm_task": ("做一个结构化的子任务", "Run a structured sub-task"), "diff": ("比较两个版本", "Compare versions"),
-          "execute_code": ("在沙箱里跑一段调工具的代码", "Run code that calls your tools")}
+          "execute_code": ("在沙箱里跑一段调工具的代码", "Run code that calls your tools"),
+          "x_search": ("搜 X 上的帖子", "Search posts on X")}  # 10/20：engine/xsearch.py
 
 
 def names() -> set[str]:
     """这里给的全部工具名（owner.rules 讲命令行工具那一行不列它们）。"""
     from . import hands, host_files, patch
-    return {*host_files.NAMES, *WEB, *hands.SANDBOX_NAMES, "host_exec", *patch.NAMES, "host_process", *MEDIA, "chrome", "llm_task", "diff", "execute_code"}
+    return {*host_files.NAMES, *WEB, *hands.SANDBOX_NAMES, "host_exec", *patch.NAMES, "host_process", *MEDIA, "chrome", "llm_task", "diff", "execute_code",
+            "x_search"}  # 10/20：x_search（engine/xsearch.py）
 
 
 def approved_run() -> bool:
@@ -170,7 +172,12 @@ async def run_approved(row, it: dict) -> str:
     tool = next((t for t in tools_for(agent) if t.name == row["tool"]), None)
     if tool is None:
         raise ToolFailure(L(f"{agent} 现在没有 {row['tool']} 这个工具了，没有做", f"{agent} no longer has the {row['tool']} tool, so nothing was done"))
-    ctx = ToolCtx(turn=row["turn"] or "", kind="owner", agent=agent, conversation=row["thread"] or agent, call_id=row["call"] or "", control=Control())
+    # 10/21：回合类型和来路照交卡那一轮（engine_calls 记着；以前的卡没记：来路不明，花不了套餐）。点了同意不等于主人自己引出来的：/v1、ACP 的
+    # 调用方能对自己会话里的卡点头，经 /mcp 来的、后台的也照原来的算（models.may_spend）
+    keys = row.keys()
+    ctx = ToolCtx(turn=row["turn"] or "", kind=(row["kind"] if "kind" in keys else None) or "owner", agent=agent,
+                  conversation=row["thread"] or agent, call_id=row["call"] or "", control=Control(),
+                  origin=row["origin"] if "origin" in keys else None)
     token = _approved.set(True)
     try:
         res = await asyncio.wait_for(tool.run(args, ctx), tool.timeout)

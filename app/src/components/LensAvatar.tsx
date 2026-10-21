@@ -4,7 +4,7 @@ import Svg, { Circle, ClipPath, Defs, G, Path } from 'react-native-svg';
 import { useTheme } from '../theme';
 import type { AvatarConfig } from '../data/types';
 
-// Grava 的形象是引力透镜：暗的力场、被弯曲的金色光环、汇入中心的青色数据流。
+// 助手的形象是引力透镜：暗的力场、被弯曲的金色光环、汇入中心的青色数据流。
 // 三种样式共用同一套几何，只改光环与数据流的画法。
 export function LensAvatar({ size = 40, config }: { size?: number; config: AvatarConfig }) {
   const t = useTheme();

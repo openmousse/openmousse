@@ -12,9 +12,9 @@ npm run web            # run in the browser (enter server address and token on t
 npm run web:build      # produce dist/, served by the server as the web version
 ```
 
-## Using the author's TestFlight build
+## Using the OpenMousse TestFlight build
 
-The first screen is the connection page: enter the server address (`https://your.domain` or Tailscale's `http://100.x.x.x:8080`) and a token (generated on the server with `python3 tokens.py add phone`). The assistant's name comes from your server.
+The first screen is the connection page: enter the server address (`https://your.domain` or Tailscale's `http://100.x.x.x:8080`) and a token (generated on the server with `python3 tokens.py add phone`), or tap **Connect with code** after `python3 tokens.py pair` on the server so nothing has to be copied. The assistant's name comes from your server.
 
 ## Building it yourself (your own name and icon)
 
@@ -26,11 +26,11 @@ The first screen is the connection page: enter the server address (`https://your
 
 ## Two apps from one account
 
-The author's own instance (Grava) and the generic OpenMousse for friends are the same code, built as two apps under one Apple developer account. The environment variable `MOUSSE_LOCAL` selects the identity file: default `app.local.json`, and the `production-openmousse` profile in `eas.json` uses `app.local.openmousse.json` (name OpenMousse, bundle id `app.openmousse.ios`, generic icons, its own EAS project). All `app.local.*.json` files stay out of git.
+Your own app and the generic OpenMousse can be the same code, built as two apps under one Apple developer account. The environment variable `MOUSSE_LOCAL` selects the identity file: default `app.local.json`, and the `production-openmousse` profile in `eas.json` uses `app.local.openmousse.json` (name OpenMousse, bundle id `app.openmousse.ios`, generic icons, its own EAS project). All `app.local.*.json` files stay out of git.
 
 ```bash
 npx eas-cli build -p ios --profile production --auto-submit               # your own app
-npx eas-cli build -p ios --profile production-openmousse --auto-submit    # generic OpenMousse (the TestFlight friends install)
+npx eas-cli build -p ios --profile production-openmousse --auto-submit    # generic OpenMousse (the TestFlight build)
 MOUSSE_LOCAL=app.local.openmousse.json npx eas-cli update --channel production --environment production   # OTA update for OpenMousse
 ```
 

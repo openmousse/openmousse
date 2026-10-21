@@ -1,12 +1,12 @@
 """Agent 的产出（2026-10-13，界面重做第 6 块）：新产出的浮动标签、按 kind 套模板的小板子、对话里的产出卡片。
 
-产出 = 建议流里的一张卡（grava.db feed_items：kind + data，Agent 经 workspace 的 grava_feed.py 写，见 data.py）。
+产出 = 建议流里的一张卡（mousse.db feed_items：kind + data，Agent 经工作区里的脚本写（比如 scripts/grava_feed.py），见 data.py）。
 - 新产出 = 还没看过的卡：seen_at 为空、没被划掉、这个逻辑日（04:00 起）出的。GET /api/outputs 最新在前，每份带小板子要画的数据（board）。
   app 把它们放在标签栏上方的浮动标签里；点开小板子、或下滑关掉浮动标签，就 POST /api/feed/seen（data.py）标成看过，哪台设备上看过都算。
 - 小板子（board）按 kind 套模板，要画的数都在这里算好、按请求的语言写好，app 只画（和看板积木一样）：
   training_review 练后报告 / meal_plan 饮食建议 / sleep_report 睡眠报告 / training_plan 训练计划；别的 kind 是 text（标题 + 正文）。
   练后报告的 data（session / minutes / sets / last / main / moves / skipped / verdict / next_24h / next）格式见 review_board，Agent 照着写；
-  作者的实例里健身 Agent 用 workspace 的 scripts/training_review.py 从训练记录算好本次和上次。没有 data 的老卡按正文的小标题拆。
+  健身 Agent 可以用工作区里的脚本（比如 scripts/training_review.py）从训练记录算好本次和上次。没有 data 的老卡按正文的小标题拆。
   饮食建议的蛋白质目标：data.targets.protein → server.json 的 nutrition_targets → 饮食看板那天的目标（/api/diet/day 的 targets；最多等 3 秒，读到了留 30 分钟）。
   睡眠报告的近 7 天恢复分读健康数据源（apple_health.recovery_series，留 5 分钟）；报告写的时候健康数据没同步、现在同步了，带上 updated。
 - 对话里的产出卡片：Agent 在哪一次回复里写的卡，就挂在那条回复下面（feed_items.thread / message_id；回复结束时 cards.on_run_end → link_run，
@@ -32,6 +32,7 @@ from chat import TZ, _lock, now_iso
 from config import raw, settings
 from data import ddb
 from i18n import L
+from stored_values import ASSISTANT_ROLE
 
 router = APIRouter()
 RETIRED = ("reminder", "mail_digest")  # 「要记得的」接替了的老卡（今天页也不显示），不算产出
@@ -76,11 +77,11 @@ def backfill(conn: sqlite3.Connection) -> int:
         if at is None:
             continue
         thread = r["group_id"] if r["group_id"] and r["group_id"] != "main" else "main"
-        m = conn.execute("SELECT id, ts FROM messages WHERE thread=? AND role='grava' AND ts>=? ORDER BY id LIMIT 1", (thread, r["created_at"])).fetchone()
+        m = conn.execute(f"SELECT id, ts FROM messages WHERE thread=? AND role='{ASSISTANT_ROLE}' AND ts>=? ORDER BY id LIMIT 1", (thread, r["created_at"])).fetchone()
         reply = _dt(m["ts"]) if m else None
         if reply is None or reply - at > timedelta(minutes=15):
             continue
-        asked = conn.execute("SELECT ts FROM messages WHERE thread=? AND id<? AND role!='grava' ORDER BY id DESC LIMIT 1", (thread, m["id"])).fetchone()
+        asked = conn.execute(f"SELECT ts FROM messages WHERE thread=? AND id<? AND role!='{ASSISTANT_ROLE}' ORDER BY id DESC LIMIT 1", (thread, m["id"])).fetchone()
         asked_at = _dt(asked["ts"]) if asked else None
         if asked_at is None or asked_at > at:
             continue

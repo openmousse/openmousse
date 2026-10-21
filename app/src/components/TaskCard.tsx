@@ -8,8 +8,8 @@ import { radius, space, type, useTheme } from '../theme';
 import { modelOf } from './ModelPicker';
 import { Btn, T } from './ui';
 
-// 任务 = OpenClaw 的子会话。现在由 Grava 在对话里用 sessions_spawn 派出去；app 负责看过程、取消、发修改意见。
-// （原型里在对话中编辑任务卡草稿、一键派发的流程要等 Grava 能输出结构化任务卡之后再接回来。）
+// 任务 = OpenClaw 的子会话。现在由助手在对话里用 sessions_spawn 派出去；app 负责看过程、取消、发修改意见。
+// （原型里在对话中编辑任务卡草稿、一键派发的流程要等助手能输出结构化任务卡之后再接回来。）
 
 export const originName = (origin: string, groups: { id: string; name: string }[], sideChats: { id: string; title: string }[]) =>
   origin === 'main' ? L('主对话', 'Main chat') : groups.find((g) => g.id === origin)?.name ?? sideChats.find((c) => c.id === origin)?.title ?? origin;

@@ -16,6 +16,7 @@ from engine import ledger, runners, tasks
 from engine import tools as tools_mod
 from engine.loop import Control, ToolCtx
 from engine.session import DbSession, text_of
+from stored_values import ASSISTANT_ROLE
 from test_engine import FakeModel
 
 BUILTIN = {"claw": {"kind": "builtin"}, "engine": {"model": "deepseek/deepseek-flash"}}
@@ -166,7 +167,7 @@ def test_spawn_runs_in_background_and_the_result_comes_back_as_a_new_turn(server
     assert "schedule" in names and not names & {"inbox", "handoff", "agents", "settings", "proposals", "tasks"}
     # app：用户那句、回复、一行灰字、交回来的那一轮的回复
     ms = messages("t-bg-new")
-    assert [x["role"] for x in ms] == ["user", "grava", "auto", "grava"]
+    assert [x["role"] for x in ms] == ["user", ASSISTANT_ROLE, "auto", ASSISTANT_ROLE]
     assert ms[2]["text"].startswith("【自动触发】") and "Formula sheet" in ms[2]["text"] and ms[3]["text"] == "Done: 12 formulas on one page."
     assert ms[3]["origin"] == "user"  # 用户要的活：算未读
     # 交回去的那一句：不是用户说的、状态是运行时的、结果包成资料
@@ -197,7 +198,7 @@ def test_result_lands_in_the_turn_that_is_still_running(server_json, models, bri
         return r, evs
     r, evs = run(go())
     ms = messages("t-bg-steer")
-    assert [x["role"] for x in ms] == ["user", "auto", "grava"]  # 灰字在这一轮的回复前面，只有一条回复
+    assert [x["role"] for x in ms] == ["user", "auto", ASSISTANT_ROLE]  # 灰字在这一轮的回复前面，只有一条回复
     assert ms[2]["text"] == "Your sheet is ready, and today is clear."
     msgs = m.parent.requests[2][1].messages
     assert [x["role"] for x in msgs[-3:]] == ["assistant", "tool", "user"] and msgs[-1]["ref"] == ms[1]["id"]
@@ -238,7 +239,7 @@ def test_quota_and_over_allowance_goes_to_the_inbox(server_json, models, bridge)
     row = task_of("t-bg-quota")
     assert row["inbox"] == card["id"] and row["status"] == "done" and row["result"] == "The sheet."
     ms = messages("t-bg-quota")
-    assert [x["role"] for x in ms][-2:] == ["auto", "grava"] and ms[-1]["text"] == "Here's the sheet."
+    assert [x["role"] for x in ms][-2:] == ["auto", ASSISTANT_ROLE] and ms[-1]["text"] == "Here's the sheet."
 
 
 def test_longer_than_the_time_limit_asks_first(server_json, models, bridge):
@@ -334,7 +335,7 @@ def test_user_stop_cancels_without_a_new_turn(server_json, models, bridge):
     run(go())
     row = task_of("t-bg-stop")
     assert row["status"] == "cancelled" and row["delivery"] == "noted" and row["data"]["stopped_by"] == "user"
-    assert [x["role"] for x in messages("t-bg-stop")] == ["user", "grava"]  # 没另开一轮
+    assert [x["role"] for x in messages("t-bg-stop")] == ["user", ASSISTANT_ROLE]  # 没另开一轮
     s = DbSession.latest(f"mousse:t-bg-stop:{chat.day_of(chat.now_iso())}")
     assert "The user stopped the background task" in text_of(s.messages()[-1])
 
@@ -376,6 +377,40 @@ def test_restart_marks_unfinished_tasks_and_reports_them(server_json, models, br
     assert "interrupted by a server restart" in said and "not restarted automatically" in said and "tasks retry" in said
     ms = messages("t-bg-restart")
     assert ms[-1]["text"].startswith("The task was cut off") and ms[-2]["text"].endswith("interrupted by a restart: Cut off")
+
+
+def test_interrupted_tasks_say_so_and_can_be_retried(server_json, models, bridge):
+    """10/20：被服务重启打断的任务，任务卡（cards.task_json）和任务页（/api/tasks）都带 interrupted，状态照旧归成「失败」（老 app 照旧）；
+    POST /api/tasks/{id}/retry 照原来的说明再派一个新的、结果回到原对话；不用重派的回 409，说为什么。OpenClaw 台账的 lost 不算。"""
+    import cards
+    import chat
+    import data
+    from fastapi import HTTPException
+    server_json(BUILTIN)
+    models(parent=[{"text": "The retried one is done."}], child=[{"text": "done again"}])
+    row = tasks.create(thread="t-bg-int", agent="main", params={"task": "目标：x\n要交：一页", "label": "Cut off"})
+    ledger.update(row["id"], status="interrupted", started_at=ledger.now_ms(), ended_at=ledger.now_ms(), tools=2,
+                  error="the server restarted while this task was running")
+    card = cards.task_json(ledger.shape(ledger.get(row["id"])))
+    assert card["interrupted"] is True and card["status"] == "失败" and card["tools"] == 2  # 做到第 2 步时服务重启
+
+    async def go():
+        listing = await data.tasks()
+        out = await data.retry_task(row["id"])
+        await until(lambda: delivered("t-bg-int"))
+        await until(lambda: not chat.busy("t-bg-int"))
+        return listing, out
+    listing, out = run(go())
+    t = next(x for x in listing["tasks"] if x["id"] == row["id"])
+    assert t["interrupted"] is True and t["status"] == "失败"
+    new = ledger.get(out["id"])
+    assert out["ok"] and new["retry_of"] == row["id"] and new["label"] == "Cut off" and new["thread"] == "t-bg-int" and new["status"] == "done"
+    assert cards.task_json(ledger.shape(new))["interrupted"] is False
+    with pytest.raises(HTTPException) as e:  # 做完了的：不用重派
+        run(data.retry_task(out["id"]))
+    assert e.value.status_code == 409 and "nothing to retry" in str(e.value.detail)
+    server_json({})  # OpenClaw：它台账里的 lost 不是「被重启打断」
+    assert cards.interrupted({"status": "lost"}) is False
 
 
 def test_shutdown_stops_children_and_the_next_start_delivers(server_json, models, bridge):
@@ -422,7 +457,7 @@ def test_revise_continues_the_same_sub_session(server_json, models, bridge):
     assert rounds == (2, "add units", "done", "v2: 10 formulas, with units")
     second = m.child.requests[1][1].messages
     assert "v1: 10 formulas" in [text_of(x) for x in second] and "asks for a change" in text_of(second[-1])  # 同一个子会话，记得前面
-    assert len(m.parent.requests) == 1 and [x["role"] for x in messages("t-bg-rev")] == ["auto", "grava"]  # 改一下的结果不另交回原对话
+    assert len(m.parent.requests) == 1 and [x["role"] for x in messages("t-bg-rev")] == ["auto", ASSISTANT_ROLE]  # 改一下的结果不另交回原对话
     assert ledger.get(row["id"])["result"] == "v1: 10 formulas"  # 卡片上第一轮的结果照旧，这一轮的在 roundResult
 
 

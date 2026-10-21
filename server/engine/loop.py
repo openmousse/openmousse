@@ -1,9 +1,10 @@
 """一轮：模型 → 工具 → 模型 …… 直到模型不再调工具。形状借 pi（pi-agent-core）：插话队列、后续队列、中止；
-10/16 对照 pi、OpenClaw、Hermes 的源码补了一遍（见 ~/openmousse-wt/engine/research/）。
+10/16 对照 pi、OpenClaw、Hermes 的源码补了一遍。
 
 三种回合（harness 方案第 10 张）：谁在说话，决定看得到什么、能做什么、用哪个模型。
   owner     主人回合：你自己说话。工具按 Agent 给；Spec.gate 是关卡（第 2 项：撤得回直接做，撤不回进收件箱）
-  cyber     赛博回合：你和赛博聊天。第 0 步零工具（以后只有只读的「问搭档」）
+  cyber     赛博回合：你和赛博聊天。只有 kinds 标了 cyber 的工具：只读的 manual、主线第三步的装载工具 ask_agent 和只提议的
+            propose_change（engine/cyber_tools.py）
   outsider  外人回合：别人的话进来（名片 Agent、A2A、Doorman 复查）。零工具，硬卡：挂了工具直接报错，不靠提示词
 别人的话永远只是资料、不算同意。工具本身也标了能在哪种回合用（Tool.kinds），不在名单里的根本不给模型看；读写记忆的工具再照
 engine/memgate.py 的读写表筛一遍（screen：主人回合全给，赛博、外人回合只给自己标了 memory_scope 的）。

@@ -17,6 +17,9 @@ let html = readFileSync(file, 'utf8');
 
 // 末尾的小脚本让 <html lang> 跟界面语言走（读屏的发音、浏览器的翻译提示看它）：
 // 「我 → 语言」存的选择（localStorage mousse.lang）优先，否则看系统语言，和 src/lang.ts 同一规则。
+// 它也让页面底色和浏览器顶栏（theme-color）跟存的外观走（localStorage mousse.appearance，规则同 src/theme.tsx 的 parseAppearance：
+// 没选过或认不得是深色），不然浅色系统的浏览器每次先刷一下浅灰、顶栏一直是浅的。选了「跟随系统」才交给上面的 media 规则。
+// 不在 <html> 上写 data-theme：src/theme.tsx 的 useHostTheme 把它当成外壳指定的深浅，「跟随系统」就不跟了。
 // 页面（Agent 写的网页，src/screens/PageScreen.tsx）在 sandbox iframe（srcdoc）里跑：frame-src 'none' 让它没法把自己导航到别的网址
 // （带着读到的数据跳走）。srcdoc 不经网络、不受它管；app 自己不嵌任何别的 iframe。
 const head = `
@@ -41,6 +44,16 @@ const head = `
         try { p = localStorage.getItem('mousse.lang') || ''; } catch (e) {}
         var zh = p === 'zh' || (p !== 'en' && /^zh/i.test(navigator.language || ''));
         document.documentElement.lang = zh ? 'zh-CN' : 'en';
+        var a = '';
+        try { a = localStorage.getItem('mousse.appearance') || ''; } catch (e) {}
+        if (a !== 'system') {
+          var bg = a === 'light' ? '#F1F3F4' : '#0B0D10';
+          var st = document.createElement('style');
+          st.textContent = 'html, body { background: ' + bg + '; }';
+          document.head.appendChild(st);
+          var tc = document.querySelectorAll('meta[name="theme-color"]');
+          for (var i = 0; i < tc.length; i++) tc[i].setAttribute('content', bg);
+        }
       })();
     </script>`;
 

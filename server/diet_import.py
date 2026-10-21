@@ -1,14 +1,14 @@
 #!/usr/bin/env python3
 """从训记搬饮食记录进来（2026-10-13）：一次性导出 → 导入 → 逐天核对 → 写迁移报告。对训记只读，不写任何东西。
 
-  python3 diet_import.py export [--from 2025-10-13] [--to 今天] [--out 文件]      # 只读：按月拉训记的饮食记录（含营养目标），存成一个 JSON
+  python3 diet_import.py export [--from YYYY-MM-DD] [--to 今天] [--out 文件]     # 只读：按月拉训记的饮食记录（含营养目标），存成一个 JSON；--from 默认一年前
   python3 diet_import.py import --file 导出的文件 [--commit] [--report 报告.md]
-        [--current-target 120/250/70[/2110] --current-from 2026-01-01 --current-note "…"]
+        [--current-target 蛋白质/碳水/脂肪[/热量] --current-from YYYY-MM-DD --current-note "…"]
   python3 diet_import.py verify --file 导出的文件 [--report 报告.md]             # 只核对：训记每天的合计 vs 这里的
 
-训记的 Open API 只给过去一年到未来三个月（2025-10-13 起）；更早的要在训记 App 里自己导出。导出文件放在 <data_dir>/diet/（不进 git）。
+训记的 Open API 只给过去一年到未来三个月；更早的要在训记 App 里自己导出。导出文件放在 <data_dir>/diet/（不进 git）。
 不加 --commit 只算不写（报告照样出，标「预演」）。再跑一次是安全的：按训记的记录 id 认，已经导过的、没变的跳过，训记里改过的更新，
-这里改过的（导入后在 Grava 里改过）不动、报告里列出来。
+这里改过的（导入后在这边改过）不动、报告里列出来。
 
 导进来的样子：
 - 食物库（diet_foods）：每个训记食物（uniquekey）一样；/shiwu/… 是训记官方库，数字的是自定义食物。名字取用得最多的写法，别的写法进 aliases。
@@ -235,7 +235,7 @@ def do_import(conn, payload: dict, current: dict | None) -> dict:
                 stats["entries_same"] += 1
                 continue
             if old["updated_at"] != old["created_at"] or old["deleted_at"] is not None:  # 导入以后在这里改过 / 删过：不动，列出来
-                conflicts.append({"date": ds, "name": row["name"], "key": key, "grava": "deleted" if old["deleted_at"] else "edited"})
+                conflicts.append({"date": ds, "name": row["name"], "key": key, "here": "deleted" if old["deleted_at"] else "edited"})
                 continue
             stats["entries_updated"] += 1  # 训记里改过：跟着改（created_at 一起挪，还算「没在这里改过」）
             conn.execute("""UPDATE diet_entries SET meal=?, name=?, amount=?, unit=?, kcal=?, protein=?, carb=?, fat=?, per100=?, nutri_ref=?,
@@ -245,7 +245,7 @@ def do_import(conn, payload: dict, current: dict | None) -> dict:
             if key in desired or old["deleted_at"] is not None:
                 continue
             if old["updated_at"] != old["created_at"]:
-                conflicts.append({"date": ds, "name": old["name"], "key": key, "grava": "edited, gone from Xunji"})
+                conflicts.append({"date": ds, "name": old["name"], "key": key, "here": "edited, gone from Xunji"})
                 continue
             stats["entries_removed"] += 1  # 训记里删了
             conn.execute("UPDATE diet_entries SET deleted_at=?, updated_at=? WHERE id=?", (ts, ts, old["id"]))
@@ -255,7 +255,7 @@ def do_import(conn, payload: dict, current: dict | None) -> dict:
             if old["date"] in seen_days:
                 continue
             if old["updated_at"] != old["created_at"]:
-                conflicts.append({"date": old["date"], "name": old["name"], "key": old["source_ref"], "grava": "edited, gone from Xunji"})
+                conflicts.append({"date": old["date"], "name": old["name"], "key": old["source_ref"], "here": "edited, gone from Xunji"})
                 continue
             stats["entries_removed"] += 1
             conn.execute("UPDATE diet_entries SET deleted_at=?, updated_at=? WHERE id=?", (ts, ts, old["id"]))
@@ -325,7 +325,7 @@ def verify(conn, payload: dict) -> dict:
         t_ok = None
         if lim:
             t_ok = bool(tgt) and all(abs((tgt or {}).get(m, 0) - round(lim[m])) <= 0.5 for m in ("protein", "carb", "fat"))
-        table.append({"date": ds, "items_xunji": len(recs), "items_grava": len(by_day.get(ds, [])), "xunji": xj, "recalc": recalc, "grava": gr,
+        table.append({"date": ds, "items_xunji": len(recs), "items_here": len(by_day.get(ds, [])), "xunji": xj, "recalc": recalc, "here": gr,
                       "diff": diff, "ok": ok, "limits": lim, "target": tgt, "target_ok": t_ok, "other": len(other.get(ds, []))})
     return {"days": table, "ok": all(x["ok"] for x in table), "mismatch": [x["date"] for x in table if not x["ok"]],
             "target_mismatch": [x["date"] for x in table if x["target_ok"] is False]}
@@ -364,7 +364,7 @@ def report(payload: dict, imp: dict | None, ver: dict, commit: bool, path: Path)
         if imp["skipped"]:
             lines += ["跳过的记录：", ""] + [f"- {x['date']} {x['name']}（{x['why']}）" for x in imp["skipped"]] + [""]
         if imp["conflicts"]:
-            lines += ["没动的（这边改过）：", ""] + [f"- {x['date']} {x['name']}（{x['grava']}）" for x in imp["conflicts"]] + [""]
+            lines += ["没动的（这边改过）：", ""] + [f"- {x['date']} {x['name']}（{x['here']}）" for x in imp["conflicts"]] + [""]
         lines += ["### 营养目标（训记按天存，连续一样的合成一段）", "", "| 从 | 到 | 蛋白质 | 碳水 | 脂肪 | 热量（4/4/9） | 喝水 |", "|---|---|---|---|---|---|---|"]
         for run in imp["runs"]:
             lim = run["limits"]
@@ -383,11 +383,11 @@ def report(payload: dict, imp: dict | None, ver: dict, commit: bool, path: Path)
               "| 日期 | 条数 训记 / 这里 | 训记 kcal / 蛋白 / 碳水 / 脂肪 | 这里 | 差 | 重算 kcal | 目标 | |",
               "|---|---|---|---|---|---|---|---|"]
     for x in v["days"]:
-        xj, gr, df = x["xunji"], x["grava"], x["diff"]
+        xj, gr, df = x["xunji"], x["here"], x["diff"]
         tg = x["target"]
         mark = ("✓" if x["ok"] else "✗") + (" 目标✗" if x["target_ok"] is False else "") + (f" +{x['other']} 条新记" if x["other"] else "")
         tg_s = f"{tg['kcal']} / {tg['protein']} / {tg['carb']} / {tg['fat']}" if tg else "–"
-        lines.append(f"| {x['date']} | {x['items_xunji']} / {x['items_grava']} | {f1(xj['kcal'])} / {f1(xj['protein'])} / {f1(xj['carb'])} / {f1(xj['fat'])} | "
+        lines.append(f"| {x['date']} | {x['items_xunji']} / {x['items_here']} | {f1(xj['kcal'])} / {f1(xj['protein'])} / {f1(xj['carb'])} / {f1(xj['fat'])} | "
                      f"{f1(gr['kcal'])} / {f1(gr['protein'])} / {f1(gr['carb'])} / {f1(gr['fat'])} | "
                      f"{f1(df['kcal'])} / {f1(df['protein'])} / {f1(df['carb'])} / {f1(df['fat'])} | {f1(x['recalc']['kcal'])} | {tg_s} | {mark} |")
     lines += ["", "## 没导的", "",
@@ -405,7 +405,7 @@ def parse_target(s: str | None) -> dict | None:
         return None
     parts = [diet.num(x) for x in re.split(r"[/,\s]+", s.strip()) if x]
     if len(parts) not in (3, 4) or any(p is None for p in parts):
-        sys.exit(L("--current-target 写成 蛋白质/碳水/脂肪[/热量]，比如 120/250/70", "--current-target is protein/carb/fat[/kcal], e.g. 120/250/70"))
+        sys.exit(L("--current-target 写成 蛋白质/碳水/脂肪[/热量]，比如 100/200/60", "--current-target is protein/carb/fat[/kcal], e.g. 100/200/60"))
     return {"protein": parts[0], "carb": parts[1], "fat": parts[2], "kcal": parts[3] if len(parts) == 4 else None}
 
 

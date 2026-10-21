@@ -1,14 +1,15 @@
-// 健身看板，按你想知道的顺序排：现在该做什么 → 身体状态 → 这周 → 长期（90 天）。
+// 健身看板，按你想知道的顺序排：现在该做什么 → 身体状态 → 这周 → 长期（90 天；体重折线 2026-10-20 从目标页挪到这一节）。
 // 数据来源写在每块小标题的右边（「Apple 健康 · 16:36」「训记 · 17:35」）；长列表一行一条，点开看细节。
 import React, { useState } from 'react';
 import { Pressable, StyleSheet, View } from 'react-native';
 import { agentName } from '../brand';
 import type { LiveTrain, LiveTrend, LiveWeek } from '../api/live';
-import type { FeedItem, TrainingPlan } from '../data/types';
+import type { FeedItem, GoalTrend, TrainingPlan } from '../data/types';
 import { L, lang } from '../i18n';
 import { useStore } from '../store';
 import { space, useTheme } from '../theme';
 import { DayBars, Ring, weekdayName } from './charts';
+import { WeightCard } from './Goals';
 import { Moon, Sparkles } from './icons';
 import { bandColor, bandTone, Caption, HealthCaption, hhmm, localDate, NoRecoveryCard, NoSourceCard, RecoveryDetails, ScoreStrip, useRecovery } from './LiveBoards';
 import { Markdown } from './Markdown';
@@ -309,7 +310,7 @@ function TrendCell({ value, label, delta, color }: { value: string; label: strin
   );
 }
 
-function TrendSection({ trend }: { trend: LiveTrend }) {
+function TrendCard({ trend }: { trend: LiveTrend }) {
   const t = useTheme();
   const v = trend.vo2max;
   const first = v.points[0];
@@ -329,14 +330,28 @@ function TrendSection({ trend }: { trend: LiveTrend }) {
     ? { text: v.latest ? L('期间仅有一次读数', 'Only one reading so far') : L('户外步行或跑步后显示', 'Appears after an outdoor walk or run'), color: t.ink3 }
     : { text: first ? L(`较 ${md(first.date)} ${signed(v.change, 1)}`, `${signed(v.change, 1)} since ${md(first.date)}`) : signed(v.change, 1), color: Math.abs(v.change) < 0.5 ? t.ink3 : v.change > 0 ? t.good : t.bad };
   return (
+    <Card style={{ flexDirection: 'row', flexWrap: 'wrap', justifyContent: 'space-between', rowGap: 14 }}>
+      <TrendCell value={v.latest ? String(v.latest.value) : '—'} label={L('最大摄氧量 · ml/kg/min', 'VO2 max · ml/kg/min')} delta={vo2Delta.text} color={vo2Delta.color} />
+      <TrendCell value={rhr.value} label={L('静息心率 · 近 7 天', 'Resting HR · last 7 days')} delta={rhr.delta} color={rhr.color} />
+      <TrendCell value={walk.value} label={L('步行心率 · 近 7 天', 'Walking HR · last 7 days')} delta={walk.delta} color={walk.color} />
+      <TrendCell value={steps.value} label={L('日均步数 · 近 7 天', 'Daily steps · last 7 days')} delta={steps.delta} color={steps.color} />
+    </Card>
+  );
+}
+
+/**
+ * 长期：Apple 健康近 90 天的四个数，下面是体重（GET /api/goals/trend?metric=weight：训记为主，Apple 健康是空心圈；
+ * 有体重目标就写上目标、画上目标区间）。两样都没有这一节不出（FitnessBoard 里判断，空节不占位）；老服务器没有体重接口（404）就只有那四个数。
+ */
+function LongSection({ trend, weight }: { trend: LiveTrend | null; weight: GoalTrend | null }) {
+  const { goals } = useStore();
+  return (
     <View>
-      <SectionLabel right={<Caption>{L('Apple 健康', 'Apple Health')}</Caption>}>{L(`长期 · ${trend.days} 天`, `Long term · ${trend.days} days`)}</SectionLabel>
-      <Card style={{ flexDirection: 'row', flexWrap: 'wrap', justifyContent: 'space-between', rowGap: 14 }}>
-        <TrendCell value={v.latest ? String(v.latest.value) : '—'} label={L('最大摄氧量 · ml/kg/min', 'VO2 max · ml/kg/min')} delta={vo2Delta.text} color={vo2Delta.color} />
-        <TrendCell value={rhr.value} label={L('静息心率 · 近 7 天', 'Resting HR · last 7 days')} delta={rhr.delta} color={rhr.color} />
-        <TrendCell value={walk.value} label={L('步行心率 · 近 7 天', 'Walking HR · last 7 days')} delta={walk.delta} color={walk.color} />
-        <TrendCell value={steps.value} label={L('日均步数 · 近 7 天', 'Daily steps · last 7 days')} delta={steps.delta} color={steps.color} />
-      </Card>
+      <SectionLabel right={trend ? <Caption>{L('Apple 健康', 'Apple Health')}</Caption> : undefined}>{trend ? L(`长期 · ${trend.days} 天`, `Long term · ${trend.days} days`) : L('长期', 'Long term')}</SectionLabel>
+      <View style={{ gap: space.md }}>
+        {trend ? <TrendCard trend={trend} /> : null}
+        {weight ? <WeightCard trend={weight} goal={goals.find((g) => g.metric === 'weight')} /> : null}
+      </View>
     </View>
   );
 }
@@ -344,8 +359,9 @@ function TrendSection({ trend }: { trend: LiveTrend }) {
 /** 健身看板。GroupScreen 保证 live 已经读回来了。 */
 export function FitnessBoard({ groupId, onAsk }: { groupId: string; onAsk: () => void }) {
   const t = useTheme();
-  const { live, liveErrors } = useStore();
+  const { live, liveErrors, weightTrend } = useStore();
   if (!live) return null;
+  const weight = weightTrend?.summary && weightTrend.series.length ? weightTrend : null;
   // 每一节一个元素（按默认顺序）；排在哪、藏没藏由看板配置定（SectionedBoard）
   return (
     <SectionedBoard els={{
@@ -358,7 +374,7 @@ export function FitnessBoard({ groupId, onAsk }: { groupId: string; onAsk: () =>
             : <Card><T v="callout" color={t.bad}>{L(`无法加载训练数据${liveErrors.week ? `：${liveErrors.week}` : ''}`, `Couldn't load workout data${liveErrors.week ? `: ${liveErrors.week}` : ''}`)}</T></Card>}
         </View>
       ),
-      'fitness.long': live.trend ? <TrendSection trend={live.trend} /> : null,
+      'fitness.long': live.trend || weight ? <LongSection trend={live.trend} weight={weight} /> : null,
     }} />
   );
 }

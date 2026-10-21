@@ -3,7 +3,7 @@ import { agentName } from '../brand';
 import { Alert, Pressable, ScrollView, StyleSheet, View } from 'react-native';
 import { useNavigation, useRoute } from '@react-navigation/native';
 import { dataApi } from '../api/data';
-import { Check, CircleAlert, CircleDot, CircleX, Clock, Eye, Inbox, LoaderCircle, Lightbulb, ListChecks, Pencil, Terminal } from '../components/icons';
+import { Check, CircleAlert, CircleDot, CircleX, Clock, Eye, Inbox, LoaderCircle, Lightbulb, ListChecks, Pencil, RotateCw, Terminal } from '../components/icons';
 import { Spinner } from '../components/ChatCards';
 import { useSheet } from '../components/Sheet';
 import { ReviseSheetContent, fmtTokens, modelName, originName } from '../components/TaskCard';
@@ -13,10 +13,17 @@ import { L } from '../i18n';
 import { useStore } from '../store';
 import { radius, space, useTheme } from '../theme';
 
-const statusTone = (s: Task['status']) => (s === '进行中' ? 'cyan' : s === '完成' ? 'good' : 'bad');
+// 被服务重启打断的（自己的内核，10/20）：状态还是「失败」，显示成「被重启打断」（琥珀），不是它自己没做成
+const cutOff = (task: Task) => task.status === '失败' && !!task.interrupted;
+const statusTone = (task: Task) => (task.status === '进行中' ? 'cyan' : task.status === '完成' ? 'good' : cutOff(task) ? 'warn' : 'bad');
 // 状态值是服务器给的中文枚举，程序拿它比较，不翻译；显示时换成当前语言。
-const statusLabel = (s: Task['status']) =>
-  ({ 进行中: L('进行中', 'Running'), 完成: L('已完成', 'Done'), 失败: L('失败', 'Failed'), 已取消: L('已取消', 'Cancelled') })[s] ?? s;
+const statusLabel = (task: Task) => (cutOff(task) ? L('被重启打断', 'Interrupted')
+  : ({ 进行中: L('进行中', 'Running'), 完成: L('已完成', 'Done'), 失败: L('失败', 'Failed'), 已取消: L('已取消', 'Cancelled') })[task.status] ?? task.status);
+/** 能重派的（自己的内核才有重派，见 server/data.py 的 /api/tasks/{id}/retry）：没做成、被重启打断、到点停的、停掉的。 */
+const retryable = (task: Task) => task.status === '失败' || task.status === '已取消';
+/** 被重启打断的那一句：做到第几步（拿得到才写）。 */
+const cutLine = (task: Task) => (task.toolUseCount ? L(`做到第 ${task.toolUseCount} 步时服务重启`, `the server restarted at step ${task.toolUseCount}`)
+  : L('服务重启，未完成', "the server restarted; it didn't finish"));
 
 /** 逻辑日从 04:00 开始（和服务器一样）：凌晨 1 点派的算前一天。 */
 function dayStartMs(): number {
@@ -32,7 +39,7 @@ function StatusDot({ task }: { task: Task }) {
   const [bg, fg, Icon] = task.status === '进行中' ? [t.cyanSoft, t.cyan, null]
     : task.status === '完成' ? [t.goodSoft, t.good, Check]
       : task.status === '已取消' ? [t.surface2, t.ink2, CircleX]
-        : task.timedOut ? [t.warnSoft, t.warn, Clock] : [t.badSoft, t.bad, CircleAlert];
+        : task.timedOut ? [t.warnSoft, t.warn, Clock] : cutOff(task) ? [t.warnSoft, t.warn, CircleAlert] : [t.badSoft, t.bad, CircleAlert];
   return (
     <View style={{ width: 30, height: 30, borderRadius: 15, backgroundColor: bg, alignItems: 'center', justifyContent: 'center' }}>
       {Icon ? <Icon size={16} color={fg} /> : <Spinner size={16} color={fg} />}
@@ -51,7 +58,8 @@ function TaskRowItem({ task, last }: { task: Task; last: boolean }) {
   const detail = task.status === '进行中' ? task.step || (n ? L(`第 ${n} 步`, `step ${n}`) : L('思考中', 'thinking'))
     : task.status === '已取消' ? L('已停止', 'stopped')
       : task.timedOut ? L('已达时间上限，未完成', 'hit the time limit, unfinished')
-        : task.status === '失败' ? L(`失败${task.error ? `：${task.error}` : ''}`, `failed${task.error ? `: ${task.error}` : ''}`)
+        : cutOff(task) ? cutLine(task)
+          : task.status === '失败' ? L(`失败${task.error ? `：${task.error}` : ''}`, `failed${task.error ? `: ${task.error}` : ''}`)
           : [mins, tokens].filter(Boolean).join(' · ');
   const right = task.status === '进行中' ? mins : task.finishedAt || task.createdAt;
   return <ListRow icon={<StatusDot task={task} />} title={task.title} sub={[who, detail].filter(Boolean).join(' · ')} last={last} onPress={() => nav.navigate('Task', { id: task.id })}
@@ -171,7 +179,8 @@ export function TaskScreen() {
   const nav = useNavigation<any>();
   const sheet = useSheet();
   const { id } = useRoute<any>().params as { id: string };
-  const { tasks, groups, sideChats, cancelTask } = useStore();
+  const { tasks, groups, sideChats, cancelTask, retryTask, claw } = useStore();
+  const [retrying, setRetrying] = useState(false);
   const [task, setTask] = useState<Task | undefined>(() => tasks.find((x) => x.id === id));
   const [err, setErr] = useState('');
   const fetchTask = useCallback(() => dataApi.task(id).then((x) => { setTask(x); setErr(''); }).catch((e) => setErr(e instanceof Error ? e.message : String(e))), [id]);
@@ -193,9 +202,16 @@ export function TaskScreen() {
     [L('用量', 'Usage'), `${fmtTokens(task.tokens)} tokens${task.costUsd != null ? L(` · 约 $${task.costUsd.toFixed(3)}（按 API 价格估算）`, ` · about $${task.costUsd.toFixed(3)} (estimated at API prices)`) : ''}`],
   ];
   const cancel = () => cancelTask(task.id).then(fetchTask).catch((e) => Alert.alert(L('取消失败', "Couldn't cancel"), e instanceof Error ? e.message : String(e)));
+  // 重派：照原来的说明再派一个新的（结果回到原对话）；成功就换到新任务的详情。不让重派的（409）照服务器的原话说
+  const retry = () => {
+    setRetrying(true);
+    retryTask(task.id).then((next) => nav.replace('Task', { id: next }))
+      .catch((e) => Alert.alert(L('重派失败', "Couldn't retry"), e instanceof Error ? e.message : String(e))).finally(() => setRetrying(false));
+  };
+  const canRetry = claw.kind === 'builtin' && retryable(task);
   return (
     <Screen>
-      <NavHeader title={task.title} onBack={() => nav.goBack()} right={<Pill label={statusLabel(task.status)} tone={statusTone(task.status)} />} />
+      <NavHeader title={task.title} onBack={() => nav.goBack()} right={<Pill label={statusLabel(task)} tone={statusTone(task)} />} />
       <ScrollView contentContainerStyle={{ padding: space.lg, paddingBottom: space.xxl }} refreshControl={<PullRefresh onRefresh={fetchTask} />}>
         {task.brief ? (
           <>
@@ -211,7 +227,8 @@ export function TaskScreen() {
             </View>
           ))}
         </Card>
-        {task.error ? <Card style={{ marginTop: space.md }}><T v="callout" color={t.bad}>{L(`失败原因：${task.error}`, `Why it failed: ${task.error}`)}</T></Card> : null}
+        {cutOff(task) ? <Card style={{ marginTop: space.md }}><T v="callout" color={t.warn}>{L(`被重启打断：${cutLine(task)}。`, `Interrupted: ${cutLine(task)}.`)}</T></Card>
+          : task.error ? <Card style={{ marginTop: space.md }}><T v="callout" color={t.bad}>{L(`失败原因：${task.error}`, `Why it failed: ${task.error}`)}</T></Card> : null}
 
         <SectionLabel>{L('过程', 'Steps')}</SectionLabel>
         {task.runs?.length ? (
@@ -226,9 +243,15 @@ export function TaskScreen() {
             <Btn label={L('修改', 'Revise')} flex icon={<Pencil size={15} color={t.onGold} />}
               onPress={() => sheet.open({ title: L('修改意见', 'What to change'), content: (close) => <ReviseSheetContent task={task} close={() => { close(); fetchTask(); }} /> })} />
           ) : null}
+          {canRetry ? (
+            <Btn label={retrying ? L('正在重派…', 'Retrying…') : L('重派', 'Retry')} flex icon={<RotateCw size={15} color={t.onGold} />} onPress={() => { if (!retrying) retry(); }} />
+          ) : null}
         </View>
         <T v="caption" color={t.ink3} style={{ marginTop: space.md, paddingHorizontal: space.xs }}>
-          {L(
+          {canRetry ? L(
+            '「重派」从头再做一遍，结果回到原对话，计入今天的额度。下拉刷新可查看最新进度。',
+            '"Retry" starts it over; the result comes back to the original chat and counts toward today\'s allowance. Pull down to refresh for the latest progress.',
+          ) : L(
             '「修改」会发送给同一个子会话，在上一轮的基础上修改；「取消」会停止子会话。下拉刷新可查看最新进度。',
             '"Revise" goes to the same sub-session, which picks up from the last round; "Cancel" stops the sub-session. Pull down to refresh for the latest progress.',
           )}

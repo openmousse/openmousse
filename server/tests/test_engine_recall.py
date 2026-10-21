@@ -16,6 +16,7 @@ import chat
 import engine
 from engine import recall, tools
 from engine.session import MemorySession, user
+from stored_values import ASSISTANT_ROLE
 from test_engine import FakeModel
 
 SERVER = Path(__file__).resolve().parent.parent
@@ -69,7 +70,7 @@ def test_segment_cuts_cjk_into_overlapping_pairs():
     assert recall.segment("修改youer服务端").split() == ["修改", "youer", "服务", "务端"]
     assert recall.segment("猫").split() == ["猫"]
     assert recall.segment("メモリ検索").split() == ["メモ", "モリ", "リ検", "検索"]
-    assert recall.segment("ＣＶ v3.3，第１版").split() == ["CV", "v3.3,", "第", "1", "版"]  # NFKC：全角变半角
+    assert recall.segment("ＰＤＦ v2.4，第１版").split() == ["PDF", "v2.4,", "第", "1", "版"]  # NFKC：全角变半角
 
 
 def test_parse_groups_quotes_or_not_and_lone_chars():
@@ -97,17 +98,17 @@ def test_chunks_keep_line_numbers_entries_and_overlap():
 # —— 搜 ——————————————————————————————————————————————————————————————————————
 
 def test_search_finds_chinese_english_and_mixed_with_sources(env):
-    write(env.ws / "MEMORY.md", "# 长期记忆\n\n- 训练日 2200 kcal，休息日 1900 kcal\n- 他养了一只猫，叫豆豆\n")
+    write(env.ws / "MEMORY.md", "# 长期记忆\n\n- 训练日 1800 kcal，休息日 1500 kcal\n- Mira 养了一只龟，叫团子\n")
     write(env.ws / "memory" / "2026-10-01.md", "# 2026-10-01\n\n## 上午\nWent running with Noor in Wrenford Common.\n\n## 日结\n修改youer服务端的配置\n")
     write(env.ws / "memory" / "context" / "sleep-notes.md", "# 睡眠\n恢复分 = HRV 40 / 静息心率 25 / 睡眠 25\n")
-    mid = say("main", "grava", "简历用 v3.3 的金融版，Quokkafund 那份已经交了。", "2026-10-09T19:42:00+00:00")
+    mid = say("main", ASSISTANT_ROLE, "海报用 v2.4 的蓝色版，Quokkafund 那份已经交了。", "2026-10-09T19:42:00+00:00")
     out = found_text("训练日")
-    assert "[1] MEMORY.md · line 3 ·" in out and "3: - 训练日 2200 kcal，休息日 1900 kcal" in out  # 原文的全角标点照原样
+    assert "[1] MEMORY.md · line 3 ·" in out and "3: - 训练日 1800 kcal，休息日 1500 kcal" in out  # 原文的全角标点照原样
     assert "memory/2026-10-01.md · lines 3–4 · 2026-10-01 · # 上午" in found_text("run")  # porter：run 找到 running
     assert "7: 修改youer服务端的配置" in found_text("youer")  # 字母和汉字挨着也分得开
-    assert "MEMORY.md · line 4" in found_text("猫")  # 单个字：退回 LIKE
+    assert "MEMORY.md · line 4" in found_text("龟")  # 单个字：退回 LIKE
     assert "memory/context/sleep-notes.md" in found_text("恢复分 睡眠")
-    chat_hit = found_text("金融版 Quokkafund")
+    chat_hit = found_text("蓝色版 Quokkafund")
     assert f"chat:main#{mid} · Main chat · 2026-10-09 19:42 · TestMousse" in chat_hit and "Quokkafund 那份已经交了" in chat_hit
     assert "Nothing found" in found_text("完全没有提过的词组合")
     loose = found_text("Quokkafund 完全没提过")  # 都要有的没有：放宽成任一个
@@ -261,7 +262,7 @@ def test_get_reads_lines_with_continuation_and_refuses_outside_paths(env):
             recall.get(bad, "main")
     assert "outside" not in found_text("outside", "main")  # 软链也不进索引
     mids = [say("rc-get", r, f"消息 {i} Hummingbirdtalk", f"2026-10-0{i}T09:00:00+00:00") for i, r in
-            enumerate(("user", "grava", "user", "grava", "user"), 1)]
+            enumerate(("user", ASSISTANT_ROLE, "user", ASSISTANT_ROLE, "user"), 1)]
     around = recall.get(f"chat:rc-get#{mids[2]}", "main", lines=1)
     assert f"#{mids[1]}" in around and f"#{mids[3]}" in around and f"#{mids[0]}" not in around and "(this one)" in around
 

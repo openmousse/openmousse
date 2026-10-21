@@ -1,34 +1,48 @@
-"""Agent 会议（2026-10-13，界面重做第 2 排）：几个 Agent 围绕一个议题轮流发言，Grava 主持、写纪要；确认后待办写进日程和各 Agent 的看板。
+"""Agent 会议（2026-10-13，界面重做第 2 排）：几个 Agent 围绕一个议题轮流发言，主对话的助手主持、写纪要；确认后待办写进日程和各 Agent 的看板。
 
 线程和会话
-- 会议是一个对话线程 grp-<8 位十六进制>，消息照旧存 messages，多两列：speaker（谁说的：Agent id；Grava 的系统行和纪要是 main；你说的是空）
-  和 meta（JSON：第几轮、回复谁、@ 了谁、纪要内容、系统行是哪种事件）。role：你说的 = user；Agent 的发言和纪要 = grava（origin meeting，
-  算未读）；「由 Grava 发起」「Grava 请 X、Y 回答」这类系统行 = auto（不算未读），文字在读的时候按 meta 重新拼（改了名、换了语言都跟着变）。
-- 每个成员在会里有自己的 OpenClaw 会话 agent:<id>:grava:grp-<id>，用它自己的记忆、工具和模型。轮到它时把它还没看过的会议发言
+- 会议是一个对话线程 grp-<8 位十六进制>，消息照旧存 messages，多两列：speaker（谁说的：Agent id；助手的系统行和纪要是 main；你说的是空）
+  和 meta（JSON：第几轮、回复谁、@ 了谁、纪要内容、系统行是哪种事件）。role：你说的 = user；Agent 的发言和纪要 = ASSISTANT_ROLE（origin meeting，
+  算未读）；「由助手发起」「助手请 X、Y 回答」这类系统行 = auto（不算未读），文字在读的时候按 meta 重新拼（改了名、换了语言都跟着变）。
+- 每个成员在会里有自己的 OpenClaw 会话 agent:<id>:<SESSION_TAG>:grp-<id>，用它自己的记忆、工具和模型。轮到它时把它还没看过的会议发言
   （标明谁说的）发给它；OpenClaw 每天 04:00 重置会话，隔了天的第一次重新带上议题、规矩和最近 RECAP 条发言。别的 claw 不记会话：每次都带全。
 - 表 meetings：议题、成员（按发言顺序）、主持（默认 main）、状态 running 进行中 / pending 待确认 / ended 已结束 / group 保留为群聊、
   第几轮、最新的纪要、确认的结果、从哪个对话发起（主对话自动发起时挂在那条回复下面）；meeting_seen：每个成员看到第几条了、哪天。
 
 规则（发起页和 docs/meetings.md 写的是同一套）
-- 每轮每个 Agent 最多发言一次。第 1 轮全体成员按顺序发言；之后的轮次你 @ 了谁就请谁，没 @ 由 Grava 决定：你补充了一句就按这句挑人
+- 每轮每个 Agent 最多发言一次。第 1 轮全体成员按顺序发言；之后的轮次你 @ 了谁就请谁，没 @ 由助手决定：你补充了一句就按这句挑人
   （不带工具的模型），没补充就请纪要里 next 写的，都没有就全体。
 - 发言里可以 @ 另一位成员一次（只认第一个），只转一层：被 @ 的这一轮还没说就提到下一个、发言标「回复 X」，它的回复里再 @ 不算；
   这一轮已经说过的不再多给一次（问题留给纪要和下一轮）。所以一轮最多 = 成员数次回复 + 1 次纪要。
 - 一轮说完主对话的助手写纪要（llmjson：不带工具的模型）：决定 + 待办（每条有负责的 Agent 和时间）+ 下一轮该请谁。会议变成待确认：
   确认 = 待办写进日程（schedule_items，source = 负责的 Agent，key 防重复）和那个 Agent 看板上的「会议待办」清单，会议结束
   （开了「会后保留为群聊」的变成群聊）；继续讨论或补充一句 = 开下一轮，新纪要取代上一轮的。
-- 群聊（group）：你说一句，@ 谁谁答，否则 Grava 请人；不写纪要。
+- 群聊（group）：你说一句，@ 谁谁答，否则助手请人；不写纪要。
 - 会议里只讨论：发给成员的规矩里写明不改日程、看板、不交收件箱卡；要做的事等纪要确认后由服务器写。
 
 主对话自动发起（packs/core/skills/handoff 的「发起会议」，ask_agent.py --meet → POST /api/meetings origin=main）
 - 发起时主对话正在回复：会议卡（kind meeting）当场经 SSE 发给那次回复，回复结束挂到它下面（link_run）。一轮的纪要写好后在主对话记一条
-  「会议已结束，以下 N 项待办需要你确认：」（role grava，origin meeting），下面挂纪要卡（kind minutes：确认 / 查看会议）。卡片都从
+  「会议已结束，以下 N 项待办需要你确认：」（role = ASSISTANT_ROLE，origin meeting），下面挂纪要卡（kind minutes：确认 / 查看会议）。卡片都从
   /api/chat/cards 出（cards_for）。主对话下一次说话时，没告诉过它的纪要和确认结果带在前情里（context_for），它知道会上定了什么。
 - 不推送：纪要只记未读（会议和主对话各一条）。
 
+主线第三步（2026-10-21）
+- 会议可以加赛博（cybers.py 开着时 agent_rows 也认 cy-…）：赛博在会里走赛博回合（engine/cyber.speak，不花套餐，带它的装载工具），
+  只出看法、不领待办（纪要里的待办只给功能 Agent）；健康、饮食、睡眠的功能 Agent 不和赛博同会。
+- 「定了告诉我」（auto）：全自动跑完：一轮说完写纪要，还有没定的、纪要说了该请谁就再开一轮（最多 AUTO_ROUNDS 轮），然后自动确认
+  （待办写进日程和看板），主对话里一行「会议…已开完，N 项待办已写进日程和看板」+ 纪要卡（已确认的回执）。只给你在 app 里发起的会，
+  跟着下面的 by_origin（默认关）：关着时、助手发起的，收到 auto 也不理（待办不经你点头就进日程，这一条要你开了开关才有）。
+- 收不收看谁发起（server.json 的 "meetings": {"by_origin": true}；默认关 = 照旧）：开着时 keep 的默认值按谁发起：你发起、没选
+  「定了告诉我」的留在对话列表（会后保留为群聊）；助手发起的和全自动的开完收走（listed = 0：对话列表里不单列，进行中时主对话那一行
+  写「会议中」，见 main_meeting），主对话留纪要卡。老的会议（listed 默认 1）照旧显示；开关是建会议那一刻定的，之后改开关不动它。
+- 会议记录（GET /api/meetings/records）：主对话资料页的「会议记录」：全部会议（你发起的也存一份），按发起的人筛、搜议题 / 纪要 / 发言。
+  一直读得到（开关关掉以后，开着时收走的会也要找得到）；资料页画不画那一行看 options 的 records：by_origin 开着，或者有收走的会。
+
 接口
 - GET /api/meetings?status=active|ended|all：对话列表的会议行（title、members、status、last、updatedAt、needsYou…；未读看 /api/unread 的 threads）
-- POST /api/meetings {topic, members, title?, keep?, origin?}：发起并开第 1 轮；POST /api/meetings/suggest {topic}：按议题推荐成员和会议名
+- POST /api/meetings {topic, members, title?, keep?, auto?, origin?}：发起并开第 1 轮；POST /api/meetings/suggest {topic}：按议题推荐成员和会议名
+- GET /api/meetings/records?filter=all|main|auto|mine&q=：会议记录（新的在前）
+- GET /api/meetings/options：发起会议那一页能请谁（带 kind、health）、「会后保留为群聊」的默认值、人数范围
 - GET /api/meetings/{id}：会议 + 全部消息 + 正在进行的一轮（live）；GET /api/meetings/{id}/stream：接上正在进行的一轮（SSE，按发言人分段：
   round / speaker / delta / said / system / phase / minutes / message / status / done）
 - POST /api/meetings/{id}/send {text}：补充一句（待确认、群聊时开新一轮；进行中只记下，还没发言的成员会看到）
@@ -54,13 +68,14 @@ import chat
 import claw
 import llmjson
 from chat import _lock, day_of, hhmm, log_activity, now_iso, sse
-from config import TZ, settings, user_word
+from config import TZ, raw, settings, user_word
 from i18n import L, LS
+from stored_values import ASSISTANT_ROLE, SESSION_TAG
 
 router = APIRouter()
 
 MID_RE = re.compile(r"^grp-[0-9a-f]{8}$")
-HOST = "main"            # 主持：现在总是主对话（Grava）；表里留着 host 一列
+HOST = "main"            # 主持：现在总是主对话（助手）；表里留着 host 一列
 MIN_MEMBERS, MAX_MEMBERS = 2, 8
 TOPIC_MAX, TITLE_MAX, NOTE_MAX = 500, 24, 2000
 SPEECH_TIMEOUT = 300     # 一位成员一次发言最长多少秒（到点算没说完，接着请下一位）
@@ -69,6 +84,8 @@ KEEP_LIVE = 15 * 60      # 一轮结束后实时状态留多久（app 断线重�
 TODO_MAX, DATES_MAX, DECISIONS_MAX, OPEN_MAX = 8, 7, 5, 5
 TODO_COLL = "meeting_todos"   # 各 Agent 看板上「会议待办」那张表
 TODO_BLOCK = "meeting-todos"  # 和那块清单积木
+AUTO_ROUNDS = 2          # 「定了告诉我」最多自己开几轮
+RECORDS_MAX = 200
 STATUS_LABEL = {"running": ("进行中", "In progress"), "pending": ("待确认", "To confirm"), "ended": ("已结束", "Ended"),
                 "group": ("群聊", "Group chat")}
 _bg: set[asyncio.Task] = set()
@@ -96,7 +113,7 @@ _ready = False
 
 
 def mdb():
-    """grava.db 加上会议的两张表，messages 补 speaker / meta 两列（只查一次）。"""
+    """mousse.db 加上会议的两张表，messages 补 speaker / meta 两列（只查一次）。"""
     global _ready
     conn = chat.db()
     if not _ready:
@@ -106,8 +123,19 @@ def mdb():
             conn.execute("ALTER TABLE messages ADD COLUMN speaker TEXT")  # 会议里谁说的（Agent id；main = 主持）
         if "meta" not in cols:
             conn.execute("ALTER TABLE messages ADD COLUMN meta TEXT")  # 会议消息的附加信息（JSON）
+        have = {r[1] for r in conn.execute("PRAGMA table_info(meetings)")}
+        if "auto" not in have:  # 主线第三步：「定了告诉我」（全自动跑完）
+            conn.execute("ALTER TABLE meetings ADD COLUMN auto INTEGER NOT NULL DEFAULT 0")
+        if "listed" not in have:  # 主线第三步：对话列表里单列不单列（老的会议 = 1，照旧显示）
+            conn.execute("ALTER TABLE meetings ADD COLUMN listed INTEGER NOT NULL DEFAULT 1")
         _ready = True
     return conn
+
+
+def by_origin() -> bool:
+    """server.json 的 meetings.by_origin：会议收不收看谁发起（默认关 = 照旧，见文件开头）。"""
+    m = raw().get("meetings")
+    return isinstance(m, dict) and m.get("by_origin") is True
 
 
 def loads(s: str | None, default=None):
@@ -124,11 +152,22 @@ def dumps(v) -> str:
 
 
 def agent_rows(conn) -> dict[str, dict]:
-    """现在有哪些 Agent（groups 表，按显示顺序）：id → {id, name, icon, color, purpose}。"""
-    if not conn.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='groups'").fetchone():
-        return {}
-    return {r["id"]: {"id": r["id"], "name": r["name"], "icon": r["icon"], "color": r["color"], "purpose": (r["purpose"] or "").strip()}
-            for r in conn.execute("SELECT id, name, icon, color, purpose FROM groups ORDER BY position, created_at")}
+    """现在有哪些 Agent（groups 表，按显示顺序）：id → {id, name, icon, color, purpose, kind: agent}；赛博开着时再加上还在的赛博
+    （kind cyber，带 avatar、tag；主线第三步：会议可以加赛博）。"""
+    out: dict[str, dict] = {}
+    if conn.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='groups'").fetchone():
+        out = {r["id"]: {"id": r["id"], "name": r["name"], "icon": r["icon"], "color": r["color"], "purpose": (r["purpose"] or "").strip(), "kind": "agent"}
+               for r in conn.execute("SELECT id, name, icon, color, purpose FROM groups ORDER BY position, created_at")}
+    try:
+        import cybers  # 延迟导入：cybers 依赖 chat
+        if cybers.on() and conn.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='cybers'").fetchone():
+            for r in cybers.active_rows(conn):
+                c = cybers.cyber_json(r)
+                out[r["id"]] = {"id": r["id"], "name": r["name"], "icon": None, "color": None, "purpose": (r["identity"] or "")[:200], "kind": "cyber",
+                                "tag": c["tag"], "avatar": c["avatar"]}
+    except Exception as e:  # noqa: BLE001 — 赛博那边读不了：会议照常，只是没有赛博
+        print(f"[meetings] 读赛博失败：{e}")
+    return out
 
 
 def name_of(who: str | None, ag: dict[str, dict]) -> str:
@@ -141,7 +180,10 @@ def name_of(who: str | None, ag: dict[str, dict]) -> str:
 
 def member_json(a: str, ag: dict[str, dict]) -> dict:
     g = ag.get(a)
-    return {"id": a, "name": g["name"] if g else a, "icon": g["icon"] if g else None, "color": g["color"] if g else None, "gone": g is None}
+    out = {"id": a, "name": g["name"] if g else a, "icon": g["icon"] if g else None, "color": g["color"] if g else None, "gone": g is None}
+    if a.startswith("cy-"):  # 赛博（主线第三步）：app 画半身像
+        out.update(kind="cyber", avatar=(g or {}).get("avatar"), tag=(g or {}).get("tag") or "")
+    return out
 
 
 def joined(names: list[str]) -> str:
@@ -183,6 +225,8 @@ def system_text(meta: dict, ag: dict[str, dict], lx=L) -> str:
     if ev == "start":
         if meta.get("origin") == "main":
             return lx(f"由 {host} 发起", f"Started by {host}")
+        if meta.get("auto"):
+            return lx(f"由你发起，{host} 主持 · 定了告诉你", f"Started by you, hosted by {host} · you'll be told once it's settled")
         return lx(f"由你发起，{host} 主持", f"Started by you, hosted by {host}")
     head = lx(f"第 {rnd} 轮 · ", f"Round {rnd} · ") if rnd > 1 and not meta.get("group") else ""  # 群聊每句一轮，不写第几轮
     if ev == "invite":
@@ -191,6 +235,8 @@ def system_text(meta: dict, ag: dict[str, dict], lx=L) -> str:
         return head + lx(f"你请 {names} 回答", f"You asked {names} to answer")
     if ev == "skipped":
         return lx(f"{names} 已删除，本轮跳过", f"{names} was deleted and is skipped")
+    if ev == "health":
+        return lx(f"{names} 管健康、饮食或睡眠，会上有赛博，这次不请", f"{names} looks after health, diet or sleep and a Cyber is here, so it wasn't asked")
     if ev == "stopped":
         return lx("本轮已停止", "This round was stopped")
     if ev == "interrupted":
@@ -227,6 +273,7 @@ class Live:
     stopping: bool = False
     stream: asyncio.Task | None = None
     queues: list[asyncio.Queue] = field(default_factory=list)
+    room: MeetingRoom | None = None  # 这一轮在哪开（None = 会议；群聊 groupchat.py 给自己的一种，见 MeetingRoom）
 
     def publish(self, event: str, data: dict) -> None:
         for q in list(self.queues):
@@ -323,6 +370,7 @@ def meeting_json(r, ag: dict[str, dict], last=None) -> dict:
     out = {"id": r["id"], "kind": "group" if status == "group" else "meeting", "title": r["title"], "topic": r["topic"],
            "host": r["host"], "hostName": settings.app_name, "members": [member_json(a, ag) for a in loads(r["members"], [])],
            "status": status, "statusLabel": L(*STATUS_LABEL.get(status, (status, status))), "keep": bool(r["keep"]), "round": r["round"],
+           "auto": bool(r["auto"]), "listed": bool(r["listed"]),
            "origin": r["origin"], "fromThread": r["from_thread"], "messageId": f"db{r['message_id']}" if r["message_id"] else None,
            "minutes": minutes_out(loads(r["minutes"]), ag), "confirmed": loads(r["confirmed"]), "needsYou": needs_you(r),
            "createdAt": r["created_at"], "updatedAt": r["updated_at"], "endedAt": r["ended_at"], "live": live_json(r["id"])}
@@ -366,12 +414,101 @@ def list_meetings(status: str = "active"):
     return {"ok": True, "meetings": out, "endedCount": ended}
 
 
+RECORD_FILTERS = ("all", "main", "auto", "mine")
+
+
+def initiator_label(r) -> str:
+    if r["origin"] == "main":
+        return L(f"{settings.app_name} 发起", f"Started by {settings.app_name}")
+    return L("你发起 · 定了告诉我", "Started by you · told when settled") if r["auto"] else L("你发起", "Started by you")
+
+
+def outcome_label(r) -> str:
+    done = loads(r["confirmed"]) or {}
+    if done:
+        return L("已进日程", "In the schedule") if r["auto"] else L("纪要已确认", "Minutes confirmed")
+    return {"running": L("进行中", "In progress"), "pending": L("纪要待确认", "Minutes to confirm"), "group": L("群聊", "Group chat"),
+            "ended": L("已结束", "Ended")}.get(r["status"], r["status"])
+
+
+def record_json(r, ag: dict[str, dict], match: str | None = None) -> dict:
+    created = r["created_at"]
+    try:
+        d = datetime.fromisoformat(created).astimezone(TZ)
+        day = f"{d.month}/{d.day}"
+    except ValueError:
+        day = ""
+    mn = loads(r["minutes"]) or {}
+    who, what = initiator_label(r), outcome_label(r)
+    return {"id": r["id"], "title": r["title"], "topic": r["topic"], "members": [member_json(a, ag) for a in loads(r["members"], [])],
+            "origin": r["origin"], "auto": bool(r["auto"]), "listed": bool(r["listed"]), "status": r["status"], "initiator": who, "outcome": what,
+            "line": f"{who} · {what}", "day": day, "createdAt": created, "updatedAt": r["updated_at"],
+            "decisions": len(mn.get("decisions") or []), "todos": len(mn.get("todos") or []), **({"match": match} if match else {})}
+
+
+def snippet(text: str, q: str, width: int = 60) -> str:
+    t = " ".join((text or "").split())
+    i = t.casefold().find(q.casefold())
+    if i < 0:
+        return t[:width * 2]
+    lo = max(0, i - width)
+    return ("…" if lo else "") + t[lo:i + len(q) + width] + ("…" if i + len(q) + width < len(t) else "")
+
+
+@router.get("/api/meetings/records")
+def records(filter: str = "all", q: str = ""):
+    """会议记录（主对话资料页 →「会议记录」）：全部会议，新的在前；filter：all / main（助手发起）/ auto（定了告诉我）/ mine（你发起、
+    没选定了告诉我）；q：搜议题、会议名、纪要和发言（字面，不调模型），每条带一段 match。"""
+    if filter not in RECORD_FILTERS:
+        raise HTTPException(400, L("filter 只能是 all / main / auto / mine", "filter must be all, main, auto or mine"))
+    cond = {"all": "1", "main": "origin='main'", "auto": "auto=1", "mine": "origin!='main' AND auto=0"}[filter]
+    q = clean_text(q, 80)
+    with _lock, mdb() as conn:
+        ag = agent_rows(conn)
+        out = []
+        for r in conn.execute(f"SELECT * FROM meetings WHERE {cond} ORDER BY created_at DESC, rowid DESC LIMIT ?", (RECORDS_MAX,)).fetchall():  # noqa: S608 — 条件是上面写死的四种
+            if not q:
+                out.append(record_json(r, ag))
+                continue
+            mn = loads(r["minutes"]) or {}
+            hay = [r["title"], r["topic"], minutes_text(mn, ag) if mn else ""]
+            hit = next((h for h in hay if h and q.casefold() in h.casefold()), None)
+            if hit is None:
+                m = conn.execute(f"SELECT text FROM messages WHERE thread=? AND role IN ('user','{ASSISTANT_ROLE}') AND instr(lower(text), lower(?)) > 0 LIMIT 1",
+                                 (r["id"], q)).fetchone()
+                hit = m["text"] if m else None
+            if hit is not None:
+                out.append(record_json(r, ag, snippet(hit, q)))
+    return {"ok": True, "records": out, "filter": filter, "q": q,
+            "intro": L(f"{settings.app_name} 发起的和全自动的会议，开完收进这里；你自己发起的留在对话列表。",
+                       f"Meetings {settings.app_name} started and fully automatic ones land here when they're done; the ones you start stay in the chat list.")}
+
+
+@router.get("/api/meetings/options")
+def options():
+    """发起会议那一页（主线第三步）：能请谁（功能 Agent 在前；赛博开着时有赛博，health = 管健康、饮食、睡眠的，不和赛博同会）、
+    「会后保留为群聊」默认开不开（meetings.by_origin 开着时你发起的默认留着）、人数范围。byOrigin：开关开着（app 据此画「定了告诉我」）；
+    records：主对话资料页要不要画「会议记录」那一行（开关开着，或者有开着时收走的会）。"""
+    import cybers  # 延迟导入：cybers 依赖 chat
+    with _lock, mdb() as conn:
+        ag = agent_rows(conn)
+        gs = cybers.group_rows(conn) if conn.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='groups'").fetchone() else {}
+        hidden = conn.execute("SELECT 1 FROM meetings WHERE listed=0 LIMIT 1").fetchone() is not None
+    members = [{"id": a, "kind": info["kind"], "name": info["name"], "icon": info.get("icon"), "color": info.get("color"), "tag": info.get("tag") or "",
+                "avatar": info.get("avatar"), "purpose": info["purpose"][:120], "health": bool(a in gs and cybers.is_health(gs[a]))}
+               for a, info in ag.items()]
+    members.sort(key=lambda m: m["kind"] == "cyber")  # 功能 Agent 在前（待办要有人领），赛博在后；各自保持原来的顺序
+    return {"ok": True, "members": members, "keep": by_origin(), "byOrigin": by_origin(), "records": by_origin() or hidden, "min": MIN_MEMBERS,
+            "max": MAX_MEMBERS}
+
+
 class MeetingIn(BaseModel):
     topic: str
     members: list[str]
     title: str | None = None
-    keep: bool = False       # 会后保留为群聊
-    origin: str = "manual"   # manual：在 app 里发起；main：主对话发起（handoff skill → ask_agent.py --meet）
+    keep: bool | None = None  # 会后保留为群聊；不给 = 默认（照旧是 false；meetings.by_origin 开着时按谁发起，见文件开头）
+    auto: bool = False        # 「定了告诉我」：全自动跑完（见文件开头；只给 manual，跟着 meetings.by_origin）
+    origin: str = "manual"    # manual：在 app 里发起；main：主对话发起（handoff skill → ask_agent.py --meet）
 
 
 def clean_text(s: str | None, n: int) -> str:
@@ -400,6 +537,18 @@ async def create(body: MeetingIn):
                                    f"No such Agent: {', '.join(unknown)}. Current Agents: {', '.join(ag) or '(none)'}"))
     if not MIN_MEMBERS <= len(members) <= MAX_MEMBERS:
         raise HTTPException(400, L(f"会议要 {MIN_MEMBERS}–{MAX_MEMBERS} 个 Agent", f"A meeting needs {MIN_MEMBERS}–{MAX_MEMBERS} Agents"))
+    if any(a.startswith("cy-") for a in members):  # 赛博用别家的模型、读得到会上的每一句：健康类的功能 Agent 不和它同会
+        import cybers
+        with _lock, mdb() as conn:
+            gs = cybers.group_rows(conn)
+        bad = [gs[a]["name"] for a in members if a in gs and cybers.is_health(gs[a])]
+        if bad:
+            raise HTTPException(400, L(f"「{'、'.join(bad)}」管健康、饮食或睡眠：不和赛博同会", f'"{", ".join(bad)}" looks after health, diet or sleep: it can\'t meet with a Cyber'))
+    if sum(1 for a in members if not a.startswith("cy-")) < 1:
+        raise HTTPException(400, L("会议至少要一个功能 Agent（待办要有人领）", "A meeting needs at least one functional Agent (someone has to own the to-dos)"))
+    auto = bool(body.auto) and origin == "manual" and by_origin()  # 「定了告诉我」：你在 app 里发起的、开关开着才算（见文件开头）
+    keep = body.keep if body.keep is not None else (by_origin() and origin == "manual" and not auto)
+    listed = 0 if by_origin() and (origin == "main" or auto) else 1  # 建的这一刻定：老的、开关关着时建的都单列
     title = clean_text(body.title, TITLE_MAX) or default_title(topic)
     mid = f"grp-{uuid.uuid4().hex[:8]}"
     src = None
@@ -408,14 +557,15 @@ async def create(body: MeetingIn):
         src = cards.source_run(mid)
         if src is not None and chat.agent_of(src.thread) != "main":  # 主对话在 Telegram 那边、app 里只有某个 Agent 在回复：不挂到它那里
             src = None
-    from_thread = (src.thread if src else "main") if origin == "main" else None
+    from_thread = (src.thread if src else "main") if origin == "main" else "main" if auto else None  # 定了告诉我：主对话留纪要卡
     ts = now_iso()
     _starting.add(mid)
     try:
         with _lock, mdb() as conn:
-            conn.execute("""INSERT INTO meetings(id, title, topic, host, members, status, keep, round, origin, from_thread, created_at, updated_at)
-                VALUES(?,?,?,?,?,?,?,?,?,?,?,?)""", (mid, title, topic, HOST, dumps(members), "running", int(body.keep), 0, origin, from_thread, ts, ts))
-            system_line(conn, mid, "start", origin=origin)
+            conn.execute("""INSERT INTO meetings(id, title, topic, host, members, status, keep, round, origin, from_thread, created_at, updated_at,
+                auto, listed) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)""", (mid, title, topic, HOST, dumps(members), "running", int(bool(keep)), 0, origin,
+                                                                      from_thread, ts, ts, int(auto), listed))
+            system_line(conn, mid, "start", origin=origin, **({"auto": True} if auto else {}))
             touch(conn, mid, ts)
         begin_round(mid, members, 1, minutes=True)
     finally:
@@ -446,7 +596,7 @@ class SuggestIn(BaseModel):
 
 @router.post("/api/meetings/suggest")
 async def suggest(body: SuggestIn):
-    """手动发起时 Grava 按议题推荐人选和会议名（不带工具的模型）。模型用不了：不推荐（agents 空），会议名按议题截一句。"""
+    """手动发起时助手按议题推荐人选和会议名（不带工具的模型）。模型用不了：不推荐（agents 空），会议名按议题截一句。"""
     topic = clean_text(body.topic, TOPIC_MAX)
     with _lock, mdb() as conn:
         ag = agent_rows(conn)
@@ -478,7 +628,7 @@ def pick_ids(raw, allowed: list[str], ag: dict[str, dict]) -> list[str]:
 # —— 一轮：成员轮流发言 ————————————————————————————————————————————————————
 
 def begin_round(mid: str, invited: list[str], rnd: int, minutes: bool, event: str = "invite") -> Live:
-    """开一轮：记「Grava 请 X、Y 回答」，后台按顺序请他们发言，说完（会议）写纪要。"""
+    """开一轮：记「助手请 X、Y 回答」，后台按顺序请他们发言，说完（会议）写纪要。"""
     lv = Live(mid=mid, round=rnd, minutes=minutes, queue=list(invited))
     LIVE[mid] = lv
     ts = now_iso()
@@ -498,16 +648,20 @@ def begin_round(mid: str, invited: list[str], rnd: int, minutes: bool, event: st
 
 
 def member_key(agent: str, mid: str) -> str:
-    """成员在会里的会话。OpenClaw：有自己 agent 的用 agent:<id>:grava:<会议>；还借住在 main 的老 Agent 在 main 底下单开一个。别的 claw：mousse:<会议>:<id>。"""
+    """成员在会里的会话。OpenClaw：有自己 agent 的用 agent:<id>:<SESSION_TAG>:<会议>；还借住在 main 的老 Agent 在 main 底下单开一个。别的 claw：mousse:<会议>:<id>。"""
     if not claw.is_openclaw():
         return f"mousse:{mid}:{agent}"
     if agent in settings.group_agents:
-        return f"agent:{agent}:grava:{mid}"
-    return f"agent:main:grava:{mid}-{agent}"
+        return f"agent:{agent}:{SESSION_TAG}:{mid}"
+    return f"agent:main:{SESSION_TAG}:{mid}-{agent}"
 
 
 def member_model(conn, agent: str) -> str:
-    """成员用它自己对话里选的模型（threads 表里那个 Agent 线程的 model），没选过用默认。"""
+    """成员用它自己对话里选的模型（threads 表里那个 Agent 线程的 model），没选过用默认。赛博：它自己的模型（cybers.model_in_use）。"""
+    if agent.startswith("cy-"):
+        import cybers
+        r = cybers.row_of(conn, agent)
+        return (cybers.model_in_use(r) if r is not None else None) or ""
     return chat.thread_model(conn, agent)
 
 
@@ -520,6 +674,22 @@ def rules_text(m, agent: str, ag: dict[str, dict]) -> str:
     app, who = settings.app_name, user_word()
     me = ag.get(agent) or {"name": agent, "purpose": ""}
     roster = LS("、", ", ").join(f"{name_of(a, ag)}（{a}）" if settings.language == "zh" else f"{name_of(a, ag)} ({a})" for a in loads(m["members"], []))
+    if me.get("kind") == "cyber":  # 赛博（主线第三步）：它是谁在它自己的开头里（engine/cyber.speak），这里只说会议和规矩
+        return LS(
+            f"（{app} 给你的说明，{who}看不到）这是一场会议：{who}请几个 Agent 一起商量一件事，{app} 主持。\n"
+            f"议题：{m['topic']}\n参会：{roster}\n"
+            f"你是赛博「{me['name']}」：只说你的看法，不领待办（待办由功能 Agent 领）。\n"
+            "规矩：\n"
+            "- 发言简短（3–6 句），从你的角度说，具体一些；和别人的建议冲突就直接指出。\n"
+            "- 要问另一位参会的 Agent，就单独一行写「@名字 问题」，一次最多 @ 一位，它会在这一轮回答你。\n"
+            "- 别人说过的不用重复。",
+            f"({app}'s note to you; {who.strip()} doesn't see it) This is a meeting: {who.strip()} asked several Agents to work something out "
+            f"together, hosted by {app}.\nTopic: {m['topic']}\nAttending: {roster}\n"
+            f"You are the Cyber \"{me['name']}\": give your view only; you don't take to-dos (functional Agents do).\n"
+            "Rules:\n"
+            "- Keep it short (3–6 sentences), from your own angle and concrete; if you disagree with someone, say so directly.\n"
+            "- To ask another Agent in the meeting, write \"@Name question\" on its own line, at most one @ per message; it answers you this round.\n"
+            "- Don't repeat what others said.")
     return LS(
         f"（{app} 给你的说明，{who}看不到）这是一场会议：{who}请几个 Agent 一起商量一件事，{app} 主持。\n"
         f"议题：{m['topic']}\n参会：{roster}\n"
@@ -573,9 +743,9 @@ def build_prompt(conn, m, agent: str, ag: dict[str, dict], ask, upto: int) -> st
     mid, rnd = m["id"], m["round"]
     seen = conn.execute("SELECT last_id, day FROM meeting_seen WHERE meeting=? AND agent=?", (mid, agent)).fetchone()
     fresh = seen is None or seen["day"] != day_of(now_iso()) or not claw.is_openclaw()
-    rows = conn.execute("SELECT id, role, text, speaker, meta FROM messages WHERE thread=? AND id>? AND id<=? AND role IN ('user','grava') "
+    rows = conn.execute(f"SELECT id, role, text, speaker, meta FROM messages WHERE thread=? AND id>? AND id<=? AND role IN ('user','{ASSISTANT_ROLE}') "
                         "AND status!='error' ORDER BY id", (mid, 0 if fresh else seen["last_id"], upto)).fetchall()
-    lines = [line_of(r, ag, agent) for r in rows if fresh or not (r["role"] == "grava" and r["speaker"] == agent)]
+    lines = [line_of(r, ag, agent) for r in rows if fresh or not (r["role"] == ASSISTANT_ROLE and r["speaker"] == agent)]
     if fresh and len(lines) > RECAP:
         lines = [LS("（更早的发言略）", "(Earlier messages omitted)")] + lines[-RECAP:]
     parts = [rules_text(m, agent, ag) if fresh else LS(f"（会议「{m['title']}」· 第 {rnd} 轮）", f"(Meeting \"{m['title']}\" · round {rnd})")]
@@ -601,6 +771,40 @@ def mentions(text: str, members: list[str], ag: dict[str, dict], exclude: str | 
                 found.append(a)
                 break
     return found
+
+
+MEETING_NOTE = ("## This meeting\nYou're taking part in a meeting the user started with several of their Agents; the user's message below "
+                "has the topic, who's attending and the rules. You only talk here: give your view; you don't take to-dos.")
+
+
+async def stream_cyber(cid: str, mid: str, content: str, on_delta) -> None:
+    """赛博在会上说（主线第三步）：赛博回合（engine/cyber.speak：kind cyber，从不花套餐），带它的装载工具；会话 meeting:<会议>:<赛博>。"""
+    import cybers
+    from engine import cyber as engine_cyber
+    from engine import cyber_tools
+    with _lock, cybers.cydb() as conn:
+        r = cybers.row_of(conn, cid)
+        loaded = cybers.loadout_of(conn, r) if r is not None else []
+    if r is None:
+        raise RuntimeError(L("这位赛博已经删除", "This Cyber was deleted"))
+    d = cybers.engine_dict(r)
+    tools = [t for t in [cyber_tools.ask_agent_tool(d, loaded, thread=cid, ask=cybers.asker(cid))] if t is not None]
+    spoke = {"any": False, "gap": False}
+
+    def on_ev(ev: dict) -> None:
+        if ev.get("type") == "model":
+            spoke["gap"] = spoke["any"]
+        elif ev.get("type") == "text" and ev.get("text"):
+            if spoke["gap"]:
+                on_delta("\n\n")
+                spoke["gap"] = False
+            spoke["any"] = True
+            on_delta(ev["text"])
+    res = await engine_cyber.speak(d, content, where=MEETING_NOTE, conversation=f"meeting:{mid}:{cid}", on_event=on_ev, tools=tools, origin="user",
+                                   timeout=SPEECH_TIMEOUT)
+    cyber_tools.forget(res.turn)
+    if res.status == "error":
+        raise RuntimeError(res.error or "model error")
 
 
 async def stream_member(agent: str, mid: str, model: str, content: str, on_delta) -> None:
@@ -658,7 +862,8 @@ async def speak(lv: Live, agent: str, ask) -> dict | None:
         lv.publish("delta", {"agent": agent, "text": d})
 
     status, error = "ok", None
-    lv.stream = asyncio.create_task(asyncio.wait_for(stream_member(agent, mid, model, content, on_delta), SPEECH_TIMEOUT))
+    talk = stream_cyber(agent, mid, content, on_delta) if agent.startswith("cy-") else stream_member(agent, mid, model, content, on_delta)
+    lv.stream = asyncio.create_task(asyncio.wait_for(talk, SPEECH_TIMEOUT))
     try:
         await lv.stream
     except asyncio.CancelledError:
@@ -671,6 +876,8 @@ async def speak(lv: Live, agent: str, ask) -> dict | None:
         status, error = "error", str(e)[:200]
     except HTTPException as e:  # 读不到 Gateway 令牌之类
         status, error = "error", str(e.detail)[:200]
+    except Exception as e:  # noqa: BLE001 — 内核的错（EngineError：赛博没模型之类）也照「没说成」记下，接着请下一位
+        status, error = "error", f"{type(e).__name__}: {e}"[:200]
     finally:
         lv.stream = None
     text = lv.text.strip()
@@ -683,7 +890,7 @@ async def speak(lv: Live, agent: str, ask) -> dict | None:
     with _lock, mdb() as conn:
         if conn.execute("SELECT 1 FROM meetings WHERE id=?", (mid,)).fetchone() is None:
             return None  # 说着说着会议被删了
-        rid = add_message(conn, mid, "grava", text, agent, meta, status=status if status != "stopped" else "ok", model=model, ts=ts)
+        rid = add_message(conn, mid, ASSISTANT_ROLE, text, agent, meta, status=status if status != "stopped" else "ok", model=model, ts=ts)
         conn.execute("""INSERT INTO meeting_seen(meeting, agent, last_id, day) VALUES(?,?,?,?)
             ON CONFLICT(meeting, agent) DO UPDATE SET last_id=excluded.last_id, day=excluded.day""", (mid, agent, upto, day_of(ts)))
         touch(conn, mid, ts)
@@ -705,9 +912,64 @@ def set_meta(mid: str, rid: int, **extra) -> dict | None:
         return msg_json(conn.execute("SELECT * FROM messages WHERE id=?", (rid,)).fetchone(), agent_rows(conn))
 
 
+class MeetingRoom:
+    """一轮在哪开（run_round 只经它读成员、请人发言、记系统行、收尾）。这一种是会议：成员在 meetings 表、发言走 speak、说完写纪要。
+    群聊（groupchat.py，主线第三步）有自己的一种，方法一样：成员是赛博和功能 Agent，各走各的回合，说完主持人写小结。
+    一轮的规矩（每位最多说一次、@ 只转一层、停了 / 出错都收尾）只在 run_round 里写一份，两边都照它。"""
+    phase = "minutes"  # 都说完以后那一段（phase 事件、live.phase）：会议写纪要
+
+    def __init__(self, mid: str) -> None:
+        self.mid = mid
+
+    def roster(self, conn) -> tuple[list[str], dict[str, dict]] | None:
+        """成员（按发言顺序）和认得的名字（ag：谁还在）；会议没了 → None。"""
+        m = conn.execute("SELECT members FROM meetings WHERE id=?", (self.mid,)).fetchone()
+        return None if m is None else (loads(m["members"], []), agent_rows(conn))
+
+    def kept_out(self, conn, members: list[str]) -> set[str]:
+        """这一次不请的：会上有赛博时，健康类的功能 Agent。开会时查过一次，这里每请一位前再现查：后来改了名字、职责、图标，
+        或者写进 cybers.health_agents 的，到这里才认得出来。"""
+        if not any(a.startswith("cy-") for a in members):
+            return set()
+        import cybers  # 延迟导入：cybers 依赖 chat
+        gs = cybers.group_rows(conn)
+        return {a for a in members if a in gs and cybers.is_health(gs[a])}
+
+    def system(self, conn, event: str, **meta) -> dict:
+        """记一行系统消息 → 给 app 的样子。"""
+        sid = system_line(conn, self.mid, event, **meta)
+        return msg_json(conn.execute("SELECT * FROM messages WHERE id=?", (sid,)).fetchone(), agent_rows(conn))
+
+    async def speak(self, lv: Live, agent: str, ask) -> dict | None:
+        return await speak(lv, agent, ask)
+
+    def mark(self, rid: int, **extra) -> dict | None:
+        return set_meta(self.mid, rid, **extra)
+
+    async def after(self, lv: Live, agent: str, got: dict, spoken: set[str]) -> None:
+        """一位说完、没 @ 别人：会议不另外请人（群聊「主持人安排」时在这里挑下一位）。"""
+
+    def stopped(self, conn, lv: Live) -> None:
+        if lv.minutes:
+            conn.execute("UPDATE meetings SET status='pending', updated_at=? WHERE id=? AND status='running'", (now_iso(), self.mid))
+
+    async def finish(self, lv: Live) -> None:
+        await write_minutes(lv)
+
+    def failed(self, conn, lv: Live, e: Exception) -> None:
+        system_line(conn, self.mid, "nominutes", error=str(e)[:120])
+        conn.execute("UPDATE meetings SET status='pending', updated_at=? WHERE id=? AND status='running'", (now_iso(), self.mid))
+
+    def status(self, conn) -> str | None:
+        r = conn.execute("SELECT status FROM meetings WHERE id=?", (self.mid,)).fetchone()
+        return r["status"] if r else None
+
+
 async def run_round(lv: Live) -> None:
-    """按队列请成员发言；@ 只转一层（规则见文件开头）；说完写纪要。出错、停了都要收尾（done），不能让会议一直「进行中」。"""
+    """按队列请成员发言；@ 只转一层（规则见文件开头）；说完写纪要（群聊：小结）。出错、停了都要收尾（done），不能让会议一直「进行中」。
+    在哪开看 lv.room（MeetingRoom 那几个方法）：会议和群聊用的是同一套规矩。"""
     mid = lv.mid
+    room = lv.room or MeetingRoom(mid)
     spoken: set[str] = set()
     asked: dict[str, object] = {}  # 被 @ 的 Agent → @ 它的那条发言（行）
     try:
@@ -716,29 +978,29 @@ async def run_round(lv: Live) -> None:
             if a in spoken:
                 continue
             with _lock, mdb() as conn:
-                ag = agent_rows(conn)
-                m = conn.execute("SELECT members FROM meetings WHERE id=?", (mid,)).fetchone()
-            if m is None:
+                got_roster = room.roster(conn)
+                out = room.kept_out(conn, got_roster[0]) if got_roster is not None else set()
+            if got_roster is None:
                 return
-            if a not in ag:  # 开会期间这个 Agent 被删了
+            members, ag = got_roster
+            if a not in ag or a in out:  # 开会期间这个 Agent 被删了；健康类的、有赛博在（见 kept_out）
                 with _lock, mdb() as conn:
-                    sid = system_line(conn, mid, "skipped", agents=[a])
-                    row = conn.execute("SELECT * FROM messages WHERE id=?", (sid,)).fetchone()
-                lv.publish("system", msg_json(row, ag))
+                    msg = room.system(conn, "skipped" if a not in ag else "health", agents=[a])
+                lv.publish("system", msg)
                 continue
             ask = asked.get(a)
-            got = await speak(lv, a, ask)
+            got = await room.speak(lv, a, ask)
             spoken.add(a)
             if got is None:
                 return
             if not got["ok"] or ask is not None or lv.stopping:  # 回答 @ 的那一条里再 @ 不算（只转一层）
                 continue
-            members = loads(m["members"], [])
             at = next(iter(mentions(got["row"]["text"], members, ag, exclude=a)), None)
             if not at:
+                await room.after(lv, a, got, spoken)
                 continue
             deferred = at in spoken  # 这一轮已经说过了：不再多给一次
-            upd = set_meta(mid, got["row"]["id"], at=at, **({"deferred": True} if deferred else {}))
+            upd = room.mark(got["row"]["id"], at=at, **({"deferred": True} if deferred else {}))
             if upd:
                 lv.publish("said", upd)
             if not deferred:
@@ -748,23 +1010,19 @@ async def run_round(lv: Live) -> None:
                 asked[at] = got["row"]
         if lv.stopping:
             with _lock, mdb() as conn:
-                sid = system_line(conn, mid, "stopped", round=lv.round)
-                if lv.minutes:
-                    conn.execute("UPDATE meetings SET status='pending', updated_at=? WHERE id=? AND status='running'", (now_iso(), mid))
-                row = conn.execute("SELECT * FROM messages WHERE id=?", (sid,)).fetchone()
-                ag = agent_rows(conn)
-            lv.publish("system", msg_json(row, ag))
+                msg = room.system(conn, "stopped", round=lv.round)
+                room.stopped(conn, lv)
+            lv.publish("system", msg)
             return
         if lv.minutes:
-            lv.phase, lv.speaker = "minutes", None
-            lv.publish("phase", {"phase": "minutes"})
-            await write_minutes(lv)
+            lv.phase, lv.speaker = room.phase, None
+            lv.publish("phase", {"phase": room.phase})
+            await room.finish(lv)
     except Exception as e:  # noqa: BLE001 — 什么错都要收尾，会议不能一直停在「进行中」
         print(f"[meetings] {mid} 第 {lv.round} 轮出错：{type(e).__name__}: {e}")
         try:
             with _lock, mdb() as conn:
-                system_line(conn, mid, "nominutes", error=str(e)[:120])
-                conn.execute("UPDATE meetings SET status='pending', updated_at=? WHERE id=? AND status='running'", (now_iso(), mid))
+                room.failed(conn, lv, e)
         except Exception:  # noqa: BLE001
             pass
     finally:
@@ -772,8 +1030,7 @@ async def run_round(lv: Live) -> None:
         status = None
         try:
             with _lock, mdb() as conn:
-                r = conn.execute("SELECT status FROM meetings WHERE id=?", (mid,)).fetchone()
-                status = r["status"] if r else None
+                status = room.status(conn)
         except Exception:  # noqa: BLE001
             pass
         lv.publish("done", {"round": lv.round, "status": status})
@@ -791,7 +1048,7 @@ MINUTES_RULES = (
     "previous 是上一轮的纪要（没有就是 null），这一轮的纪要要取代它（还成立的决定和待办照写）。\n"
     "规矩：\n"
     "- 只写发言里真的定下来的，不编、不加自己的建议。没定下来的放进 open。\n"
-    "- 每条待办有且只有一个负责的 Agent（members 里的 id），并且有时间：按 today（{today}，{weekday}）和时区 {tz} 换算成具体日期；"
+    "- 每条待办有且只有一个负责的 Agent（members 里 kind 是 agent 的 id；赛博只出看法、不领待办），并且有时间：按 today（{today}，{weekday}）和时区 {tz} 换算成具体日期；"
     "重复的写多个日期（最多 7 个）；只有截止日的 start 写 null。待办最多 8 条。\n"
     "- text 是列表里显示的一行：时间 + 事，简短，比如「周二 18:00 加餐提醒」；title 是写进日程的标题，不带时间，比如「加餐提醒」。\n"
     "- next：要继续讨论时该请谁（和 open 里的问题有关的 Agent id），没有就空。\n"
@@ -804,7 +1061,7 @@ MINUTES_RULES = (
     "decisions and to-dos that still stand).\n"
     "Rules:\n"
     "- Only write what was actually agreed. Don't invent anything or add your own advice. Anything not settled goes in open.\n"
-    "- Every to-do has exactly one owner (an Agent id from members) and a time: resolve it to concrete dates from today ({today}, {weekday}) "
+    "- Every to-do has exactly one owner (the id of a members entry whose kind is agent; Cybers give views and own no to-dos) and a time: resolve it to concrete dates from today ({today}, {weekday}) "
     "in the {tz} time zone; a repeating one lists several dates (at most 7); a deadline only has start null. At most 8 to-dos.\n"
     "- text is the line shown in the list: time + what, short, e.g. \"Tue 18:00 snack reminder\"; title is the schedule title without the "
     "time, e.g. \"Snack reminder\".\n"
@@ -832,10 +1089,11 @@ def clean_minutes(out, members: list[str], ag: dict[str, dict], rnd: int) -> dic
         return [clean_text(str(x), width) for x in (v if isinstance(v, list) else []) if clean_text(str(x), width)][:n]
 
     todos = []
+    owners = [a for a in members if not a.startswith("cy-")]  # 赛博只出看法、不领待办（主线第三步）
     for td in out.get("todos") if isinstance(out.get("todos"), list) else []:
         if not isinstance(td, dict):
             continue
-        owner = next(iter(pick_ids([td.get("agent")], members, ag)), None)
+        owner = next(iter(pick_ids([td.get("agent")], owners, ag)), None)
         text = clean_text(str(td.get("text") or td.get("title") or ""), 80)
         if not owner or not text:
             continue
@@ -870,14 +1128,14 @@ def minutes_text(mn: dict, ag: dict[str, dict], lx=L) -> str:
 
 
 async def write_minutes(lv: Live) -> None:
-    """一轮说完：Grava（不带工具的模型）写纪要 → 会议里记一条纪要、状态改成待确认；从主对话发起的，主对话里记一条通知（下面挂纪要卡）。"""
+    """一轮说完：助手（不带工具的模型）写纪要 → 会议里记一条纪要、状态改成待确认；从主对话发起的，主对话里记一条通知（下面挂纪要卡）。"""
     mid = lv.mid
     with _lock, mdb() as conn:
         m = conn.execute("SELECT * FROM meetings WHERE id=?", (mid,)).fetchone()
         if m is None:
             return
         ag = agent_rows(conn)
-        rows = conn.execute("SELECT role, text, speaker, meta FROM messages WHERE thread=? AND role IN ('user','grava') AND status!='error' ORDER BY id",
+        rows = conn.execute(f"SELECT role, text, speaker, meta FROM messages WHERE thread=? AND role IN ('user','{ASSISTANT_ROLE}') AND status!='error' ORDER BY id",
                             (mid,)).fetchall()
     members = loads(m["members"], [])
     now = datetime.now(TZ)
@@ -885,7 +1143,8 @@ async def write_minutes(lv: Live) -> None:
                  "text": r["text"][:3000]} for r in rows if (loads(r["meta"], {}) or {}).get("kind") != "minutes"][-80:]
     prev = loads(m["minutes"])
     inp = {"topic": m["topic"], "round": lv.round, "today": now.date().isoformat(), "weekday": WEEKDAYS_EN[now.weekday()], "timezone": settings.timezone,
-           "members": [{"id": a, "name": name_of(a, ag), "purpose": (ag.get(a) or {}).get("purpose", "")} for a in members],
+           "members": [{"id": a, "name": name_of(a, ag), "purpose": (ag.get(a) or {}).get("purpose", ""), "kind": (ag.get(a) or {}).get("kind", "agent")}
+                       for a in members],
            "speeches": speeches, "previous": {k: prev.get(k) for k in ("decisions", "todos", "open")} if prev else None}
     rules = LS(*MINUTES_RULES).format(app=settings.app_name, round=lv.round, today=now.date().isoformat(),
                                       weekday=LS(WEEKDAYS[now.weekday()], WEEKDAYS_EN[now.weekday()]), tz=settings.timezone)
@@ -906,15 +1165,15 @@ async def write_minutes(lv: Live) -> None:
         if cur is None:
             return
         ag = agent_rows(conn)
-        rid = add_message(conn, mid, "grava", minutes_text(mn, ag), HOST, {"kind": "minutes", "round": lv.round, "minutes": mn}, ts=ts)
+        rid = add_message(conn, mid, ASSISTANT_ROLE, minutes_text(mn, ag), HOST, {"kind": "minutes", "round": lv.round, "minutes": mn}, ts=ts)
         mn["messageId"] = f"db{rid}"
         conn.execute("UPDATE messages SET meta=? WHERE id=?", (dumps({"kind": "minutes", "round": lv.round, "minutes": mn}), rid))
         # 写纪要的时候你已经点了「结束」：纪要照记，状态不改回待确认，主对话也不再通知
         conn.execute("UPDATE meetings SET minutes=?, status=CASE WHEN status='running' THEN 'pending' ELSE status END, news=news+1, updated_at=? "
                      "WHERE id=?", (dumps(mn), ts, mid))
         touch(conn, mid, ts)
-        if m["from_thread"] and cur["status"] != "ended":  # 主对话发起的：主对话里一条通知，下面挂纪要卡（cards_for）
-            add_message(conn, m["from_thread"], "grava", notice_text(m["title"], lv.round, mn), HOST,
+        if m["from_thread"] and cur["status"] != "ended" and not m["auto"]:  # 主对话发起的：主对话里一条通知，下面挂纪要卡（cards_for）
+            add_message(conn, m["from_thread"], ASSISTANT_ROLE, notice_text(m["title"], lv.round, mn), HOST,
                         {"kind": "meeting", "meeting": mid, "round": lv.round}, ts=ts)
             conn.execute("INSERT INTO threads(id, updated_at) VALUES(?,?) ON CONFLICT(id) DO UPDATE SET updated_at=excluded.updated_at",
                          (m["from_thread"], ts))
@@ -922,6 +1181,50 @@ async def write_minutes(lv: Live) -> None:
         status = conn.execute("SELECT status FROM meetings WHERE id=?", (mid,)).fetchone()["status"]
     lv.publish("minutes", msg_json(row, ag))
     lv.publish("status", {"status": status})
+    if m["auto"] and status == "pending":  # 定了告诉我：这一轮收尾以后自己往下走（再开一轮或者确认）
+        spawn(auto_next(mid, lv.round))
+
+
+async def auto_next(mid: str, rnd: int) -> None:
+    """「定了告诉我」的会议一轮收尾以后（等 run_round 收完尾）：还有没定的、纪要说了该请谁，就再开一轮（最多 AUTO_ROUNDS 轮）；
+    不然自动确认（待办写进日程和看板，会议结束），主对话里一行「已开完 · N 项待办已写进日程和看板」+ 纪要卡（已确认的回执）。"""
+    for _ in range(600):  # 最多等 30 秒
+        if not busy_now(mid):
+            break
+        await asyncio.sleep(0.05)
+    with _lock, mdb() as conn:
+        m = conn.execute("SELECT * FROM meetings WHERE id=?", (mid,)).fetchone()
+    if m is None or m["status"] != "pending" or m["round"] != rnd:  # 中途你接手了（补了一句、结束了、删了）：不再自己动
+        return
+    mn = loads(m["minutes"]) or {}
+    if mn.get("open") and mn.get("next") and rnd < AUTO_ROUNDS:
+        try:
+            await next_round(mid, None)
+        except HTTPException as e:
+            print(f"[meetings] {mid} 没能自己开下一轮：{e.detail}")
+        return
+    if not mn:
+        return
+    _confirming.add(mid)
+    try:
+        out = await write_todos(m, mn)
+    finally:
+        _confirming.discard(mid)
+    ts = now_iso()
+    with _lock, mdb() as conn:
+        if m["from_thread"]:
+            add_message(conn, m["from_thread"], ASSISTANT_ROLE, auto_notice_text(m["title"], mn, out.get("confirmed") or {}), HOST,
+                        {"kind": "meeting", "meeting": mid, "round": rnd}, ts=ts)
+            conn.execute("INSERT INTO threads(id, updated_at) VALUES(?,?) ON CONFLICT(id) DO UPDATE SET updated_at=excluded.updated_at",
+                         (m["from_thread"], ts))
+
+
+def auto_notice_text(title: str, mn: dict, done: dict) -> str:
+    n = int(done.get("todos") or 0)
+    head = L(f"会议「{title}」已开完", f'The meeting "{title}" is done')
+    if n:
+        return head + L(f"，{n} 项待办已写进日程和看板：", f"; {n} to-do{'' if n == 1 else 's'} went into the schedule and dashboards:")
+    return head + L("，纪要见会议。", ". The minutes are in the meeting.")
 
 
 def notice_text(title: str, rnd: int, mn: dict) -> str:
@@ -993,7 +1296,7 @@ async def next_round(mid: str, note: str | None) -> dict:
 
 @router.post("/api/meetings/{mid}/send")
 async def send(mid: str, body: SendIn):
-    """你在会议里说一句。待确认 / 群聊：开新一轮（@ 谁谁答，否则 Grava 请人）；进行中：只记下，还没发言的成员会看到；已结束：409。"""
+    """你在会议里说一句。待确认 / 群聊：开新一轮（@ 谁谁答，否则助手请人）；进行中：只记下，还没发言的成员会看到；已结束：409。"""
     text = (body.text or "").strip()[:NOTE_MAX]
     if not text:
         raise HTTPException(400, L("空消息", "Empty message"))
@@ -1272,7 +1575,7 @@ def cards_for(thread: str, lo: str, hi: str) -> list[dict]:
             if m is None:
                 continue
             mn = None
-            for r in conn.execute("SELECT meta FROM messages WHERE thread=? AND speaker=? AND role='grava' ORDER BY id DESC", (mid, HOST)):
+            for r in conn.execute(f"SELECT meta FROM messages WHERE thread=? AND speaker=? AND role='{ASSISTANT_ROLE}' ORDER BY id DESC", (mid, HOST)):
                 mm = loads(r["meta"], {}) or {}
                 if mm.get("kind") == "minutes" and mm.get("round") == rnd:
                     mn = mm.get("minutes")
@@ -1284,6 +1587,11 @@ def cards_for(thread: str, lo: str, hi: str) -> list[dict]:
                         "title": m["title"], "round": rnd, "status": state, "decisions": (mn or {}).get("decisions") or [],
                         "todos": [todo_json(td, ag) for td in (mn or {}).get("todos") or []], "open": (mn or {}).get("open") or [],
                         "confirmed": done if state == "confirmed" else None})
+    try:  # 群聊（groupchat.py，主线第三步）：群结束那一行下面的小结卡，借纪要卡的样子
+        import groupchat
+        out += groupchat.cards_for(thread, lo, hi)
+    except Exception as e:  # noqa: BLE001 — 群聊那边出错不影响会议的卡
+        print(f"[meetings] 读群聊的小结卡失败：{e}")
     return out
 
 
@@ -1324,7 +1632,9 @@ def tracked(conn) -> list[str]:
     """给 unread.tracked：没结束的会议和群聊（传进来的 conn 已经拿着锁）。"""
     if not conn.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='meetings'").fetchone():
         return []
-    return [r["id"] for r in conn.execute("SELECT id FROM meetings WHERE status!='ended' ORDER BY created_at")]
+    have = {x[1] for x in conn.execute("PRAGMA table_info(meetings)")}
+    cond = " AND listed=1" if "listed" in have else ""  # 不单列的没有自己的一行：它的消息只在会议页，结果主对话里有一行
+    return [r["id"] for r in conn.execute(f"SELECT id FROM meetings WHERE status!='ended'{cond} ORDER BY created_at")]  # noqa: S608
 
 
 def busy() -> list[str]:
@@ -1346,9 +1656,11 @@ def chat_rows() -> list[dict]:
         out = []
         for r in conn.execute("SELECT * FROM meetings ORDER BY created_at"):
             r = repair(conn, r)
-            last = conn.execute("SELECT id, role, text, ts, speaker, meta FROM messages WHERE thread=? AND role IN ('user','grava') ORDER BY id DESC LIMIT 1",
+            if not r["listed"]:  # 助手发起的、全自动的（meetings.by_origin 开着时建的）：在会议记录里，进行中时写在主对话那一行
+                continue
+            last = conn.execute(f"SELECT id, role, text, ts, speaker, meta FROM messages WHERE thread=? AND role IN ('user','{ASSISTANT_ROLE}') ORDER BY id DESC LIMIT 1",
                                 (r["id"],)).fetchone()
-            unread = conn.execute("SELECT COUNT(*) FROM messages WHERE thread=? AND role='grava' AND id>?", (r["id"], marks.get(r["id"]) or 0)).fetchone()[0]
+            unread = conn.execute(f"SELECT COUNT(*) FROM messages WHERE thread=? AND role='{ASSISTANT_ROLE}' AND id>?", (r["id"], marks.get(r["id"]) or 0)).fetchone()[0]
             lv = running(r["id"])
             mn = loads(r["minutes"]) or {}
             if needs_you(r):
@@ -1370,6 +1682,15 @@ def chat_rows() -> list[dict]:
                         "lineRole": last["role"] if last is not None else None, "at": last["ts"] if last is not None else r["created_at"],
                         "unread": 0 if r["status"] == "ended" else unread})  # 结束的不算未读（和 unread.tracked 一致）
     return out
+
+
+def main_meeting() -> dict | None:
+    """对话列表的主对话那一行（chats.py）：不单列的会议有一场正在进行 → {id, title, line: 「会议中 · 议题」}；没有 → None。"""
+    with _lock, mdb() as conn:
+        for r in conn.execute("SELECT id, title, status FROM meetings WHERE listed=0 AND status IN ('running','pending') ORDER BY updated_at DESC"):
+            if running(r["id"]) or r["status"] == "running":
+                return {"id": r["id"], "title": r["title"], "line": L(f"会议中 · {r['title']}", f"In a meeting · {r['title']}")}
+    return None
 
 
 async def delete_meeting(mid: str) -> None:

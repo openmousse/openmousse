@@ -1,7 +1,11 @@
-// 对话列表（2026-10-13，../../server/chats.py）：「对话」tab 的 Grava 一边 = 顶上一排 Agent + 主对话、会议 / Agent 群、项目。
+// 对话列表（2026-10-13，../../server/chats.py）：「对话」tab 的助手一边 = 顶上一排 Agent + 主对话、会议 / Agent 群、项目。
 // 排序和未读服务器算好（只算你的话和给你的回复）；老服务器没有 /api/chats，就用 /api/groups、/api/sidechats、/api/unread 拼一份（不能置顶 / 免打扰）。
+import { ASSISTANT_ROLE, type AssistantRole } from '../data/stored';
 import type { Group, InboxItem, Message, SideChat, UnreadSummary } from '../data/types';
 import { request } from './base';
+import type { CyberAvatarSpec } from './cybers';
+import type { GroupMember } from './groups';
+import { supports } from './version';
 
 /** 外圈状态：在做（正在回复、后台任务在跑）= 青色弧；等你点头（收件箱里有它的）= 琥珀点。 */
 export type ChatState = 'working' | 'waiting' | null;
@@ -14,7 +18,7 @@ export interface ChatAgent {
   purpose: string;
   /** 最后一句（你的话或给你的回复；一条都没有时是最新的一条） */
   line: string;
-  lineRole: 'user' | 'grava' | 'auto' | null;
+  lineRole: 'user' | AssistantRole | 'auto' | null;
   /** 排序用的时间：最后一条你的话或给你的回复（ISO）；没有 = null */
   at: string | null;
   unread: number;
@@ -23,7 +27,8 @@ export interface ChatAgent {
   state: ChatState;
 }
 
-export type RowKind = 'main' | 'meeting' | 'room' | 'project';
+/** cyber：赛博的一对一（主线第三步，聊过才有一行；服务器的赛博开着、app 说要 with=cyber 才给）；group：群聊（群聊开着、with=group 才给） */
+export type RowKind = 'main' | 'meeting' | 'room' | 'project' | 'cyber' | 'group';
 
 export interface ChatRow {
   kind: RowKind;
@@ -34,12 +39,19 @@ export interface ChatRow {
   /** 会议 / Agent 群的成员：Agent id 或 "main" */
   members?: string[];
   line: string;
-  lineRole: 'user' | 'grava' | 'auto' | null;
+  lineRole: 'user' | AssistantRole | 'auto' | null;
   at: string | null;
   unread: number;
   pinned: boolean;
   muted: boolean;
   state: ChatState;
+  /** 赛博的一行：标签、模型的名字、形象 */
+  tag?: string;
+  model?: string;
+  avatar?: CyberAvatarSpec;
+  /** 群聊的一行：前四位成员的样子（组合头像用）、结束了没有 */
+  faces?: GroupMember[];
+  ended?: boolean;
 }
 
 export interface ChatList {
@@ -48,6 +60,8 @@ export interface ChatList {
   /** 已结束的会议、已归档的项目各有几条（列表底下的入口） */
   ended: number;
   archived: number;
+  /** 已结束的群聊几个（with=group 才有） */
+  endedGroups?: number;
   /** 服务器给的（能置顶 / 免打扰）；false = 老服务器，app 自己拼的 */
   server: boolean;
 }
@@ -61,9 +75,13 @@ export interface SlashCommand {
   description: string;
 }
 
+/** 主线第三步的几种行：服务器认得才要（老服务器不认 with，照旧） */
+const withKinds = () => [supports('cybers') ? 'cyber' : '', supports('groupchat') ? 'group' : ''].filter(Boolean).join(',');
+
 export const chatsApi = {
-  load: () => request<Omit<ChatList, 'server'>>('/api/chats').then((j): ChatList => ({ agents: j.agents, rows: j.rows, ended: j.ended, archived: j.archived, server: true })),
-  archived: () => request<{ rows: ChatRow[] }>('/api/chats?archived=1').then((j) => j.rows),
+  load: () => request<Omit<ChatList, 'server'>>(withKinds() ? `/api/chats?with=${withKinds()}` : '/api/chats')
+    .then((j): ChatList => ({ agents: j.agents, rows: j.rows, ended: j.ended, archived: j.archived, endedGroups: j.endedGroups, server: true })),
+  archived: () => request<{ rows: ChatRow[] }>(withKinds() ? `/api/chats?archived=1&with=${withKinds()}` : '/api/chats?archived=1').then((j) => j.rows),
   patch: (thread: string, body: { pinned?: boolean; muted?: boolean }) =>
     request<{ pinned: boolean; muted: boolean }>(`/api/chats/${encodeURIComponent(thread)}`, { method: 'PATCH', body }),
   remove: (thread: string) => request(`/api/chats/${encodeURIComponent(thread)}`, { method: 'DELETE' }),
@@ -79,13 +97,13 @@ export function fallbackList(groups: Group[], sideChats: SideChat[], unread: Unr
   const today = (id: string) => { const m = threads[id]?.[threads[id].length - 1]; return m ? m.body.text.replace(/\s+/g, ' ').trim() : ''; };
   const last = (id: string, fb: string) => unread.threads[id]?.last?.text || today(id) || fb;
   const agents: ChatAgent[] = groups.map((g) => ({
-    id: g.id, name: g.name, icon: g.icon, color: g.color ?? null, purpose: g.purpose, line: last(g.id, g.lastLine), lineRole: 'grava',
+    id: g.id, name: g.name, icon: g.icon, color: g.color ?? null, purpose: g.purpose, line: last(g.id, g.lastLine), lineRole: ASSISTANT_ROLE,
     at: unread.threads[g.id]?.last?.ts ?? null, unread: n(g.id), pinned: false, muted: false, state: null,
   }));
   const live = sideChats.filter((c) => !c.archived).sort((a, b) => b.updatedAt - a.updatedAt);
   const rows: ChatRow[] = [
-    { kind: 'main', id: 'main', title: '', line: last('main', ''), lineRole: 'grava', at: unread.threads.main?.last?.ts ?? null, unread: n('main'), pinned: true, muted: false, state: null },
-    ...live.map((c): ChatRow => ({ kind: 'project', id: c.id, title: c.title, purpose: c.purpose, line: last(c.id, c.lastLine), lineRole: 'grava', at: iso(c.updatedAt),
+    { kind: 'main', id: 'main', title: '', line: last('main', ''), lineRole: ASSISTANT_ROLE, at: unread.threads.main?.last?.ts ?? null, unread: n('main'), pinned: true, muted: false, state: null },
+    ...live.map((c): ChatRow => ({ kind: 'project', id: c.id, title: c.title, purpose: c.purpose, line: last(c.id, c.lastLine), lineRole: ASSISTANT_ROLE, at: iso(c.updatedAt),
       unread: n(c.id), pinned: false, muted: false, state: null })),
   ];
   return { agents, rows, ended: 0, archived: sideChats.length - live.length, server: false };
@@ -105,9 +123,9 @@ export function overlay(list: ChatList, typing: Record<string, boolean>, inbox: 
   return {
     ...list,
     agents: list.agents.map((a) => ({ ...a, unread: seen(a.id, a.unread), state: state(a.id, a.state, false) })),
-    // 会议线程不在未读摘要里（unread.py 只算主对话、Agent、项目）：会议的未读照服务器的
+    // 会议、群聊：未读和「等你」照服务器那一行的（会议模块、群聊模块自己算：纪要待确认、群里有等你点头的卡）
     rows: list.rows.map((r) => {
-      const room = r.kind === 'meeting' || r.kind === 'room';
+      const room = r.kind === 'meeting' || r.kind === 'room' || r.kind === 'group';
       return { ...r, unread: room ? r.unread : seen(r.id, r.unread), state: state(r.id, r.state, room) };
     }),
   };

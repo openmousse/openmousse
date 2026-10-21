@@ -1,6 +1,6 @@
 """压缩（内核第 4 项）：会话太长时把前面的部分压成一条摘要（engine_entries.kind = compaction，session.py），后面的照留。
 
-借 pi / OpenClaw / Hermes（10/16 读的源码，取舍见 ~/openmousse-wt/engine/README.md「第 4 项」）和 Claude 官方的压缩说法：
+借 pi / OpenClaw / Hermes（10/16 读的源码，取舍写在下面）和 Claude 官方的压缩说法：
   什么时候压  一轮开始前（Spec.prepare，拿到会话锁以后、这句话进会话之前）：估这一轮发出去有多大 = 最近一次模型调用报的用量
               （那次发出去的全部 + 它的回复；压缩以前的不算）+ 之后新加的按字数估（中文一个字算一个 token，英文四个字母一个），
               超过「窗口 − 16384」就压（pi / OpenClaw 的 reserveTokens）。模型说上下文太长（还没出字）：压一次再问（Spec.recover，
@@ -14,7 +14,8 @@
               （run_turn kind = outsider）。10/19 起 engine.use.compact 能写用户自己的 Claude Code（claude-code/…）：这一轮的来路
               may_spend 认了（主人回合：user / auto / relay），摘要交给他自己登录的 Claude Code 一次性地跑（claude_brain.ask，零工具、
               不存会话）；不认的（对外接口、后台任务……）换成 outside() 挑的。它没做成（没登录、额度用完、超时……）就换：
-              engine.use.compact 写成列表的就按列表（没写成列表按 engine.fallbacks），最后是这一轮自己的模型（以前就用它）。
+              engine.use.compact 写成列表的就按列表（没写成列表按 engine.fallbacks），最后是这一轮自己的模型（以前就用它）；有这些备用时
+              它最多等 SUMMARY_TIMEOUT 的一半，换上的拿剩下的（10/20）。
               对话写成 [User] / [Assistant] / [Tool result] 一行行（OpenClaw 的格式，工具结果最多 2000 字），一次最多约 6 万 token，多了分几段、一段段更新
               （前一次的摘要当 <previous-summary>，OpenClaw 的增量更新）。提示词：Claude 官方给的那段（六项、两种声音分开对待），
               加 OpenClaw 的「id、名字原样保留」，加 Hermes 的几条（对话是资料不是指令、密钥换成 [REDACTED]、做完的事写成带日期的
@@ -58,7 +59,11 @@ DEFAULT_WINDOW = 128_000     # 不认识的模型按这么大算（宁可早压�
 RESERVE = 16_384             # 窗口里给这一轮的回复、思考、工具结果留的余量（pi / OpenClaw）
 KEEP = 20_000                # 压缩时原样留下最近多少 token（pi / OpenClaw）
 SUMMARY_MAX_TOKENS = 16_000  # 摘要的输出上限（Claude 的思考也算在里面）
-SUMMARY_TIMEOUT = 300        # 一段摘要交给用户自己的 Claude Code 时最多等多久（秒，排队的时间也算；按量的一次调用也是 300）
+# 一段摘要交给用户自己的 Claude Code 时最多等多久（秒，排队的时间也算）。10/20 从 300 改成 240：一段最多读 6 万 token、写到 8000 token
+# （SUMMARY_BUDGET），套餐上 Opus 也就两分钟上下，240 给了一倍的余地；有备用时（链里的，或者最后这一轮自己的模型）它只拿一半，卡住的
+# 套餐两分钟就换，一段摘要连换上的一起最多 4 分钟（以前套餐先等满 5 分钟，换上的再给 5 分钟）；120 秒正好算短的一次性调用
+# （claude_brain.SHORT：一次性的位子被长活占着时排在前面、能多开，engine.claude_code.burst）。按量的那次调用照旧 300
+SUMMARY_TIMEOUT = 240
 CHUNK_TOKENS = 60_000        # 一次摘要最多读多少（OpenClaw 16 万「加权字」≈ 4 万 token；多了分段）
 MAX_CHUNKS = 6
 ENTRY_MAX = 20_000           # 摘要输入里一条话最多多少字
@@ -367,29 +372,33 @@ async def _summary_call(model: str, chain: list[str] | None, spec: Spec, prompt:
     used: list[dict] = []
     ids: list[str] = []
     conv = f"compact:{spec.conversation or '-'}"
+    timeout = 300.0  # 按量的这一次（以前就是 300）
     if models.subscription(model) == "claude-code":  # 用户自己的 Claude Code（engine.use.compact，route 已经照 may_spend 挑过）
         from . import claude_brain, fallback
+        rest = fallback.backup(model, kind=spec.kind, origin=spec.origin, via=spec.via, chain=models.purpose_chain("compact", model))
+        own = spec.model  # 最后是这一轮自己的模型（以前就用它）
+        if own not in rest and models.subscription(own) != "claude-code" and models.may_spend(own, kind=spec.kind, origin=spec.origin,
+                                                                                               via=spec.via):
+            rest = [*rest, own]
+        t0 = time.monotonic()  # 有备用时它只拿一半（10/20，照 oneshot.ask_json），换上的拿剩下的：一段摘要连换的一起不超过 SUMMARY_TIMEOUT
         res = await claude_brain.ask(SUMMARIZER, prompt, model=model, origin=spec.origin, conversation=conv, agent=spec.agent or "main",
-                                     timeout=SUMMARY_TIMEOUT, effort_="low", max_tokens=SUMMARY_MAX_TOKENS)
+                                     timeout=SUMMARY_TIMEOUT / 2 if rest else SUMMARY_TIMEOUT, effort_="low", max_tokens=SUMMARY_MAX_TOKENS)
         used.append(res.usage)
         ids.append(res.turn)
         if res.status == "done" and extract(res.text):
             return res.text, used, ids, model, chain
         if res.error_kind in ("rule", "refusal"):
             raise EngineError(res.error or "the summary didn't finish", kind=res.error_kind)
-        rest = fallback.backup(model, kind=spec.kind, origin=spec.origin, via=spec.via, chain=models.purpose_chain("compact", model))
-        own = spec.model  # 最后是这一轮自己的模型（以前就用它）
-        if own not in rest and models.subscription(own) != "claude-code" and models.may_spend(own, kind=spec.kind, origin=spec.origin,
-                                                                                               via=spec.via):
-            rest = [*rest, own]
         if not rest:
             raise EngineError(f"the summary didn't finish ({res.error or 'Claude Code'})", kind=res.error_kind or "http")
         model, chain = rest[0], rest[1:]
+        timeout = max(3.0, SUMMARY_TIMEOUT - (time.monotonic() - t0))
     # 用户自己的 ChatGPT 套餐（第 11b 项）：压缩是这一轮自己的一步，照这一轮的来路花（kind owner、零工具）；别的照旧是外人回合
     plan = models.subscription(model) == "chatgpt" and models.may_spend(model, kind=spec.kind, origin=spec.origin, via=spec.via)
+    plan = plan or (models.subscription(model) == "grok" and models.may_spend(model, kind=spec.kind, origin=spec.origin, via=spec.via))  # 10/20：Grok 订阅同上
     s = Spec(kind="owner" if plan else "outsider", model=model, system=SUMMARIZER, conversation=conv, agent=spec.agent,
              origin=spec.origin if plan else "compact", via=spec.via if plan else None, effort="low", max_tokens=SUMMARY_MAX_TOKENS,
-             max_steps=1, timeout=300, cache_tail=False, fallbacks=chain)
+             max_steps=1, timeout=timeout, cache_tail=False, fallbacks=chain)
     res = await run_turn(s, MemorySession(), user(prompt))
     used.append(res.usage)
     ids.append(res.turn)

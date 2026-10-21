@@ -10,6 +10,7 @@ import pytest
 import bridges
 from engine import commands, events, providers, side
 from engine.session import DbSession, day_key, text_of, user
+from stored_values import ASSISTANT_ROLE
 from test_engine import FakeModel
 from test_engine_commands import rows, say, until
 
@@ -79,7 +80,7 @@ def test_btw_answers_from_the_chat_with_no_tools_and_stays_out_of_the_session(se
     assert "TOOL RESULT: Saturday is free." in asked and asked.rstrip().endswith("Side question: which tent did we pick?")
     assert [e["id"] for e in DbSession.latest(day_key(thread, today())).path()] == before  # 会话一条都没多
     got = rows(thread)
-    assert [(r["role"], r["origin"]) for r in got] == [("user", "command"), ("grava", "btw")]
+    assert [(r["role"], r["origin"]) for r in got] == [("user", "command"), (ASSISTANT_ROLE, "btw")]
     assert got[1]["text"] == "(Side question) The blue one."  # app 里看得出是旁问
     t = next(t for t in events.turns(thread, 20) if t["model"] == MODEL)
     assert t["session"] is None and t["origin"] == "btw" and t["kind"] == "outsider"  # 不落会话；用量记在这个对话名下

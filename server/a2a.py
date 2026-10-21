@@ -13,7 +13,7 @@
 你点了以后变成 COMPLETED（同意 / 不去，带 decision 的 DataPart）或 INPUT_REQUIRED（换个时间，等对方再提）。
 对方给了推送地址、而且是朋友、地址就在他自己的根地址下，才往那里推（不然只能 GetTask 来问）。
 
-表（grava.db）
+表（mousse.db）
 - a2a_tasks：别人问我们、要你表态的任务（id、context、谁、状态、状态消息、结果、历史、收件箱卡、推送设置）。
 - a2a_seen：(谁, messageId) → 当时的回应：同一条消息再发一遍，回一样的东西（A2A 3.3.1 幂等）。
 - a2a_out：我们问别人（经 /api/a2a/send）：对方的任务 id、context、状态，推回来的进展也记这里。

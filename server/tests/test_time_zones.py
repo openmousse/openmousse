@@ -13,6 +13,7 @@ import claw
 import config
 from engine import context, events, jobs, owner, store
 from engine.session import text_of
+from stored_values import ASSISTANT_ROLE
 
 LISBON, SHANGHAI = ZoneInfo("Europe/Lisbon"), ZoneInfo("Asia/Shanghai")
 
@@ -35,8 +36,8 @@ def put(thread: str, rows: list[tuple]) -> list[int]:
 
 def lisbon_evening(thread: str) -> None:
     """里斯本 16 日晚上的两段：20:30 那段是上海的 16 日（凌晨 03:30），21:40 那段已经是上海的 17 日（04:40，逻辑日 04:00 换天）。"""
-    put(thread, [("user", "Plan my week please", "2026-10-16T20:30:00+01:00"), ("grava", "Mon push, Wed pull.", "2026-10-16T20:31:00+01:00"),
-                 ("user", "And Friday?", "2026-10-16T21:40:00+01:00"), ("grava", "Friday legs.", "2026-10-16T21:41:00+01:00")])
+    put(thread, [("user", "Plan my week please", "2026-10-16T20:30:00+01:00"), (ASSISTANT_ROLE, "Mon push, Wed pull.", "2026-10-16T20:31:00+01:00"),
+                 ("user", "And Friday?", "2026-10-16T21:40:00+01:00"), (ASSISTANT_ROLE, "Friday legs.", "2026-10-16T21:41:00+01:00")])
 
 
 def test_a_day_after_moving_from_lisbon_to_shanghai(move):

@@ -126,7 +126,7 @@ function yOf(l: Layout, key: string): number | null {
 
 type DayData = { events: ScheduleEntry[]; editable: boolean; feed: FeedItem[]; errors: string[] };
 
-/** 翻到别的日子：那天的日程（过去的记实际发生的）、Grava 的建议卡、日志。审批 / 后台任务 / 定时任务只跟"现在"有关，只在今天显示。 */
+/** 翻到别的日子：那天的日程（过去的记实际发生的）、助手的建议卡、日志。审批 / 后台任务 / 定时任务只跟"现在"有关，只在今天显示。 */
 function DayView({ iso, offset, refreshKey }: { iso: string; offset: number; refreshKey: number }) {
   const t = useTheme();
   const timeW = useScaledWidth(52);
@@ -194,7 +194,7 @@ export function TodayLegacy() {
   const focused = useIsFocused();
   const { inbox, inboxRecent, receipts, feed: allFeed, schedule, scheduleEditable, remember, rememberErrors, upcoming, groups, sideChats, dismissFeed, markFeedSeen, tasks, connected, booting, reload, refreshLive, loading, dataErrors } = useStore();
   const [offset, setOffset] = useState(0);
-  // 建议卡只显示今天的；看过的（上次打开这一页时看过的）收起来。这次在屏幕上看过的留到离开这一页，免得读着读着没了（Leo 2026-10-01）
+  // 建议卡只显示今天的；看过的（上次打开这一页时看过的）收起来。这次在屏幕上看过的留到离开这一页，免得读着读着没了（2026-10-01）
   const [keepIds, setKeepIds] = useState<Set<string>>(() => new Set());
   const [showRead, setShowRead] = useState(false);
   const todayCards = shownCards(allFeed).filter((f) => !f.createdAt || f.createdAt.slice(0, 10) === isoOf(0));

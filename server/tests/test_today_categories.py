@@ -12,6 +12,7 @@ from fastapi import HTTPException
 import schedule as sch
 import today as tp
 from chat import _lock
+from config import OWNER_ID_LEGACY as OLD_OWNER  # 老脚本照样传 --source leo：算你自己
 
 
 @pytest.fixture
@@ -45,7 +46,7 @@ def ago(n: int) -> str:
 
 
 def test_undated_todo_and_category(env):
-    tid = add(title="量一次体脂", kind="todo", category="life", source="leo")
+    tid = add(title="量一次体脂", kind="todo", category="life", source=OLD_OWNER)
     with pytest.raises(HTTPException):
         add(title="没日子的日程", kind="event")
     with pytest.raises(HTTPException):
@@ -62,8 +63,8 @@ def test_undated_todo_and_category(env):
 
 
 def test_overdue_stays_and_folds_after_a_week(env):
-    a = add(title="Acme interview prep", kind="deadline", date=ago(3), source="leo")
-    b = add(title="寄回宽带路由器", kind="deadline", date=ago(10), source="leo")
+    a = add(title="Acme interview prep", kind="deadline", date=ago(3), source=OLD_OWNER)
+    b = add(title="寄回宽带路由器", kind="deadline", date=ago(10), source=OLD_OWNER)
     d = day()
     row = next(r for r in d["pending"]["items"] if r["id"] == a)
     assert row["overdueDays"] == 3 and row["tone"] == "bad" and row["category"] == "work"
@@ -94,7 +95,7 @@ def test_dismiss_is_recorded_apart_from_done(env):
 
 
 def test_category_override_wins_and_undoes(env):
-    a = add(title="Book a dentist appointment", kind="todo", source="leo")
+    a = add(title="Book a dentist appointment", kind="todo", source=OLD_OWNER)
     assert next(r for r in day()["pending"]["nodate"] if r["id"] == a)["category"] == "life"
     r = asyncio.run(sch.remember_category(sch.CategoryIn(ref=a, category="work")))
     row = next(x for x in day()["pending"]["nodate"] if x["id"] == a)
@@ -107,7 +108,7 @@ def test_category_override_wins_and_undoes(env):
 
 def test_mail_todo_kept_after_source_drops_it(env):
     _, write_mail = env
-    x = {"id": "t1:todo", "type": "todo", "title": "寄回宽带路由器，不然扣 £60", "detail": "", "due": ago(2), "source": "personal",
+    x = {"id": "t1:todo", "type": "todo", "title": "寄回宽带路由器，不然扣押金", "detail": "", "due": ago(2), "source": "personal",
          "thread_id": "t1", "urgent": False, "first_seen": "2026-10-01T10:00:00+01:00"}
     write_mail([x])
     row = next(r for r in day()["pending"]["items"] if r["id"] == "mail:t1:todo")
@@ -120,8 +121,8 @@ def test_mail_todo_kept_after_source_drops_it(env):
 
 
 def test_remember_groups_stale(env):
-    add(title="old thing", kind="deadline", date=ago(9), source="leo")
-    add(title="undated", kind="todo", source="leo")
+    add(title="old thing", kind="deadline", date=ago(9), source=OLD_OWNER)
+    add(title="undated", kind="todo", source=OLD_OWNER)
     got = {e["title"]: e for e in sch.build_remember()["items"]}
     assert got["old thing"]["group"] == "stale" and got["undated"]["group"] == "nodate"
     assert all(e["category"] in ("study", "life", "work") for e in got.values())
@@ -130,10 +131,10 @@ def test_remember_groups_stale(env):
 def test_migrate_old_table(tmp_path):
     conn = sqlite3.connect(tmp_path / "old.db")
     conn.row_factory = sqlite3.Row
-    conn.executescript("""
+    conn.executescript(f"""
     CREATE TABLE schedule_items (id TEXT PRIMARY KEY, kind TEXT NOT NULL DEFAULT 'event', title TEXT NOT NULL,
         date TEXT NOT NULL, start TEXT, end TEXT, location TEXT NOT NULL DEFAULT '', note TEXT NOT NULL DEFAULT '',
-        source TEXT NOT NULL DEFAULT 'leo', key TEXT, attended INTEGER, actual_start TEXT, actual_end TEXT,
+        source TEXT NOT NULL DEFAULT '{OLD_OWNER}', key TEXT, attended INTEGER, actual_start TEXT, actual_end TEXT,
         created_at TEXT NOT NULL, updated_at TEXT NOT NULL, deleted_at TEXT);
     CREATE TABLE schedule_marks (ref TEXT PRIMARY KEY, skip INTEGER, location TEXT, note TEXT, done_at TEXT,
         attended INTEGER, actual_start TEXT, actual_end TEXT, title TEXT, date TEXT, time TEXT, source TEXT, updated_at TEXT NOT NULL);
@@ -151,7 +152,7 @@ def test_migrate_old_table(tmp_path):
 
 
 def test_undo_category_keeps_a_later_tick(env):
-    a = add(title="寄回路由器", kind="deadline", date=ago(1), source="leo")
+    a = add(title="寄回路由器", kind="deadline", date=ago(1), source=OLD_OWNER)
     c = asyncio.run(sch.remember_category(sch.CategoryIn(ref=a, category="work")))
     asyncio.run(sch.remember_done(sch.DoneIn(ref=a)))
     asyncio.run(sch.undo(c["card"]["logId"]))  # 撤销「改类别」：后来打的勾照留
@@ -161,7 +162,7 @@ def test_undo_category_keeps_a_later_tick(env):
 
 
 def test_undo_tick_keeps_a_later_category(env):
-    a = add(title="寄回路由器", kind="deadline", date=ago(1), source="leo")
+    a = add(title="寄回路由器", kind="deadline", date=ago(1), source=OLD_OWNER)
     d = asyncio.run(sch.remember_done(sch.DoneIn(ref=a, how="dismissed")))
     asyncio.run(sch.remember_category(sch.CategoryIn(ref=a, category="work")))
     asyncio.run(sch.undo(d["card"]["logId"]))  # 撤销「不用管」：后来改的类别照留

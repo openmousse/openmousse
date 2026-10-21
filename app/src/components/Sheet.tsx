@@ -1,7 +1,7 @@
 import React, { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
 import { Animated, BackHandler, Easing, Keyboard, Platform, Pressable, ScrollView, StyleSheet, View, useWindowDimensions } from 'react-native';
 import { L } from '../i18n';
-import { radius, space, useTheme } from '../theme';
+import { LiftSurface, radius, space, useTheme } from '../theme';
 import Reanimated from 'react-native-reanimated';
 import { useBottomInset } from './keyboard';
 import { T } from './ui';
@@ -56,21 +56,35 @@ function Panel({ spec, shown, close, onHidden }: { spec: SheetSpec; shown: boole
       <Animated.View style={[StyleSheet.absoluteFill, { backgroundColor: 'rgba(0,0,0,0.45)', opacity: p }]}>
         <Pressable style={StyleSheet.absoluteFill} onPress={close} accessibilityLabel={L('关闭', 'Close')} />
       </Animated.View>
-      <Animated.View style={[styles.panel, { backgroundColor: t.bg, paddingBottom: space.lg, transform: [{ translateY: lift }] }, spec.tall && { maxHeight: '90%' }]}>
-        <View style={[styles.grabber, { backgroundColor: t.line }]} />
-        {spec.header ?? (spec.sub ? (
-          <View style={{ flexDirection: 'row', alignItems: 'baseline', gap: space.sm, marginBottom: space.md }}>
-            <T v="title">{spec.title}</T>
-            <T v="callout" color={t.ink3}>{spec.sub}</T>
-          </View>
-        ) : <T v="title" style={{ marginBottom: space.md }}>{spec.title}</T>)}
-        {/* handled：键盘开着时点弹层里的按钮（比如「保存」）一次就生效，点空白处收键盘。 */}
-        <ScrollView style={{ flexGrow: 0 }} showsVerticalScrollIndicator={false} keyboardShouldPersistTaps="handled">{spec.content(close)}</ScrollView>
-        {spec.footer ? spec.footer(close) : null}
-        {/* 垫片：键盘开着时和键盘一样高（逐帧跟着），收起时让出 Home 指示条 */}
-        <Reanimated.View style={bottom.spacer} />
+      {/* 深色浮层用 surface，和后面页面的 bg 分开。浅色仍用 bg：白卡片落在灰底上，样子不动。
+          这里的 t 在 LiftSurface 外面，只有面板底色用它。里面的字和线在 SheetBody 里再取一次。 */}
+      <Animated.View style={[styles.panel, { backgroundColor: t.mode === 'dark' ? t.surface : t.bg, paddingBottom: space.lg, transform: [{ translateY: lift }] }, spec.tall && { maxHeight: '90%' }]}>
+        <LiftSurface>
+          <SheetBody spec={spec} close={close} />
+          {/* 垫片：键盘开着时和键盘一样高（逐帧跟着），收起时让出 Home 指示条 */}
+          <Reanimated.View style={bottom.spacer} />
+        </LiftSurface>
       </Animated.View>
     </View>
+  );
+}
+
+/** 弹层里的拖动条、标题和内容。必须在 LiftSurface 里面取色：Panel 那份 t 是没抬的。 */
+function SheetBody({ spec, close }: { spec: SheetSpec; close: () => void }) {
+  const t = useTheme();
+  return (
+    <>
+      <View style={[styles.grabber, { backgroundColor: t.line }]} />
+      {spec.header ?? (spec.sub ? (
+        <View style={{ flexDirection: 'row', alignItems: 'baseline', gap: space.sm, marginBottom: space.md }}>
+          <T v="title">{spec.title}</T>
+          <T v="callout" color={t.ink3}>{spec.sub}</T>
+        </View>
+      ) : <T v="title" style={{ marginBottom: space.md }}>{spec.title}</T>)}
+      {/* handled：键盘开着时点弹层里的按钮（比如「保存」）一次就生效，点空白处收键盘。 */}
+      <ScrollView style={{ flexGrow: 0 }} showsVerticalScrollIndicator={false} keyboardShouldPersistTaps="handled">{spec.content(close)}</ScrollView>
+      {spec.footer ? spec.footer(close) : null}
+    </>
   );
 }
 

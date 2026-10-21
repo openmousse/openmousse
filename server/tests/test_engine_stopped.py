@@ -12,6 +12,7 @@ import pytest
 import bridges
 from engine import compact, context, loop, owner, providers
 from engine.session import DbSession, day_key, system_note, text_of, user
+from stored_values import ASSISTANT_ROLE
 from test_engine import FakeModel
 
 BUILTIN = {"claw": {"kind": "builtin"}, "engine": {"model": "deepseek/deepseek-flash"}}
@@ -148,7 +149,7 @@ def test_the_next_day_knows_the_last_reply_was_stopped_by_the_user(server_json, 
     server_json(BUILTIN)
     thread = f"t-tail-{len(tail)}"
     with chat._lock, chat.db() as conn:
-        for role, text, status in (("user", "plan a trip to the coast", "ok"), ("grava", f"Looking at trains.\n\n{tail}", "stopped")):
+        for role, text, status in (("user", "plan a trip to the coast", "ok"), (ASSISTANT_ROLE, f"Looking at trains.\n\n{tail}", "stopped")):
             conn.execute("INSERT INTO messages(thread, role, text, ts, status) VALUES(?,?,?,?,?)", (thread, role, text, "2026-10-18T20:00:00+00:00",
                                                                                                 status))
     lines = context.tail_part(thread, "2026-10-19").text.splitlines()

@@ -58,11 +58,16 @@ export interface Saved { provider: ProviderRow; saved: { key: boolean; config: b
 export interface Removed { removed: { key: boolean; config: boolean }; affected: string[]; backup: string | null }
 
 export interface Recommendation { value: string | { id: string; model: string | null } | null; why: string | null; cost: string | null }
+/** 最近一次用套餐没做成、之后也没做成过（kind：auth 没登录 / quota 额度用完 / broken 命令坏了 / timeout 超时 / error 别的）。 */
+export interface PlanFailure { at: string; kind: string; error: string }
 export interface Purpose {
-  id: 'chat' | 'background' | 'writing' | 'outsider' | 'embeddings'; label: string; applies: boolean; current: unknown; effective?: string | null;
-  usable?: boolean; follows?: string | null; recommended: Recommendation | null; why?: string;
+  id: 'chat' | 'background' | 'writing' | 'json' | 'compact' | 'outsider' | 'embeddings'; label: string; applies: boolean; current: unknown;
+  effective?: string | null; usable?: boolean; follows?: string | null; recommended: Recommendation | null; why?: string;
+  // 服务器有 setup.purposes.oneshot 才有：effective 是谁家的套餐（按量的 = null）、这台机器上现在跑不跑得了、这件事能不能用套餐、
+  // 出问题时按顺序换谁（空 = 不自动换）、最近一次套餐没做成；thenOwn（只有 compact）：套餐没做成，最后用这个对话自己的模型
+  plan?: string | null; planReady?: boolean | null; mayPlan?: boolean; backups?: string[]; lastFailure?: PlanFailure | null; thenOwn?: boolean;
 }
-export interface ModelChoice { ref: string; provider: string; providerName: string; model: string; kind: string; plan: string | null; listed: boolean }
+export interface ModelChoice { ref: string; provider: string; providerName: string; model: string; kind: string; plan: string | null; listed: boolean; oneShot?: boolean }
 export interface EmbeddingChoice { id: string; name: string; provider: string; backend: string; model: string | null; dims: number | null; local: boolean; note: string | null; models: string[] | null }
 export interface Purposes {
   claw: string; purposes: Purpose[]; choices: { models: ModelChoice[]; embeddings: EmbeddingChoice[] };
@@ -146,7 +151,8 @@ export const setupApi = {
     request<Saved>(`/api/setup/models/${enc(id)}`, { method: 'PUT', body, timeoutMs: 45000 }),
   remove: (id: string) => request<Removed>(`/api/setup/models/${enc(id)}`, { method: 'DELETE' }),
   purposes: (probe = true) => request<Purposes>(`/api/setup/purposes?probe=${probe ? 1 : 0}`, { timeoutMs: 30000 }),
-  setPurposes: (body: { chat?: string; background?: string | null; writing?: string | null; outsider?: string | null; embeddings?: { id: string; model?: string | null } | 'off' }) =>
+  /** json / compact（setup.purposes.oneshot）：引用 | 'default'（json = 跟后台和定时一样，compact = 跟对话自己的模型）| null */
+  setPurposes: (body: { chat?: string; background?: string | null; writing?: string | null; json?: string | null; compact?: string | null; outsider?: string | null; embeddings?: { id: string; model?: string | null } | 'off' }) =>
     request<Purposes & { backup: string | null }>('/api/setup/purposes', { method: 'PUT', body }),
   search: () => request<SearchView>('/api/setup/search'),
   setSearch: (body: { enabled: boolean; provider?: string | null }) => request<SearchView>('/api/setup/search', { method: 'PUT', body }),

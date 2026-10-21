@@ -46,6 +46,7 @@ from pathlib import Path
 import httpx
 
 from config import raw, settings
+from stored_values import ASSISTANT_ROLE
 
 KINDS = ("openclaw", "openai", "builtin")
 DEFAULT_TURNS = 40
@@ -206,12 +207,12 @@ def history(conn: sqlite3.Connection, thread: str, before_id: int, since: str, t
     用户那边发给模型的原文（gw_text：带了附件抽出的字、前情）优先；回复里没拿到的、停了的照样带（模型知道上一轮怎么了）；
     自动触发的（role auto）算用户说的。"""
     rows = conn.execute(
-        "SELECT role, text, gw_text FROM messages WHERE thread=? AND id<? AND julianday(ts)>=julianday(?) AND role IN ('user','auto','grava') "
+        f"SELECT role, text, gw_text FROM messages WHERE thread=? AND id<? AND julianday(ts)>=julianday(?) AND role IN ('user','auto','{ASSISTANT_ROLE}') "
         "ORDER BY id DESC LIMIT ?",
         (thread, before_id, since, turns * 2)).fetchall()
     out: list[dict] = []
     for r in reversed(rows):
-        role = "assistant" if r["role"] == "grava" else "user"
+        role = "assistant" if r["role"] == ASSISTANT_ROLE else "user"
         text = (r["gw_text"] if role == "user" and r["gw_text"] else r["text"]) or ""
         if out and out[-1]["role"] == role:  # 连着两条同一边的（排队合成过、没拿到回复）并成一条，接口不用处理奇怪的顺序
             out[-1]["content"] += "\n\n" + text
@@ -301,6 +302,9 @@ async def probe(timeout: float = 5) -> tuple[bool, str]:
         if engine_models.subscription(ref) == "chatgpt":  # 默认模型是用户自己的 ChatGPT 套餐（内核第 11b 项）
             return (True, f"built-in engine · {ref} (your ChatGPT plan)") if engine_models.subscription_ready(ref) else \
                 (False, "your ChatGPT plan isn't connected (Settings → Continue with ChatGPT)")
+        if engine_models.subscription(ref) == "grok":  # 10/20：默认模型是用户自己的 Grok 订阅（engine/grok_plan.py）
+            return (True, f"built-in engine · {ref} (your Grok subscription)") if engine_models.subscription_ready(ref) else \
+                (False, "your Grok subscription isn't signed in (python3 setup_ctl.py grok login)")
         if engine_models.subscription(ref):  # 默认模型就是本机用户自己登录的 Claude Code（内核第 11 项）
             return (True, f"built-in engine · {ref} (your own Claude Code)") if engine_models.subscription_ready(ref) else \
                 (False, "Claude Code isn't installed or logged in on this computer")

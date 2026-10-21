@@ -1,4 +1,4 @@
-"""内核第 0 步 10/16 加固（对照 pi、OpenClaw、Hermes 的源码查出来的，见 ~/openmousse-wt/engine/research/）：
+"""内核第 0 步 10/16 加固（对照 pi、OpenClaw、Hermes 的源码查出来的）：
 会话始终完整（停、取消、出错都补齐工具结果）、回放前修历史、同一个会话一次一轮、关卡默认不放、参数小毛病自动修、输出截断、
 兼容接口的各家脾气（断流、Ollama 的 index、<think>、Kimi 的 schema、Mistral 的 id、不认图、system 怎么放）、Claude 的
 fallback 块、签名被拒再试、流里的 overloaded。模型都是假的，不连网。"""

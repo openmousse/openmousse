@@ -38,7 +38,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from engine import embeddings, recall, semantic  # noqa: E402 — 要在上面设好环境变量之后再导入
 
-WORDS = ("旅行 计划 预算 健身 深蹲 睡眠 失眠 早餐 燕麦 面试 简历 项目 会议 日结 周末 爬山 读书 电影 音乐 吉他 猫 豆豆 妈妈 生日 "
+WORDS = ("旅行 计划 预算 健身 深蹲 睡眠 失眠 早餐 燕麦 面试 简历 项目 会议 日结 周末 爬山 读书 电影 音乐 吉他 猫 团子 妈妈 生日 "
          "travel budget gym sleep breakfast interview resume project meeting weekend hiking book movie music guitar cat birthday "
          "deadline report draft review lunch dinner coffee train flight hotel ticket").split()
 

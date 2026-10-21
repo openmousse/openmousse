@@ -492,3 +492,81 @@ def test_unattended_replies_record_the_backup_model(server_json, scripted):
     with chat._lock, chat.db() as conn:
         row = conn.execute("SELECT model, requested FROM messages WHERE id=?", (rid,)).fetchone()
     assert (row["model"], row["requested"]) == ("moonshot/kimi-k3", "deepseek/deepseek-flash")
+
+
+
+def test_switch_is_pushed_live_and_on_reattach(server_json, scripted, monkeypatch):
+    """10/20：换的当场推 SSE model_switch（app 在回复下面写一行），重连时补发；done 带 fallbackReason（只在这次推送里）。"""
+    import bridges
+    import chat
+    server_json(BUILTIN)
+    hold = asyncio.Event()
+
+    async def fake_run(name, args, stdin, agent, *, kill_on_cancel=False):  # 命令行工具停在这里：换完模型以后有时间重连
+        await hold.wait()
+        return "nothing today"
+    monkeypatch.setattr(bridges, "run", fake_run)
+    scripted({"deepseek/deepseek-flash": [overloaded() for _ in range(3)],
+              "moonshot/kimi-k3": [{"calls": [("c1", "schedule", {"args": ["day"]})]}, {"text": "From the backup."}]})
+
+    async def go():
+        r = chat.start_run("t-fb-live", "hello", None)
+        first = asyncio.create_task(_collect(chat.attach(r)))
+        while not r.switches:
+            await asyncio.sleep(0.01)
+        again = await _collect(chat.attach(r), until="model_switch")  # 断线重连：补发换模型的那一条
+        hold.set()
+        return await first, again
+    first, again = run(go())
+    sw = {"from": "deepseek/deepseek-flash", "to": "moonshot/kimi-k3", "reason": "overloaded"}
+    assert dict(first)["model_switch"] == sw and again[-1] == ("model_switch", sw)
+    kinds = [e for e, _ in first]
+    assert kinds.index("model_switch") < kinds.index("delta")  # 换的当场就推了，回复还没出字
+    done = dict(first)["done"]
+    assert done["fallbackFrom"] == "deepseek/deepseek-flash" and done["fallbackReason"] == "overloaded"
+    assert "fallbackReason" not in chat.history("t-fb-live", all=1)["messages"][-1]  # 不进库
+
+
+def test_a_key_rotation_is_not_a_model_switch(server_json, monkeypatch):
+    """同一个型号换一把密钥再来（engine/fallback.py 的 from = to）：不推 model_switch，done 也没有 fallbackFrom / fallbackReason。"""
+    import chat
+    monkeypatch.setenv("DS_KEY_1", "key-one")
+    monkeypatch.setenv("DS_KEY_2", "key-two")
+    server_json({**BUILTIN, "engine": {**BUILTIN["engine"], "providers": {"deepseek": {"key_env": ["DS_KEY_1", "DS_KEY_2"]}}}})
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.headers["authorization"] == "Bearer key-one":
+            return httpx.Response(429, json={"error": {"message": "rate limit reached for requests"}})
+        body = "".join("data: " + json.dumps(c) + "\n\n" for c in [{"choices": [{"index": 0, "delta": {"content": "from key two"}}]},
+                                                                  {"choices": [{"index": 0, "delta": {}, "finish_reason": "stop"}]}])
+        return httpx.Response(200, headers={"content-type": "text/event-stream"}, content=(body + "data: [DONE]\n\n").encode())
+    monkeypatch.setattr(provider_openai, "TRANSPORT", httpx.MockTransport(handler))
+
+    async def go():
+        r = chat.start_run("t-fb-key", "hello", None)
+        return r, await _collect(chat.attach(r))
+    r, evs = run(go())
+    done = dict(evs)["done"]
+    assert done["text"] == "from key two" and "model_switch" not in dict(evs) and r.switches == []
+    assert done["fallbackFrom"] is None and "fallbackReason" not in done
+
+
+async def _collect(gen, until: str = "done", timeout: float = 10.0) -> list[tuple[str, dict]]:
+    out: list[tuple[str, dict]] = []
+
+    async def go() -> None:
+        async for chunk in gen:
+            for block in chunk.decode().split("\n\n"):
+                if not block.strip():
+                    continue
+                ev, data = "message", {}
+                for line in block.split("\n"):
+                    if line.startswith("event:"):
+                        ev = line[6:].strip()
+                    elif line.startswith("data:"):
+                        data = json.loads(line[5:].strip())
+                out.append((ev, data))
+                if ev == until:
+                    return
+    await asyncio.wait_for(go(), timeout)
+    return out

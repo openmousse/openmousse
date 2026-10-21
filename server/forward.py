@@ -42,6 +42,7 @@ import social
 from chat import _lock, db, log_activity, now_iso
 from config import settings, user_word
 from i18n import L, LS
+from stored_values import ASSISTANT_ROLE
 
 log = logging.getLogger("mousse.forward")
 router = APIRouter()
@@ -127,7 +128,7 @@ def resolve(ref: str, names: dict[str, str] | None = None) -> dict | None:
     if src == "chat":
         with _lock, db() as conn:
             r = conn.execute("SELECT id, thread, role, text, ts, attachments FROM messages WHERE id=? AND thread=?", (mid, where)).fetchone()
-        if not r or r["role"] not in ("user", "grava"):
+        if not r or r["role"] not in ("user", ASSISTANT_ROLE):
             return None
         text = (r["text"] or "").strip()
         att = json.loads(r["attachments"]) if r["attachments"] else []
@@ -299,8 +300,8 @@ def window_of(ref: str) -> tuple[list[dict], int]:
     src, where, mid = parse_ref(ref)
     with _lock, db() as conn:
         if src == "chat":
-            rows = conn.execute("SELECT id FROM (SELECT id FROM messages WHERE thread=? AND id<=? AND role IN ('user','grava') ORDER BY id DESC LIMIT ?) "
-                                "UNION SELECT id FROM (SELECT id FROM messages WHERE thread=? AND id>? AND role IN ('user','grava') ORDER BY id LIMIT ?) ORDER BY id",
+            rows = conn.execute(f"SELECT id FROM (SELECT id FROM messages WHERE thread=? AND id<=? AND role IN ('user','{ASSISTANT_ROLE}') ORDER BY id DESC LIMIT ?) "
+                                f"UNION SELECT id FROM (SELECT id FROM messages WHERE thread=? AND id>? AND role IN ('user','{ASSISTANT_ROLE}') ORDER BY id LIMIT ?) ORDER BY id",
                                 (where, mid, WINDOW + 1, where, mid, WINDOW)).fetchall()
         else:
             rows = conn.execute("SELECT id FROM (SELECT id FROM friend_messages WHERE friend=? AND id<=? AND kind IN ('text','ask','answer','share') "

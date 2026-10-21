@@ -7,18 +7,29 @@ import todocat
 
 
 @pytest.mark.parametrize("title, want", [
-    ("寄回宽带路由器，不然扣 £60", "life"),
+    ("寄回宽带路由器，不然扣押金", "life"),
     ("云主机：关掉旧机器 vps-demo-01 的自动续费", "life"),
-    ("买演唱会门票（10/19、10/20、11/2）", "life"),
-    ("递交高才通申请材料（月底截止）", "work"),
-    ("办申根旅行签证", "life"),
+    ("买音乐节门票", "life"),
+    ("递交工签申请材料（月底截止）", "work"),
+    ("办旅行签证", "life"),
     ("Group Assignment 2", "study"),
-    ("推荐信：给导师发邮件，再回 5/23 那封", "study"),
-    ("Acme quant internship interview", "work"),
-    ("写 OpenMousse BP", "work"),
+    ("请导师写推荐信", "study"),
+    ("Acme internship interview", "work"),
+    ("写商业计划书初稿", "work"),
     ("Book a dentist appointment", "life"),
 ])
 def test_guess(title, want):
+    assert todocat.guess(title) == want
+
+
+@pytest.mark.parametrize("title, want", [
+    ("Renew my licence at the DMV", "life"),
+    ("交社保和公积金", "life"),
+    ("H-1B petition paperwork", "work"),
+    ("考研复习：第三章", "study"),
+])
+def test_guess_other_regions(title, want):
+    # 词表不只认一个地方的说法
     assert todocat.guess(title) == want
 
 

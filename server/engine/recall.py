@@ -12,7 +12,7 @@
                每项可以用 agents 限定给哪几个 Agent
   世界树        不进这里的索引：memory_search 顺手跑一次 tree 工具的 recall，附在结果后面（这个 Agent 有 tree 工具才有）。
                按意思搜开着时一片叶子一段进索引（按枝的范围，engine/recall_tree.py），出处写 tree:<叶子 id>，不再另外附
-范围：一个 Agent 只搜得到自己工作区、自己的对话和日结、给它的共享项。主对话默认也一样（Grava 的 OpenClaw 就是这么配的：memory.search
+范围：一个 Agent 只搜得到自己工作区、自己的对话和日结、给它的共享项。主对话默认也一样（OpenClaw 那边一般也这么配：memory.search
   每个 agent 一份索引，extraPaths 是大家共用的档案、各组日结、世界树导出、Obsidian 几个文件夹）；engine.recall.main = "all" 放开成全部。
   赛博、外人回合没有这两个工具（kinds = owner）。
 不索引内核自己的 engine_entries：主人回合说的话 messages 里都有（app 里删掉的、撤回掉的它还留着，搜出来就不对了）；工具的原样输出大多是
@@ -73,6 +73,7 @@ from datetime import date, datetime, timedelta
 
 from config import raw, settings
 from i18n import L
+from stored_values import ASSISTANT_ROLE
 
 try:
     import fcntl
@@ -95,7 +96,7 @@ SHOW_LINES, LINE_MAX = 4, 220  # 每条结果最多列几行命中的、每行�
 MAX_QUERY = 2048            # 查询最多多少字（Hermes 的 MAX_FTS5_QUERY_CHARS）
 DAY_START_HOUR = 4          # 逻辑日 04:00 换（同 chat.DAY_START_HOUR；命令行不想为它导入整个 chat）
 TEXT_EXT = (".md", ".markdown", ".txt")
-CHAT_ROLES = ("user", "grava")
+CHAT_ROLES = ("user", ASSISTANT_ROLE)
 TOOLS = ("memory_search", "memory_get")  # 给模型的两个工具（owner.rules 拿它把这两个和命令行工具分开说）
 
 _lock = threading.Lock()
@@ -740,7 +741,7 @@ def _sync_chat(conn: sqlite3.Connection, stats: dict) -> None:
                 break
             for mid, thread, role, text, ts, status in rows:
                 cnt, total, last = cnt + 1, total + mid, mid  # 指纹按读到的每一行算（读完以后再被删的，下次就对不上）
-                if role not in CHAT_ROLES or (role == "grava" and status == "error") or not (text or "").strip():
+                if role not in CHAT_ROLES or (role == ASSISTANT_ROLE and status == "error") or not (text or "").strip():
                     continue
                 cur = conn.execute("INSERT OR IGNORE INTO sources(root, path, thread, day, ts, role, size) VALUES('chat',?,?,?,?,?,?)",
                                    (str(mid), thread, day_of_ts(ts), ts, role, len(text)))
@@ -1188,7 +1189,7 @@ def thread_label(thread: str, names: dict[str, str]) -> str:
 def speaker(role: str | None, thread: str, names: dict[str, str], cache: dict[str, str]) -> str:
     if role == "user":
         return settings.user_name or L("用户", "the user")
-    if role == "grava":  # 助手的话：那个对话的 Agent 的名字，主对话就是助手自己
+    if role == ASSISTANT_ROLE:  # 助手的话：那个对话的 Agent 的名字，主对话就是助手自己
         who = owner_of(thread, cache)
         return settings.app_name if who == "main" else names.get(who) or settings.app_name
     return L("（系统）", "(system)")
@@ -1414,7 +1415,7 @@ def _get_chat(ref: str, sc: Scope, around: int | None) -> str:
             me = src.execute("SELECT id, role, text, ts FROM messages WHERE id=? AND thread=?", (mid, thread)).fetchone()
             if me is None:
                 raise RecallError(L(f"没有这条消息了：{ref}（可能被删了）", f"That message is gone: {ref} (it may have been deleted)"))
-            roles = ("user", "grava", "auto")
+            roles = ("user", ASSISTANT_ROLE, "auto")
             before = src.execute("SELECT id, role, text, ts FROM messages WHERE thread=? AND id<? AND role IN (?,?,?) ORDER BY id DESC LIMIT ?",
                                  (thread, mid, *roles, k)).fetchall()[::-1]
             after = src.execute("SELECT id, role, text, ts FROM messages WHERE thread=? AND id>? AND role IN (?,?,?) ORDER BY id LIMIT ?",

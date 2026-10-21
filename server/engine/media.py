@@ -13,6 +13,8 @@
   local：本机的命令（whisper-cli、ffmpeg、pdftoppm……）
   对象里还能写 url（换地址：自己的代理、测试的假服务）、key_env（换密钥变量名）、timeout（秒）。
   用户自己的套餐（claude-code/…、chatgpt/…）不能写在这里：这几样都是按量花钱的（写了 = 没配，problem() 说为什么）。
+  10/20 例外：Grok 订阅（grok/<型号>，engine/grok_media.py）能写在生图、生成视频、朗读这三样（GROK_PURPOSES）：算订阅的额度、不另付钱；
+  登录了才列出来能选，谁的这一轮能花照 models.may_spend（grok_plan.may_use）。
 密钥：照 models.env_value（进程环境 → app 里存的 secrets.env → env_file），每次现读；只放请求头，不进地址；报错的字里抹掉（embeddings.scrub）。
 出错（MediaError.kind，和 embeddings.EmbedError 一样分）：rate（429）/ auth（401、403、没密钥）/ bad（400、404、422）/ server（5xx）/
   net（连不上、超时）/ shape（回来的不像样）/ config（没配、配错了）。
@@ -50,7 +52,9 @@ from . import catalog, models, store
 
 PURPOSES = models.MEDIA_PURPOSES
 LOCAL = "local"
-FREE = (LOCAL, "comfyui")  # 本机跑的：不花钱，花费上限不拦（第 4 批，engine/spend.py）
+FREE = (LOCAL, "comfyui", "grok")  # 本机跑的、算订阅额度的（10/20：grok）：不花钱，花费上限不拦（第 4 批，engine/spend.py）
+GROK = "grok"                                 # 10/20：Grok 订阅（engine/grok_media.py）
+GROK_PURPOSES = ("image", "video_gen", "tts")
 TIMEOUT = 120.0
 ERROR_MAX = 300
 
@@ -150,6 +154,10 @@ def offered() -> dict[str, dict]:
            + [pid for pid, e in every.items() if (e.get("caps") or {}).get("images") is True and (e.get("caps") or {}).get("video") is not True],
            "video_gen": ["google", *(m for m, e in catalog.MEDIA.items() if "video_gen" in e["does"])],
            "music": ["google", *(m for m, e in catalog.MEDIA.items() if "music" in e["does"])]}
+    from . import grok_plan
+    if grok_plan.usable():  # 10/20：登录了 Grok 订阅才列出来能选（engine/grok_media.py）
+        for k in GROK_PURPOSES:
+            who[k].append(GROK)
     return {k: {"label": catalog.text(LABELS[k][0]), "cost": catalog.text(LABELS[k][1]), "providers": who[k]} for k in LABELS if k in who}
 
 
@@ -199,6 +207,8 @@ def parse(purpose: str, v: Any) -> Choice | None:
     if not m:
         return None
     provider, model = m.group(1), m.group(2)
+    if provider == GROK and purpose in GROK_PURPOSES and models.NAME.match(model):  # 10/20：Grok 订阅（见文件开头）
+        return Choice(purpose, provider, model, opts)
     if models.subscription(f"{provider}/{model}") or provider in models.SUBSCRIPTIONS:
         return None  # 用户自己的套餐只给他自己的回合（may_spend），这几样都是按量花钱的：不收
     if provider in catalog.CLOUD or provider in catalog.LOCAL:
@@ -217,6 +227,10 @@ def problem(purpose: str) -> str | None:
     if v is None or v is False:
         return None
     c = choice(purpose)
+    if c is not None and c.provider == GROK:  # 10/20：Grok 订阅没登录、要重登、被拒：说清楚
+        from . import grok_plan
+        why = grok_plan.why_not()
+        return L(f"engine.use.{purpose} 用的是 Grok 订阅：{why}", f"engine.use.{purpose} uses the Grok subscription: {why}") if why else None
     if c is not None:
         return None if known(c.provider) else L(f"engine.use.{purpose}：不认识 {c.provider} 这一家（engine.providers 里加上它）",
                                                 f"engine.use.{purpose}: {c.provider} isn't a known provider (add it under engine.providers)")
@@ -230,7 +244,7 @@ def problem(purpose: str) -> str | None:
 
 def known(provider: str) -> bool:
     return provider == LOCAL or provider in catalog.CLOUD or provider in catalog.LOCAL or provider in catalog.MEDIA or \
-        provider in (models.cfg().get("providers") or {})
+        provider in (models.cfg().get("providers") or {}) or provider == GROK
 
 
 # —— 地址和密钥 ——————————————————————————————————————————————————————————————————

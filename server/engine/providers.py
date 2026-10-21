@@ -4,6 +4,8 @@ codex/…、copilot/…（第 7 批）：用户自己登录的 Codex / Copilot �
 chatgpt/…（用户自己的 ChatGPT 套餐，engine/chatgpt_plan.py）：也走 provider_responses；每次调之前现取访问令牌（快过期先刷新，排队），
 回 401 就强制刷新一次再试，刷新过了还是 401 标「要重连」（用户在 ChatGPT 里断开不会通知我们）；别的错记成套餐最近一次的错（状态里给 app 看）。
 谁能用它不在这里管：loop.run_turn 先问过 models.may_spend。
+grok/…（10/20，用户自己的 Grok 订阅，engine/grok_plan.py）：同 chatgpt/…，也走 provider_responses；现取访问令牌，回 401 强制刷新一次再试，
+还是 401 标「要重登」，403 换成说清楚的一句（账号拿不到 OAuth、改用 API 密钥）；走 Grok CLI 的订阅代理时多带它要的请求头。
 
 每家都是一个异步生成器，吐统一的事件：
   {"type": "text", "text"}       回复的字，一段段来
@@ -78,6 +80,15 @@ async def stream(ref: str, req: Request) -> AsyncIterator[dict]:
         except EngineError as e:
             e.provider, e.key = name, p.get("key_id")
             raise
+    grok = name in models.API_PLANS
+    if grok:  # 10/20：用户自己的 Grok 订阅：key 换成现在能用的访问令牌（choose_key 填的只是记号）
+        from . import grok_plan
+        try:
+            p["key"] = await grok_plan.access_token()
+        except EngineError as e:
+            e.provider, e.key = name, p.get("key_id")
+            raise
+        p["headers"] = {**(p.get("headers") or {}), **grok_plan.chat_headers(model_id)}
     req.key = p.get("key_id")
     mod = provider_anthropic if p["api"] == models.ANTHROPIC else provider_responses if p["api"] == models.RESPONSES else provider_openai
     sent = req
@@ -98,6 +109,8 @@ async def stream(ref: str, req: Request) -> AsyncIterator[dict]:
                 yield ev
             if plan:
                 chatgpt_plan.note_ok()
+            if grok:
+                grok_plan.note_ok()
             return
         except EngineError as e:
             # 报错进库、进事件、进对话（还有套餐的 note_error）之前抹掉密钥和像密钥的串：这一次用的那把（套餐是访问令牌）和这一家配着的几把
@@ -109,6 +122,16 @@ async def stream(ref: str, req: Request) -> AsyncIterator[dict]:
                 sent = dataclasses.replace(req, messages=await asyncio.to_thread(images.for_model, req.messages, False))
                 sent = await _more(ref, p, req, sent, False)
                 continue
+            if grok and not started and e.status == 401 and not reauthed:  # 10/20：Grok 订阅的令牌被拒：强制刷新一次再试
+                reauthed = True
+                try:
+                    p = {**p, "key": await grok_plan.after_401(p["key"])}
+                except EngineError as e2:
+                    e2.provider, e2.key = name, p.get("key_id")
+                    raise
+                continue
+            if grok:  # 刷新过了还是 401 → 要重登；403 → 说清楚（账号拿不到 OAuth、改用 API 密钥）；别的记成最近一次的错
+                grok_plan.note_failure(e)
             if plan and not started and e.status == 401 and not reauthed:  # 套餐的令牌被拒：强制刷新一次再试
                 reauthed = True
                 try:

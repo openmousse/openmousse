@@ -24,6 +24,12 @@ web_search：搜索后端（照 OpenClaw / Hermes 接的那几家）
   一家都没配：不出这个工具（会话开头说一句「搜索没配，web_fetch 照样能打开网址」）。不自动退到不用密钥的那家（照 OpenClaw：没配就不
   把用户的搜索词发给他没选过的第三方；不要密钥的接口限流、出验证码、说改就改，一半时候失灵的工具只会教模型乱试）。要不用密钥的就写
   "provider": "duckduckgo"（或者自己搭一个 SearXNG）。
+10/20 Grok 订阅（engine/grok_plan.py）：登录了用户自己的 Grok 订阅时，grok 这一家先走订阅（同一个请求，令牌换成订阅的：算 SuperGrok 订阅的
+  额度——xAI 没写明订阅里含不含搜索；记一行、钱记 0）。XAI_API_KEY 是退路：订阅用不了（没登录、要重登、被 xAI 拒、这一轮不能花——后台的没同意过、别人引出来的、
+  经 /mcp 来的，照 grok_plan.may_use）才用它，照旧按量（xAI 按次收工具费再加型号的 token；价钱没核对，记 null）；订阅这一次没成（限流、5xx、
+  超时）就报错，不悄悄换成按量。engine.grok.search = false：搜索不走订阅。只登录了订阅不会自己换成 grok 搜（按顺序挑的时候不算订阅，
+  usable(plan=False)）：要用就写明 provider: grok。搜 X 上的帖子是另一个工具 x_search（engine/xsearch.py，默认没有；走不走订阅另有开关
+  engine.grok.x_search，默认不走）。
 web_fetch：在 webfetch.py 上做（check_url：http(s)、80 / 443、不带用户名密码；PDF / Word / PPT 抽文字）。只去公网：连之前自己解析域名、
   每个地址都查（本机、内网、链路本地、云的元数据地址、CGNAT、NAT64 里藏的内网地址都挡），连的就是查过的那个地址（不再解析第二次，
   防 DNS 换绑；OpenClaw 的 pinned lookup），每一跳重定向重新查，最多 5 跳；服务器设了代理（HTTPS_PROXY）时退回 webfetch 原来的查法
@@ -140,10 +146,19 @@ def url_of(name: str) -> str:
     return str(s.get("url") or "") or (models.env_value(str(s["url_env"])) if s.get("url_env") else "")
 
 
-def usable(name: str) -> bool:
+def on_plan() -> bool:
+    """10/20：grok 这一家能走 Grok 订阅吗：登录着、能用、engine.grok.search 没关（不连网）。这一轮能不能花另看 grok_plan.may_use。
+    x_search 不看这个，看 xsearch.on_plan（engine.grok.x_search，默认关）。"""
+    from . import grok_plan
+    return grok_plan.usable() and grok_plan.search_on()
+
+
+def usable(name: str, *, plan: bool = True) -> bool:
     s = settings_of(name)
     if name not in PROVIDERS:
         return False
+    if plan and name == "grok" and on_plan():  # 10/20：登录了 Grok 订阅也算连上（按顺序挑时 plan = False：只登录了订阅不会自己换成 grok）
+        return True
     return bool(url_of(name)) if s.get("keyless") else bool(key_of(name) and url_of(name))
 
 
@@ -158,7 +173,7 @@ def provider() -> str | None:
     more = _sub("search").get("more") is True  # 第 3 批：新加的四家默认不自己选上（见文件开头）
     for name in sorted((n for n, s in PROVIDERS.items() if not s.get("explicit") and (more or not s.get("opt_in"))),
                        key=lambda n: PROVIDERS[n]["order"]):
-        if not settings_of(name).get("keyless") and usable(name):
+        if not settings_of(name).get("keyless") and usable(name, plan=False):
             return name
     return "searxng" if usable("searxng") else None
 
@@ -223,9 +238,21 @@ def ddg_parse(page: str) -> list[Hit]:
     return out
 
 
-async def search(name: str, query: str, count: int, *, key: str | None = None, url: str | None = None) -> list[Hit]:
+async def search(name: str, query: str, count: int, *, key: str | None = None, url: str | None = None, kind: str | None = None,
+                 origin: str | None = None) -> list[Hit]:
     """调一家搜索后端 → 结果（最多 count 条）。出错抛 ToolFailure（只说哪家、什么状态，不带密钥）。
-    key / url：第 9 步的设置页「测一下」还没存的那一把（不给 = 用配好的）。"""
+    key / url：第 9 步的设置页「测一下」还没存的那一把（不给 = 用配好的）。
+    kind / origin（10/20）：这一轮是谁的（ToolCtx 的）。grok 登录了订阅、这一轮能花（grok_plan.may_use）就走订阅（见文件开头）；不给 = 不走订阅。"""
+    if name == "grok" and key is None and url is None and on_plan():
+        from . import grok_plan
+        if grok_plan.may_use(kind, origin):
+            try:
+                return await plan_grok(query, count)
+            except grok_plan.ApiError as e:
+                if e.status not in (401, 403) or not key_of(name):  # 要重登、被拒才退到 XAI_API_KEY；限流、5xx、超时照实报
+                    raise ToolFailure(str(e)) from None
+        elif not key_of(name):
+            raise ToolFailure(grok_plan.refusal(kind, origin))
     url, key = url or url_of(name), key or key_of(name)
     n = max(1, min(int(count or COUNT), COUNT_MAX))
     try:
@@ -311,6 +338,57 @@ async def search(name: str, query: str, count: int, *, key: str | None = None, u
         media.record("search", media.Choice("search", name, str(settings_of(name).get("model") or name)), units=1, unit="query", unpriced=True)
     res = Hits(out[:n])
     res.answer = out.answer
+    return res
+
+
+# —— 10/20：grok 走 Grok 订阅（engine/grok_plan.py）——————————————————————————————————————————
+
+def grok_model(plan: bool = False) -> str:
+    """grok 搜索用哪个型号：engine.web.search.providers.grok.model 写了就用它；走订阅时用账号目录里对话的默认型号（grok_plan.default_model）；
+    不然 PROVIDERS 里的默认（grok-4.7）。"""
+    p = _sub("search").get("providers")
+    mine = p.get("grok") if isinstance(p, dict) and isinstance(p.get("grok"), dict) else {}
+    if mine.get("model"):
+        return str(mine["model"])
+    if plan:
+        from . import grok_plan
+        if d := grok_plan.default_model():
+            return d.partition("/")[2]
+    return str(PROVIDERS["grok"]["model"])
+
+
+def responses_hits(data: object, answer_max: int = 4000) -> Hits:
+    """xAI Responses API 回的（tools 里有 web_search / x_search）→ 回答 + 出处：output_text 上的 url_citation，再加顶层的 citations
+    （x_search 多半放在那里，可能只是网址）；按网址去重。"""
+    texts, cites = [], []
+    for out in (data.get("output") if isinstance(data, dict) else None) or []:
+        for blk in (out.get("content") or []) if isinstance(out, dict) else []:
+            if isinstance(blk, dict) and blk.get("type") == "output_text":
+                texts.append(str(blk.get("text") or ""))
+                cites += [a for a in blk.get("annotations") or [] if isinstance(a, dict) and a.get("type") == "url_citation"]
+    top = data.get("citations") if isinstance(data, dict) else None
+    cites += [{"url": c} if isinstance(c, str) else c for c in top if isinstance(c, (str, dict))] if isinstance(top, list) else []
+    seen, hits = set(), Hits()
+    for h in _hits(cites, "title", "url", "snippet"):
+        if h.url not in seen:
+            seen.add(h.url)
+            hits.append(h)
+    hits.answer = _clean("".join(texts), answer_max)
+    return hits
+
+
+async def plan_grok(query: str, count: int) -> Hits:
+    """grok 这一家走 Grok 订阅：同一个请求（Responses API + web_search），令牌是订阅的（grok_plan.api，401 刷新一次再试、403 说清楚）。
+    算订阅的额度：记一行，钱记 0。没成抛 grok_plan.ApiError。"""
+    from . import grok_plan, media
+    model = grok_model(plan=True)
+    data, _ = await grok_plan.api("POST", "/responses", json_body={"model": model, "input": [{"role": "user", "content": query}],
+                                                                  "tools": [{"type": "web_search"}], "store": False},
+                                  timeout=SEARCH_TIMEOUT, what="web_search")
+    hits = responses_hits(data)
+    media.record("search", media.Choice("search", "grok", model), units=1, unit="query", cost=0.0)
+    res = Hits(hits[:max(1, min(int(count or COUNT), COUNT_MAX))])
+    res.answer = hits.answer
     return res
 
 
@@ -695,7 +773,7 @@ def search_tool(agent: str) -> Tool | None:
             raise ToolFailure(L("搜索没配好（engine.web.search）", "Web search isn't set up (engine.web.search)"))
         if held := await door(ctx, f"{url_of(now) or 'https://' + now}?q={quote_plus(q)}", "search"):
             return held
-        hits = await search(now, q, int(args.get("count") or _sub("search").get("count") or COUNT))
+        hits = await search(now, q, int(args.get("count") or _sub("search").get("count") or COUNT), kind=ctx.kind, origin=ctx.origin)
         answer = getattr(hits, "answer", "")
         if not hits and not answer:
             return L(f"「{q}」没有搜到结果（{now}）", f'No results for "{q}" ({now})')
@@ -797,4 +875,5 @@ async def rendered(agent: str, url: str) -> dict | None:
 
 
 def tools(agent: str) -> list[Tool]:
-    return [t for t in (search_tool(agent), fetch_tool(agent)) if t is not None]
+    from . import xsearch  # 10/20：x_search（engine.web.x_search 开了才有）
+    return [t for t in (search_tool(agent), fetch_tool(agent), xsearch.tool(agent)) if t is not None]

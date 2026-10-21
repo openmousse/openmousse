@@ -186,6 +186,25 @@ Exit codes: 0 done or --dry-run; 1 a step failed (the rest still ran; a failed b
 """
 
 
+EN["owner"] = """mousse owner migrate: replace the old value that stands for "you" in the database ('leo') with the new one (default 'owner'),
+then write owner_id into server.json.
+
+  mousse owner migrate [--to owner] [--apply] [--db PATH] [--json]
+
+Why: the schedule, goals, projects and meal-log tables record what you changed yourself under one id (config.owner_id; other values are
+main or an Agent's id). Older installs wrote 'leo'. 'leo', 'owner' and the owner_id in server.json all count as you when read, so nothing
+needs migrating for things to work; run this only to have a single value in the database. --to another value (leo, say) goes the other way.
+By default it only reports which table, which column and how many rows would change, and changes nothing. --apply: checks that server.json
+can be read and still validates with owner_id set (otherwise nothing changes); backs up the database (sqlite3's backup(), into backup_dir,
+default <data_dir>/backups/, 0600); replaces the values in one transaction; backs up server.json (server.json.bak-<time>) and writes
+owner_id, so new writes use the new value (read on every request, no restart); then sweeps once more for anything written in between.
+Not touched: memory tree leaves (their source lives in your own notes, and both values count), the before / after snapshots in the change
+logs (an undo writes back an old value, which still counts as you), any other column. Nothing runs it automatically.
+Exit codes: 0 reported / done / nothing to change; 1 failed (database or server.json unreadable, write failed, validation failed);
+2 bad arguments (--to doesn't look like an id).
+"""
+
+
 def _doc(name: str) -> str:
     """--help 的说明。中文是那个模块开头的说明（导入出错也不拦着别的命令：只是没有说明）。"""
     if L("zh", "en") == "en":
@@ -198,7 +217,7 @@ def _doc(name: str) -> str:
 
 def writes(name: str, fn: str, a: argparse.Namespace) -> bool:
     """会改东西的运维命令：update（--check、--plan 除外）、restore、uninstall、sessions cleanup（这三样 --dry-run 除外）、config set / unset、
-    带 --fix 的（doctor、security audit）。"""
+    带 --fix 的（doctor、security audit）、owner migrate --apply。"""
     if getattr(a, "fix", False):
         return True
     if name == "update":
@@ -207,6 +226,8 @@ def writes(name: str, fn: str, a: argparse.Namespace) -> bool:
         return getattr(a, "action", None) in ("set", "unset")
     if (name, fn) == ("backup", "main_restore") or name in ("uninstall", "sessions"):
         return not getattr(a, "dry_run", False)
+    if name == "owner":
+        return bool(getattr(a, "apply", False))
     return False
 
 
@@ -302,6 +323,14 @@ def add(sub) -> None:
     cl.add_argument("--yes", action="store_true", help=L("不问，直接清", "remove without asking"))
     cl.add_argument("--no-vacuum", action="store_true", help=L("清完不 VACUUM", "don't VACUUM afterwards"))
     cl.add_argument("--json", action="store_true")
+
+    p = _parser(sub, "owner", "主人在库里记成什么（migrate 把老值 leo 换成新值）", "How 'you' is recorded in the database (migrate replaces the old 'leo')")
+    os_ = p.add_subparsers(dest="action", required=True)
+    m = os_.add_parser("migrate", help=L("默认只看会改哪些表、多少行；--apply 才改（先备份）", "reports what would change; --apply changes it (backed up first)"))
+    m.add_argument("--to", default=None, help=L("换成什么（默认 owner）", "the new value (default owner)"))
+    m.add_argument("--apply", action="store_true", help=L("真的改：先备份数据库和 server.json", "really change it: the database and server.json are backed up first"))
+    m.add_argument("--db", help=L("换一个库（默认 server.json 的 db）", "another database (default: db from server.json)"))
+    m.add_argument("--json", action="store_true")
 
     p = _parser(sub, "diagnostics", "打一个诊断包（不带对话、密钥、令牌、邮箱）", "Make a diagnostics bundle (no conversations, keys, tokens or emails)")
     p.add_argument("--out", help=L("放哪（.zip 文件或目录；默认 server.json 旁边的 diagnostics/）",

@@ -6,7 +6,7 @@
   python3 goals_ctl.py trend [--metric weight|bodyfat] [--days 90] [--json]   # 体重 / 体脂的读数：最新、近 7 天平均、30 天变化
   python3 goals_ctl.py log [--limit N] [--goal <id>]            # 最近的改动（谁改了什么），带改动号
 改（每次改动都记下来，app 目标页顶上能撤销；输出里有改动号）
-  python3 goals_ctl.py add --title "体重回到 75 kg 以下" --category 健康 [--metric weight] [--low 72] [--high 75] [--unit kg]
+  python3 goals_ctl.py add --title "体重降到 65 kg 以下" --category 健康 [--metric weight] [--low 60] [--high 65] [--unit kg]
       [--due 2026-12-31] [--detail "…"] [--agent fitness]
   python3 goals_ctl.py update <id> [--title …] [--category …] [--detail … | --no-detail] [--due … | --no-due]
       [--metric weight|bodyfat | --no-metric] [--low N | --no-low] [--high N | --no-high] [--unit …] [--agent <id> | --no-agent] [--position N]
@@ -17,7 +17,7 @@
 
 分类：健康 / 学业 / 职业 / 财务（也认 health / study / career / finance）。
 --metric：服务端自动读当前值（bodyfat 体脂、weight 体重：训记为主，Apple 健康对照）；不给 = 不自动读。体脂从不自动算，只读记下的。
---low / --high：目标区间，可以只给一头（只给 --high = 降到这个以下）。--due：YYYY-MM-DD、YYYY-MM，或者「2027 秋」这样的说法。
+--low / --high：目标区间，可以只给一头（只给 --high = 降到这个以下）。--due：YYYY-MM-DD、YYYY-MM，或者「2027 春」这样的说法。
 --agent：这个目标挂在哪个 Agent 下（app 里「去看板」）。
 不给 --source：当前目录在哪个 Agent 的工作区里就算它的，否则是 main。
 服务地址按 server.json 的 bind（MOUSSE_SERVER_CONFIG 换一份 server.json 就指向别的服务，测试用）。
@@ -44,7 +44,7 @@ Read
   python3 goals_ctl.py trend [--metric weight|bodyfat] [--days 90] [--json]   # weight / body fat readings: latest, 7-day average, 30-day change
   python3 goals_ctl.py log [--limit N] [--goal <id>]            # recent changes (who changed what), with change numbers
 Change (every change is logged and can be undone from the top of the app's Goals page; the output has the change number)
-  python3 goals_ctl.py add --title "Back under 75 kg" --category health [--metric weight] [--low 72] [--high 75] [--unit kg]
+  python3 goals_ctl.py add --title "Down to 65 kg" --category health [--metric weight] [--low 60] [--high 65] [--unit kg]
       [--due 2026-12-31] [--detail "…"] [--agent fitness]
   python3 goals_ctl.py update <id> [--title …] [--category …] [--detail … | --no-detail] [--due … | --no-due]
       [--metric weight|bodyfat | --no-metric] [--low N | --no-low] [--high N | --no-high] [--unit …] [--agent <id> | --no-agent] [--position N]
@@ -56,7 +56,7 @@ Change (every change is logged and can be undone from the top of the app's Goals
 Categories: 健康 / 学业 / 职业 / 财务 (or health / study / career / finance).
 --metric: the server reads the current value itself (bodyfat, weight: the body data source first, Apple Health as a cross-check); none = no automatic reading.
 Body fat is never calculated, only read from what was recorded.
---low / --high: the target range; one end is enough (only --high = get below it). --due: YYYY-MM-DD, YYYY-MM, or words like "fall 2027".
+--low / --high: the target range; one end is enough (only --high = get below it). --due: YYYY-MM-DD, YYYY-MM, or words like "spring 2027".
 --agent: the Agent this goal belongs to ("Go to board" in the app).
 Without --source: the Agent whose workspace contains the current directory, otherwise main.
 The server address comes from bind in server.json (point MOUSSE_SERVER_CONFIG at another server.json to use another server, e.g. for tests).

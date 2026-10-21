@@ -7,7 +7,7 @@ import { L } from '../i18n';
 import { space, useAppearance, useTheme, vizMark, type Appearance } from '../theme';
 import { NavHeader, Screen, SectionLabel, Segmented, T } from '../components/ui';
 import {
-  BarChart, BeforeAfter, ChangeTag, ChartCard, CompareList, DataTable, DayGrid, Donut, HBarChart, HeatCalendar, Kanban, KanbanBoard, LineChart, MonthCalendar,
+  BarChart, BeforeAfter, ChangeTag, ChartCard, CompareList, DataTable, DayGrid, Donut, HBarChart, HeatCalendar, Kanban, KanbanBoard, LineChart, MemoryRings, MonthCalendar,
   NutritionRing, PercentBar, ProgressRing, RangeSwitch, SegmentBars, SleepStages, Sparkline, StackedBar, StatRow, StatTile, StatusTag, Streak,
   SwatchMark, TargetBar, Timeline, VizEmpty, VizError, VizLoading, VizSurface, type RangeDays, type TableColumn,
 } from '../components/viz';
@@ -30,6 +30,22 @@ function Section({ title, children }: { title: string; children: React.ReactNode
     <View>
       <SectionLabel>{title}</SectionLabel>
       {children}
+    </View>
+  );
+}
+
+/** 年轮点按：组件只把是哪一条交回来，打开什么由页面定；这里在下面写出那一条。 */
+function RingsDemo() {
+  const t = useTheme();
+  const dots = D.memoryDots();
+  const [picked, setPicked] = useState<string | null>(null);
+  const hit = dots.find((d) => d.key === picked);
+  return (
+    <View style={{ gap: space.sm }}>
+      <MemoryRings dots={dots} days={7} onPick={setPicked} />
+      <T v="callout" color={hit ? t.ink : t.ink3} numberOfLines={2} style={{ textAlign: 'center' }}>
+        {hit ? `${hit.day == null ? L('待确认', 'To confirm') : hit.day === 0 ? L('今天', 'Today') : L(`${hit.day} 天前`, `${hit.day} days ago`)} · ${hit.label}` : L('点一个点', 'Tap a dot')}
+      </T>
     </View>
   );
 }
@@ -227,19 +243,19 @@ export function VizKitScreen() {
                 <View style={{ flex: 1, gap: 4 }}>
                   <T v="caption" color={t.ink2} style={{ fontWeight: '400' }}>{L('硬拉', 'Deadlift')}</T>
                   <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
-                    <T style={{ fontSize: 26, lineHeight: 30, fontWeight: '700' }}>70 kg</T>
+                    <T style={{ fontSize: 26, lineHeight: 30, fontWeight: '700' }}>60 kg</T>
                     <ChangeTag dir="up" text="5 kg" good />
                   </View>
-                  <T v="caption" color={t.ink3} style={{ fontWeight: '400' }}>{L('估算最大重量 78 → 82 kg', 'Estimated 1RM 78 → 82 kg')}</T>
+                  <T v="caption" color={t.ink3} style={{ fontWeight: '400' }}>{L('估算最大重量 66 → 70 kg', 'Estimated 1RM 66 → 70 kg')}</T>
                 </View>
-                <BeforeAfter before={{ label: '9/29', value: 65 }} after={{ label: '10/12', value: 70 }} label={L('硬拉工作重量：9/29 65 kg，10/12 70 kg', 'Deadlift working weight: 65 kg on 29 Sep, 70 kg on 12 Oct')} />
+                <BeforeAfter before={{ label: '9/29', value: 55 }} after={{ label: '10/12', value: 60 }} label={L('硬拉工作重量：9/29 55 kg，10/12 60 kg', 'Deadlift working weight: 55 kg on 29 Sep, 60 kg on 12 Oct')} />
               </View>
             </VizSurface>
             <CompareList title={L('与 9/29 相比', 'Compared with 29 Sep')} items={D.pullCompare()} />
           </Item>
           <Item title={L('目标条', 'Target bar')} rule={L('实际对目标：竖线是目标，条可以超过它；超过不好时（热量）用注意色并写明「超出」。', 'Actual against target: the tick is the target and the bar may pass it; when going over is bad (calories) it turns amber and says so.')}>
             <TargetBar label={L('蛋白质', 'Protein')} value={D.dinner.protein} target={D.dinner.proteinTarget} text={String(D.dinner.protein)} targetText={`${D.dinner.proteinTarget} g`}
-              note={L('今晚两顿合计；训练日目标 120 g。白天的饮食尚未记录。', "Tonight's two meals; the training-day target is 120 g. Daytime meals aren't logged yet.")} />
+              note={L('今晚两顿合计；训练日目标 100 g。白天的饮食尚未记录。', "Tonight's two meals; the training-day target is 100 g. Daytime meals aren't logged yet.")} />
           </Item>
         </Section>
 
@@ -261,6 +277,13 @@ export function VizKitScreen() {
           </Item>
           <Item title={L('连续打卡', 'Streak')} rule={L('最近 N 天一格一天：做了上色，没做是轨道色，今天描金边。示例：9/29–10/12 训练。', 'One cell per day for the last N days: done is coloured, missed is the track, today has a gold edge. Example: workouts, 29 Sep–12 Oct.')}>
             <Streak days={D.trainingDays} today="2026-10-12" value={L('7 次', '7')} title={L('近 14 天训练', 'workouts in 14 days')} sub={L('连续 2 天（10/11–10/12）', '2 days in a row (11–12 Oct)')} />
+          </Item>
+        </Section>
+
+        <Section title={L('记忆', 'Memory')}>
+          <Item title={L('年轮', 'Memory rings')} rule={L('一天一圈：外圈为今天，向内依次为前几天，一个点一条新记忆；待确认的画在最外圈外面（注意色）。点按一个点打开那一条。示例：10/6–10/12。',
+            'One ring per day: the outer ring is today, then the days before it inward, one dot per new memory; ones waiting for you sit outside the outer ring (amber). Tap a dot to open it. Example: 6–12 Oct.')}>
+            <RingsDemo />
           </Item>
         </Section>
 

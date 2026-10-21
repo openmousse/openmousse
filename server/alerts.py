@@ -5,7 +5,7 @@
 - 规则（spec）：{id, title, source: 查询 Q（和看板的列表一样）, row: 每一行写成什么（「{name}」）, message: 推送正文（「家里快没了：{items}」，
   {items} 是前 limit 行、{count} 是总共几行）, at: "10:00", days: ["sat"]（mon…sun）或不写 = 每天, level: quiet 静默（默认）| ring 响铃, limit: 6}。
 - 到点查出来是空的就不推。服务器那会儿没开着：3 小时内补推一次，过了就等下一次。点开推送进这个 Agent 的看板。
-- 表 alerts（grava.db）：draft 等点头 → live 开着 / paused 暂停；rejected 没同意；deleted 删了；superseded 被同一个 id 的新规则换掉。
+- 表 alerts（mousse.db）：draft 等点头 → live 开着 / paused 暂停；rejected 没同意；deleted 删了；superseded 被同一个 id 的新规则换掉。
 """
 from __future__ import annotations
 

@@ -1,6 +1,8 @@
 // Zen 的「想法」一边（2026-10-13 重排，服务器 supports('think.home')；老服务器还是 ThinkLegacy 的三栏）。
 // 从上到下：冥想结束的提示 → 在想（讨论中的主题，横排卡片）→ 记下的（想法和收藏放在一起，按天分组，一句话就是一行）→ 已想完一行。
 // 每条都有不经模型的出口：左滑 完成 / 删除；长按进多选，底部一排 归入主题 / 讨论 / 放进播客 / 写成笔记 / 完成 / 删除。
+// 主线第三步（服务器 supports('think.discuss')，赛博或群聊开着）：只选了一条时「讨论」是「拿去讨论」：和一位赛博、新建群聊、放进播客、交给功能 Agent、
+// 发给好友，或者照旧和助手讨论（IdeaDiscussSheet）；拿去讨论过的想法行尾带「讨论中」，点它去那里。
 import React, { useEffect, useRef, useState } from 'react';
 import { Pressable, ScrollView, StyleSheet, TextInput, View } from 'react-native';
 import Reanimated from 'react-native-reanimated';
@@ -12,6 +14,10 @@ import { useSheet } from '../components/Sheet';
 import { Btn, PullRefresh, T, showError } from '../components/ui';
 import * as thinkApi from '../api/think';
 import type { DayItem, Fragment, TopicCard } from '../api/think';
+import { useCybersOn } from '../api/cybers';
+import { useGroupsOn, type IdeaDiscussion } from '../api/groups';
+import { supports } from '../api/version';
+import { IdeaDiscussSheet, openDiscussion } from '../components/agents/IdeaDiscuss';
 import { agentName } from '../brand';
 import { L } from '../i18n';
 import { useStore } from '../store';
@@ -64,6 +70,8 @@ export function describe(x: DayItem): { text: string; sub: string; rich: boolean
 export function Row({ x, first, selecting, on, onPress, onLong }: { x: DayItem; first: boolean; selecting: boolean; on: boolean; onPress: () => void; onLong?: () => void }) {
   const t = useTheme();
   const r = describe(x);
+  // 拿去讨论过（服务器 think.frag_json 的 discussion）：行尾「讨论中」，点它去那里（一样东西只有一个家）
+  const disc = x.type === 'idea' ? (x.idea as Fragment & { discussion?: Pick<IdeaDiscussion, 'kind' | 'id'> | null }).discussion : null;
   return (
     <Pressable onPress={onPress} onLongPress={selecting || !onLong ? undefined : onLong} delayLongPress={400}
       accessibilityRole={selecting ? 'checkbox' : 'button'} accessibilityState={selecting ? { checked: on } : undefined}
@@ -80,6 +88,12 @@ export function Row({ x, first, selecting, on, onPress, onLong }: { x: DayItem; 
         <T v="body" numberOfLines={1} style={{ fontSize: 15, fontWeight: r.rich ? '600' : '400' }}>{r.text}</T>
         {r.sub ? <T v="caption" color={t.ink3} numberOfLines={1} style={{ fontSize: 12.5, fontWeight: '400' }}>{r.sub}</T> : null}
       </View>
+      {disc && !selecting ? (
+        <Pressable onPress={() => openDiscussion(disc)} hitSlop={8} accessibilityRole="button" accessibilityLabel={L('讨论中，打开', 'Being discussed; open it')}
+          style={[styles.tag, { backgroundColor: t.goldSoft }]}>
+          <T v="caption" color={t.gold} style={{ fontSize: 11.5, fontWeight: '700' }}>{L('讨论中', 'Discussing')}</T>
+        </Pressable>
+      ) : null}
       {r.unread ? <View style={[styles.dot, { backgroundColor: t.cyan }]} /> : null}
     </Pressable>
   );
@@ -88,11 +102,11 @@ export function Row({ x, first, selecting, on, onPress, onLong }: { x: DayItem; 
 type SelAct = 'topic' | 'talk' | 'podcast' | 'note' | 'done' | 'delete';
 
 /** 多选时代替输入栏的一排：归入主题 / 讨论 / 放进播客 / 写成笔记 / 完成 / 删除。 */
-function SelectBar({ n, busy, onAct }: { n: number; busy: boolean; onAct: (a: SelAct) => void }) {
+function SelectBar({ n, busy, onAct, discuss }: { n: number; busy: boolean; onAct: (a: SelAct) => void; discuss?: boolean }) {
   const t = useTheme();
   const acts: [SelAct, string, typeof Mic, string][] = [
     ['topic', L('归入主题', 'To topic'), Lightbulb, t.gold],
-    ['talk', L('讨论', 'Discuss'), MessageCircle, t.ink],
+    ['talk', discuss && n === 1 ? L('拿去讨论', 'Discuss…') : L('讨论', 'Discuss'), MessageCircle, t.ink],
     ['podcast', L('放进播客', 'To podcast'), Mic, t.ink],
     ['note', L('写成笔记', 'Write up'), BookOpen, t.ink],
     ['done', L('完成', 'Done'), CircleCheck, t.ink],
@@ -178,6 +192,9 @@ export function ZenIdeas({ sel, setSel }: { sel: string[] | null; setSel: (v: st
   const { home, homeError, refreshHome, unseenFocus, finish, removeFragment, removeSave } = useThink();
   const [busy, setBusy] = useState(false);
   const [undo, setUndo] = useState<{ ids: string[]; text: string } | null>(null);
+  const cybersOn = useCybersOn();
+  const groupsOn = useGroupsOn();
+  const canDiscuss = supports('think.discuss') && (cybersOn === true || groupsOn === true);  // 赛博、群聊都关着：服务器那边是 404，照旧「和助手讨论」
   const root = useRef<View>(null);
   const bottom = useBottomInset(root);
   useEffect(() => {
@@ -256,14 +273,24 @@ export function ZenIdeas({ sel, setSel }: { sel: string[] | null; setSel: (v: st
       ) });
       return;
     }
-    setBusy(true);
-    try {
-      const ids = await ideaIds();
+    const toTopic = async (ids: string[]) => {
       const tp = await thinkApi.createTopic(ids);
       if (a === 'talk') await thinkApi.talk(tp.id); else await thinkApi.done(tp.id);
       setSel(null);
       refreshHome();
       nav.navigate(a === 'talk' ? 'ThinkTalk' : 'ThinkDone', { id: tp.id });
+    };
+    setBusy(true);
+    try {
+      const ids = await ideaIds();
+      if (a === 'talk' && ids.length === 1 && canDiscuss) {  // 只选了一条：拿去讨论（去哪由你挑；原来的「和助手讨论」是最后一行）
+        sheet.open({ title: L('拿去讨论', 'Take it to discuss'), content: (close) => (
+          <IdeaDiscussSheet idea={ids[0]} close={close} onDone={() => { setSel(null); refreshHome(); }}
+            onTalk={() => { toTopic(ids).catch((e) => showError(L('无法开始', "Couldn't start"), e)); }} />
+        ) });
+        return;
+      }
+      await toTopic(ids);
     } catch (e) { showError(L('无法开始', "Couldn't start"), e); } finally { setBusy(false); }
   };
   const openTopicCard = (tp: TopicCard) => nav.navigate(tp.draftStatus === 'ready' ? 'ThinkDone' : 'ThinkTalk', { id: tp.id });
@@ -335,7 +362,7 @@ export function ZenIdeas({ sel, setSel }: { sel: string[] | null; setSel: (v: st
           </View>
         ) : null}
       </View>
-      {selecting ? <SelectBar n={picked.length} busy={busy} onAct={act} /> : <CaptureBar />}
+      {selecting ? <SelectBar n={picked.length} busy={busy} onAct={act} discuss={canDiscuss} /> : <CaptureBar />}
     </Reanimated.View>
   );
 }
@@ -356,6 +383,7 @@ const styles = StyleSheet.create({
   row: { flexDirection: 'row', alignItems: 'center', gap: 12, paddingHorizontal: 14, borderTopWidth: StyleSheet.hairlineWidth },
   circle: { width: 22, height: 22, borderRadius: 11, borderWidth: 1.5, alignItems: 'center', justifyContent: 'center' },
   dot: { width: 8, height: 8, borderRadius: 4 },
+  tag: { borderRadius: 9, paddingHorizontal: 7, height: 20, justifyContent: 'center' },
   day: { fontWeight: '600', paddingHorizontal: 4, paddingTop: 10, paddingBottom: 6 },
   card: { borderRadius: 14, overflow: 'hidden' },
   empty: { textAlign: 'center', paddingVertical: space.xxl, paddingHorizontal: space.lg },

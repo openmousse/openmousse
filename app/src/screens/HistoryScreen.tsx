@@ -11,6 +11,7 @@ import { InboxCard } from '../components/InboxCard';
 import { Search, X } from '../components/icons';
 import { Card, NavHeader, Pill, Screen, SectionLabel, T } from '../components/ui';
 import { SourcePill } from '../components/SourceBadge';
+import { ASSISTANT_ROLE } from '../data/stored';
 import type { DayInfo, Message, SearchHit } from '../data/types';
 import { L } from '../i18n';
 import { useStore } from '../store';
@@ -195,7 +196,7 @@ export function HistoryDayScreen() {
           {msgs.map((m, i) => (
             <View key={m.id} onLayout={(e) => { ys.current[m.id] = e.nativeEvent.layout.y; }}
               style={focus === m.id ? [styles.focus, { borderLeftColor: t.gold }] : undefined}>
-              <Bubble m={m} avatar={avatar} groupIds={groupIds} showAvatar={m.role === 'grava' && msgs[i - 1]?.role !== 'grava'} />
+              <Bubble m={m} avatar={avatar} groupIds={groupIds} showAvatar={m.role === ASSISTANT_ROLE && msgs[i - 1]?.role !== ASSISTANT_ROLE} />
               {asks.filter((it) => it.messageId != null && `db${it.messageId}` === m.id).map((it) => (
                 <View key={it.id} style={{ paddingLeft: 36, marginTop: 14 }}><InboxCard item={it} variant="chat" /></View>
               ))}

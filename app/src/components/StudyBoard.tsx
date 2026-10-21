@@ -188,7 +188,7 @@ export function StudyEmpty({ onChat }: { onChat: () => void }) {
       <Card style={{ gap: 10 }}>
         <T v="callout" color={t.ink2} style={{ fontWeight: '600' }}>{L('也可以在对话中添加', 'Or add it in the chat')}</T>
         <Pressable onPress={onChat} accessibilityRole="button" style={[styles.bubble, { backgroundColor: t.goldSoft }]}>
-          <T v="body" style={{ fontSize: 15 }}>{L('这学期有一门行为经济学，大纲在附件里', 'I have a behavioural economics course this term; the syllabus is attached')}</T>
+          <T v="body" style={{ fontSize: 15 }}>{L('这学期有一门线性代数，大纲在附件里', 'I have a linear algebra course this term; the syllabus is attached')}</T>
         </Pressable>
         <T v="callout" color={t.ink3} style={{ fontSize: 13 }}>{L('学习 Agent 会按相同步骤引导添加，缺少材料时会向你确认。', "The study Agent follows the same steps and asks for anything missing.")}</T>
       </Card>

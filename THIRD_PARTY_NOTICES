@@ -527,3 +527,43 @@ AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
 LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
+
+
+Hermes Agent (NousResearch/hermes-agent), later commit
+------------------------------------------------------
+
+Source:  https://github.com/NousResearch/hermes-agent
+Commit:  49268ca6728b35296e1cc5f6fba12c6ffd1c7a8b
+Used in: server/engine/grok_plan.py — signing in to the user's own Grok subscription with
+         xAI's OAuth device code: the shared client id, the scope and the issuer
+         (hermes_cli/auth_constants.py), discovery endpoints accepted only over https on
+         x.ai (_xai_validate_oauth_endpoint), the device-code polling rules (wait on
+         authorization_pending, a longer interval on slow_down, back off on 408 / 429 / 5xx
+         and edge-mitigation pages until the code expires; hermes_cli/auth_device_flow.py
+         _poll_device_token_generic), refreshing long-lived access tokens up to an hour
+         early and short-lived ones two minutes early (_xai_proactive_refresh_skew_seconds),
+         and treating HTTP 403 from the token endpoint as an account that xAI won't give
+         OAuth access to, with an API key as the way out rather than signing in again
+         (refresh_xai_oauth_pure); rewritten in this server's style
+
+MIT License
+
+Copyright (c) 2025 Nous Research
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.

@@ -76,6 +76,7 @@ def perm_targets(cfg: dict) -> list[tuple[str, str, Path, str]]:
         ("fs.config", "server.json", C.config_path(), L("接入令牌和全部设置", "access tokens and every setting")),
         ("fs.data_dir", L("数据目录", "data folder"), d, L("对话、记忆、上传的文件", "chats, memories, uploads")),
         ("fs.chatgpt", L("ChatGPT 套餐的凭据", "ChatGPT plan credentials"), C.chatgpt_dir(cfg), L("ChatGPT 套餐的令牌", "the ChatGPT plan's tokens")),
+        ("fs.grok", L("Grok 订阅的凭据", "Grok subscription credentials"), C.grok_dir(cfg), L("Grok 订阅的令牌", "the Grok subscription's tokens")),
         ("fs.apps", L("连接器的令牌", "connector tokens"), d / "apps", L("第三方应用的 OAuth 令牌", "third-party OAuth tokens")),
         ("fs.sentinel", L("Doorman 的密钥", "Doorman's keys"), d / "sentinel", L("代位用的真密钥、证书的私钥", "the real keys it substitutes, its CA key")),
         ("fs.device_key", L("设备私钥", "device key"), d / "gateway-device.json", L("连 Gateway 的设备私钥", "the device key for the Gateway")),
@@ -368,11 +369,20 @@ def check_plan(cfg: dict) -> list[Finding]:
         on = chatgpt_plan.background_allowed() and chatgpt_plan.enabled()
     except Exception:  # noqa: BLE001
         on = False
-    if not on:
-        return []
-    return [Finding("plan.chatgpt_background", "warn", L("ChatGPT 套餐的「后台也能花」开着", "The ChatGPT plan may be used in the background"),
-                    L("定时任务、心跳、后台任务没人在看的时候也花你的套餐额度", "scheduled jobs, heartbeats and background tasks spend your plan while nobody watches"),
-                    L("不想要就在 app 的设置里关掉（ChatGPT 套餐 → 后台）", "turn it off in the app's settings (ChatGPT plan → background) if you don't want that"))]
+    out = [] if not on else [
+        Finding("plan.chatgpt_background", "warn", L("ChatGPT 套餐的「后台也能花」开着", "The ChatGPT plan may be used in the background"),
+                L("定时任务、心跳、后台任务没人在看的时候也花你的套餐额度", "scheduled jobs, heartbeats and background tasks spend your plan while nobody watches"),
+                L("不想要就在 app 的设置里关掉（ChatGPT 套餐 → 后台）", "turn it off in the app's settings (ChatGPT plan → background) if you don't want that"))]
+    try:  # 10/20：Grok 订阅（engine/grok_plan.py）的后台同意单独记
+        from engine import grok_plan
+        grok_on = grok_plan.background_allowed() and grok_plan.enabled()
+    except Exception:  # noqa: BLE001
+        grok_on = False
+    if grok_on:
+        out.append(Finding("plan.grok_background", "warn", L("Grok 订阅的「后台也能花」开着", "The Grok subscription may be used in the background"),
+                           L("定时任务、心跳、后台任务没人在看的时候也花你的订阅额度", "scheduled jobs, heartbeats and background tasks spend your subscription while nobody watches"),
+                           L("不想要就关掉：python3 setup_ctl.py grok background off", "turn it off if you don't want that: python3 setup_ctl.py grok background off")))
+    return out
 
 
 def check_sandbox(cfg: dict) -> list[Finding]:

@@ -1,6 +1,6 @@
 """分享（2026-09-28，社交第一层）：把一条回复、一篇想完了的笔记，变成一个链接或一张卡片发给别人。
 
-- 分享是一份快照：建的时候把正文抄一份存进 grava.db 的 shares 表，原文以后再改，已经发出去的不变。
+- 分享是一份快照：建的时候把正文抄一份存进 mousse.db 的 shares 表，原文以后再改，已经发出去的不变。
 - 发之前先挡私事：从档案（USER.md）认出住址、伴侣和家人的名字，再加上邮箱、电话、身体数字（体重、体脂、心率、睡眠……）
   和 server.json share.private_words 里你自己加的词，默认都挡住；app 里一处处「放出来」。挡住的地方在链接页和卡片上都是一块灰条，
   原文不出服务器。标题里出现挡住的词也一样挡。
@@ -41,6 +41,7 @@ import think
 from chat import _lock, db, log_activity, now_iso
 from config import raw, settings
 from i18n import L
+from stored_values import ASSISTANT_ROLE
 
 router = APIRouter()          # 给自己的：/api/shares…（要令牌）
 public_router = APIRouter()   # 给别人的：/s/<令牌>（不要令牌；主服务和 public.py 的小服务都挂它）
@@ -379,15 +380,15 @@ def snapshot(b: ShareIn) -> tuple[str, dict, str, str]:
         with _lock, db() as conn:
             m = conn.execute("SELECT * FROM messages WHERE thread=? AND id=?", (b.thread, mid)).fetchone()
             q = None
-            if m and m["role"] == "grava":
+            if m and m["role"] == ASSISTANT_ROLE:
                 q = conn.execute("SELECT text FROM messages WHERE thread=? AND id<? AND role='user' ORDER BY id DESC LIMIT 1",
                                  (b.thread, mid)).fetchone()
         if not m:
             raise HTTPException(404, L("找不到这条消息", "Message not found"))
-        if m["role"] not in ("grava", "user") or not (m["text"] or "").strip():
+        if m["role"] not in (ASSISTANT_ROLE, "user") or not (m["text"] or "").strip():
             raise HTTPException(400, L("这条不能分享", "This message can't be shared"))
         text = m["text"].strip()
-        with_q = bool(q and (q["text"] or "").strip()) and (b.withQuestion is not False) and m["role"] == "grava"
+        with_q = bool(q and (q["text"] or "").strip()) and (b.withQuestion is not False) and m["role"] == ASSISTANT_ROLE
         title = ""
         head = next((ln for ln in text.splitlines() if ln.strip()), "")
         if re.match(r"^\s{0,3}#{1,3}\s", head):

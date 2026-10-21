@@ -7,7 +7,7 @@ server.json 的 engine.use 改走这里；出错时照旧退回原来的路（en
 默认是外人回合（kind outsider）。10/19 起调用方能报上来路（kind / origin / via）：主人自己的（llmjson.ask 的会议纪要、播客、学习页……）
 model 是用户自己的套餐时照 may_spend 花：claude-code/… 交给他自己登录的 Claude Code 一次性地跑（claude_brain.ask，零工具、不存
 会话）；它没做成（没登录、额度用完、超时……）而链里有按量的就换（有备用时它最多等剩下时间的一半），没有照旧抛错。chatgpt/… 照主人
-回合跑（零工具）。不报的照旧是外人回合，route() 根本不会给它套餐。
+回合跑（零工具）；grok/…（10/20，用户自己的 Grok 订阅）同 chatgpt/…。不报的照旧是外人回合，route() 根本不会给它套餐。
 
 JSON 只卡最外层（是对象 / 数组、need 那个键是字符串、required 的键都在）：和 llm-task 那时一样，严格校验整个 schema
 会因为模型多带一个键就整句作废。回的不像样就再问一次。
@@ -74,6 +74,7 @@ async def ask_json(prompt: str, input_: Any, *, model: str, purpose: str = "json
                                      effort=effort, max_tokens=max_tokens, conversation=conversation, origin=origin, kind=kind, via=via,
                                      chain=chain)
     owner = sub == "chatgpt"  # 主人自己的、能花 ChatGPT 套餐（上面问过）：照主人回合跑，零工具
+    owner = owner or sub == "grok"  # 10/20：Grok 订阅同上
     spec = Spec(kind="owner" if owner else "outsider", model=model, system=prompt.rstrip() + JSON_RULE, conversation=conversation or purpose,
                 origin=origin if owner else (None if kind == "owner" else origin) or purpose, via=via if owner else None,
                 effort=effort or models.effort(purpose), max_tokens=max_tokens, json=True, max_steps=1, cache_tail=False, fallbacks=chain)
@@ -134,6 +135,7 @@ async def ask_text(prompt: str, text: str, *, model: str, purpose: str = "text",
                                   conversation=conversation, origin=origin, kind=kind, via=via, fallbacks=spare[1:])
         raise last
     owner = sub == "chatgpt"
+    owner = owner or sub == "grok"  # 10/20：Grok 订阅同 ChatGPT 套餐
     spec = Spec(kind="owner" if owner else "outsider", model=model, system=system, conversation=conversation or purpose,
                 origin=origin if owner else (None if kind == "owner" else origin) or purpose, via=via if owner else None,
                 effort=effort or models.effort(purpose), max_tokens=max_tokens, max_steps=1, cache_tail=False, fallbacks=chain)
@@ -181,6 +183,10 @@ async def _on_claude_code(prompt: str, text: str, input_: Any, *, model: str, pu
     last = last or EngineError(f"{model} ran out of time", kind="timeout", retryable=True)
     left = deadline - time.monotonic()
     if spare and last.kind not in NO_SWITCH and left >= 3:
-        return await ask_json(prompt, input_, model=spare[0], purpose=purpose, need=need, required=required, timeout=left, effort=effort,
-                              max_tokens=max_tokens, conversation=conversation, origin=origin, kind=kind, via=via, fallbacks=spare[1:])
+        try:
+            return await ask_json(prompt, input_, model=spare[0], purpose=purpose, need=need, required=required, timeout=left, effort=effort,
+                                  max_tokens=max_tokens, conversation=conversation, origin=origin, kind=kind, via=via, fallbacks=spare[1:])
+        except EngineError as e:
+            e.plan_failure = last  # 备用也没做成：套餐那一下是怎么没做成的记在上面（llmjson.plan_failed 报错时说清楚）
+            raise
     raise last

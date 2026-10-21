@@ -1,6 +1,6 @@
 // 世界树（server/memtree.py）：各 AI 平台共用的记忆，枝和叶子；确认 / 忘记 / 挪到别的枝。
 // 服务器没接世界树（missing_source=tree）或者版本太老（404）时不算出错，页面显示对应的空状态。
-import type { TreeAction, TreeBranch, TreeConnect, TreeInfo, TreeLeaf, TreePlatform, TreeState, TreeStorage } from '../data/types';
+import type { HeldItem, TreeAction, TreeBranch, TreeConnect, TreeInfo, TreeLeaf, TreePlatform, TreeSaid, TreeState, TreeStorage } from '../data/types';
 import { httpStatus, request } from './base';
 
 const KINDS: TreeLeaf['kind'][] = ['fact', 'preference', 'decision', 'event'];
@@ -20,6 +20,8 @@ function norm(j: Partial<TreeInfo>): TreeInfo {
     originName: str(l.originName) || str(l.sourceName) || str(l.source), agent: typeof l.agent === 'string' ? l.agent : null,
     status: l.status === 'pending' ? 'pending' : 'active', branch: str(l.branch) || trunk.name,
     tags: Array.isArray(l.tags) ? l.tags.map(String) : [], observedAt: str(l.observedAt), createdAt: str(l.createdAt),
+    quote: str(l.quote), cues: Array.isArray(l.cues) ? l.cues.map(String).filter(Boolean) : [], said: normSaid(l.said),
+    tier: l.tier === 'profile' || l.tier === 'quoted' || l.tier === 'inferred' ? l.tier : undefined,
   }));
   const bySource = Array.isArray(j.counts?.bySource) ? j.counts.bySource.filter((s) => s && typeof s.source === 'string') : [];
   return {
@@ -29,6 +31,20 @@ function norm(j: Partial<TreeInfo>): TreeInfo {
     branchable: j.branchable !== false,
     storage: normStorage(j.storage),
   };
+}
+
+/** 出处：认得的 link 才留（打开那天的记录 / 那个主题 / 网页），别的当没有链接。 */
+function normSaid(raw: unknown): TreeSaid | null {
+  if (!raw || typeof raw !== 'object') return null;
+  const r = raw as Partial<TreeSaid> & { link?: Record<string, unknown> };
+  const str = (v: unknown) => (typeof v === 'string' ? v : '');
+  const l = r.link && typeof r.link === 'object' ? r.link : null;
+  const link: TreeSaid['link'] = !l ? undefined
+    : typeof l.thread === 'string' && typeof l.day === 'string' ? { thread: l.thread, day: l.day, ...(typeof l.messageId === 'number' ? { messageId: l.messageId } : {}) }
+      : typeof l.topic === 'string' ? { topic: l.topic, ...(typeof l.thought === 'string' ? { thought: l.thought } : {}) }
+        : typeof l.url === 'string' && /^https?:\/\//.test(l.url) ? { url: l.url } : undefined;
+  return { platform: str(r.platform), platformName: str(r.platformName), thread: str(r.thread), message: str(r.message),
+    ...(typeof r.threadName === 'string' ? { threadName: r.threadName } : {}), ...(link ? { link } : {}) };
 }
 
 function normStorage(s: Partial<TreeStorage> | undefined): TreeStorage {
@@ -83,3 +99,29 @@ export const addPlatform = (name: string) =>
 export const removePlatform = (id: string) =>
   request<{ ok: boolean; changed: boolean; restarted?: boolean }>(`/api/tree/platforms/${encodeURIComponent(id)}`, { method: 'DELETE' });
 
+
+// —— 待定（server/memhold.py）：别人说的要记的，先放这里；记忆页的「待确认」里和你说的一起列 ——————————————————
+
+const HELD_KINDS: HeldItem['kind'][] = ['fact', 'preference', 'decision', 'event'];
+
+/** 还在待定里的（status held）。老服务器没有这个接口（404）→ 空：当没有别人说的。 */
+export async function loadHeld(): Promise<HeldItem[]> {
+  try {
+    const j = await request<{ items?: Partial<HeldItem>[] }>('/api/memory/held?status=held');
+    const str = (v: unknown) => (typeof v === 'string' ? v : '');
+    return (Array.isArray(j.items) ? j.items : []).filter((x) => x && typeof x.id === 'string' && typeof x.text === 'string').map((x) => ({
+      id: x.id as string, text: x.text as string, kind: HELD_KINDS.includes(x.kind as HeldItem['kind']) ? (x.kind as HeldItem['kind']) : 'fact',
+      about: x.about === 'person' ? 'person' : 'owner', who: str(x.who), via: str(x.via), channel: str(x.channel), channelName: str(x.channelName),
+      whoLine: str(x.whoLine), quote: str(x.quote), cues: Array.isArray(x.cues) ? x.cues.map(String) : [],
+      flags: Array.isArray(x.flags) ? x.flags.map(String) : [], status: 'held', createdAt: str(x.createdAt),
+    }));
+  } catch (e) {
+    const s = httpStatus(e);
+    if (s === 404 || s === 405) return [];
+    throw e;
+  }
+}
+
+/** 记下（approve：长成叶子，算推断；回叶子 id，duplicate = 和已有的那片重复）/ 不记（reject）。已经定过的服务器回 409，报错里是它的原话。 */
+export const actHeld = (id: string, action: 'approve' | 'reject') =>
+  request<{ ok: boolean; leaf?: string; duplicate?: boolean }>(`/api/memory/held/${encodeURIComponent(id)}`, { method: 'POST', body: { action } });

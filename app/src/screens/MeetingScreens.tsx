@@ -1,7 +1,8 @@
 // Agent 会议（server/meetings.py，2026-10-13，画布第 2 排）：
-// - Meeting：会议页。每条 Agent 的发言带头像和名字（回复谁、@ 了谁），系统行「由 Grava 发起」「Grava 请 X、Y 回答」，Grava 的纪要卡
+// - Meeting：会议页。每条 Agent 的发言带头像和名字（回复谁、@ 了谁），系统行「由助手发起」「助手请 X、Y 回答」，助手的纪要卡
 //   （待办 + 确认 / 继续讨论）；一轮进行中接 SSE，按发言人分段出字。输入框：补充一句（待确认时开下一轮），@ 指定 Agent，进行中空着时是「停」。
-// - NewMeeting：发起会议（议题 + 勾选 Agent，Grava 先按议题推荐；会后保留为群聊；写明用量）。
+// - NewMeeting：发起会议（议题 + 勾选 Agent，助手先按议题推荐；会后保留为群聊；写明用量）。主线第三步：也能请赛博（只出看法、不领待办；
+//   管健康、饮食、睡眠的功能 Agent 不和赛博同会），「定了告诉我」= 全自动跑完、结果留在主对话（服务器 /api/meetings/options 的 byOrigin 为真才显示）。
 // - MeetingInfo：会议资料（议题、成员、主持、规则和用量、保留为群聊、结束、删除），由资料页 Info（kind meeting）显示。
 // 对话列表里的会议行和「已结束的会议」在对话页（/api/chats 的会议行来自 server/meetings.py 的 chat_rows）。
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
@@ -9,13 +10,14 @@ import { AppState, Platform, Pressable, ScrollView, StyleSheet, Switch, TextInpu
 import { useFocusEffect, useNavigation, useRoute } from '@react-navigation/native';
 import { agentName } from '../brand';
 import { dataApi } from '../api/data';
-import { followMeeting, meetingsApi, splitMentions, type Meeting, type MeetingLive, type MeetingMember, type MeetingMsg } from '../api/meetings';
+import { supports } from '../api/version';
+import { followMeeting, meetingsApi, splitMentions, type Meeting, type MeetingLive, type MeetingMember, type MeetingMsg, type MeetingOptions } from '../api/meetings';
 import { Dots } from '../components/ChatCards';
 import { ArrowUp, AtSign, Check, ChevronLeft, ChevronRight, CircleStop, Info, Square, Trash2 } from '../components/icons';
 import { ChatScroll, dismissMode, KeyboardScroll, KeyboardSticky, useBottomInset } from '../components/keyboard';
 import { LensAvatar } from '../components/LensAvatar';
 import { Markdown } from '../components/Markdown';
-import { AgentAvatar, MeetingAvatar, StatusPill, TodoRow, confirmedLine } from '../components/MeetingBits';
+import { MeetingAvatar, MemberAvatar, StatusPill, TodoRow, confirmedLine } from '../components/MeetingBits';
 import { SheetProvider, useSheet } from '../components/Sheet';
 import { Btn, Card, NavHeader, PullRefresh, Screen, SectionLabel, T, showError } from '../components/ui';
 import { loadDraft, saveDraft } from '../drafts';
@@ -235,16 +237,18 @@ const AgentLine = React.memo(function AgentLine({ member, name, replyTo, members
 }) {
   const t = useTheme();
   const tint = agentTint(t, member?.color);
+  const cyber = member?.kind === 'cyber';
   return (
     <View style={styles.row}>
-      <AgentAvatar icon={member?.icon} color={member?.color} size={30} />
+      <MemberAvatar m={member} size={30} />
       <View style={{ flex: 1, minWidth: 0, gap: 3, alignItems: 'flex-start' }}>
-        <T v="caption" color={tint.fg} style={{ fontWeight: '600' }}>
-          {name}{replyTo ? <T v="caption" color={t.ink3} style={{ fontWeight: '400' }}>{L(` · 回复 ${replyTo}`, ` · replying to ${replyTo}`)}</T> : null}
+        <T v="caption" color={cyber ? t.ink : tint.fg} style={{ fontWeight: '600' }}>
+          {name}{cyber ? <T v="caption" color={t.ink3} style={{ fontWeight: '400' }}>{member?.tag ? L(` · 赛博 · ${member.tag}`, ` · Cyber · ${member.tag}`) : L(' · 赛博', ' · Cyber')}</T> : null}
+          {replyTo ? <T v="caption" color={t.ink3} style={{ fontWeight: '400' }}>{L(` · 回复 ${replyTo}`, ` · replying to ${replyTo}`)}</T> : null}
         </T>
         <View style={[styles.bubble, { backgroundColor: t.surface, maxWidth: '100%' }]}>
           {text ? <SpeechText text={text} members={members} color={failed ? t.ink3 : undefined} /> : null}
-          {streaming ? <View style={{ paddingTop: text ? 6 : 2 }}><Dots color={tint.fg} /></View> : null}
+          {streaming ? <View style={{ paddingTop: text ? 6 : 2 }}><Dots color={cyber ? t.gold : tint.fg} /></View> : null}
         </View>
         {at?.deferred ? <T v="caption" color={t.ink3}>{L(`${at.name} 本轮已发言，问题留到下一轮`, `${at.name} already spoke this round; the question carries over`)}</T> : null}
       </View>
@@ -271,7 +275,7 @@ function SpeechText({ text, members, color }: { text: string; members: MeetingMe
       {out.map((b, i) => ('md' in b ? (b.md.trim() ? <Markdown key={i} text={b.md} color={color} compact /> : null) : (
         <T key={i} v="body" color={color}>
           {splitMentions(b.line, members).map((p, j) => (p.agent
-            ? <T key={j} v="body" style={{ fontWeight: '600' }} color={agentTint(t, members.find((x) => x.id === p.agent)?.color).fg}>{p.text}</T>
+            ? <T key={j} v="body" style={{ fontWeight: '600' }} color={members.find((x) => x.id === p.agent)?.kind === 'cyber' ? t.ink : agentTint(t, members.find((x) => x.id === p.agent)?.color).fg}>{p.text}</T>
             : p.text))}
         </T>
       )))}
@@ -279,7 +283,7 @@ function SpeechText({ text, members, color }: { text: string; members: MeetingMe
   );
 }
 
-/** 会议里的一条：议题（第一行系统消息）、系统行、你说的、Agent 的发言、Grava 的纪要。 */
+/** 会议里的一条：议题（第一行系统消息）、系统行、你说的、Agent 的发言、助手的纪要。 */
 const MsgRow = React.memo(function MsgRow({ m, meeting, avatar, acting, onConfirm, onNext }: {
   m: MeetingMsg; meeting: Meeting; avatar: React.ComponentProps<typeof LensAvatar>['config']; acting: 'confirm' | 'next' | null;
   onConfirm: () => void; onNext: () => void;
@@ -380,7 +384,7 @@ const MeetingComposer = React.memo(function MeetingComposer({ id, members, place
             setDraft((d) => `${d}${d && !/\s$/.test(d) ? ' ' : ''}@${m.name} `);
             setTimeout(() => input.current?.focus(), 250);
           }} style={({ pressed }) => [styles.pickRow, { opacity: pressed ? 0.6 : 1 }]}>
-            <AgentAvatar icon={m.icon} color={m.color} size={32} />
+            <MemberAvatar m={m} size={32} />
             <T v="body" style={{ flex: 1 }}>{m.name}</T>
           </Pressable>
         ))}
@@ -427,10 +431,17 @@ function NewMeetingForm() {
   const [touched, setTouched] = useState(!!params.members?.length);  // 自己勾过：不再拿推荐覆盖
   const [hint, setHint] = useState<{ topic: string; agents: string[]; title: string } | null>(null);
   const [asking, setAsking] = useState(false);
-  const [keep, setKeep] = useState(false);
+  // 主线第三步：能请谁（含赛博）、「会后保留」的默认值从服务器来；老服务器（404）照旧只列功能 Agent，没有「定了告诉我」
+  const [opts, setOpts] = useState<MeetingOptions | null>(null);
+  useEffect(() => { if (supports('meetings.records')) meetingsApi.options().then(setOpts).catch(() => {}); }, []);
+  const [keepPick, setKeepPick] = useState<boolean | null>(null);  // null = 没动过，跟服务器的默认
+  const [auto, setAuto] = useState(false);
   const [starting, setStarting] = useState(false);
+  const keep = keepPick ?? !!opts?.keep;
+  const people: (MeetingMember & { health?: boolean })[] = opts?.members
+    ?? groups.map((g) => ({ id: g.id, name: g.name, icon: g.icon, color: g.color ?? null, gone: false, kind: 'agent' as const }));
   const q = topic.trim();
-  // 议题停下来 0.9 秒：Grava 按议题推荐人选（不带工具的模型）
+  // 议题停下来 0.9 秒：助手按议题推荐人选（不带工具的模型）
   useEffect(() => {
     if (q.length < 4 || touched || hint?.topic === q) return undefined;
     const h = setTimeout(() => {
@@ -443,12 +454,17 @@ function NewMeetingForm() {
     return () => clearTimeout(h);
   }, [q, touched, hint?.topic]);
   const toggle = (gid: string) => { setTouched(true); setPicked((cur) => (cur.includes(gid) ? cur.filter((x) => x !== gid) : [...cur, gid])); };
-  const can = !!q && picked.length >= 2 && !starting;
+  const isCyber = (id: string) => people.find((p) => p.id === id)?.kind === 'cyber';
+  const withCyber = picked.some(isCyber);
+  const withHealth = picked.some((id) => people.find((p) => p.id === id)?.health);
+  const agentsPicked = picked.filter((id) => !isCyber(id)).length;
+  const can = !!q && picked.length >= 2 && agentsPicked >= 1 && !starting;
   const start = async () => {
     if (!can) return;
     setStarting(true);
     try {
-      const m = await meetingsApi.create({ topic: q, members: picked, keep, title: hint?.topic === q && hint.title ? hint.title : undefined });
+      const m = await meetingsApi.create({ topic: q, members: picked, keep: auto ? false : keepPick ?? undefined, ...(auto ? { auto: true } : {}),
+        title: hint?.topic === q && hint.title ? hint.title : undefined });
       nav.replace('Meeting', { id: m.id, at: Date.now() });
     } catch (e) {
       showError(L('无法发起会议', "Couldn't start the meeting"), e);
@@ -456,9 +472,12 @@ function NewMeetingForm() {
     }
   };
   const recommended = !touched && hint?.topic === q && hint.agents.length;
-  const label = asking ? L('参会 Agent · 正在按议题推荐…', 'Agents · Picking for this topic…')
-    : recommended ? L(`参会 Agent · 已按议题推荐 ${hint!.agents.length} 个`, `Agents · ${hint!.agents.length} suggested for this topic`)
-      : L(`参会 Agent · 已选 ${picked.length} 个`, `Agents · ${picked.length} selected`);
+  const label = asking ? L('参会成员 · 正在按议题推荐…', 'Members · Picking for this topic…')
+    : recommended ? L(`参会成员 · 已按议题推荐 ${hint!.agents.length} 个`, `Members · ${hint!.agents.length} suggested for this topic`)
+      : L(`参会成员 · 已选 ${picked.length} 个`, `Members · ${picked.length} selected`);
+  const why = (p: MeetingMember & { health?: boolean }) => (picked.includes(p.id) ? null
+    : p.kind === 'cyber' && withHealth ? L('会上有健康类 Agent：赛博不参加', 'A health Agent is in this meeting: Cybers stay out')
+      : p.health && withCyber ? L('管健康、饮食或睡眠：不和赛博同会', 'Looks after health, diet or sleep: not in a meeting with Cybers') : null);
   return (
     <Screen>
       <View style={styles.modalHead}>
@@ -476,14 +495,18 @@ function NewMeetingForm() {
           placeholderTextColor={t.ink3} accessibilityLabel={L('议题', 'Topic')} style={[type.body, styles.topicInput, { backgroundColor: t.surface, color: t.ink }]} />
         <T v="caption" color={t.ink3} style={[styles.formLabel, { marginTop: space.lg }]}>{label}</T>
         <View style={[styles.group, { backgroundColor: t.surface }]}>
-          {groups.length ? groups.map((g, i) => {
+          {people.length ? people.map((g, i) => {
             const on = picked.includes(g.id);
+            const off = why(g);
             return (
-              <Pressable key={g.id} onPress={() => toggle(g.id)} accessibilityRole="checkbox" accessibilityState={{ checked: on }} accessibilityLabel={g.name}
-                style={({ pressed }) => [styles.agentRow, { opacity: pressed ? 0.7 : 1 }]}>
-                <AgentAvatar icon={g.icon} color={g.color} size={34} />
-                <View style={[styles.agentRowBody, i < groups.length - 1 && { borderBottomColor: t.surface2, borderBottomWidth: StyleSheet.hairlineWidth }]}>
-                  <T v="body" style={{ flex: 1, fontWeight: '600' }} numberOfLines={1}>{g.name}</T>
+              <Pressable key={g.id} onPress={() => toggle(g.id)} disabled={!!off} accessibilityRole="checkbox" accessibilityState={{ checked: on, disabled: !!off }} accessibilityLabel={g.name}
+                style={({ pressed }) => [styles.agentRow, { opacity: off ? 0.45 : pressed ? 0.7 : 1 }]}>
+                <MemberAvatar m={g} size={34} />
+                <View style={[styles.agentRowBody, i < people.length - 1 && { borderBottomColor: t.surface2, borderBottomWidth: StyleSheet.hairlineWidth }]}>
+                  <View style={{ flex: 1, minWidth: 0, gap: 1 }}>
+                    <T v="body" style={{ fontWeight: '600' }} numberOfLines={1}>{g.name}</T>
+                    {off || g.kind === 'cyber' ? <T v="caption" color={t.ink3} numberOfLines={1} style={{ fontWeight: '400' }}>{off ?? (g.tag ? L(`赛博 · ${g.tag}`, `Cyber · ${g.tag}`) : L('赛博', 'Cyber'))}</T> : null}
+                  </View>
                   {on ? <View style={[styles.check, { backgroundColor: t.cyan }]}><Check size={15} color={t.bg} strokeWidth={3} /></View>
                     : <View style={[styles.uncheck, { borderColor: t.ink3 }]} />}
                 </View>
@@ -491,22 +514,36 @@ function NewMeetingForm() {
             );
           }) : <T v="callout" color={t.ink3} style={{ padding: space.lg }}>{L('还没有 Agent。先新建 Agent，再发起会议。', 'No Agents yet. Create an Agent first, then start a meeting.')}</T>}
         </View>
-        <View style={[styles.group, styles.keepRow, { backgroundColor: t.surface, marginTop: space.lg }]}>
-          <View style={{ flex: 1, gap: 3 }}>
-            <T v="body" style={{ fontWeight: '600' }}>{L('会后保留为群聊', 'Keep as a group chat')}</T>
-            <T v="caption" color={t.ink3} style={{ fontWeight: '400', lineHeight: 17 }}>
-              {L('关闭：会议结束后归入「已结束的会议」；开启：保留为群聊，可继续讨论', 'Off: the meeting moves to Ended meetings when it’s over. On: it stays as a group chat you can keep using.')}
-            </T>
+        {withCyber ? <T v="caption" color={t.ink3} style={[styles.rules, { paddingTop: space.sm }]}>{L('赛博只出看法、不领待办；会上至少要一个功能 Agent。', 'Cybers give views and take no to-dos; a meeting needs at least one functional Agent.')}</T> : null}
+        {opts?.byOrigin ? (  // 服务器只在 meetings.by_origin 开着时认 auto
+          <View style={[styles.group, styles.keepRow, { backgroundColor: t.surface, marginTop: space.lg }]}>
+            <View style={{ flex: 1, gap: 3 }}>
+              <T v="body" style={{ fontWeight: '600' }}>{L('定了告诉我', 'Tell me when it’s settled')}</T>
+              <T v="caption" color={t.ink3} style={{ fontWeight: '400', lineHeight: 17 }}>
+                {L(`全自动跑完：没定的再开一轮（最多 2 轮），纪要自动确认，结果留在主对话；会议收进「会议记录」。`, 'Runs on its own: open points get another round (2 at most), the minutes are confirmed for you and the result lands in the main chat; the meeting goes to Meeting records.')}
+              </T>
+            </View>
+            <Switch value={auto} onValueChange={setAuto} accessibilityLabel={L('定了告诉我', 'Tell me when it’s settled')} trackColor={{ true: t.cyan, false: t.surface2 }} />
           </View>
-          <Switch value={keep} onValueChange={setKeep} accessibilityLabel={L('会后保留为群聊', 'Keep as a group chat')} trackColor={{ true: t.cyan, false: t.surface2 }} />
-        </View>
+        ) : null}
+        {auto ? null : (
+          <View style={[styles.group, styles.keepRow, { backgroundColor: t.surface, marginTop: space.lg }]}>
+            <View style={{ flex: 1, gap: 3 }}>
+              <T v="body" style={{ fontWeight: '600' }}>{L('会后保留为群聊', 'Keep as a group chat')}</T>
+              <T v="caption" color={t.ink3} style={{ fontWeight: '400', lineHeight: 17 }}>
+                {L('关闭：会议结束后归入「已结束的会议」；开启：保留为群聊，可继续讨论', 'Off: the meeting moves to Ended meetings when it’s over. On: it stays as a group chat you can keep using.')}
+              </T>
+            </View>
+            <Switch value={keep} onValueChange={setKeepPick} accessibilityLabel={L('会后保留为群聊', 'Keep as a group chat')} trackColor={{ true: t.cyan, false: t.surface2 }} />
+          </View>
+        )}
         <T v="caption" color={t.ink3} style={styles.rules}>
-          {L(`每轮每个 Agent 发言一次，可 @ 其他 Agent 一次；由 ${agentName()} 主持并生成纪要。`, `Each Agent speaks once per round and may @ one other Agent; ${agentName()} hosts and writes the minutes.`)}
+          {L(`每轮每个成员发言一次，可 @ 其他成员一次；由 ${agentName()} 主持并生成纪要。`, `Each member speaks once per round and may @ one other member; ${agentName()} hosts and writes the minutes.`)}
         </T>
         <T v="caption" color={t.ink3} style={[styles.rules, { paddingTop: 4 }]}>
           {picked.length >= 2
-            ? L(`用量：每轮 = 成员数次回复 + 1 次纪要，当前 ${picked.length} + 1 = ${picked.length + 1} 次模型调用。`, `Usage: each round = one reply per member + 1 for the minutes; now ${picked.length} + 1 = ${picked.length + 1} model calls.`)
-            : L('用量：每轮 = 成员数次回复 + 1 次纪要。至少选择 2 个 Agent。', 'Usage: each round = one reply per member + 1 for the minutes. Pick at least 2 Agents.')}
+            ? L(`用量：每轮 = 成员数次回复 + 1 次纪要，当前 ${picked.length} + 1 = ${picked.length + 1} 次模型调用${auto ? '，最多 2 轮' : ''}。`, `Usage: each round = one reply per member + 1 for the minutes; now ${picked.length} + 1 = ${picked.length + 1} model calls${auto ? ', 2 rounds at most' : ''}.`)
+            : L('用量：每轮 = 成员数次回复 + 1 次纪要。至少选择 2 个成员。', 'Usage: each round = one reply per member + 1 for the minutes. Pick at least 2 members.')}
         </T>
       </KeyboardScroll>
     </Screen>
@@ -575,8 +612,8 @@ export function MeetingInfoScreen() {
         <SectionLabel>{L(`成员 · ${m.members.length}`, `Members · ${m.members.length}`)}</SectionLabel>
         <Card style={{ paddingVertical: space.xs }}>
           {m.members.map((a) => (
-            <Pressable key={a.id} disabled={a.gone} onPress={() => nav.navigate('Group', { id: a.id })} accessibilityRole="button" style={({ pressed }) => [styles.memberRow, { opacity: pressed ? 0.6 : 1 }]}>
-              <AgentAvatar icon={a.icon} color={a.color} size={32} />
+            <Pressable key={a.id} disabled={a.gone} onPress={() => nav.navigate(a.kind === 'cyber' ? 'CyberProfile' : 'Group', { id: a.id })} accessibilityRole="button" style={({ pressed }) => [styles.memberRow, { opacity: pressed ? 0.6 : 1 }]}>
+              <MemberAvatar m={a} size={32} />
               <T v="body" style={{ flex: 1 }}>{a.name}</T>
               {a.gone ? <T v="caption" color={t.ink3}>{L('已删除', 'Deleted')}</T> : <ChevronRight size={16} color={t.ink3} />}
             </Pressable>

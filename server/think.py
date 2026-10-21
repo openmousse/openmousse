@@ -16,7 +16,7 @@ Zen 首页（2026-10-13）
   想法挪进已想完、收藏记 done_at，都能恢复），不调模型；已想完的列表在 /api/think/finished，搜索页的热力日历用 /api/think/heat。
 
 主题（聊聊 / 想完了）
-- 勾几条碎片点「聊聊」或「想完了」= 建一个主题（grava.db think_topics，id tp-xxxxxxxx 也是对话线程 id，会话 agent:main:grava:tp-…）。
+- 勾几条碎片点「聊聊」或「想完了」= 建一个主题（mousse.db think_topics，id tp-xxxxxxxx 也是对话线程 id，会话 agent:main:<SESSION_TAG>:tp-…）。
 - 聊聊：先发一句「【自动触发】聊聊」让它先问；每天第一句话、主题里的碎片变了以后，chat.start_run 调 context_for 把碎片和
   「陪你想」的规矩拼在消息前面（只给模型看，对话里不显示）。
 - 只记下：聊的时候记一句不给它看 = 一条碎片（note: true，挂在这个主题上），对话里显示一行虚线气泡（messages 里 role=auto、
@@ -62,6 +62,7 @@ import config
 from chat import _lock, db, log_activity, now_iso
 from config import TZ, settings, user_word
 from i18n import L, LS
+from stored_values import ASSISTANT_ROLE, NOTE_SOURCE_THINK, SESSION_TAG, TREE_SOURCE
 
 router = APIRouter()
 
@@ -77,6 +78,7 @@ MARK_TALK = "【自动触发】聊聊"    # 协议标记：app 按「【自动�
 MARK_NOTE = "【只记下】"          # 对话里的虚线气泡（app 按它认，不翻译）
 ID_RE = re.compile(r"^th-[0-9a-f]{8}$")
 TOPIC_RE = re.compile(r"^tp-[0-9a-f]{8}$")
+GROUP_MARK = re.compile(r"^%%\s*/?mousse:group\b[^%]*%%$")  # 群聊写回想法的那一段的头尾（groupchat.py）：只是记号，不当正文
 HASHTAG = re.compile(r"(?<![A-Za-z0-9/&=?._:~%+-])#([^\s#，。、；：！？,.;:!?()（）\[\]【】「」『』\"'`<>…～]+)")
 EMBED = re.compile(r"^!\[\[([^\]|]+)(?:\|[^\]]*)?\]\]\s*$")
 STAMP = re.compile(r"^\d{4}-\d{2}-\d{2} \d{6} ")   # store_file 给库里的附件加的时间前缀
@@ -280,6 +282,8 @@ def frag_from_file(path: Path, st: os.stat_result) -> dict:
     files: list[dict] = []
     lines = []
     for line in body.splitlines():
+        if GROUP_MARK.match(line.strip()):
+            continue
         m = EMBED.match(line.strip())
         if m:
             p = resolve_embed(m.group(1), path)
@@ -317,6 +321,8 @@ def frag_from_file(path: Path, st: os.stat_result) -> dict:
         "bad": bad, "mtime": st.st_mtime, "chars": len(text),
         "doneAt": as_iso(meta.get("done_at")) or (datetime.fromtimestamp(st.st_mtime, TZ).isoformat(timespec="seconds") if in_done else None),
         "notePath": str(meta.get("note_path") or ""),
+        "talk": meta.get("talk") if isinstance(meta.get("talk"), dict) else None,  # 主线第三步：「拿去讨论」去了哪（ideatalk.py）
+        "group": str(meta.get("group") or ""),  # 群聊的小结写回到这里的那个群（groupchat.write_idea）
     }
 
 
@@ -380,7 +386,19 @@ def frag_json(f: dict, full: bool = True) -> dict:
         "files": [{"name": x["name"], "kind": x["kind"], "size": x["size"], "url": file_url(f["id"], i)} for i, x in enumerate(f["files"])],
         "url": f["url"], "linkTitle": f["linkTitle"], "duration": f["duration"], "source": f["source"], "save": f["save"] or None,
         "chars": f["chars"], "bad": f["bad"], "path": f["path"], "doneAt": f.get("doneAt") if f["status"] == "done" else None,
+        "discussion": discussion_ref(f),
     }
+
+
+def discussion_ref(f: dict) -> dict | None:
+    """这条想法在哪讨论（主线第三步「拿去讨论」，ideatalk.py）：{kind: cyber | group | podcast | agent, id}；没有 → None。
+    一样东西只有一个家：Zen 里画「讨论中」，点开就是那里。"""
+    talk = f.get("talk")
+    if isinstance(talk, dict) and talk.get("kind") in ("cyber", "group", "podcast", "agent") and talk.get("id"):
+        return {"kind": talk["kind"], "id": str(talk["id"])}
+    if f.get("group"):
+        return {"kind": "group", "id": f["group"]}
+    return None
 
 
 def stem_for(kind: str, text: str, title: str, keywords: list[str], when: datetime) -> str:
@@ -722,7 +740,7 @@ async def post_note(body: WriteIn):
     when = datetime.now(TZ)
     kws = clean_keywords(inline_tags(text))
     path = await asyncio.to_thread(unique_path, folder, safe_file_part(title, 60) or f"{when:%Y-%m-%d %H%M}")
-    meta = {"created_at": when.isoformat(timespec="seconds"), "source": "grava-think", "keywords": kws, "tags": obsidian_tags(kws)}
+    meta = {"created_at": when.isoformat(timespec="seconds"), "source": NOTE_SOURCE_THINK, "keywords": kws, "tags": obsidian_tags(kws)}
     await asyncio.to_thread(write_atomic, path, dump_note(meta, text))
     log_activity(L(f"在库里写了一篇「{title}」（{rel(path)}）", f'Wrote "{title}" into the vault ({rel(path)})'), "edit")
     return {"ok": True, "path": rel(path)}
@@ -770,13 +788,13 @@ def topic_brief(r: sqlite3.Row, notes: set[str] | None = None) -> dict:
     notes = note_ids() if notes is None else notes
     mine = [i for i in ids if i in notes]
     with _lock, db() as conn:
-        last = conn.execute("SELECT text, ts FROM messages WHERE thread=? AND role='grava' ORDER BY id DESC LIMIT 1", (r["id"],)).fetchone()
-        n = conn.execute("SELECT COUNT(*) FROM messages WHERE thread=? AND role='grava'", (r["id"],)).fetchone()[0]
-        who = conn.execute("SELECT role FROM messages WHERE thread=? AND role IN ('user', 'grava') ORDER BY id DESC LIMIT 1", (r["id"],)).fetchone()
+        last = conn.execute(f"SELECT text, ts FROM messages WHERE thread=? AND role='{ASSISTANT_ROLE}' ORDER BY id DESC LIMIT 1", (r["id"],)).fetchone()
+        n = conn.execute(f"SELECT COUNT(*) FROM messages WHERE thread=? AND role='{ASSISTANT_ROLE}'", (r["id"],)).fetchone()[0]
+        who = conn.execute(f"SELECT role FROM messages WHERE thread=? AND role IN ('user', '{ASSISTANT_ROLE}') ORDER BY id DESC LIMIT 1", (r["id"],)).fetchone()
     return {"id": r["id"], "title": r["title"], "count": len(ids) - len(mine), "notes": len(mine), "status": r["status"], "createdAt": r["created_at"], "updatedAt": r["updated_at"],
             "talked": n, "lastLine": (last["text"].strip().replace("\n", " ")[:80] if last else ""), "lastAt": last["ts"] if last else None,
             "draftStatus": r["draft_status"], "notePath": r["note_path"], "doneAt": r["done_at"],
-            # 谁最后说的（user / grava）：Zen 首页「在想」的卡上，它问了你还没回 = 等你回答
+            # 谁最后说的（user / ASSISTANT_ROLE）：Zen 首页「在想」的卡上，它问了你还没回 = 等你回答
             "lastRole": who["role"] if who else None}
 
 
@@ -1000,7 +1018,7 @@ DRAFT_KEYS = ("title", "oneLine", "points", "open", "next", "keywords", "suggest
 
 
 def branches() -> list[str]:
-    """世界树的枝名（主干在最前面），给模型挑 branch。跟 sources.py 选中的那一份走：作者实例的 scripts/memory_tree.py 起子进程跑，
+    """世界树的枝名（主干在最前面），给模型挑 branch。跟 sources.py 选中的那一份走：工作区的 scripts/memory_tree.py 起子进程跑，
     开源版直接调 treelib；没接世界树 = []。"""
     import sources
     if sources.memory_tree is None:
@@ -1028,7 +1046,7 @@ def transcript(tid: str, limit: int = 60) -> list[str]:
     for r in reversed(rows):
         if r["role"] == "user":
             out.append(LS(f"{user_word().strip()}：", "User: ") + r["text"][:1500])
-        elif r["role"] == "grava":
+        elif r["role"] == ASSISTANT_ROLE:
             out.append(LS("你：", "You: ") + r["text"][:1500])
     return out
 
@@ -1142,7 +1160,7 @@ async def make_draft(tid: str) -> None:
     ids = json.loads(r["fragments"] or "[]")
     by_id = {f["id"]: f for f in await asyncio.to_thread(scan)}
     frags = [by_id[i] for i in ids if i in by_id]
-    key = f"agent:main:grava:{tid}:draft"
+    key = f"agent:main:{SESSION_TAG}:{tid}:draft"
     with _lock, db() as conn:
         model = chat.thread_model(conn, tid)
     try:
@@ -1222,7 +1240,7 @@ def save_sync(tid: str, body: SaveIn) -> dict:
         links.append(f"- [[{rel(p)[:-3]}|{label}]]")
     if links:
         parts.append("---\n" + LS("用到的碎片：", "From these thoughts:") + "\n" + "\n".join(links))
-    meta = {"created_at": now_iso(), "source": "grava-think", "topic": tid, "keywords": kws, "tags": obsidian_tags(kws),
+    meta = {"created_at": now_iso(), "source": NOTE_SOURCE_THINK, "topic": tid, "keywords": kws, "tags": obsidian_tags(kws),
             "fragments": [f["id"] for f in frags]}
     write_atomic(path, dump_note(meta, "\n\n".join(parts)))
     for f, p in moved:  # 碎片标成想完了（在已想完文件夹里本来就算，属性上也写一笔）
@@ -1256,9 +1274,13 @@ def remember_tree(text: str, branch: str | None, tags: list[str], said: dict | N
     from engine import memgate
     gate = memgate.gate("leaf", "add", turn="owner", conversation=said.get("thread", ""), author="main", agent="main")
     script = sources.tree_script()
+    # 开源包由 store.add 计数。工作区那份脚本不经过那里：builtin 才先换掉。OpenClaw 原样。
+    text = memgate.scrub_script(text)
+    tag_s = memgate.scrub_script(",".join(tags[:6]))
+    said = {k: memgate.scrub_script(v) for k, v in said.items()}
     if script is None:  # 开源版世界树：查重、挂枝都在包里
         try:
-            out = sources.memory_tree.remember(text, source="main", kind="fact", tags=",".join(tags[:6]), branch=branch, **said)
+            out = sources.memory_tree.remember(text, source="main", kind="fact", tags=tag_s, branch=branch, **said)
         except Exception as e:  # noqa: BLE001 — 没写进去：草稿照样存进库
             memgate.done(gate, f"{type(e).__name__}", ok=False)
             return {"ok": False}
@@ -1266,7 +1288,7 @@ def remember_tree(text: str, branch: str | None, tags: list[str], said: dict | N
         return out
     if not script.is_file():
         return None
-    cmd = ["python3", str(script), "add", "--source", "grava", "--kind", "fact", "--text", text, "--tags", ",".join(tags[:6])]
+    cmd = ["python3", str(script), "add", "--source", TREE_SOURCE, "--kind", "fact", "--text", text, "--tags", tag_s]
     if branch:
         cmd += ["--branch", branch]
     for k, v in said.items():
@@ -1439,7 +1461,7 @@ def search_sync(q: str, scope: str) -> dict:
         with _lock, tdb() as conn:
             rows = conn.execute("SELECT * FROM think_topics WHERE status!='deleted' ORDER BY updated_at DESC").fetchall()
             for r in rows:
-                msgs = conn.execute("SELECT text FROM messages WHERE thread=? AND role IN ('user','grava') ORDER BY id DESC", (r["id"],)).fetchall()
+                msgs = conn.execute(f"SELECT text FROM messages WHERE thread=? AND role IN ('user','{ASSISTANT_ROLE}') ORDER BY id DESC", (r["id"],)).fetchall()
                 hit = next((m["text"] for m in msgs if all_words(m["text"], words)), None)
                 if hit or all_words(r["title"], words):
                     found.append((r, hit))
@@ -1580,7 +1602,7 @@ def topic_stage(b: dict) -> dict:
     if ds == "error":
         return {"stage": 2, "state": L("草稿未生成", "Draft failed"), "waiting": True}
     if b.get("talked"):
-        asked = b.get("lastRole") == "grava"
+        asked = b.get("lastRole") == ASSISTANT_ROLE
         return {"stage": 2, "state": L("等你回答", "Your turn") if asked else L("讨论中", "In discussion"), "waiting": asked}
     return {"stage": 1, "state": L("尚未讨论", "Not discussed"), "waiting": False}
 

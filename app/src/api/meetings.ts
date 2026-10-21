@@ -1,13 +1,18 @@
-// Agent 会议（server/meetings.py，2026-10-13）：几个 Agent 围绕一个议题轮流发言，Grava 主持、写纪要；确认后待办写进日程和各 Agent 的看板。
-// 线程 grp-<id>：每条消息带发言人（speaker），系统行（「由 Grava 发起」「Grava 请 X、Y 回答」）和纪要是 Grava（main）。
+// Agent 会议（server/meetings.py，2026-10-13）：几个 Agent 围绕一个议题轮流发言，助手主持、写纪要；确认后待办写进日程和各 Agent 的看板。
+// 线程 grp-<id>：每条消息带发言人（speaker），系统行（「由助手发起」「助手请 X、Y 回答」）和纪要是助手（main）。
 // 一轮进行中用 GET /api/meetings/{id}/stream 接上（SSE，按发言人分段）；服务器有 supports('meetings') 才显示入口。
 import { fetch as expoFetch } from 'expo/fetch';
 import type { AgentColor } from '../data/types';
 import { authHeaders, getBase, request } from './base';
 import { readSse } from './client';
+import type { CyberAvatarSpec } from './cybers';
 
 export type MeetingStatus = 'running' | 'pending' | 'ended' | 'group';
-export interface MeetingMember { id: string; name: string; icon: string | null; color: AgentColor | null; /** 这个 Agent 已经删了 */ gone: boolean }
+export interface MeetingMember {
+  id: string; name: string; icon: string | null; color: AgentColor | null; /** 这个 Agent 已经删了 */ gone: boolean;
+  /** 主线第三步：会上也可以有赛博（只出看法、不领待办），带它的形象和标签；老服务器没有 kind = 功能 Agent */
+  kind?: 'agent' | 'cyber'; avatar?: CyberAvatarSpec | null; tag?: string;
+}
 /** 纪要里的一条待办：负责的 Agent + 时间（dates 是具体日期，重复的有几天；start 为空 = 只有截止日） */
 export interface MeetingTodo {
   agent: string; agentName: string; icon: string | null; color: AgentColor | null;
@@ -30,6 +35,8 @@ export interface Meeting {
   minutes: MeetingMinutes | null; confirmed: MeetingConfirmed | null;
   /** 待确认：这一轮的纪要还没确认（对话列表的行上标出来） */
   needsYou: boolean;
+  /** 主线第三步：「定了告诉我」（全自动跑完，主对话里留结果）；listed = false：对话列表里不单列，在会议记录里 */
+  auto?: boolean; listed?: boolean;
   createdAt: string; updatedAt: string; endedAt: string | null;
   live: MeetingLive | null;
   /** 只在列表里有：最后一条（谁说的、说了什么） */
@@ -48,6 +55,21 @@ export interface MeetingMsg {
   minutes?: MeetingMinutes;
 }
 
+/** 会议记录（主对话资料页 →「会议记录」，主线第三步）：谁发起的、结果怎样、一句话；搜的时候带一段 match */
+export interface MeetingRecord {
+  id: string; title: string; topic: string; origin: 'manual' | 'main'; auto: boolean; listed: boolean; status: MeetingStatus;
+  initiator: string; outcome: string; line: string; day: string; createdAt: string; decisions: number; todos: number; match?: string;
+  members: MeetingMember[];
+}
+/** all 全部 / main 助手发起 / auto 定了告诉我 / mine 你发起 */
+export type RecordFilter = 'all' | 'main' | 'auto' | 'mine';
+
+export interface MeetingOptions {
+  members: (MeetingMember & { kind: 'agent' | 'cyber'; purpose: string; health: boolean })[];
+  /** byOrigin：meetings.by_origin 开着（才有「定了告诉我」）；records：资料页画「会议记录」（开关开着，或者有开着时收走的会；老服务器没有） */
+  keep: boolean; byOrigin: boolean; records?: boolean; min: number; max: number;
+}
+
 const enc = encodeURIComponent;
 type One = { meeting: Meeting };
 
@@ -55,8 +77,12 @@ export const meetingsApi = {
   /** active = 进行中 / 待确认 / 群聊；ended = 已结束的会议 */
   list: (status: 'active' | 'ended' | 'all' = 'active') => request<{ meetings: Meeting[]; endedCount: number }>(`/api/meetings?status=${status}`),
   get: (id: string) => request<{ meeting: Meeting; messages: MeetingMsg[] }>(`/api/meetings/${enc(id)}`),
-  create: (b: { topic: string; members: string[]; title?: string; keep?: boolean }) => request<One>('/api/meetings', { method: 'POST', body: b }).then((j) => j.meeting),
-  /** Grava 按议题推荐人选和会议名（不带工具的模型；用不了时 agents 为空） */
+  /** keep 不给 = 服务器的默认（meetings.by_origin 开着时你发起的默认留着）；auto =「定了告诉我」 */
+  create: (b: { topic: string; members: string[]; title?: string; keep?: boolean; auto?: boolean }) => request<One>('/api/meetings', { method: 'POST', body: b }).then((j) => j.meeting),
+  /** 发起会议那一页：能请谁（功能 Agent 在前；health 的不和赛博同会）、「会后保留为群聊」的默认值（主线第三步；老服务器 404） */
+  options: () => request<MeetingOptions>('/api/meetings/options'),
+  records: (filter: RecordFilter = 'all', q = '') => request<{ records: MeetingRecord[]; intro: string }>(`/api/meetings/records?filter=${filter}&q=${enc(q)}`),
+  /** 助手按议题推荐人选和会议名（不带工具的模型；用不了时 agents 为空） */
   suggest: (topic: string) => request<{ agents: string[]; title: string }>('/api/meetings/suggest', { method: 'POST', body: { topic }, timeoutMs: 60000 }),
   /** 补充一句：待确认 / 群聊时开下一轮，进行中只记下 */
   send: (id: string, text: string) => request<{ message: MeetingMsg; meeting: Meeting }>(`/api/meetings/${enc(id)}/send`, { method: 'POST', body: { text }, timeoutMs: 60000 }),

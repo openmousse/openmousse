@@ -15,6 +15,7 @@ import engine
 from engine import heartbeat, jobs, store, tools, unattended, when
 from engine.errors import EngineError
 from engine.session import DbSession, MemorySession, day_key, text_of, user
+from stored_values import ASSISTANT_ROLE
 from test_engine import FakeModel
 
 UTC = ZoneInfo("UTC")
@@ -255,7 +256,7 @@ def test_agent_job_stays_off_until_the_user_turns_it_on(builtin, fake, pushes):
     assert j["runs"] == 1 and j["last_status"] == "ok" and when.parse_iso(j["next_run"]) == due + timedelta(minutes=2)
     m = msgs(aid)
     assert m[-2]["role"] == "auto" and m[-2]["text"] == "【自动触发】Scheduled: Water" and "ran on its own" in m[-2]["gw_text"]
-    assert m[-1]["role"] == "grava" and m[-1]["text"] == "💧 Time for a glass of water." and m[-1]["origin"] == "auto"
+    assert m[-1]["role"] == ASSISTANT_ROLE and m[-1]["text"] == "💧 Time for a glass of water." and m[-1]["origin"] == "auto"
     assert pushes[-1]["body"] == "💧 Time for a glass of water." and pushes[-1]["level"] == "quiet" and pushes[-1]["kind"] == "reply"
     req = f.requests[3][1]  # 到点那一轮：新会话、没有 cron 工具、照常的开头
     assert [m["role"] for m in req.messages] == ["user"] and "Nobody is watching this run" in text_of(req.messages[0])
@@ -491,7 +492,7 @@ def test_chat_mode_runs_in_the_conversation_and_cannot_make_jobs(builtin, fake, 
     m = msgs(aid)
     assert j["name"] == "Ask the user how the…"  # 没起名字：取 task 的前 20 个字
     assert m[-2]["role"] == "auto" and m[-2]["text"] == f"【自动触发】Scheduled: {j['name']}" and "[Scheduled job]" in m[-2]["gw_text"]
-    assert m[-1]["role"] == "grava" and m[-1]["text"] == "How's your day going?"
+    assert m[-1]["role"] == ASSISTANT_ROLE and m[-1]["text"] == "How's your day going?"
     tool_res = f.requests[1][1].messages[-1]
     assert tool_res["role"] == "tool" and tool_res["error"] and "scheduled job running" in text_of(tool_res)
     assert [x for x in jobs.listing(aid) if x["id"] != j["id"]] == []  # 没建出新的
@@ -667,9 +668,9 @@ def test_heartbeat_does_not_follow_the_chats_subscription_model(builtin, fake, p
 
 
 def test_hooks_leave_a_database_without_the_kernel_alone(monkeypatch, tmp_path):
-    """claw 是 OpenClaw（比如 Grava）时，OpenClaw 的 Agent 交的 schedule 卡也会经过这里的钩子：没用过内核的库什么都不碰。"""
+    """claw 是 OpenClaw（比如一直跑 OpenClaw 的老实例）时，OpenClaw 的 Agent 交的 schedule 卡也会经过这里的钩子：没用过内核的库什么都不碰。"""
     import sqlite3
-    db = tmp_path / "grava.db"
+    db = tmp_path / "mousse.db"
     sqlite3.connect(db).execute("CREATE TABLE inbox (id TEXT)").connection.commit()
     monkeypatch.setattr(config.settings, "db", db)
     assert not jobs.exists() and jobs.by_inbox("ib-x") is None and jobs.extra("ib-x") is None

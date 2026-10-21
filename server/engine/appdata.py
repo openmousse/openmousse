@@ -350,6 +350,12 @@ def provider_rows(refs: list[str]) -> list[dict]:
             out.append({"provider": pid, "name": catalog.text(catalog.LOGINS["chatgpt"]["name"]),
                         "status": "ok" if st["ready"] else "expired" if st["needsReconnect"] else "missing", "subscription": True,
                         "expires": None, "plan": st["plan"]})
+        elif sub == "grok":  # 10/20：用户自己的 Grok 订阅（engine/grok_plan.py 记下的状态，不连网）
+            from . import grok_plan
+            gs = grok_plan.status()
+            out.append({"provider": pid, "name": catalog.text(catalog.LOGINS["grok"]["name"]),
+                        "status": "ok" if gs["ready"] else "expired" if gs["needsReconnect"] else "denied" if gs["denied"] else "missing",
+                        "subscription": True, "expires": None, "plan": None})
         else:
             e = catalog.entry(pid)
             name = catalog.text(e["name"]) if e else str(setup_api.over(pid).get("name") or pid)
@@ -375,6 +381,14 @@ async def purposes() -> list[dict]:
     return out
 
 
+def _grok_brief() -> dict:
+    """/api/models 的 grok：连没连、能不能用、型号、默认的那个、后台同意没有（10/20，engine/grok_plan.py）。"""
+    from . import grok_plan
+    gs = grok_plan.status()
+    return {**{k: gs[k] for k in ("enabled", "connected", "ready", "needsReconnect", "models", "defaultModel", "quota")},
+            "denied": bool(gs["denied"]), "background": bool(gs["background"]["allowed"])}
+
+
 async def models_view(request: Request | None = None) -> dict:
     """/api/models 在 builtin 下（见文件开头）。"""
     from . import chatgpt_plan, claude_brain, runners, setup_api
@@ -394,6 +408,7 @@ async def models_view(request: Request | None = None) -> dict:
            "claudeCode": cc,
            "chatgpt": {**{k: st[k] for k in ("enabled", "connected", "ready", "planEnabled", "plan", "needsReconnect", "models")},
                        "background": bool((st.get("background") or {}).get("allowed"))},
+           "grok": _grok_brief(),  # 10/20：用户自己的 Grok 订阅（engine/grok_plan.py；不带令牌）
            "purposes": await purposes(), "usage": None}
     if is_owner(request):  # 花了多少只给主人的设备（同 /api/setup/usage）
         try:

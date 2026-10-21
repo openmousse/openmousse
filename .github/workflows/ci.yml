@@ -33,10 +33,11 @@ jobs:
         with: { python-version: "${{ matrix.python }}" }
       - run: pip install -r server/requirements.txt ruff==0.15.2 ./tree
       - run: ruff check server tree/openmousse_tree packs/core/scripts packs/core/setup.py  # rules in ruff.toml
-      - name: server unit tests
+      - name: server and tree unit tests
         run: |
           pip install pytest
           python -m pytest server/tests -q
+          python -m pytest tree/tests -q
       - run: bash -n install.sh && bash -n check.sh
       - name: installer takes over a freshly onboarded OpenClaw workspace
         run: |

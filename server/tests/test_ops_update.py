@@ -135,7 +135,7 @@ def test_update_refuses_what_it_should_not_touch(w, capsys, monkeypatch, tmp_pat
     assert code == 0 and sh(w.repo, "rev-parse", "HEAD") == w.v2 and "mousse update" in sh(w.repo, "stash", "list")
     monkeypatch.setenv("MOUSSE_INSTALL", "docker")
     code, out = run(w, capsys)
-    assert code == 2 and "docker compose pull" in out
+    assert code == 2 and "up -d --build" in out
     monkeypatch.delenv("MOUSSE_INSTALL")
     sh(w.repo, "checkout", "-q", "-b", "feature", w.v1)  # 在跑别的开发分支：不硬切
     (w.repo / "server/extra.py").write_text("y = 1\n", encoding="utf8")

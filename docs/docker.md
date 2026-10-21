@@ -56,7 +56,7 @@ The image has no Node.js and doesn't build the web app. To serve it at `http://1
 
 ## Updating
 
-Rebuild or pull a new image (`git pull && docker compose -f docker/compose.yaml up -d --build`). `mousse update` refuses to run in the container (`MOUSSE_INSTALL=docker`) and tells you to pull a new image. The volume stays as it is.
+Rebuild or pull a new image (`git pull && docker compose -f docker/compose.yaml up -d --build`). `mousse update` refuses to run in the container (`MOUSSE_INSTALL=docker`) and tells you how to rebuild the image. The volume stays as it is.
 
 ## Backups
 

@@ -6,6 +6,7 @@ import { Linking, Pressable, StyleSheet, Text, TextInput, View } from 'react-nat
 import { agentName } from '../../brand';
 import * as sched from '../../api/schedule';
 import type { DayEvent, FeedRef } from '../../api/today';
+import { isOwner } from '../../data/owner';
 import type { FeedItem, MealPlan, TrainingPlan } from '../../data/types';
 import { L } from '../../i18n';
 import { openThread } from '../../navigation';
@@ -24,7 +25,7 @@ import { CAT_SLOT, type CatFilterValue, catColor } from './Cats';
 import { BlockHeader, hhmm, toMin } from './parts';
 
 /** 这一条是哪个 Agent 排的（课表、邮件、你自己加的、主对话加的都不算）。 */
-const agentOf = (e: DayEvent) => (e.origin === 'own' && e.by && e.by !== 'leo' && e.by !== 'main' ? e.by : null);
+const agentOf = (e: DayEvent) => (e.origin === 'own' && e.by && !isOwner(e.by) && e.by !== 'main' ? e.by : null);
 const skipped = (e: DayEvent) => e.state === 'skipped';
 const span = (a: string, b: string) => (b ? `${a}–${b}` : a);
 

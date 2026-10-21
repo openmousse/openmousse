@@ -133,11 +133,11 @@ const readingLabel = r => (r.kind === 'textbook' && r.chapter ? L(`教材第 ${r
 // 第 1 步：说说这门课
 function step1() {
   const d = W.draft;
-  const nameIn = h('input', { id: 'wz-name', value: d.name || '', placeholder: L('比如：Behavioural Economics 行为经济学', 'e.g. Behavioural Economics') });
+  const nameIn = h('input', { id: 'wz-name', value: d.name || '', placeholder: L('比如：Linear Algebra 线性代数', 'e.g. Linear Algebra') });
   nameIn.addEventListener('input', () => { d.name = nameIn.value; paintFoot1(); });
   const termIn = h('input', { id: 'wz-term', value: d.term || '', placeholder: L('比如：2026 秋季', 'e.g. Autumn 2026') });
   termIn.addEventListener('input', () => { d.term = termIn.value; });
-  const notes = h('textarea', { id: 'wz-more', rows: 3, placeholder: L('比如：微观学过，前景理论没学过；每节控制在两小时内。', "e.g. I know micro but not prospect theory; keep each session under two hours.") });
+  const notes = h('textarea', { id: 'wz-more', rows: 3, placeholder: L('比如：微积分学过，特征值没学过；每节控制在两小时内。', "e.g. I know calculus but not eigenvalues; keep each session under two hours.") });
   notes.value = d.notes || '';
   notes.addEventListener('input', () => { d.notes = notes.value; });
   const group = (set, items) => h('div', { class: 'chips' }, items.map(([k, label]) => chip(label, set.has(k), e => { set.has(k) ? set.delete(k) : set.add(k); e.currentTarget.classList.toggle('on'); e.currentTarget.setAttribute('aria-pressed', set.has(k)); })));
@@ -617,7 +617,7 @@ async function wzStartGen() {
 
 // —— 右边：学习 Agent 的对话 ——
 const TIPS = () => ({
-  1: L('左边可以一项项填，也可以直接跟我说，比如「这学期的行为经济学，期末闭卷，微观学过，前景理论没学过」，我帮你填好。', 'Fill in the left, or just tell me, e.g. "Behavioural economics this term, closed-book final, I know micro but not prospect theory", and I\'ll fill it in.'),
+  1: L('左边可以一项项填，也可以直接跟我说，比如「这学期的线性代数，期末闭卷，微积分学过，特征值没学过」，我帮你填好。', 'Fill in the left, or just tell me, e.g. "Linear algebra this term, closed-book final, I know calculus but not eigenvalues", and I\'ll fill it in.'),
   2: null,
   3: L('表里有不对的直接跟我说，我改好标黄；改错了能撤销。', "Tell me what's wrong in the table; I'll fix it and highlight the change. Anything I get wrong can be undone."),
   4: L('缺的阅读我可以去找公开的版本，找不到你再决定跳不跳过。', "I can look for public copies of missing readings; if I can't find one, you decide whether to skip it."),

@@ -13,6 +13,7 @@ from fastapi import FastAPI, Request
 from fastapi.responses import PlainTextResponse
 
 import friends
+import friendgroup
 import a2a
 import share
 import social
@@ -23,6 +24,7 @@ app.include_router(share.public_router)
 app.include_router(social.public_router)  # /f/card、/f/jwks.json（社交第二层）
 app.include_router(friends.public_router)  # /f/i/…（邀请落地页）、/f/hello、/f/msg
 app.include_router(a2a.public_router)  # /f/a2a、/f/a2a/agent-card.json、/f/a2a/push（第三层，名片 agent 之间）
+app.include_router(friendgroup.public_router)  # /f/group（主线第三步：好友群，逐个成员投递；跟着管家开关）
 app.include_router(webhooks.public_router)  # 第 4 批：/webhooks/<名字>：只认配了 public: true 的（engine/webhooks.py，自己验签）
 
 

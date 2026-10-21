@@ -23,7 +23,7 @@ Several Agents work through one topic together. The main chat's agent (the "host
 
 ## How each member takes part
 
-- A meeting is a thread `grp-<8 hex>`. Each member has its own OpenClaw session in it, `agent:<id>:grava:grp-<id>` (older Agents still living under main: `agent:main:grava:grp-<id>-<id>`), reached through the Gateway's OpenAI-compatible endpoint with its own agent id (`x-openclaw-agent-id`): its own memory, tools and the model picked in its chat.
+- A meeting is a thread `grp-<8 hex>`. Each member has its own OpenClaw session in it, `agent:<id>:grava:grp-<id>` (older Agents still living under main: `agent:main:grava:grp-<id>-<id>`; `grava` is an internal value in the session key, kept so older sessions are found again), reached through the Gateway's OpenAI-compatible endpoint with its own agent id (`x-openclaw-agent-id`): its own memory, tools and the model picked in its chat.
 - On its turn it gets the meeting messages it hasn't seen yet, each labelled with who said it (`[Meals] …`, `[your name] …`, `[assistant · minutes of round 1] …`), without its own (they're in its session). The first turn also carries the topic, who is present, who it is and the rules; OpenClaw resets sessions daily at 04:00, so the first turn on a new day carries them again (with at most the last 30 messages). Other claws (Hermes, nanobot…) don't keep sessions and get the whole thing every time.
 - The Agent that was @-ed also reads ""X" @-mentioned you: "…" Answer that first; don't @ anyone in this reply."
 - One turn may take up to 5 minutes; after that it counts as unfinished and the next member is asked.
@@ -36,11 +36,18 @@ Suggesting attendees, picking who answers and writing minutes all go through [`s
 
 When a meeting the main chat started gets minutes, is confirmed or ends, the main chat's next turn carries that in its preamble once (the minutes plus confirmed / waiting / ended unconfirmed; `meetings.news` / `told`).
 
+## Cybers, "tell me when it's settled", and where a meeting lives (2026-10-21)
+
+- **Cybers can attend** (when `cybers` is on): a Cyber speaks in a cyber turn ([`engine/cyber.py`](../server/engine/cyber.py) `speak`: never your Claude Code / ChatGPT plan; its loadout tool `ask_agent` included; conversation `meeting:<meeting>:<cyber>`). It gives views and owns no to-dos: the minutes only give to-dos to functional Agents, and a meeting needs at least one of them. Health, diet and sleep Agents can't meet with a Cyber (it runs on another company's model and reads everything said).
+- **Tell me when it's settled** (`auto: true` when starting one; only for a meeting you start in the app, with `by_origin` below on, otherwise `auto` is ignored): it runs on its own. After a round's minutes, if there are open questions and the minutes say who to ask, another round starts (at most 2 rounds in all); then the minutes are confirmed automatically (to-dos into the schedule and dashboards) and the meeting ends. The main chat gets one line ("The meeting … is done; N to-dos went into the schedule and dashboards:") with the minutes card under it, as a receipt.
+- **Where a meeting lives depends on who started it** (`"meetings": {"by_origin": true}` in `server.json`; off by default, so existing installs keep the old behaviour until you turn it on): meetings you start yourself without "tell me" stay in the chat list (keep as a group chat is on by default); meetings the assistant started and fully automatic ones leave the list when they're done (`listed: false`): while one runs, the main chat's row says "In a meeting · …", and the main chat keeps the minutes card. Whether a meeting is listed is decided when it's created, so older meetings keep showing as before.
+- **Meeting records** (the main chat's info page → Meeting records): every meeting, yours included, newest first, filtered by who started it, searchable across topics, minutes and what was said.
+
 ## Data
 
 - `meetings`: `id, title, topic, host (main), members (JSON, speaking order), status (running / pending (to confirm) / ended / group), keep, round, origin (manual / main), from_thread, message_id (the reply the meeting card hangs on), minutes (latest minutes, JSON), confirmed (JSON), news, told, created_at, updated_at, ended_at`
 - `meeting_seen`: `(meeting, agent) → last_id, day`: how far each member has read, and on which day (a new day re-sends the rules).
-- `messages` gains two columns: `speaker` (Agent id; the host's system lines and minutes are `main`; yours is empty) and `meta` (JSON: `round`, `replyTo`, `at`, `deferred`, `kind: minutes | system | meeting`, `event`, `agents`, `minutes`). Roles: you = `user`; members and minutes = `grava` with `origin = meeting` (unread, but not a "reply to you" for the badge); system lines = `auto`.
+- `messages` gains two columns: `speaker` (Agent id; the host's system lines and minutes are `main`; yours is empty) and `meta` (JSON: `round`, `replyTo`, `at`, `deferred`, `kind: minutes | system | meeting`, `event`, `agents`, `minutes`). Roles: you = `user`; members and minutes = `grava` (the internal value for the assistant's side) with `origin = meeting` (unread, but not a "reply to you" for the badge); system lines = `auto`.
 - A server restart interrupts a running round: the next read marks the meeting to-confirm with a line "The server restarted; this round didn't finish", and you can continue. A running round counts in `/api/chat/busy`, so `safe_restart` waits for it.
 
 ## API
@@ -48,7 +55,9 @@ When a meeting the main chat started gets minutes, is confirmed or ends, the mai
 | Endpoint | What it does |
 |---|---|
 | `GET /api/meetings?status=active\|ended\|all` | `{meetings, endedCount}`: active = running, to confirm and groups (the chat list's meeting rows), newest first; each row has `last` (`name`, `text`, `time`, `kind`) and `needsYou` (to confirm) |
-| `POST /api/meetings` | `{topic, members, title?, keep?, origin?}` → starts it and round 1; 2–8 existing Agents. With `origin: main` the meeting card goes straight to the main chat's running reply over SSE |
+| `POST /api/meetings` | `{topic, members, title?, keep?, auto?, origin?}` → starts it and round 1; 2–8 existing Agents (Cybers allowed, at least one functional Agent). `keep` left out = the default (false; by who started it when `meetings.by_origin` is on); `auto` = tell me when it's settled (only with `origin: manual` and `meetings.by_origin` on). With `origin: main` the meeting card goes straight to the main chat's running reply over SSE |
+| `GET /api/meetings/options` | The New meeting page: who can be invited (`members`, functional Agents first, then Cybers; `health: true` = never in a meeting with a Cyber), the default for Keep as a group chat (`keep`, follows `meetings.by_origin`), `byOrigin` (whether `meetings.by_origin` is on; the app shows Tell me when it's settled only then), `records` (whether the main chat's info page shows Meeting records: `by_origin` on, or meetings it filed away while it was on), `min` / `max` |
+| `GET /api/meetings/records?filter=all\|main\|auto\|mine&q=` | `{records, intro}`: every meeting, newest first; each has `initiator` ("Started by …" / "Started by you · told when settled"), `outcome` ("Minutes confirmed" / "In the schedule" / …), `line`, `day`, and `match` (a snippet) when searching |
 | `POST /api/meetings/suggest` | `{topic}` → `{agents, title}` (empty `agents` when the model isn't available) |
 | `GET /api/meetings/{id}` | `{meeting, messages}`: every message (oldest first, up to 500); `meeting.live` = the running round (`round, phase, speaker, replyTo, text, queue`) |
 | `GET /api/meetings/{id}/stream` | Attach to the running round (SSE; 204 if none), split by speaker: `state` (snapshot) → `round` / `speaker` / `delta` / `said` / `system` / `message` / `phase` (minutes = writing the minutes) / `minutes` / `status` → `done` |

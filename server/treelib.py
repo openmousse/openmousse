@@ -1,6 +1,6 @@
 """开源版世界树（仓库 tree/ 的 openmousse_tree 包，安装器用 `mousse-tree` 装的那一套）包成 memtree.py / connectors.py / 内核要的样子。
 
-sources.py 先找 workspace 的 scripts/memory_tree.py（作者自己的实例：Obsidian 库里的笔记）；没有它、而 openmousse_tree
+sources.py 先找 workspace 的 scripts/memory_tree.py（自己写的那份，比如 Obsidian 库里的笔记）；没有它、而 openmousse_tree
 已经 init 过（有 ~/.mousse-tree/config.json 或 MOUSSE_TREE_HOME 下的配置），就用这里。两边的配置格式一样（tokens: 令牌 → 平台名、
 public_hosts、port），所以「接到你的 AI」两边通用。
 
@@ -45,7 +45,7 @@ def available() -> bool:
 
 
 def selected() -> bool:
-    """sources.py 选中的就是这里（不是作者实例的脚本）。"""
+    """sources.py 选中的就是这里（不是工作区的脚本）。"""
     import sources
     return sources.memory_tree is sys.modules[__name__]
 

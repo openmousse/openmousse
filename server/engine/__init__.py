@@ -1,5 +1,5 @@
 """OpenMousse 自己的内核（builtin）。10/15 定的：自己的内核，Python 写进服务器；借 pi、OpenClaw 的设计，三家都是 MIT。
-交接和十步计划：~/openmousse-wt/engine/README.md；规矩（三种回合、关卡、事件流）：~/openmousse-wt/harness/README.md。
+规矩（三种回合、关卡、事件流）写在 loop.py、tools.py、events.py 的开头；每个文件管什么见下面的分工。
 
 分工：
   models.py              模型引用 provider/model、各家接口和密钥、server.json 的 engine 段、价钱
@@ -9,9 +9,13 @@
   session.py             中立格式的消息、会话（内存 / 库里的一棵树，撤回 = 换叶子）
   loop.py                一轮：模型 → 工具 → 模型……；三种回合（owner / cyber / outsider）按回合卡工具；插话、后续、停
   events.py, store.py    事件流：对话 → 一轮 → 每一步（mousse.db 的 engine_* 四张表）+ 进程里的实时广播
+  steps.py               app 进度上的一步说人话（10/20）：工具名 + 标题 → label / doing / 细节（chat.note_engine 加进 progress）
   oneshot.py             一次性 JSON（名片 Agent、Doorman、llmjson.ask 改走它，能换模型）：默认外人回合；调用方报了主人自己的来路、
                          模型是他的 Claude Code 时交给 claude_brain.ask（走他的套餐，跑不了换按量的备用）
-  cyber.py               赛博回合（后端 + 测试入口）
+  cyber.py               赛博回合（后端 + 测试入口）；存起来的赛博在 ../cybers.py（主线第三步）
+  cyber_tools.py         主线第三步：只给赛博回合的工具（Tool.kinds 只有 cyber）：ask_agent 找它装载的功能 Agent（目标限死在装载名单里；
+                         那个 Agent 只读地答一轮、不花主人的套餐，要改数据的出只给主人的卡）；propose_change 只提议：它自己的性格、标签、
+                         记下一条，交卡给主人，点了才改
   tools.py               主人回合的工具：我们自己的命令行工具（bridges.py）+ 连接器 + skill；分类表和关卡（撤得回直接做，撤不回进收件箱）
   mcp_client.py          你自己配的 MCP 服务（第 13 步，server.json 的 mcp_servers）：本机 stdio 的常驻进程、写好令牌的远端，工具接进主人回合
                          第 5 批：prompts 两个只读工具、sampling（默认关，零工具的外人回合、限速、不花套餐）、/api/setup/mcp…、
@@ -49,7 +53,7 @@
                          /embeddings（OpenAI、本机 Ollama……）；密钥照 models.env_value、限速、出错分类、报错里抹掉密钥
   semantic.py            向量存进 recall.db（float32 + 符号位）、后台慢慢补（不卡主人回合）、换型号重建；搜的时候汉明粗筛 + 余弦精算，
                          关键词和意思合分 × 新近 × 信几分，MMR 去掉差不多的；/api/engine/recall 的状态
-  recall_tree.py         世界树的叶子进记忆检索（配了向量才有）：作者的 memory_tree.py 或开源包（读不了退回 TREE.md 导出），一片一段，按枝的范围
+  recall_tree.py         世界树的叶子进记忆检索（配了向量才有）：工作区的 memory_tree.py 脚本 或开源包（读不了退回 TREE.md 导出），一片一段，按枝的范围
   memgate.py             记性的闸和读写表（13b / 13d）：四种记忆（经历 / 叶子 / 档案 / 做法）× 三种回合 × 谁的话 → 直接写 / 先提议 / 进待定 / 不做；
                          工具（skill_manage、主机文件、tree）和后台（写回、skill 回看、Zen、待定）都问它，每一次记进 engine_memory；读叶子的三档信；
                          loop 挑工具时照读写表再筛一遍（screen）；/api/engine/memory、/api/engine/memory/table
@@ -122,6 +126,7 @@
                          不经 Doorman；给第 8 批的接口 ADDRESS_HOOKS / connect_to。沙箱浏览器的登录配置档在 sandbox.browser_profile
   web.py                 ⑫ web_search（Brave、Tavily、Exa、Perplexity、SearXNG、DuckDuckGo；第 3 批加 Gemini、Grok、Kimi、Firecrawl，写明才用）和
                          web_fetch（只去公网、钉住查过的地址、转成 Markdown；第 3 批：只有脚本的壳可选交沙箱浏览器渲染）
+  xsearch.py             10/20：x_search 搜 X 上的帖子（xAI 自带的工具；engine.web.x_search 开了才有）：用 XAI_API_KEY；engine.grok.x_search = true 才先走 Grok 订阅
   toolsearch.py          第 3 批：MCP、连接器的工具多过门槛（engine.tools.search）收进 tool_search / tool_describe / tool_call，分类和卡照被调的那个
   llm_task.py            第 3 批：llm_task 结构化的子任务（engine.tools.llm_task）：零工具的一问（oneshot.ask_json）、照 JSON Schema 校验、may_spend
   difftool.py            第 3 批：diff（engine.tools.diff）：两段文字、或者文件和它留着的旧版本（versions.py）比；可选做成一页（pages.py）
@@ -140,6 +145,11 @@
   chatgpt_plan.py        模型 chatgpt/…（第 11b 项）：用户自己的 ChatGPT 套餐（官方 Sign in with ChatGPT 给开源 / 本地应用的那条路）：授权、
                          令牌存在本机（0600）、刷新排队、撤销；推理走公开的 Responses API；谁能花照 models.may_spend（后台的要用户同意过）；
                          /api/engine/chatgpt…
+  grok_plan.py           10/20 模型 grok/…：用户自己的 Grok 订阅（SuperGrok / X Premium+）：xAI 的 OAuth 设备码登录（服务器上跑，用户在手机或电脑上
+                         点同意）、令牌存在本机（0600）、刷新排队、退出；403 = xAI 不给这个账号 OAuth（提示改用 API 密钥）；/api/engine/grok…（只认
+                         主人的设备）、../setup_ctl.py grok
+  grok_media.py          10/20：生图、生视频、朗读多一家「Grok 订阅」（engine.use.image / video_gen / tts 写 grok/<型号> 才用，默认关）：算订阅的额度、
+                         不另付钱；这一轮能不能花照 may_spend
   provider_cli.py        模型 codex/…、copilot/…（第 7 批，默认关）：用户自己登录的官方 Codex / Copilot 命令行当主人回合的模型
                          （providers.stream 交过来）：一次回复起一次命令，关掉它自己的工具，我们的工具经 MCP 给；谁能花照 models.may_spend
   auto.py                自动选模型（第 7 批，engine.auto，默认关）：主人自己说的简单的一句交给便宜的模型，同一轮粘住，没成回到主模型

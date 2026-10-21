@@ -58,9 +58,9 @@ export const applications = () => [
 
 /** 一次 Pull A：每个动作做了几组 */
 export const pullA = () => [
-  { label: L('硬拉 70 kg × 5', 'Deadlift 70 kg × 5'), done: 3, total: 3 },
-  { label: L('高位下拉 50 kg × 10', 'Lat pulldown 50 kg × 10'), done: 4, total: 4 },
-  { label: L('杠铃划船 50 kg × 10', 'Barbell row 50 kg × 10'), done: 3, total: 3 },
+  { label: L('硬拉 60 kg × 5', 'Deadlift 60 kg × 5'), done: 3, total: 3 },
+  { label: L('高位下拉 40 kg × 10', 'Lat pulldown 40 kg × 10'), done: 4, total: 4 },
+  { label: L('杠铃划船 40 kg × 10', 'Barbell row 40 kg × 10'), done: 3, total: 3 },
 ];
 
 /** M/D（示例里的日期标签） */
@@ -112,13 +112,13 @@ export const jobBoard = () => [
 
 /** 练后报告：和上一次（9/29）的 Pull A 比 */
 export const pullCompare = () => [
-  { key: 'dl', name: L('硬拉', 'Deadlift'), now: '70 kg × 5 × 3', last: '65 kg × 6 × 3', dir: 'up' as const, verdict: L('进步', 'Up'), good: true },
-  { key: 'pd', name: L('高位下拉', 'Lat pulldown'), now: '50 kg × 10 × 4', last: '45 kg × 10 × 4', dir: 'up' as const, verdict: L('加重', 'Heavier'), good: true },
-  { key: 'row', name: L('杠铃划船', 'Barbell row'), now: '50 kg × 10 × 3', last: '50 kg × 9 × 4', dir: 'flat' as const, verdict: L('持平', 'Level') },
+  { key: 'dl', name: L('硬拉', 'Deadlift'), now: '60 kg × 5 × 3', last: '55 kg × 6 × 3', dir: 'up' as const, verdict: L('进步', 'Up'), good: true },
+  { key: 'pd', name: L('高位下拉', 'Lat pulldown'), now: '40 kg × 10 × 4', last: '35 kg × 10 × 4', dir: 'up' as const, verdict: L('加重', 'Heavier'), good: true },
+  { key: 'row', name: L('杠铃划船', 'Barbell row'), now: '40 kg × 10 × 3', last: '40 kg × 9 × 4', dir: 'flat' as const, verdict: L('持平', 'Level') },
 ];
 
 /** 晚餐建议（两顿合计） */
-export const dinner = { protein: 78, carbs: 96, fat: 24, kcal: 912, proteinTarget: 120 };
+export const dinner = { protein: 64, carbs: 90, fat: 22, kcal: 814, proteinTarget: 100 };
 
 /** 一晚的睡眠分期（10/11 23:40 – 10/12 07:10） */
 export const sleepNight: { start: string; end: string; stage: 'awake' | 'rem' | 'core' | 'deep' }[] = ([
@@ -140,3 +140,14 @@ export const trainingDays: { date: string; done: boolean }[] = (() => {
   }
   return out;
 })();
+
+/** 年轮：最近 7 天（10/6–10/12）新长的记忆，0 = 今天；day 为 null 的两条还待确认（一条自己说的，一条朋友的 Agent 说的） */
+export const memoryDots = () => ([
+  [0, L('周三晚上有吉他课', 'Guitar lesson on Wednesday evenings')], [0, L('投行申请写到第二篇文书', 'On the second essay of the bank application')],
+  [0, L('不喝含糖饮料', 'Avoids sugary drinks')], [1, L('11 月想去一趟海边', 'Wants a trip to the sea in November')],
+  [1, L('导师建议先投两家实习', 'The tutor suggested two internships first')], [2, L('早上 7 点前训练状态最好', 'Trains best before 7 am')],
+  [3, L('数据科学硕士放在第二志愿', 'MSc Data Science is the second choice')], [3, L('周末不排面试', 'No interviews on weekends')],
+  [3, L('喜欢先看结论再看细节', 'Likes the conclusion before the details')], [5, L('膝盖旧伤，深蹲控制在 80 kg 以内', 'Old knee injury: squats stay under 80 kg')],
+  [6, L('室友下个月搬走', 'The flatmate moves out next month')],
+  [null, L('下周四有小组展示', 'Group presentation next Thursday')], [null, L('对芒果过敏', 'Allergic to mango')],
+] as const).map(([day, label], i) => ({ key: `m${i}`, day, label }));

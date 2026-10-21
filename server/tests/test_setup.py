@@ -125,6 +125,7 @@ def env(server_json, tmp_path, monkeypatch):
     import main
     from engine import catalog, models, runners, setup_api
     monkeypatch.setattr(setup_api, "_mcache_path", lambda: tmp_path / "setup-models.json")
+    monkeypatch.setattr(setup_api, "_pins_path", lambda: tmp_path / "setup-pins.json")
     setup_api.reset()
     for name in {e["key_env"] for e in catalog.CLOUD.values()} | {s["key_env"] for s in catalog.SEARCH.values() if s.get("key_env")} | {"SEARXNG_URL", "MYLAB_API_KEY"}:
         monkeypatch.delenv(name, raising=False)
@@ -176,7 +177,7 @@ def test_catalog_entries_have_every_required_field():
         assert e.get("test_model") or e["list"] != "none", pid
     for pid, e in catalog.LOCAL.items():
         assert e["key_env"] == "" and e["detect"]["path"].startswith("/") and e["url"].startswith("http://127.0.0.1:"), pid
-    assert set(catalog.LOGINS) == {"claude-code", "chatgpt", "codex"}
+    assert set(catalog.LOGINS) == {"claude-code", "chatgpt", "codex", "grok"}  # grok：Grok 订阅（engine/grok_plan.py）
     from engine import web
     assert set(catalog.SEARCH) == set(web.PROVIDERS)  # 搜索的两半（请求怎么发 / 给人看的）对得上
     for eid, x in catalog.EMBEDDINGS.items():
@@ -352,7 +353,7 @@ def test_providers_list_covers_every_way_to_run_a_model(env):
         kinds.setdefault(row["kind"], []).append(row["id"])
     from engine import catalog
     assert kinds["cloud"] == list(catalog.CLOUD) and kinds["local"] == list(catalog.LOCAL)
-    assert kinds["login"] == ["claude-code", "chatgpt", "codex"]
+    assert kinds["login"] == ["claude-code", "chatgpt", "grok", "codex"]
     ds = next(x for x in r["providers"] if x["id"] == "deepseek")
     assert ds["connected"] is False and ds["key"]["present"] is False and ds["keyUrl"].startswith("https://") and ds["caps"]["reasoning"] is True
     mo = next(x for x in r["providers"] if x["id"] == "moonshot")
@@ -706,7 +707,7 @@ def test_writing_is_a_purpose_and_a_gemini_key_brings_argon_as_the_recommendatio
     c = env.client
     c.put("/api/setup/models/deepseek", headers=H, json={"key": KEY})  # 只有它一家：主对话自动用它
     p = c.get("/api/setup/purposes?probe=0", headers=H).json()
-    assert [x["id"] for x in p["purposes"]] == ["chat", "background", "writing", "outsider", "embeddings"]
+    assert [x["id"] for x in p["purposes"]] == ["chat", "background", "writing", "json", "compact", "outsider", "embeddings"]
     w = next(x for x in p["purposes"] if x["id"] == "writing")
     assert w["applies"] is True and w["accepts"] == {"plans": True} and w["current"] is None and w["follows"] == "chat"
     assert w["effective"] == w["recommended"]["value"] == "deepseek/deepseek-flash"  # 没有哪家专门推荐写作的：照主对话挑

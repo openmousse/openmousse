@@ -331,6 +331,9 @@ ENGINE = Obj({
     "claude_code": OneOf(Bool(), Obj({"models": ListOf(Ref()), "effort": EFFORT, "fallback_model": Str(), "idle": Num(0), "builtin_tools": ListOf(Str()),
                                       "max_concurrent": Int(1), "max_oneshot": Int(1), "enabled": Bool()}, open=True)),
     "chatgpt": OneOf(Bool(), Obj({"models": ListOf(Str(nonempty=True)), "headers": DictOf(Str()), "enabled": Bool()}, open=True)),  # 型号可以不带 chatgpt/
+    # 10/20：用户自己的 Grok 订阅（engine/grok_plan.py）：型号可以不带 grok/；route = api / proxy；search = false：搜网页不走订阅；x_search = true：搜 X 才走订阅
+    "grok": OneOf(Bool(), Obj({"models": ListOf(Str(nonempty=True)), "route": Enum("api", "proxy"), "headers": DictOf(Str()), "search": Bool(), "x_search": Bool(),
+                               "enabled": Bool()}, open=True)),
     # 第 7 批：codex/…、copilot/… 当模型（engine/provider_cli.py，默认关）
     "codex": OneOf(Bool(), Obj({"models": ListOf(Ref()), "max_concurrent": Int(1), "enabled": Bool()}, open=True)),
     "copilot": OneOf(Bool(), Obj({"models": ListOf(Ref()), "max_concurrent": Int(1), "background": Bool(), "max_ai_credits": Int(30), "bin": PATH,
@@ -339,7 +342,8 @@ ENGINE = Obj({
     "cache_warming": OneOf(Bool(), Obj({"hours": Num(0.1, 24), "every_minutes": Num(5, 59), "enabled": Bool()}, open=True)),  # 第 7 批：engine/warming.py
     "api": OneOf(Bool(), Obj({"agents": ListOf(Str()), "approve": Bool(), "wait": Num(0), "enabled": Bool(), "responses": Bool(), "a2a": Bool()})),
     "files": Obj(open=True),
-    "web": Obj({"search": OneOf(Bool(), Str(), Obj(open=True)), "fetch": OneOf(Bool(), Obj(open=True)), "agents": Any_()}, open=True),
+    "web": Obj({"search": OneOf(Bool(), Str(), Obj(open=True)), "fetch": OneOf(Bool(), Obj(open=True)), "agents": Any_(),
+                "x_search": OneOf(Bool(), Obj({"model": Str(nonempty=True), "enabled": Bool()}, open=True))}, open=True),  # 10/20：engine/xsearch.py
     "host_exec": Obj({"agents": DictOf(OneOf(Bool(), Obj({"allow": ListOf(Str()), "ask": Enum("on-miss", "always", "off"),
                                                           "security": Enum("allowlist", "full"), "timeout": Num(1), "env": ListOf(EnvName())},
                                                          open=True)))}, open=True),
@@ -354,7 +358,8 @@ ENGINE = Obj({
 })
 
 KEYS = Obj({
-    "app_name": Str(), "user_name": Str(), "timezone": Tz(), "language": Str(pattern=re.compile(r"^(zh|en)([-_]\w+)*$", re.IGNORECASE), what=("zh 或 en", "zh or en")),
+    "app_name": Str(), "user_name": Str(),
+    "owner_id": Str(pattern=re.compile(r"^[a-z0-9_-]{1,40}$"), what=("一个 id（小写字母、数字、- 和 _）", "an id (lowercase letters, digits, - and _)")), "timezone": Tz(), "language": Str(pattern=re.compile(r"^(zh|en)([-_]\w+)*$", re.IGNORECASE), what=("zh 或 en", "zh or en")),
     "bind": Obj({"host": Str(nonempty=True), "port": Int(1, 65535), "auto": Bool()}),
     "claw": Obj({"kind": Enum("builtin", "openclaw", "openai"), "name": Str(), "url": Url(), "token": Str(), "token_env": EnvName(), "model": Str(),
                  "models": ListOf(Str()), "session": Any_(), "headers": DictOf(Str()), "skills": PATH, "rules": PATH, "env_file": PATH}, open=True),
@@ -376,6 +381,9 @@ KEYS = Obj({
     "mcp_servers": DictOf(Obj(open=True)), "mcpServers": DictOf(Obj(open=True)), "wake": Obj(open=True),
     "relay": OneOf(Bool(), Obj(open=True)), "think": Obj(open=True), "today": Obj(open=True), "tree": Obj(open=True),
     "update": Obj({"channel": Enum("stable", "main"), "remote": Str(nonempty=True), "wait": Num(1), "idle_wait": Num(0)}),
+    # 「接下来会自动做的事」里起好认的名字（data.py）、连接页认的单元名和文件（connectors.py）：2026-10-20 从代码里挪出来的
+    "upcoming": Obj({"titles": DictOf(OneOf(Str(), Obj({"zh": Str(), "en": Str(), "repeat": Enum("daily", "weekly")}))), "reminder_prefix": Str()}),
+    "connectors": Obj({"units": Obj({"browser": Str(), "mail": Str(), "obsidian": Str(), "tree": Str()}), "canvas_courses": PATH}),
 })
 
 

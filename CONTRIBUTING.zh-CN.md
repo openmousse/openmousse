@@ -11,7 +11,7 @@
 
 ## 起环境
 
-完整体验需要一个 OpenClaw，但每一块都能单独改。
+不用装 OpenClaw：自带的内核用你选的模型就能把整套跑起来，每一块也都能单独改。
 
 ```bash
 git clone https://github.com/openmousse/openmousse && cd openmousse
@@ -23,11 +23,17 @@ cd app && npm install && npm run typecheck && npm run lint
 cd ../server && pip install -r requirements.txt
 MOUSSE_SERVER_CONFIG=/tmp/server.json python3 run.py        # 见 server.example.json 和 config.py
 
+# 自带的内核，不要任何服务商的账号：/tmp/server.json 里写上 "claw": {"kind": "builtin"}，起一个按剧本回话的假模型
+# （OpenAI 兼容，在 127.0.0.1:8765/v1，回「echo: …」），再把它接成主对话的模型
+python3 -m evals.fakemodel --echo &
+MOUSSE_SERVER_CONFIG=/tmp/server.json python3 setup_ctl.py add fake --url http://127.0.0.1:8765/v1 --key-stdin </dev/null
+# 换成真的模型：MOUSSE_SERVER_CONFIG=/tmp/server.json python3 setup_ctl.py（模型、联网搜索、记忆三步）
+
 # tree（MCP 记忆）
 cd ../tree && pip install -e . && MOUSSE_TREE_HOME=/tmp/tree mousse-tree init --name Dev
 ```
 
-CI（`.github/workflows/ci.yml`）里写着到底检查什么：app 的 typecheck + lint、Python 的 pyflakes、`install.sh` 语法、空实例起服务的冒烟测试、tree 命令行。
+CI（`.github/workflows/ci.yml`）里写着到底检查什么：app 的 typecheck + lint、Python 的 lint（ruff，规则在 `ruff.toml`）和服务器的单元测试（`python -m pytest server/tests`）、`install.sh` 语法、空实例起服务的冒烟测试、tree 命令行。
 
 ## Pull Request
 

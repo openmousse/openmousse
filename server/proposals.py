@@ -22,7 +22,7 @@
 - 拒绝：inbox 的 note 记下理由，以后 context 里带着，模型不再提同类的；撤回：记成 withdrawn。
 
 不是给任何 kind=skill / agent 的卡都接手：只接这里交的（proposals.inbox_id 对得上），「先聊聊」建 Agent 那种照旧由 Agent 自己建。
-表 proposals（grava.db）一条提案一行。
+表 proposals（mousse.db）一条提案一行。
 """
 from __future__ import annotations
 
@@ -48,6 +48,7 @@ import inbox
 from chat import _lock, day_bounds, day_of, db, hhmm, log_activity, now_iso
 from config import settings
 from i18n import L
+from stored_values import ASSISTANT_ROLE
 
 router = APIRouter()
 MAX_PER_DAY = 2                 # 每个逻辑日最多几条（蓝图：每天最多一两条）
@@ -488,14 +489,14 @@ def context(days: int = CONTEXT_DAYS):
     since = day_bounds(first)[0]
     names = thread_names()
     with _lock, db() as conn:
-        rows = conn.execute("""SELECT id, thread, role, text, ts, attachments FROM messages WHERE julianday(ts)>=julianday(?) AND role IN ('user','grava')
+        rows = conn.execute(f"""SELECT id, thread, role, text, ts, attachments FROM messages WHERE julianday(ts)>=julianday(?) AND role IN ('user','{ASSISTANT_ROLE}')
             ORDER BY thread, id""", (since,)).fetchall()
     by_day: dict[str, list[dict]] = {}
     for i, r in enumerate(rows):
         th = r["thread"]
         if r["role"] != "user" or (th.startswith("study-") and th.endswith("-gen")):
             continue
-        reply = next((x for x in rows[i + 1:i + 6] if x["thread"] == th and x["role"] == "grava"), None)
+        reply = next((x for x in rows[i + 1:i + 6] if x["thread"] == th and x["role"] == ASSISTANT_ROLE), None)
         files = len(json.loads(r["attachments"])) if r["attachments"] else 0
         where = names.get(th) or (L("学习台", "Study desk") if th.startswith("study-") else th)
         by_day.setdefault(day_of(r["ts"]), []).append({"time": hhmm(r["ts"]), "ts": r["ts"], "thread": th, "where": where, "text": clip(r["text"], 300),

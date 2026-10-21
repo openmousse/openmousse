@@ -1,10 +1,10 @@
 """收藏（2026-09-27）：别人的好东西，先存着，你决定怎么处理。另见 think.py（思考空间）。
 
-- 原件不进 Obsidian 库（原始材料，库要精）：grava.db 的 think_saves 一行 + <data_dir>/saves/ 里的原件（server.json think.saves_dir 可改）。
+- 原件不进 Obsidian 库（原始材料，库要精）：mousse.db 的 think_saves 一行 + <data_dir>/saves/ 里的原件（server.json think.saves_dir 可改）。
 - 存的时候不调模型，只把正文抽一份存成 <id>.txt：链接在后台抓网页正文（公众号文章被删了也还在），PDF / Word / 表格抽文字。
   抓不到（服务器 IP 被挡、要登录、要跑脚本的页面）就记下原因，原链接还在。
 - 怎么进来：app 里粘贴链接或一段文字、选照片 / 文件、对话里长按一条消息「收藏」；以后的分享扩展（下次出包）也走这里（source 写来自哪个 App）。
-- 处理：问 Grava（app 把这条带进主对话，chat.py 的 save 字段把正文给模型）、交给某个 Agent（在它的线程里开一轮，回完静默推）、
+- 处理：问助手（app 把这条带进主对话，chat.py 的 save 字段把正文给模型）、交给某个 Agent（在它的线程里开一轮，回完静默推）、
   放进思考（变成一条 kind=save 的碎片）、提炼进库（app：放进思考 → 主题 → 想完了）、删（软删，deleted_at，能恢复）、
   完成（done_at，进 Zen 的「已想完」，能恢复；2026-10-13）。
 - 关键词和想法共用（think.py 的 keyword 页一起列）。
@@ -32,6 +32,7 @@ import think
 from chat import _lock, db, log_activity, now_iso
 from config import settings, user_word
 from i18n import L, LS
+from stored_values import ASSISTANT_ROLE
 
 router = APIRouter()
 SAVE_RE = re.compile(r"^sv-[0-9a-f]{8}$")
@@ -452,7 +453,7 @@ async def from_message(body: FromMessage):
         raise HTTPException(404, L("找不到这条消息", "Message not found"))
     text = m["text"] or ""
     first = next((ln.strip(" #*>-") for ln in text.splitlines() if ln.strip(" #*>-")), "")[:60]
-    who = settings.app_name if m["role"] == "grava" else L("你", "You")
+    who = settings.app_name if m["role"] == ASSISTANT_ROLE else L("你", "You")
     sid = await asyncio.to_thread(insert, "chat", title=f"{who}：{first}" if first else who, source=L("对话", "Chat"), note=body.note,
                                   thread=body.thread, message_id=mid)
     await asyncio.to_thread(set_text, sid, "ok", text)
@@ -553,7 +554,7 @@ async def restore_save(sid: str):
 
 
 def save_context(sid: str, cap: int = 30_000) -> str:
-    """把一条收藏给模型看（问 Grava、交给 Agent）：来源、链接、你的备注、抽出来的正文。"""
+    """把一条收藏给模型看（问助手、交给 Agent）：来源、链接、你的备注、抽出来的正文。"""
     r = row(sid)
     text = text_of(sid)
     lines = [LS(f"【收藏】{user_word().lstrip()}让你看 TA 收藏的一条（id {sid}）。", f"[Saved item] The user wants you to look at something they saved (id {sid})."),

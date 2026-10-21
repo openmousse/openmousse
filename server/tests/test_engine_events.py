@@ -14,6 +14,7 @@ import bridges
 import engine
 from engine import events, loop, store
 from engine.session import DbSession, MemorySession, day_key, text_of, tool_calls, user
+from stored_values import ASSISTANT_ROLE
 from test_engine import FakeModel
 
 BUILTIN = {"claw": {"kind": "builtin"}, "engine": {"model": "deepseek/deepseek-flash"}}
@@ -93,7 +94,7 @@ def msg_row(chat, mid: int):
 
 def replies(chat, thread: str) -> list:
     with chat._lock, chat.db() as conn:
-        return conn.execute("SELECT * FROM messages WHERE thread=? AND role='grava' ORDER BY id", (thread,)).fetchall()
+        return conn.execute(f"SELECT * FROM messages WHERE thread=? AND role='{ASSISTANT_ROLE}' ORDER BY id", (thread,)).fetchall()
 
 
 # —— 内核这一层：事件 ——————————————————————————————————————————————————————
@@ -223,12 +224,15 @@ def test_progress_has_the_same_shape_as_openclaw(server_json, fake, bridge, monk
     r, evs, later = run(go())
     progress = [d for e, d in evs if e == "progress"]
     assert progress and all(set(p) == {"since", "phase", "steps", "thought"} for p in progress)
-    assert all(set(s) == {"id", "tool", "detail", "status"} for p in progress for s in p["steps"])
+    # 对话通道那四样一样不少（老 app 照旧画），10/20 起多 label / doing / note（engine/steps.py）
+    assert all(set(s) == {"id", "tool", "detail", "status", "label", "doing", "note"} for p in progress for s in p["steps"])
     phases = [p["phase"] for p in progress]
     assert phases[0] == "preparing_context" and {"waiting_for_model", "thinking", "tool"} <= set(phases)
     last = progress[-1]
     assert [(s["id"], s["tool"], s["detail"], s["status"]) for s in last["steps"]] == [("c1", "schedule", "schedule day", "done"),
                                                                                       ("c2", "journal", "journal list", "done")]
+    assert [(s["label"], s["doing"], s["note"]) for s in last["steps"]] == [("Check the schedule", "Checking the schedule", ""),
+                                                                           ("Read the journal", "Reading the journal", "")]
     assert "Let me look at the schedule first." in [p["thought"] for p in progress]
     assert last["since"] == round(r.t0, 1)
     assert later[-1][0] == "progress" and later[-1][1]["steps"][0]["status"] == "running"  # 重连时补发的是正在跑的那一步
@@ -237,7 +241,7 @@ def test_progress_has_the_same_shape_as_openclaw(server_json, fake, bridge, monk
     # 和对话通道（note_progress）画出来的是同一个形状
     ref = chat.Run(thread="x", model="m", user_id=0, started=chat.now_iso())
     chat.note_progress(ref, {"stream": "item", "data": {"kind": "tool", "itemId": "i1", "name": "exec", "meta": "x", "phase": "start"}})
-    assert set(ref.progress) == set(last) and set(ref.progress["steps"][0]) == set(last["steps"][0])
+    assert set(ref.progress) == set(last) and set(ref.progress["steps"][0]) == {"id", "tool", "detail", "status"} <= set(last["steps"][0])
 
 
 def test_thinking_progress_is_throttled_and_keeps_the_tail(server_json, monkeypatch):
@@ -274,7 +278,8 @@ def test_waiting_for_approval_shows_as_a_done_step(server_json, fake, bridge, mo
         return await collect(chat.attach(r))
     evs = run(go())
     step = [d for e, d in evs if e == "progress"][-1]["steps"][0]
-    assert step["status"] == "done" and step["detail"] == "journal delete · waiting for your OK" and bridge.calls == []
+    assert step["status"] == "done" and step["detail"] == "journal delete · awaiting your approval" and bridge.calls == []
+    assert step["wait"] is True and step["label"] == "Delete a journal entry" and step["note"] == ""
 
 
 # —— 插话 ————————————————————————————————————————————————————————————————
@@ -295,6 +300,7 @@ def test_steer_joins_the_running_turn(server_json, fake, bridge):
     r, first, second = run(go())
     kind, data = second[0]
     assert kind == "queued" and data["steer"] is True
+    assert "steer_missed" not in [e for e, _ in first + second]  # 并进去了：不报没赶上
     sid = int(data["userId"][2:])
     done1, done2 = dict(first)["done"], dict(second)["done"]
     assert done1["id"] == done2["id"] and done1["text"] == "Checking.\n\nDone, and noted the dentist."  # 还是同一条回复
@@ -340,6 +346,10 @@ def test_steer_that_misses_the_turn_becomes_the_next_turn(server_json, fake, bri
     r, first, second = run(go())
     assert r.status == "stopped" and dict(first)["done"]["text"] == "(Stopped)" and bridge.cancelled == ["schedule"]
     sid = int(second[0][1]["userId"][2:])
+    # 10/20：这一轮的连接（发上一条的那个）收到 steer_missed，说是哪几条没赶上；在 done 之前，app 当场改字
+    kinds = [e for e, _ in first]
+    assert dict(first)["steer_missed"] == {"userIds": [f"db{sid}"]} and kinds.index("steer_missed") < kinds.index("done")
+    assert "steer_missed" not in [e for e, _ in second]  # 那一条自己的连接接的是下一轮
     done2 = dict(second)["done"]
     assert done2["text"] == "About the dentist: noted." and done2["id"] != dict(first)["done"]["id"]
     nxt = chat.RUNS["t-miss"]

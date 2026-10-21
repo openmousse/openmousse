@@ -285,7 +285,9 @@ if code == 200:  # MCP 入口：claw 不用 shell 也能用看板、收件箱这
         warn(L("MCP 入口没有令牌", "The MCP endpoint has no token"), L("claw 只能用 skills 里的命令", "claws can only use the skills' commands"),
              L("再跑一遍安装命令（会生成 mcp 令牌）", "run the installer again (it creates the mcp token)"))
     else:
-        c2, b2 = http(f"http://{host}:{port}/mcp", mtok, "POST", {"jsonrpc": "2.0", "id": 1, "method": "tools/list", "params": {}},
+        # 监听在通配地址（0.0.0.0、::）上时连 127.0.0.1：Host 头写成通配地址会被 /mcp 的 DNS 重绑定防护拒掉（421）
+        mhost = "127.0.0.1" if host in ("", "0.0.0.0", "::", "[::]") else f"[{host}]" if ":" in host and not host.startswith("[") else host
+        c2, b2 = http(f"http://{mhost}:{port}/mcp", mtok, "POST", {"jsonrpc": "2.0", "id": 1, "method": "tools/list", "params": {}},
                       headers={"Accept": "application/json, text/event-stream"})
         try:
             n = len(json.loads(b2)["result"]["tools"])

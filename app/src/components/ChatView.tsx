@@ -4,7 +4,8 @@ import { useNavigation } from '@react-navigation/native';
 import { Alert, Image, Platform, Pressable, ScrollView, StyleSheet, View, type LayoutChangeEvent, type NativeScrollEvent, type NativeSyntheticEvent } from 'react-native';
 import * as Clipboard from 'expo-clipboard';
 import * as Haptics from 'expo-haptics';
-import { Bookmark, Camera, ChevronRight, Copy, EyeOff, FileAudio, FileText, Film, ImageIcon, Inbox, ListChecks, LoaderCircle, Mic, Paperclip, Pencil, Quote, ShareIcon, Trash2, Undo2, X } from './icons';
+import { ASSISTANT_ROLE } from '../data/stored';
+import { Bookmark, Camera, Check, ChevronRight, Copy, Ellipsis, EyeOff, FileAudio, FileText, Film, ImageIcon, Inbox, ListChecks, LoaderCircle, Mic, Paperclip, Pencil, Quote, ShareIcon, Trash2, Undo2, X } from './icons';
 import type { Attachment, ChatCard, HandoffCard, InboxItem, Message, PendingFile, TaskCardInfo } from '../data/types';
 import { L } from '../i18n';
 import type { ChatQuote } from '../navigation';
@@ -16,18 +17,20 @@ import { modelOf } from './ModelPicker';
 import { useSheet } from './Sheet';
 import { PullRefresh, T } from './ui';
 import { Markdown } from './Markdown';
+import { SelectableMarkdown, type PassageAction } from './SelectableMarkdown';
 import { InboxCard } from './InboxCard';
 import { CourseChip, HandoffChip, HandoffFrom, ProjectChip, ScheduleChip, TaskCardView, modelLabel } from './ChatCards';
 import { OutputCard } from './outputs/OutputCard';
 import { PageChip } from './PageCards';
 import { MAX_FILES, pickDocuments, pickMedia } from './chatInput';
-import { saveMessage } from '../api/think';
+import { addSave, saveMessage } from '../api/think';
+import { nativeReady } from '../api/native';
 import { isRemote } from '../api/files';
 import { podFeatures } from '../api/podcast';
 import { PutInPodcast } from '../think/Materials';
 import { useReplyProgress } from '../api/progress';
 import { usePartial } from '../api/partial';
-import { StepsLine, ThinkingPanel, WritingDots } from './Thinking';
+import { StepsLine, SwitchLine, ThinkingPanel, WritingDots, switchReason } from './Thinking';
 import { openEpisode } from '../think/Podcast';
 import * as fw from '../api/forward';
 import { BasketPill, BundleCard, ForwardTranscript, SelectBar, SelectMark, forwardActions, openBack, setBasketCount, useForwardSupported, useSelect } from './Forward';
@@ -130,15 +133,20 @@ function ModelTag({ m }: { m: Message }) {
   const t = useTheme();
   const model = modelOf(m.modelId);
   const err = m.error ? L(` · 错误：${m.error}`, ` · Error: ${m.error}`) : '';
+  // 备用链换过模型：原请求的那个不在目录里（自己内核的 provider/型号）也照样写，名字用目录里的短名、没有就用它本来的名字
+  const fromId = m.fallbackFrom && m.fallbackFrom !== m.modelId ? m.fallbackFrom : null;
+  const fromName = fromId ? modelOf(fromId)?.short ?? modelLabel(fromId) : '';
+  const why = fromId ? switchReason(m.fallbackReason) : '';  // 这次推送里有原因才写（不进库，重读记录就只剩前半句）
+  const fell = fromId ? L(` · 原请求 ${fromName}${why ? `（${why}）` : ''}，已按回退链切换`, ` · requested ${fromName}${why ? ` (${why})` : ''}, used fallback`) : '';
+  const color = m.error ? t.bad : fromId ? t.warn : t.ink3;
   if (!model) {
-    return m.modelId || m.error ? <T v="caption" color={m.error ? t.bad : t.ink3} style={{ marginTop: 4 }}>{m.modelId ?? ''}{err} · {m.time}</T> : null;
+    return m.modelId || m.error ? <T v="caption" color={color} style={{ marginTop: 4 }}>{m.modelId ?? ''}{fell}{err} · {m.time}</T> : null;
   }
-  const from = modelOf(m.fallbackFrom);
   // billing 是目录里的枚举值（'订阅' / 'API' / '免费'），程序拿它比较；这里只换显示文字。
   const billing = model.billing === '订阅' ? L('订阅', 'Subscription') : model.billing === '免费' ? L('免费', 'Free') : model.billing;
   return (
-    <T v="caption" color={m.error ? t.bad : from ? t.warn : t.ink3} style={{ marginTop: 4 }}>
-      {model.short} · {billing}{from ? L(` · 原请求 ${from.short}，已按回退链切换`, ` · requested ${from.short}, used fallback`) : ''}{err} · {m.time}
+    <T v="caption" color={color} style={{ marginTop: 4 }}>
+      {model.short} · {billing}{fell}{err} · {m.time}
     </T>
   );
 }
@@ -217,14 +225,24 @@ function QuoteChip({ text, onPress, spaced }: { text: string; onPress?: () => vo
   );
 }
 
-/** 回复正文：引用行画成引用条，其余照常 Markdown。 */
-const ReplyText = React.memo(function ReplyText({ text, resolveQuote, onJump }: { text: string; resolveQuote?: (q: string) => string | undefined; onJump?: (id: string) => void }) {
+/**
+ * 长按能选一段字（方案 A，2026-10-20）：只在 iOS、原生模块在（1.0.5 起的包）时，回完的回复画成只读的输入框（SelectableMarkdown.tsx）；
+ * 网页用浏览器自己的选字，安卓和老包照旧（长按整条的菜单）。正在出的那条照旧用 Markdown（字一直在变），回完再换成能选的。
+ */
+const selectReplies = () => Platform.OS === 'ios' && nativeReady();
+
+/** 回复正文：引用行画成引用条，其余照常 Markdown。selectable：正文能选字，onPick 收系统菜单里加的三项（引用这段 / 收藏这段 / 转发这段）。 */
+const ReplyText = React.memo(function ReplyText({ text, resolveQuote, onJump, selectable, onPick }: {
+  text: string; resolveQuote?: (q: string) => string | undefined; onJump?: (id: string) => void;
+  selectable?: boolean; onPick?: (what: PassageAction, text: string) => void;
+}) {
   const parts = splitQuotes(text);
-  if (!parts.some((x) => x.quote)) return <Markdown text={text} />;
+  const body = (x: string, key?: number) => (selectable ? <SelectableMarkdown key={key} text={x} onPick={onPick} /> : <Markdown key={key} text={x} />);
+  if (!parts.some((x) => x.quote)) return body(text);
   return (
     <View style={{ gap: 4 }}>
       {parts.map((x, i) => {
-        if (!x.quote) return <Markdown key={i} text={x.text} />;
+        if (!x.quote) return body(x.text, i);
         const id = resolveQuote?.(x.quote);
         return <QuoteChip key={i} text={x.quote} spaced={i > 0} onPress={id && onJump ? () => onJump(id) : undefined} />;
       })}
@@ -236,8 +254,10 @@ const ReplyText = React.memo(function ReplyText({ text, resolveQuote, onJump }: 
  * 一条消息。memo，不读 store（头像、Agent 列表由外面传进来）：store 一变（流式回复每来一段字都变）读 store 的组件全都要重画，
  * 一天几十条长回复每段字都重新排一遍版。回调要稳定（ChatView 用 handlers ref 包着），onLongPress 收到的是这条消息。
  */
-export const Bubble = React.memo(function Bubble({ m, avatar, groupIds, showAvatar, onLongPress, before, from, highlight, onJump, resolveQuote }: {
+export const Bubble = React.memo(function Bubble({ m, avatar, groupIds, showAvatar, onLongPress, onPassage, before, from, highlight, onJump, resolveQuote }: {
   m: Message; showAvatar: boolean; onLongPress?: (m: Message) => void;
+  /** 回复里选中一段字后点了系统菜单里的「引用这段 / 收藏这段 / 转发这段」（只有能选字的回复有） */
+  onPassage?: (m: Message, what: PassageAction, text: string) => void;
   avatar: AvatarConfig;
   /** 合并转发卡里点「回到原对话」时分辨是不是 Agent 的对话 */
   groupIds: string[];
@@ -255,6 +275,7 @@ export const Bubble = React.memo(function Bubble({ m, avatar, groupIds, showAvat
   const t = useTheme();
   const sheet = useSheet();
   const long = onLongPress ? () => onLongPress(m) : undefined;
+  const pick = useCallback((what: PassageAction, text: string) => onPassage?.(m, what, text), [m, onPassage]);
   const att = m.body.attachments ?? [];
   const text = att.length && m.body.text === PLACEHOLDER_TEXT ? '' : m.body.text;
   if (m.role === 'auto') {
@@ -307,24 +328,47 @@ export const Bubble = React.memo(function Bubble({ m, avatar, groupIds, showAvat
             <T v="body">{text}</T>
           </Pressable>
         ) : null}
-        {/* 它正在回复时发的：先排队，这条回完和排着的一起发给它 */}
+        {/* 它正在回复时发的：先排队，这条回完和排着的一起发给它；插进去了却没赶上这一轮的（missed）同样等这一轮结束 */}
         {m.queued ? <T v="caption" color={t.ink3} style={{ marginRight: 4 }}>{L('排队中 · 当前回复结束后发送', 'Queued · sends when the current reply ends')}</T>
+          : m.missed ? <T v="caption" color={t.ink3} style={{ marginRight: 4 }}>{L('未赶上本轮 · 本轮结束后回复', 'Missed this turn · answered when it ends')}</T>
           : m.steered ? <T v="caption" color={t.ink3} style={{ marginRight: 4 }}>{L('已插入 · 将在本轮下一步读取', 'Inserted · read at the next step of this turn')}</T> : null}
       </View>
     );
   }
+  // 能选字时：长按正文是系统选字，长按气泡空白处（头像那一列、模型那一行）和「⋯」打开整条的菜单
+  const selectable = selectReplies();
   return (
     <Pressable onLongPress={long} delayLongPress={350} style={{ flexDirection: 'row', gap: space.sm }}>
       <View style={{ width: 28 }}>{showAvatar || before ? <LensAvatar size={28} config={avatar} /> : null}</View>
       <View style={{ flex: 1 }}>
         {before ? <View style={{ gap: 8, marginBottom: 8 }}>{before}</View> : null}
-        <ReplyText text={m.body.text} resolveQuote={resolveQuote} onJump={onJump} />
+        <ReplyText text={m.body.text} resolveQuote={resolveQuote} onJump={onJump} selectable={selectable} onPick={onPassage && m.id.startsWith('db') ? pick : undefined} />
         {att.length ? <View style={{ marginTop: 6 }}><AttachmentList items={att} mine={false} /></View> : null}
-        <ModelTag m={m} />
+        <View style={styles.tagRow}>
+          <View style={{ flex: 1, minWidth: 0 }}><ModelTag m={m} /></View>
+          {long ? (
+            <Pressable onPress={long} hitSlop={10} accessibilityRole="button" accessibilityLabel={L('更多操作', 'More actions')}
+              accessibilityHint={L('复制整条、引用、转发、收藏、分享或删除', 'Copy the whole message, quote, forward, save, share or delete')}
+              style={({ pressed }) => [styles.more, { opacity: pressed ? 0.5 : 1 }]}>
+              <Ellipsis size={18} color={t.ink3} />
+            </Pressable>
+          ) : null}
+        </View>
       </View>
     </Pressable>
   );
 });
+
+/** 「复制整条」：点了先在原处写「已复制」，再收起菜单（原来复制完什么提示都没有）。 */
+function CopyAction({ text, close }: { text: string; close: () => void }) {
+  const [done, setDone] = useState(false);
+  return (
+    <Action icon={done ? Check : Copy} label={done ? L('已复制', 'Copied') : L('复制整条', 'Copy message')} onPress={() => {
+      if (done) return;
+      Clipboard.setStringAsync(text).then(() => { setDone(true); setTimeout(close, 600); }).catch(() => close());
+    }} />
+  );
+}
 
 export function Action({ icon: Icon, label, note, danger, onPress }: { icon: typeof Copy; label: string; note?: string; danger?: boolean; onPress: () => void }) {
   const t = useTheme();
@@ -543,7 +587,7 @@ export function ChatView({ threadId, placeholder, empty, welcome, quote: quotePr
       title: m.role === 'user' ? L('这条消息', 'This message') : L(`${agentName()} 的回复`, `${agentName()}'s reply`),
       content: () => (
         <View style={{ gap: space.sm }}>
-          <Action icon={Copy} label={L('复制', 'Copy')} onPress={() => { close(); Clipboard.setStringAsync(text).catch(() => {}); }} />
+          <CopyAction text={text} close={close} />
           {m.id.startsWith('db') && m.role !== 'auto' && text.trim() ? (
             <Action icon={Quote} label={L('引用', 'Quote')} note={L('引用这条消息回复：Agent 能看到所引原文，你的消息上方也会显示原话', 'Reply to this message: the Agent sees the quoted text, and your message shows it')}
               onPress={() => { close(); setQuote({ replyTo: m.id, title: text.replace(/\s+/g, ' ').slice(0, 40) }); setTimeout(() => composer.current?.focus(), 250); }} />
@@ -579,6 +623,21 @@ export function ChatView({ threadId, placeholder, empty, welcome, quote: quotePr
     });
   };
 
+  // 回复里选中一段、点了系统菜单里加的项：引用这段 = 照「引用」（replyTo 这一条），输入框里先填好这段；收藏这段 = 存这段字；
+  // 转发这段 = 照「转发」打开这一条，这段放进附言（转发页的「补充说明」，转给朋友时是那一行概括）
+  const passage = (m: Message, what: PassageAction, text: string) => {
+    if (what === 'quote') {
+      setQuote({ replyTo: m.id, title: m.body.text.replace(/\s+/g, ' ').slice(0, 40) });
+      composer.current?.prepend(`「${text}」\n`);
+      setTimeout(() => composer.current?.focus(), 250);
+    } else if (what === 'save') {
+      const where = threadId === 'main' ? L('主对话', 'Main chat') : groups.find((g) => g.id === threadId)?.name ?? L('对话', 'Chat');
+      addSave({ text, source: where }).then(() => Alert.alert(L('已收藏', 'Saved'), L('可在「Zen → 收藏」中查看', 'Find it in Zen → Saved'))).catch(fail);
+    } else if (canForward) {
+      nav.navigate('Forward', { refs: [fw.chatRef(threadId, m.id)], note: text });
+    }
+  };
+
   // 点引用：滚到那条，闪一下金边
   const jumpTo = (mid: string) => {
     const y = ys.current[mid];
@@ -600,11 +659,12 @@ export function ChatView({ threadId, placeholder, empty, welcome, quote: quotePr
   };
   const stopReply = () => { stop(threadId).catch(fail); };
   // 列表和输入框的回调走 ref：拿到的永远是最新的（submit 要读当前的引用和附件），又不让列表、输入框因为回调换了而重画。
-  const handlers = useRef({ openActions, reviseCard, jumpTo, resolveQuote, submit, openAttach, stopReply });
-  useEffect(() => { handlers.current = { openActions, reviseCard, jumpTo, resolveQuote, submit, openAttach, stopReply }; });  // 每次渲染后更新（回调只在点按时才用，提交后再换不影响）
+  const handlers = useRef({ openActions, reviseCard, jumpTo, resolveQuote, submit, openAttach, stopReply, passage });
+  useEffect(() => { handlers.current = { openActions, reviseCard, jumpTo, resolveQuote, submit, openAttach, stopReply, passage }; });  // 每次渲染后更新（回调只在点按时才用，提交后再换不影响）
   const onJump = useCallback((mid: string) => handlers.current.jumpTo(mid), []);
   const findQuote = useCallback((q: string) => handlers.current.resolveQuote(q), []);
   const onLong = useCallback((m: Message) => handlers.current.openActions(m), []);
+  const onPassage = useCallback((m: Message, what: PassageAction, text: string) => handlers.current.passage(m, what, text), []);
   const onRevise = useCallback((c: TaskCardInfo) => handlers.current.reviseCard(c), []);
   const onSubmit = useCallback((text: string) => handlers.current.submit(text), []);
   const onAttach = useCallback(() => handlers.current.openAttach(), []);
@@ -614,7 +674,7 @@ export function ChatView({ threadId, placeholder, empty, welcome, quote: quotePr
         {msgs.map((m, i) => {
           const above = placed.above.get(i);
           const bubble = (
-            <Bubble m={m} avatar={avatar} groupIds={groupIds} showAvatar={m.role === 'grava' && msgs[i - 1]?.role !== 'grava'} onLongPress={onLong}
+            <Bubble m={m} avatar={avatar} groupIds={groupIds} showAvatar={m.role === ASSISTANT_ROLE && msgs[i - 1]?.role !== ASSISTANT_ROLE} onLongPress={onLong} onPassage={onPassage}
               before={above?.length ? above.map((c) => <HandoffChip key={c.id} card={c} />) : undefined}
               from={m.role === 'auto' ? incoming.find((h) => h.relayId === m.id) : undefined} highlight={flash === m.id}
               onJump={onJump} resolveQuote={findQuote} />
@@ -638,7 +698,7 @@ export function ChatView({ threadId, placeholder, empty, welcome, quote: quotePr
           );
         })}
     </>
-  ), [msgs, placed, slots, incoming, flash, threadId, avatar, groupIds, onLong, onRevise, onJump, findQuote, picking, picked, toggle]);
+  ), [msgs, placed, slots, incoming, flash, threadId, avatar, groupIds, onLong, onPassage, onRevise, onJump, findQuote, picking, picked, toggle]);
 
   // 「从这里开始」只在对话还空着时出现，占住空白提示的位置；发出第一条就没了
   const showWelcome = !!welcome && !msgs.length && !busy;
@@ -693,6 +753,8 @@ export function ChatView({ threadId, placeholder, empty, welcome, quote: quotePr
                   <WritingDots />
                 </>
               ) : liveHandoffs.length ? null : <ThinkingPanel progress={progress} />}
+              {/* 换模型的当场（自己的内核）：这条回复下面一行小字；回完以后看模型那行 */}
+              <SwitchLine thread={threadId} />
             </View>
           </View>
         ) : null}
@@ -756,4 +818,6 @@ const styles = StyleSheet.create({
   quote: { flexDirection: 'row', alignItems: 'center', gap: 6, borderRadius: radius.md, paddingHorizontal: 10, paddingVertical: 7 },
   quoteChip: { borderLeftWidth: 3, borderRadius: 0, paddingLeft: 8, paddingVertical: 1, alignSelf: 'stretch' },
   bgStrip: { flexDirection: 'row', alignItems: 'center', gap: 6, marginHorizontal: space.md, marginTop: space.sm, paddingHorizontal: 12, paddingVertical: 8, borderRadius: radius.md },
+  tagRow: { flexDirection: 'row', alignItems: 'center', gap: space.sm },
+  more: { paddingHorizontal: 4, paddingTop: 4, minHeight: 24, justifyContent: 'center' },
 });

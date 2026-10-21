@@ -1,5 +1,6 @@
 // 会议（server/meetings.py，2026-10-13）用到的小零件：Agent 的圆头像、会议的组合头像、纪要里的待办行，
 // 以及主对话里的两张卡：会议卡（发起它的那条回复下面，状态跟着走）和纪要卡（「会议已结束，以下 N 项待办需要你确认：」下面）。
+// 主线第三步：会上也可以有赛博（画它的半身像，MemberAvatar）；群聊结束那一行下面的小结卡借纪要卡的样子（card.group），点开进群聊。
 import React, { useState } from 'react';
 import { Alert, Pressable, StyleSheet, View } from 'react-native';
 import { meetingsApi, type MeetingMember, type MeetingStatus, type MeetingTodo } from '../api/meetings';
@@ -8,6 +9,7 @@ import { L } from '../i18n';
 import { navigationRef } from '../navigation';
 import { useStore } from '../store';
 import { agentTint, radius, space, useTheme } from '../theme';
+import { CyberAvatar } from './agents/CyberAvatar';
 import { GROUP_ICONS, iconKey } from './GroupIcon';
 import { Check, ChevronRight, LayoutGrid } from './icons';
 import { T } from './ui';
@@ -24,6 +26,12 @@ export function AgentAvatar({ icon, color, size = 30 }: { icon?: string | null; 
   );
 }
 
+/** 会上的一位：赛博画半身像（小的不带金环），功能 Agent 画圆头像。 */
+export function MemberAvatar({ m, size = 30 }: { m?: Pick<MeetingMember, 'icon' | 'color' | 'kind' | 'avatar'> | null; size?: number }) {
+  if (m?.kind === 'cyber') return <CyberAvatar avatar={m.avatar} size={size} ring={size >= 28} />;
+  return <AgentAvatar icon={m?.icon} color={m?.color} size={size} />;
+}
+
 /** 会议的头像：一个圆里放最多四位成员的小头像（2 × 2）。 */
 export function MeetingAvatar({ members, size = 36 }: { members: MeetingMember[]; size?: number }) {
   const t = useTheme();
@@ -34,7 +42,7 @@ export function MeetingAvatar({ members, size = 36 }: { members: MeetingMember[]
     <View style={{ width: size, height: size, borderRadius: size / 2, backgroundColor: t.surface2 }} accessibilityElementsHidden importantForAccessibility="no-hide-descendants">
       {members.slice(0, 4).map((m, i) => (
         <View key={m.id} style={{ position: 'absolute', left: pad + (i % 2) * step, top: pad + Math.floor(i / 2) * step }}>
-          <AgentAvatar icon={m.icon} color={m.color} size={mini} />
+          <MemberAvatar m={m} size={mini} />
         </View>
       ))}
     </View>
@@ -72,7 +80,8 @@ export function confirmedLine(c: { todos: number; schedule: number; failed: unkn
     : L('已确认', 'Confirmed');
 }
 
-export const openMeeting = (id: string) => navigationRef.navigate('Meeting', { id, at: Date.now() });
+/** 打开一场会议；群聊的 id（gc-…，主线第三步，小结卡借了纪要卡的样子）进群聊页。 */
+export const openMeeting = (id: string) => (id.startsWith('gc-') ? navigationRef.navigate('GroupChat', { id }) : navigationRef.navigate('Meeting', { id, at: Date.now() }));
 
 /** 主对话里的会议卡：标题、成员、状态，点开进会议。 */
 export function MeetingChip({ card }: { card: MeetingCardInfo }) {
@@ -93,6 +102,30 @@ export function MeetingChip({ card }: { card: MeetingCardInfo }) {
 
 /** 主对话里的纪要卡：待办（没有待办就列决定）+ 确认 / 查看会议。确认过、被下一轮取代、没确认就结束的收成一行。 */
 export function MinutesChip({ card }: { card: MinutesCardInfo }) {
+  if (card.group) return <GroupSummaryChip card={card} />;
+  return <MeetingMinutesChip card={card} />;
+}
+
+/** 群聊结束那一行下面的小结卡：最近一次小结的一句话、定了的、还在争的，点开进群聊。 */
+function GroupSummaryChip({ card }: { card: MinutesCardInfo }) {
+  const t = useTheme();
+  return (
+    <Pressable onPress={() => openMeeting(card.meeting)} accessibilityRole="button" accessibilityHint={L('打开群聊', 'Opens the group chat')}
+      style={({ pressed }) => [styles.card, { backgroundColor: t.surface, opacity: pressed ? 0.8 : 1 }]}>
+      <T v="caption" color={t.ink2} style={{ fontWeight: '700' }}>{L(`小结 · ${card.title} · 第 ${card.round} 轮`, `Summary · ${card.title} · round ${card.round}`)}</T>
+      {card.line ? <T v="callout" style={{ fontSize: 14 }}>{card.line}</T> : null}
+      {card.decisions.slice(0, 3).map((d, i) => <T key={`d${i}`} v="callout" color={t.ink2} style={{ fontSize: 14 }}>{`· ${d}`}</T>)}
+      {card.open.length ? <T v="caption" color={t.ink3}>{L(`还在争：${card.open.slice(0, 2).join('；')}`, `Still disputed: ${card.open.slice(0, 2).join('; ')}`)}</T> : null}
+      <View style={styles.receipt}>
+        <T v="caption" color={t.ink3} style={{ flex: 1 }}>{L('已写进群记忆', "Kept in the group's memory")}</T>
+        <T v="caption" color={t.gold} style={{ fontWeight: '600' }}>{L('查看群聊', 'Open')}</T>
+        <ChevronRight size={14} color={t.gold} />
+      </View>
+    </Pressable>
+  );
+}
+
+function MeetingMinutesChip({ card }: { card: MinutesCardInfo }) {
   const t = useTheme();
   const { refreshThread, reload } = useStore();
   const [busy, setBusy] = useState(false);

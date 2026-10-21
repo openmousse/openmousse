@@ -1,10 +1,10 @@
 """目标（2026-09-27）：你和各个 Agent 都能改的目标，外加体重、体脂的读数和趋势。
 
-表（grava.db）
+表（mousse.db）
 - goals（data.py 建的，本模块补列）：一行一个目标。category 存 健康 / 学业 / 职业 / 财务（这四个中文词就是值，app 按语言显示）；
-  due 是 YYYY-MM-DD，也收 YYYY-MM 和「2027 秋」这种说法；数字目标 target_low / target_high / unit（可以只给一头）；
+  due 是 YYYY-MM-DD，也收 YYYY-MM 和「2027 春」这种说法；数字目标 target_low / target_high / unit（可以只给一头）；
   metric = bodyfat / weight 时服务端自动读当前值，空 = 不自动读；group_id = 挂在哪个 Agent 下（app 里「去看板」）；
-  status active / done / dropped（「不做了」= dropped，没有删除）。补的列：added_by 谁加的（leo / main / Agent id）、updated_at、
+  status active / done / dropped（「不做了」= dropped，没有删除）。补的列：added_by 谁加的（你自己 = config.owner_id()，leo / owner 都认 / main / Agent id）、updated_at、
   closed_at（完成或不做了的时间）、deleted_at（只有撤销「加了一个目标」时才写，这样的行哪里都不显示）。
 - goal_log：每次改动一行（谁、哪个目标、做了什么、之前 / 之后的快照），同时写一行活动记录。摘要读的时候按请求的语言现拼。
   撤销只把这次改动动过、之后没人再改过的字段改回去；撤销「加了」= 藏起来（deleted_at）。
@@ -20,7 +20,7 @@
 接口
   GET   /api/goals                  goals（进行中）+ closed（完成 / 不做了）+ recent（Agent 最近的改动）+ metrics（能自动读的）
   POST  /api/goals                  加一个 {title, category, detail?, due?, unit?, targetLow?, targetHigh?, metric?, groupId?, position?, source?}
-  PATCH /api/goals/{id}             只带要改的字段（null = 清掉），外加 status / position；source = 谁在改（默认 leo）
+  PATCH /api/goals/{id}             只带要改的字段（null = 清掉），外加 status / position；source = 谁在改（默认你自己：config.owner_id()）
   POST  /api/goals/undo/{log}       撤销一次改动（{redo: true} 再做回来）
   GET   /api/goals/log?limit=       最近的改动，新的在前
   POST  /api/goals/seen {ids}       目标页顶上那条点了「知道了」
@@ -43,7 +43,7 @@ from pydantic import BaseModel
 import schedule
 import sources
 from chat import _lock, log_activity, now_iso
-from config import TZ
+from config import TZ, is_owner, owner_ids
 from data import ddb
 from i18n import L
 
@@ -128,7 +128,7 @@ def unit_suffix(unit: str | None) -> str:
 
 
 def fmt_target(low: float | None, high: float | None, unit: str | None) -> str:
-    """15–18% / 72–75 kg / 18% 以下 / 5000 GBP 以上；都没有是空字符串。"""
+    """20–25% / 60–65 kg / 25% 以下 / 5000 以上；都没有是空字符串。"""
     u = unit_suffix(unit)
     if low is not None and high is not None:
         return f"{fmt_num(low)}{u}" if low == high else f"{fmt_num(low)}–{fmt_num(high)}{u}"
@@ -320,7 +320,7 @@ def progress_of(start: float | None, cur: float | None, low: float | None, high:
 
 
 def days_left(due: str | None) -> int | None:
-    """截止还有几天：YYYY-MM-DD 按那天算，YYYY-MM 按那个月最后一天；别的写法（「2027 秋」）不算。"""
+    """截止还有几天：YYYY-MM-DD 按那天算，YYYY-MM 按那个月最后一天；别的写法（「2027 春」）不算。"""
     s = (due or "").strip()
     try:
         if DATE_RE.match(s):
@@ -389,7 +389,9 @@ def goals(fresh: int = 0):
     since = (datetime.now(TZ) - timedelta(hours=RECENT_HOURS)).isoformat(timespec="seconds")
     with _lock, gdb() as conn:
         rows = conn.execute("SELECT * FROM goals WHERE deleted_at IS NULL ORDER BY position, created_at").fetchall()
-        logs = conn.execute("SELECT * FROM goal_log WHERE actor<>'leo' AND at>=? AND seen_at IS NULL ORDER BY id DESC LIMIT 10", (since,)).fetchall()
+        mine = owner_ids()
+        logs = conn.execute(f"SELECT * FROM goal_log WHERE actor NOT IN ({','.join('?' * len(mine))}) AND at>=? AND seen_at IS NULL ORDER BY id DESC LIMIT 10",  # noqa: S608
+                            (*mine, since)).fetchall()
         names = schedule.group_names(conn)
     reads = Reads(bool(fresh))
     active = [goal_json(r, reads) for r in rows if r["status"] == "active"]
@@ -485,8 +487,8 @@ def check_due(v: str | None) -> str | None:
     elif (m := MONTH_RE.match(s)):
         ok = 1 <= int(m.group(2)) <= 12
     if not ok:
-        raise HTTPException(400, L(f"截止「{s}」不是一个真的日子（写成 2026-12-31、2026-12，或者「2027 秋」这样的说法）",
-                                   f'The due date "{s}" isn\'t a real date (use 2026-12-31, 2026-12, or words like "fall 2027")'))
+        raise HTTPException(400, L(f"截止「{s}」不是一个真的日子（写成 2026-12-31、2026-12，或者「2027 春」这样的说法）",
+                                   f'The due date "{s}" isn\'t a real date (use 2026-12-31, 2026-12, or words like "spring 2027")'))
     return s
 
 
@@ -551,7 +553,7 @@ def log_change(conn: sqlite3.Connection, actor: str, gid: str, action: str, befo
 
 def announce(actor: str, summary: str, names: dict[str, str]) -> None:
     """活动记录一行。你自己改的记成「你」，Agent 改的写它的名字。"""
-    log_activity(L(f"目标：{summary}", f"Goals: {summary}"), "edit", None if actor == "leo" else (who(actor, names) or actor))
+    log_activity(L(f"目标：{summary}", f"Goals: {summary}"), "edit", None if is_owner(actor) else (who(actor, names) or actor))
 
 
 # —— 写：接口 ————————————————————————————————————————————————————————
@@ -560,14 +562,14 @@ class GoalIn(BaseModel):
     title: str
     category: str | None = None     # 健康 / 学业 / 职业 / 财务（也认 health / study / career / finance）；有 metric 时默认健康
     detail: str | None = None
-    due: str | None = None          # YYYY-MM-DD / YYYY-MM / 一句话（「2027 秋」）
+    due: str | None = None          # YYYY-MM-DD / YYYY-MM / 一句话（「2027 春」）
     unit: str | None = None         # 有 metric 时默认用它的单位
     targetLow: float | None = None  # noqa: N815 — 和 app 的字段名一致
     targetHigh: float | None = None  # noqa: N815
     metric: str | None = None       # bodyfat / weight：自动读当前值
     groupId: str | None = None      # noqa: N815 — 挂在哪个 Agent 下
     position: int | None = None
-    source: str | None = None       # 谁在加：leo（默认）/ main / Agent id
+    source: str | None = None       # 谁在加：不写 = 你自己 / main / Agent id
 
 
 class GoalPatch(BaseModel):
@@ -718,7 +720,7 @@ def undo(log_id: int, body: UndoIn | None = None):
         names = schedule.group_names(conn)
     change = change_json(row, names)
     log_activity(L(f"目标：{'做回来了' if redo else '撤销了'} · {change['summary']}", f"Goals: {'redid' if redo else 'undid'} · {change['summary']}"),
-                 "edit", None if actor == "leo" else (who(actor, names) or actor))
+                 "edit", None if is_owner(actor) else (who(actor, names) or actor))
     return {"ok": True, "change": change, "goal": goal_json(g, None) if not g["deleted_at"] else None, "kept": kept}
 
 

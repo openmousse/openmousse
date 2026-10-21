@@ -1,9 +1,9 @@
-"""Grava API：只读的真实数据接口（第一档）+ 真实对话（第二档，见 chat.py）+ 托管 app 的网页版。
+"""服务器接口：只读的真实数据接口（第一档）+ 真实对话（第二档，见 chat.py）+ 托管 app 的网页版。
 
 - 监听地址、路径、认证都在 server.json（见 config.py）。/api/* 要令牌（Authorization: Bearer），或来源是 Tailscale 白名单里的设备。
 - 第一档只读：训练 / 身体数据、日历（可选数据源，见 sources.py）；饮食记录在服务自己的库里（diet.py）。第二档对话经 Gateway 的 OpenAI 兼容接口，只在 loopback。
 - app 其余页面（Groups、独立空间、目标、审批、定时任务、任务、活动、档案、记忆、模型、安全）：见 data.py，全部是真实来源。
-- Apple 健康：原生 app 读 HealthKit 后按天推上来，存 grava.db 的 health_daily（见 health.py）。
+- Apple 健康：原生 app 读 HealthKit 后按天推上来，存 mousse.db 的 health_daily（见 health.py）。
 - 附件：/api/chat/upload 存盘 + 抽文字 / 转写，/api/chat/send 带附件 id，/api/files/{id} 回放，/api/chat/transcribe 语音输入（见 files.py）；/api/files/{id}/preview、/page/{n} 在 app 里预览（见 preview.py）。
 - 推送：/api/push/register 存 Expo push token；回复完成后 push.notify_run 按档位（ring / quiet / none）推回复或这次写的卡（见 push.py）。
 - 收件箱「等你点头」：/api/inbox，Agent 经 inbox_ctl.py 提交要你同意的事，OpenClaw 执行审批也合在里面（见 inbox.py）。
@@ -12,7 +12,7 @@
 - 对话里的转交卡、任务卡：/api/chat/cards；后台任务额度 /api/tasks/quota；后台任务做完静默推一条（见 cards.py）。
 - 训记数据不落库：训练和身体数据以训记为真源，这里只有短时缓存（由 xunji.py / calendar_ics.py 管）。
 - 饮食记录：/api/diet/*（2026-10-13 起记在服务自己的库里：吃了什么、个人食物库、营养目标；查营养 个人食物库 → Open Food Facts → CoFID → USDA。见 diet.py、nutrition.py）。
-- Agent 会议：/api/meetings（几个 Agent 围绕一个议题轮流发言，各用自己的 OpenClaw 会话；Grava 主持、写纪要，确认后待办写进日程和各 Agent 的看板，见 meetings.py）。
+- Agent 会议：/api/meetings（几个 Agent 围绕一个议题轮流发言，各用自己的 OpenClaw 会话；主对话的助手主持、写纪要，确认后待办写进日程和各 Agent 的看板，见 meetings.py）。
 - 学习台：/study 网页 + /api/study/*，课件和学习页按课程 / 模块浏览，问答走同一条对话通道（见 study.py）。
 - 思考空间和收藏：/api/think/*（碎片是库里收件箱的笔记，AI 不碰，等你叫它；收藏存原件和抽出来的正文；冥想时间压住推送。见 think.py、saves.py）。
 - 日程和「要记得的」：/api/schedule（课表 + 自己的日程 + 当天的截止，能改）、/api/remember（作业、邮件、求职的 ddl，打勾），iPhone 日历订阅 /cal/<令牌>.ics（见 schedule.py）。
@@ -78,7 +78,7 @@ from canvasapi import router as canvas_router  # noqa: E402
 import coursegen  # noqa: E402
 from inbox import router as inbox_router  # noqa: E402
 from unread import router as unread_router  # noqa: E402
-from chats import router as chats_router  # noqa: E402 — 对话列表（Grava 一边：Agent 栏、主对话、会议、项目；置顶 / 免打扰）
+from chats import router as chats_router  # noqa: E402 — 对话列表（助手一边：Agent 栏、主对话、会议、项目；置顶 / 免打扰）
 from schedule import router as schedule_router  # noqa: E402
 import today as today_page  # noqa: E402 — 本文件有自己的 today()（日期），模块换个名字
 import engboard  # noqa: E402
@@ -113,6 +113,17 @@ import diet  # noqa: E402
 from diet import router as diet_router  # noqa: E402 — 饮食记录、个人食物库、营养目标、查营养（diet.py + nutrition.py）
 from outputs import router as outputs_router  # noqa: E402 — Agent 的产出：浮动标签、小板子、对话里的产出卡片（2026-10-13）
 from meetings import router as meetings_router  # noqa: E402 — Agent 会议：/api/meetings…（几个 Agent 轮流发言、主对话的助手写纪要，见 meetings.py）
+import cybers  # noqa: E402 — 赛博（主线第三步）：导入时挂上收件箱认得赛博的对话、改法卡的跑法（cybers.install）
+from cybers import router as cybers_router  # noqa: E402 — /api/cybers…（server.json 的 cybers 开了才有，见 cybers.py）
+from agentnew import router as agentnew_router  # noqa: E402 — 一句话新建（赛博和功能 Agent），同一个开关
+from contacts import router as contacts_router  # noqa: E402 — 通讯录（管家、赛博、功能 Agent、好友），同一个开关
+from cybermodels import router as cybermodels_router  # noqa: E402 — 赛博选模型的页，同一个开关
+import groupchat  # noqa: E402 — 群聊（主线第三步）：挑待定的后台循环（groupchat.start）
+from groupchat import router as groupchat_router  # noqa: E402 — /api/groupchats…（server.json 的 groupchat 开了才有，见 groupchat.py）
+from ideatalk import router as ideatalk_router  # noqa: E402 — Zen 想法「拿去讨论」：/api/think/ideas/{id}/…（赛博、群聊那几处要开着各自的开关）
+from butler import router as butler_router  # noqa: E402 — 管家（主线第三步）：/api/butler…（server.json 的 butler 开了才有，见 butler.py）
+import friendgroup  # noqa: E402 — 好友群（主线第三步）：投递、挑待定的后台循环（friendgroup.start）
+from friendgroup import router as friendgroup_router  # noqa: E402 — /api/friendgroups…（跟着管家开关，见 friendgroup.py）
 from engine.api import router as engine_router  # noqa: E402 — 自己的内核：/api/engine/…（状态、一轮轮的记录、赛博的测试入口）、/api/setup/…
 from engine import setup_api as engine_setup  # noqa: E402 — 第 9 步「通用的选择层」：出错的样子、/api/health 的 no_model
 from engine import tools as engine_tools  # noqa: E402 — 内核的工具和关卡：收件箱 kind tool / schedule 的钩子（重启后点同意也照样跑）
@@ -159,6 +170,9 @@ async def lifespan(_app: FastAPI):
         engine_skill_review.start()
     coursegen.start()  # 学习台：生成学习页的队列用服务的事件循环
     friends.start()  # 朋友聊天的投递循环：发出去的消息排队发、失败重试；名片变了告诉朋友
+    cybers.start()  # 赛博（主线第三步）：每天读的循环（claw 是 builtin 才起；开着「每天读」的赛博才真去读，默认没有）
+    groupchat.start()  # 群聊（主线第三步）：一段聊完了挑值得记的进待定（claw 是 builtin 才起；开着群聊、有聊完的群才真去挑）
+    friendgroup.start()  # 好友群（主线第三步）：逐个成员投递、失败重试；一段聊完了挑值得记的进待定（关着就没有要做的）
     relay.start()  # 往外连中继：没有公网入口时朋友经它找到这台服务器（server.json "relay": false 关掉）
     if claw.is_builtin():  # 第 6 批的渠道层：开着的 Telegram、Discord、邮件账号收发（OpenClaw 有它自己的渠道，那条路不起这个）
         channels.start()
@@ -243,6 +257,14 @@ app.include_router(egress_router)
 app.include_router(diet_router)
 app.include_router(outputs_router)
 app.include_router(meetings_router)  # /api/meetings/suggest 在 /api/meetings/{mid} 之前定义（同一个 router 里按顺序）
+app.include_router(cybers_router)  # 赛博：关着时一律 404（cybers.enabled）
+app.include_router(agentnew_router)  # /api/new…：一句话新建，同上
+app.include_router(contacts_router)  # /api/contacts：通讯录，同上
+app.include_router(cybermodels_router)  # /api/cyber-models：赛博选模型（推荐 / 全部 / 本机），同上
+app.include_router(groupchat_router)  # /api/groupchats…：群聊，关着时一律 404（groupchat.enabled）
+app.include_router(ideatalk_router)  # /api/think/ideas/{id}/…：想法「拿去讨论」
+app.include_router(butler_router)  # /api/butler…：管家（名片 Agent 升级），关着时一律 404（butler.enabled）
+app.include_router(friendgroup_router)  # /api/friendgroups…：好友群，跟着管家开关（friendgroup.enabled）；对别的服务器的 /f/group 在 public.py
 app.include_router(engine_router)
 app.include_router(channels_router)  # 在网页版的静态文件之前（第 6 批）
 if apps is not None:

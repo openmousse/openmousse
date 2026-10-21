@@ -25,6 +25,7 @@ import engine
 from engine import embeddings, owner, recall, semantic, tools
 from engine.session import MemorySession, user
 from evals.fakeembed import FakeEmbedServer, cosine, vector
+from stored_values import TREE_AGENT_PREFIX
 from test_engine import FakeModel
 
 SERVER = Path(__file__).resolve().parent.parent
@@ -232,13 +233,13 @@ def test_scope_dates_not_and_chats_by_meaning(sem):
 
 def test_vectors_are_incremental_and_rebuilt_when_the_model_changes(sem, server_json):
     sem.cfg(db=None)  # 索引放在默认的地方：server.json 写坏了的时候也找得到同一个
-    mem = write(sem.ws / "MEMORY.md", "- 我们打算十二月去鲸歌岛度假\n- 养了一只猫叫豆豆\n")
+    mem = write(sem.ws / "MEMORY.md", "- 我们打算十二月去鲸歌岛度假\n- 养了一只龟叫团子\n")
     trip = write(sem.ws / "memory" / "trip.md", "# 行程\n去鲸歌岛前要办签证\n")
     write(sem.ws / "memory" / "2026-10-03.md", "晚上失眠，三点才睡着\n")
     recall.sync("main")
     assert semantic.backfill()["embedded"] == 4 and len(sem.fe.texts("docs")) == 4
     assert semantic.backfill()["requests"] == 0  # 没变：一个请求都不发
-    write(mem, "- 我们打算十二月去鲸歌岛度假\n- 养了一只猫叫豆豆\n- 下周面试一家新公司\n")
+    write(mem, "- 我们打算十二月去鲸歌岛度假\n- 养了一只龟叫团子\n- 下周面试一家新公司\n")
     recall.sync("main")
     st = semantic.backfill()
     assert sem.fe.texts("docs")[4:] == ["- 下周面试一家新公司"] and st["embedded"] == 1  # 没改的两条接着用旧的向量
@@ -460,7 +461,7 @@ def test_tree_leaves_carry_their_cues_and_source_into_the_index(sem, mousse_tree
 
 
 def _script_tree(tmp_path: Path, leaves: list[tuple], branches: list[dict], broken: bool = False) -> types.ModuleType:
-    """作者那份 memory_tree.py 的样子：connect(sync=False) 给它的索引（tree 表）、branch_tree、TRUNK；broken = 读不了。"""
+    """工作区那份 memory_tree.py 的样子：connect(sync=False) 给它的索引（tree 表）、branch_tree、TRUNK；broken = 读不了。"""
     db = tmp_path / "author-tree-index.db"
     with contextlib.closing(sqlite3.connect(db)) as c:
         c.execute("CREATE TABLE tree (id TEXT PRIMARY KEY, text TEXT, kind TEXT, tags TEXT, source TEXT, status TEXT, branch TEXT, "
@@ -487,7 +488,7 @@ def test_tree_leaves_from_the_authors_script_and_its_export(sem, monkeypatch):
     import sources
     sem.cfg(tree=True)
     leaves = [("n1", "周末想去海边度假", "preference", "旅行", "claude", "active", None, "2026-09-01", "2026-09-01T10:00:00"),
-              ("n2", "每天早上跑步五公里", "fact", "", "grava-rcfit", "active", "健身", "2026-09-20", "2026-09-20T08:00:00", 1.5),
+              ("n2", "每天早上跑步五公里", "fact", "", f"{TREE_AGENT_PREFIX}rcfit", "active", "健身", "2026-09-20", "2026-09-20T08:00:00", 1.5),
               ("n3", "十月去看了牙医", "event", "健康", "owner", "active", "身体", "2026-10-05", "2026-10-05T09:00:00"),
               ("p1", "档案要点不进来", "profile", "", "profile", "active", None, "2026-10-01", "2026-10-01")]
     branches = [{"name": "人", "parent": "档案", "agents": ""}, {"name": "身体", "parent": "档案", "agents": ""},

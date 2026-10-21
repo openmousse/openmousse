@@ -6,6 +6,7 @@ import pytest
 
 from engine import events, loop, resume, store
 from engine.session import DbSession, day_key, text_of, user
+from stored_values import ASSISTANT_ROLE
 from test_engine_claude_code import serving
 from test_engine_events import BUILTIN, replies, run, until
 
@@ -73,8 +74,8 @@ def test_a_killed_turn_is_picked_up_once(server_json, model, cli, monkeypatch):
     assert loop.RESTART_NOTE in [text_of(m) for m in msgs if m["role"] == "system"]
     assert [text_of(m) for m in msgs if m["role"] == "user"][-1] == resume.PROMPT  # 交给模型的是「接着做」那一句，不是 app 里那行灰字
     assert rows(chat, thread) == [("user", "ok", "book the gym at six"),
-                                  ("grava", "error", "Booking it.\n\n(The server restarted; this turn didn't finish.)"),
-                                  ("auto", "ok", resume.shown()), ("grava", "ok", "The booking went through: six o'clock.")]
+                                  (ASSISTANT_ROLE, "error", "Booking it.\n\n(The server restarted; this turn didn't finish.)"),
+                                  ("auto", "ok", resume.shown()), (ASSISTANT_ROLE, "ok", "The booking went through: six o'clock.")]
     # 接着跑的那一轮（origin auto）又被打断：不再接
     t2 = events.turn_open(conversation=thread, kind="owner", model=MODEL, session=s.id, agent="main", origin="auto")
     s.append(user(resume.PROMPT), turn=t2)
@@ -100,7 +101,7 @@ def test_off_by_default_only_settles(server_json, model, cli, monkeypatch):
 
 
 def test_a_command_answered_mid_turn_does_not_hide_the_cut_off_turn(server_json, model, cli, monkeypatch):
-    """回复在跑的时候插了一句、又打了 /btw（命令的回答也是 role grava、是这个对话最后一条）：重启后照样认出那一轮没回完，
+    """回复在跑的时候插了一句、又打了 /btw（命令的回答也是 role ASSISTANT_ROLE、是这个对话最后一条）：重启后照样认出那一轮没回完，
     补「没拿到回复」，插话改成排着的。"""
     import chat
     thread = "t-resume-cmd"
@@ -113,7 +114,7 @@ def test_a_command_answered_mid_turn_does_not_hide_the_cut_off_turn(server_json,
         conn.execute("INSERT INTO messages(thread, role, text, ts, status, origin) VALUES(?,?,?,?,?,?)",
                      (thread, "user", "/btw is the pool open", ts, "ok", "command"))
         conn.execute("INSERT INTO messages(thread, role, text, ts, status, origin) VALUES(?,?,?,?,?,?)",
-                     (thread, "grava", "(Side question) Until nine.", ts, "ok", "btw"))
+                     (thread, ASSISTANT_ROLE, "(Side question) Until nine.", ts, "ok", "btw"))
     model([])
     run(_settle(chat))
     assert replies(chat, thread)[-1]["status"] == "error" and "(The server restarted" in replies(chat, thread)[-1]["text"]

@@ -15,6 +15,7 @@
   这两样不算记忆：扫笔记时不当叶子收，只把枝读进索引的 branch 表。
 - 改写一篇笔记（确认、取代、挪枝、改正文）只换我们写的那几个属性，用户在 Obsidian 里自己加的属性原样留着（原文一行不动）。
   遗忘例外：只留我们的骨架，别的属性一起清掉（里面可能也有内容）。
+- 隐去过密钥的叶子多一个属性 redacted（「隐去过 N 处」/ redacted N，见 secrets.py）。没隐去就不写。索引里存整数。
 """
 from __future__ import annotations
 
@@ -36,13 +37,14 @@ import yaml
 
 from . import branches as B
 from . import config as C
+from . import secrets as K
 from . import store as S
 
 MAX_NOTE_BYTES = 64 * 1024        # 一条记忆是一句话，比这大的多半放错了地方
 SETTLE_SECONDS = 2                # 档案同步：改了的那边不到 2 秒先不动，可能还没写完
 CURRENT = ("active", "pending")
 COLS = ("id", "path", "text", "kind", "tags", "source", "observed_at", "status", "supersedes", "created_at", "updated_at", "branch",
-        *S.EXTRA)
+        *S.EXTRA, "redacted")
 
 INDEX_SCHEMA = """
 CREATE TABLE IF NOT EXISTS tree (
@@ -62,7 +64,8 @@ CREATE TABLE IF NOT EXISTS tree (
   platform TEXT NOT NULL DEFAULT '',
   thread TEXT NOT NULL DEFAULT '',
   message TEXT NOT NULL DEFAULT '',
-  cues TEXT NOT NULL DEFAULT ''
+  cues TEXT NOT NULL DEFAULT '',
+  redacted INTEGER NOT NULL DEFAULT 0
 );
 CREATE TABLE IF NOT EXISTS issue (path TEXT NOT NULL, problem TEXT NOT NULL);
 """ + S.SCHEMA  # tree 已经建好，S.SCHEMA 里的 CREATE TABLE IF NOT EXISTS tree 跳过；索引、FTS、触发器、activity、meta、branch 照建
@@ -185,7 +188,7 @@ def split_tags(raw) -> list[str]:
     return out
 
 
-NOTE_KEYS = ("id", "kind", "source", "observed_at", "status", "branch", "tags", "supersedes", *S.EXTRA, "created_at", "updated_at")
+NOTE_KEYS = ("id", "kind", "source", "observed_at", "status", "branch", "tags", "supersedes", *S.EXTRA, "redacted", "created_at", "updated_at")
 BRANCH_KEYS = ("parent", "aliases", "agents", "order")
 _KEY = re.compile(r"""^(?:"([^"]*)"|'([^']*)'|([^\s#\-'"][^:]*?))[ \t]*:(?:[ \t]|$)""")
 
@@ -252,6 +255,8 @@ def render_note(m: dict, keep: str | None = None) -> str:
     cues = S.cue_list(m.get("cues") or "")
     if cues:
         ours["cues"] = ["cues:", *(f"  - {json.dumps(c, ensure_ascii=False)}" for c in cues)]
+    if (n := K.count_of(m.get("redacted"))) > 0:  # 只记隐去了几处，不写原值
+        ours["redacted"] = [f"redacted: {K.note(n)}"]
     ours["created_at"] = [f"created_at: {_yaml_time(m['created_at'])}"]
     ours["updated_at"] = [f"updated_at: {_yaml_time(m['updated_at'])}"]
     body = (m["body"] if m.get("body") is not None else m.get("text") or "").strip()
@@ -407,7 +412,7 @@ def _profile_rows(raw: str, mtime: datetime, path: str) -> list[dict]:
             pid = "p" + hashlib.sha1((section + text).encode()).hexdigest()[:11]
             rows[pid] = {"id": pid, "path": path, "text": text, "kind": "profile", "tags": section, "source": "profile",
                          "observed_at": mtime.date().isoformat(), "status": "active", "supersedes": None,
-                         "created_at": ts, "updated_at": ts, "branch": None, **dict.fromkeys(S.EXTRA, "")}
+                         "created_at": ts, "updated_at": ts, "branch": None, **dict.fromkeys(S.EXTRA, ""), "redacted": 0}
     return list(rows.values())
 
 
@@ -452,7 +457,8 @@ def _note_row(rel: str, raw: str, mtime: datetime, issues: list) -> dict | None:
     return {"id": nid, "path": rel, "text": text, "kind": kind, "tags": tags,
             "source": "owner" if source == "profile" else source, "observed_at": observed, "status": status,
             "supersedes": _s(fm.get("supersedes")) or None, "created_at": created,
-            "updated_at": _s(fm.get("updated_at")) or created, "branch": B.link_name(fm.get("branch")) or None, **prov, "cues": cues}
+            "updated_at": _s(fm.get("updated_at")) or created, "branch": B.link_name(fm.get("branch")) or None, **prov, "cues": cues,
+            "redacted": K.count_of(fm.get("redacted"))}
 
 
 def _branch_row(rel: str, raw: str, mtime: datetime, issues: list) -> dict | None:
@@ -548,7 +554,7 @@ BCOLS = ("name", "parent", "about", "aliases", "agents", "ord", "path", "created
 
 def _write_index(conn: sqlite3.Connection, rows: list[dict], brows: list[dict], issues: list, sig: str) -> dict:
     def key(r):
-        return (r["path"], r["text"], r["status"], r["tags"], r["kind"], r["branch"], r["quote"], r["cues"])
+        return (r["path"], r["text"], r["status"], r["tags"], r["kind"], r["branch"], r["quote"], r["cues"], r["redacted"])
     old = {r["id"]: key(r) for r in conn.execute("SELECT * FROM tree WHERE source != 'profile'")}
     new = {r["id"]: key(r) for r in rows if r["source"] != "profile"}
     conn.execute("DELETE FROM tree")
@@ -680,9 +686,10 @@ def _base_ok(base: Path) -> None:
 
 def add(conn: sqlite3.Connection, *, text: str, source: str, kind: str = "fact", tags: str = "",
         observed_at: str | None = None, status: str = "active", supersedes: str | None = None,
-        branch: str | None = None, agent: str | None = None, prov: dict | None = None, cues: list[str] = ()) -> dict:
+        branch: str | None = None, agent: str | None = None, prov: dict | None = None, cues: list[str] = (),
+        redacted: int = 0) -> dict:
     """写一片叶子（查重、自动挂枝和 SQLite 存储一样，见 store.prepare）。新笔记一律写上 branch 属性（主干就是 "[[档案]]"）。
-    prov / cues：store.add 整理好的出处和「用得上的时候」（没有就不写这几个属性）。"""
+    prov / cues：store.add 整理好的出处和「用得上的时候」（没有就不写这几个属性）。redacted：store.add 已经数过的处数，这里不再认一遍。"""
     if not " ".join((text or "").split()):
         raise ValueError("empty text")
     kind = kind if kind in S.KINDS[:-1] else "fact"
@@ -695,10 +702,12 @@ def add(conn: sqlite3.Connection, *, text: str, source: str, kind: str = "fact",
         if p["duplicate"]:
             return p
         text = p["text"]
+        use, extra = S.finish_cues(p, list(cues))
+        redacted += extra
         mid, ts, obs = _new_id(conn), S.now_iso(), _day(observed_at)
         note = {"id": mid, "text": text, "kind": kind, "tags": tags, "source": source, "observed_at": obs,
                 "status": status, "supersedes": supersedes or None, "created_at": ts, "updated_at": ts,
-                "branch_link": f"[[{p['branch'] or S.trunk()}]]", **(prov or {}), "cues": list(cues) or S.inherited_cues(p)}
+                "branch_link": f"[[{p['branch'] or S.trunk()}]]", **(prov or {}), "cues": use, "redacted": redacted}
         atomic_write(_unique_path(base, f"{obs} {title_of(text)}", mid), render_note(note))
         touched = {mid}
         if p["old"]:
@@ -707,12 +716,14 @@ def add(conn: sqlite3.Connection, *, text: str, source: str, kind: str = "fact",
         refresh(conn, force=True, expect=touched)
         S.log(conn, source, C.L(f"新增 1 条（{kind}，{status}）", f"Added 1 ({kind}, {status})"))
         conn.commit()
-    return S.result(mid, p)
+    return S._with_count(S.result(mid, p), redacted)
 
 
 def write(conn: sqlite3.Connection, *, text: str, source: str, kind: str, tags: str, observed_at: str | None,
-          branch: str | None, replaces: list[str], actor: str, prov: dict | None = None, cues: list[str] = ()) -> str:
-    """每周修剪用（store.write）：不查重，长一片新叶子，replaces 里当前的旧叶子都标成被取代、挪进归档。→ 新叶子的 id。"""
+          branch: str | None, replaces: list[str], actor: str, prov: dict | None = None, cues: list[str] = (),
+          redacted: int = 0) -> str:
+    """每周修剪用（store.write）：不查重，长一片新叶子，replaces 里当前的旧叶子都标成被取代、挪进归档。
+    redacted：store.write 已经隐去、数过的处数。→ 新叶子的 id。"""
     base = root()
     _base_ok(base)
     with locked():
@@ -720,7 +731,7 @@ def write(conn: sqlite3.Connection, *, text: str, source: str, kind: str, tags: 
         mid, ts, obs = _new_id(conn), S.now_iso(), _day(observed_at)
         note = {"id": mid, "text": text, "kind": kind, "tags": tags, "source": source, "observed_at": obs, "status": "active",
                 "supersedes": replaces[0] if replaces else None, "created_at": ts, "updated_at": ts,
-                "branch_link": f"[[{branch or S.trunk()}]]", **(prov or {}), "cues": list(cues)}
+                "branch_link": f"[[{branch or S.trunk()}]]", **(prov or {}), "cues": list(cues), "redacted": redacted}
         atomic_write(_unique_path(base, f"{obs} {title_of(text)}", mid), render_note(note))
         touched = {mid}
         for oid in replaces:
@@ -734,8 +745,10 @@ def write(conn: sqlite3.Connection, *, text: str, source: str, kind: str, tags: 
     return mid
 
 
-def _restatus(base: Path, row, status: str, ts: str, text: str | None = None, branch_link: str | None = None) -> None:
-    """改状态（和 / 或正文、挂的枝），顺便挪位置：当前的放根下，不是当前的放归档。用户加的属性原样留着（render_note 的 keep）。"""
+def _restatus(base: Path, row, status: str, ts: str, text: str | None = None, branch_link: str | None = None,
+              redacted: int | None = None) -> None:
+    """改状态（和 / 或正文、挂的枝），顺便挪位置：当前的放根下，不是当前的放归档。用户加的属性原样留着（render_note 的 keep）。
+    redacted：改写时隐去密钥以后的总处数（不传就照旧）。"""
     src = base / row["path"]
     try:
         raw = src.read_text(encoding="utf8")
@@ -746,6 +759,8 @@ def _restatus(base: Path, row, status: str, ts: str, text: str | None = None, br
     m = dict(row)
     m.update(status=status, updated_at=ts, branch_link=branch_link,
              body=text if text is not None else body.strip() if fm is not None and body.strip() else row["text"])
+    if redacted is not None:
+        m["redacted"] = redacted
     folder = base if status in CURRENT else base / archive()
     dst = src if src.parent == folder else _unique_path(folder, src.stem, row["id"])
     atomic_write(dst, render_note(m, keep=keep))
@@ -848,14 +863,16 @@ def set_status(conn: sqlite3.Connection, mid: str, status: str, actor: str) -> b
     return True
 
 
-def edit(conn: sqlite3.Connection, mid: str, text: str, actor: str) -> bool:
+def edit(conn: sqlite3.Connection, mid: str, text: str, actor: str, redacted: int = 0) -> bool:
+    """store.edit 已经隐去过密钥；redacted 是这次隐去的处数，加到这片原来的上面。"""
     text = " ".join((text or "").split())
     with locked():
         refresh(conn, force=True)  # 按最新状态找文件，用户可能刚改过名
         row = _find(conn, mid)
         if not row or row["source"] == "profile" or row["status"] == "retracted" or not text:
             return False
-        _restatus(root(), row, row["status"], S.now_iso(), text=text)
+        _restatus(root(), row, row["status"], S.now_iso(), text=text,
+                  redacted=K.count_of(row["redacted"]) + redacted if redacted else None)
         refresh(conn, force=True, expect={mid})
         S.log(conn, actor, C.L("改写 1 条", "Edited 1"))
         conn.commit()

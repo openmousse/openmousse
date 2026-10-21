@@ -1,4 +1,4 @@
-// 日志、求职与申请看板、训练建议卡：Grava 用 workspace 的脚本写进 grava.db，这里只读。
+// 日志、求职与申请看板、训练建议卡：助手用工作区的脚本写进服务器的库（mousse.db），这里只读。
 import React from 'react';
 import { agentName } from '../brand';
 import { Alert, Linking, Pressable, StyleSheet, View } from 'react-native';

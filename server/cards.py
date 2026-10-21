@@ -1,7 +1,7 @@
 """对话里的卡片：主对话转给 Agent 的「转交卡」、派出去的后台任务的「任务卡」（2026-09-26）；Agent 改了日程的「日程卡」在 schedule.py。
 
 转交（skills/handoff → scripts/ask_agent.py → POST /api/chat/relay）
-- relay 开跑时在 grava.db 的 handoffs 表记一行：从哪个线程转给谁、问了什么。「从哪个线程」= 这时正在回复、又不是 relay 的那个线程
+- relay 开跑时在 mousse.db 的 handoffs 表记一行：从哪个线程转给谁、问了什么。「从哪个线程」= 这时正在回复、又不是 relay 的那个线程
   （source_run：exec 起的脚本不知道自己在哪个会话里，只能这样认；同时有几个在回复时优先主 agent 的线程，再取最晚开始的）。
   builtin 的内核工具转的（第 1 批 b，Agent 也能转）：脚本带来从哪个对话转的（relay 的 source），照它记，不猜。
   Telegram 那边转的在 app 里没有对应的回复，from_thread 为空，只在 Agent 那边显示「主对话转来」。
@@ -50,10 +50,12 @@ from pathlib import Path
 from fastapi import APIRouter, HTTPException
 
 import chat
+import claw
 import push
 from chat import _lock, db, now_iso
 from config import TZ, raw, settings
 from i18n import L
+from stored_values import ASSISTANT_ROLE
 
 router = APIRouter()
 LEDGER = settings.openclaw_home / "state" / "openclaw.sqlite"
@@ -216,6 +218,12 @@ def outcome(r: dict) -> dict:
     return ((r.get("payload") or {}).get("execution") or {}).get("outcome") or {}
 
 
+def interrupted(r: dict) -> bool:
+    """自己的内核的任务被服务重启打断了（engine/ledger.py 的 interrupted，台账的样子里记成 lost，状态归成「失败」）：
+    app 写「被重启打断」、给「重派」（10/20）。OpenClaw 台账里的 lost 是它自己的说法，不算。"""
+    return claw.is_builtin() and str(r.get("status") or "").lower() == "lost"
+
+
 def timed_out(r: dict) -> bool:
     return (r.get("status") == "timed_out" or outcome(r).get("status") == "timeout"
             or "timeout" in str((r.get("payload") or {}).get("endedReason") or ""))
@@ -376,7 +384,7 @@ def rounds(conn: sqlite3.Connection | None, tid: str) -> tuple[int, str | None, 
     run = chat.RUNS.get(f"task:{tid}")
     if run and not run.done:
         return 1 + len(notes), notes[-1], "running", None
-    last = rows[-1] if rows and rows[-1]["role"] == "grava" else None
+    last = rows[-1] if rows and rows[-1]["role"] == ASSISTANT_ROLE else None
     return 1 + len(notes), notes[-1], "failed" if last is None or last["status"] == "error" else "done", last["text"] if last else None
 
 
@@ -396,7 +404,8 @@ def task_json(r: dict, message_id: int | None = None, conn: sqlite3.Connection |
             "tools": int(r.get("tool_use_count") or 0), "step": step_of(tid, r.get("last_tool_name")) if st == "进行中" else "",
             "result": push.clip(result_of(r), RESULT_MAX) if st != "进行中" else "", "error": r.get("error") or None,
             "round": n, "roundStatus": round_status, "note": note, "roundResult": push.clip(round_text, RESULT_MAX) if round_text else None,
-            "tokens": det.get("tokens"), "limitMinutes": limit_minutes(r), "seq": (seq or {}).get(tid), "dailyLimit": limits()[0]}
+            "tokens": det.get("tokens"), "limitMinutes": limit_minutes(r), "seq": (seq or {}).get(tid), "dailyLimit": limits()[0],
+            "interrupted": interrupted(r)}  # 10/20 只新增：被服务重启打断的（老 app 不认，照旧画成「失败」）
 
 
 def handoff_json(h: sqlite3.Row, nm: dict[str, str]) -> dict:

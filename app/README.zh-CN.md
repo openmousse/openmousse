@@ -12,9 +12,9 @@ npm run web            # 本机浏览器里跑（连接页填服务器地址和�
 npm run web:build      # 生成 dist/，由 server 托管成网页版
 ```
 
-## 用作者的 TestFlight 装
+## 用 OpenMousse 的 TestFlight 装
 
-装上后首页是连接页：填服务器地址（`https://你的域名` 或 Tailscale 的 `http://100.x.x.x:8080`）和令牌（服务器上 `python3 tokens.py add 手机` 生成）。助手的名字来自你的服务器。
+装上后首页是连接页：填服务器地址（`https://你的域名` 或 Tailscale 的 `http://100.x.x.x:8080`）和令牌（服务器上 `python3 tokens.py add 手机` 生成）；也可以在服务器上跑 `python3 tokens.py pair`，再点 **使用配对码连接**，什么都不用抄。助手的名字来自你的服务器。
 
 ## 自己构建（自己的名字和图标）
 
@@ -26,11 +26,11 @@ npm run web:build      # 生成 dist/，由 server 托管成网页版
 
 ## 同一个账号发两个 app
 
-作者自己的实例（Grava）和给朋友的通用 OpenMousse 是同一份代码、同一个 Apple 开发者账号下的两个 app。身份文件由环境变量 `MOUSSE_LOCAL` 选：默认 `app.local.json`（Grava），`eas.json` 的 `production-openmousse` 配置用 `app.local.openmousse.json`（名字 OpenMousse、包名 `app.openmousse.ios`、通用图标、自己的 EAS 项目）。`app.local.*.json` 都不进 git。
+你自己的 app 和通用的 OpenMousse 可以是同一份代码、同一个 Apple 开发者账号下的两个 app。身份文件由环境变量 `MOUSSE_LOCAL` 选：默认 `app.local.json`（你自己的 app），`eas.json` 的 `production-openmousse` 配置用 `app.local.openmousse.json`（名字 OpenMousse、包名 `app.openmousse.ios`、通用图标、自己的 EAS 项目）。`app.local.*.json` 都不进 git。
 
 ```bash
-npx eas-cli build -p ios --profile production --auto-submit               # Grava
-npx eas-cli build -p ios --profile production-openmousse --auto-submit    # OpenMousse（朋友装这个的 TestFlight）
+npx eas-cli build -p ios --profile production --auto-submit               # 你自己的 app
+npx eas-cli build -p ios --profile production-openmousse --auto-submit    # 通用的 OpenMousse（TestFlight 上的那个）
 MOUSSE_LOCAL=app.local.openmousse.json npx eas-cli update --channel production --environment production   # 给 OpenMousse 发热更新
 ```
 

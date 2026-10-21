@@ -33,7 +33,7 @@ WORDS = {
               "assignment*", "coursework", "homework", "problem set", "quiz*", "exam*", "midterm*", "final exam", "lecture*", "seminar*", "tutorial*",
               "office hour*", "canvas", "syllabus", "module*", "transcript*", "recommendation*", "reference letter*", "writing sample*",
               "personal statement", "statement of purpose", "master", "masters", "msc", "mfin", "meng", "mphil", "phd", "mba", "admission*", "university", "college",
-              "gre", "gmat", "toefl", "ielts", "essay*",
+              "gre", "gmat", "toefl", "ielts", "essay*", "gpa", "fafsa", "erasmus", "高考", "考研", "四六级", "雅思", "托福",
               "reading*", "course*", "class*", "study", "school*"),
     "work": ("求职", "实习", "全职", "岗位", "职位", "面试", "笔试", "测评", "网申", "简历", "招聘", "校招", "内推", "雇主", "职业", "猎头",
              "薪资", "融资", "投资人", "路演", "商业计划", "商标", "律师", "授权", "发帖", "宣传", "高才通", "工签", "人才",
@@ -46,9 +46,10 @@ WORDS = {
              "搬家", "驾照", "护照", "居留", "里程", "会员", "账户", "账号", "密码", "邮箱",
              "bill*", "invoice*", "charge*", "payment*", "renew*", "subscription*", "refund*", "return*", "parcel*", "delivery", "appointment*",
              "doctor*", "dentist*", "gp", "nhs", "bank*", "rent", "council tax", "insurance", "flight*", "hotel*", "train", "trip*", "travel*",
-             "concert*", "ticket*", "gym", "workout*", "passport*", "brp", "router*", "phone*", "birthday*", "account*", "password*"),
+             "concert*", "ticket*", "gym", "workout*", "passport*", "brp", "router*", "phone*", "birthday*", "account*", "password*",
+             "社保", "医保", "公积金", "户口", "居住证", "dmv", "irs", "tax return*", "medicare", "medicaid", "green card", "residence permit*"),
 }
-WORK_VISA = re.compile(r"高才通|工签|人才签|求职签|工作签|work visa|graduate visa|hpi|skilled worker|j-?find", re.I)
+WORK_VISA = re.compile(r"高才通|工签|人才签|求职签|工作签|work visa|graduate visa|hpi|skilled worker|j-?find|h-?1b|blue card", re.I)
 VISA = re.compile(r"签证|visa", re.I)
 ASCII_WORD = re.compile(r"[a-z]")
 

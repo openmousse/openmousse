@@ -231,7 +231,7 @@ def test_owner_rules_tell_the_model_about_the_gate(builtin):
 def test_tiers_follow_who_wrote_it_and_whose_words_they_are():
     t = memgate.tier
     assert t("profile") == "profile"
-    assert t("owner") == "quoted" and t("leo", owner_sources=("leo", "owner")) == "quoted"  # 自己写的
+    assert t("owner") == "quoted" and t(config.OWNER_ID_LEGACY, owner_sources=memtree.OWNER_SOURCES) == "quoted"  # 自己写的
     assert t("claude", "I only drink oat milk", "claude") == "quoted"  # 带原话
     assert t("claude") == "inferred"  # 平台总结的，没原话
     assert t("main", "Sam said she is vegan now", "friend") == "inferred"  # 别人说的：原话不是用户的

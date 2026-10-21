@@ -26,7 +26,7 @@ api_key / api_key_helper / oauth_token / third_party；Codex 的 chatgpt / api k
     配置文件，令牌不进命令行）、不给内置工具（--tools ""：没有 Bash、读写文件、上网）、只放行我们那几个
     （--allowedTools mcp__openmousse__…）、不弹问题（--disallowedTools AskUserQuestion、
     --permission-mode dontAsk、--permission-prompts none）、不加载 skills（--disable-slash-commands）；后台任务的规矩用
-    --append-system-prompt 接在它自己的后面，任务从标准输入给；MCP 等连上再开始（MCP_CONNECTION_NONBLOCKING=false，Grava 的
+    --append-system-prompt 接在它自己的后面，任务从标准输入给；MCP 等连上再开始（MCP_CONNECTION_NONBLOCKING=false，OpenClaw 那条路的
     mail_digest.py 踩过的坑）；我们的工具一开始就全列出来（ENABLE_TOOL_SEARCH=false：工具搜索默认把 MCP 工具藏起来、要内置的 ToolSearch
     去找，--tools "" 把内置工具都拿掉了）；一次调用最多等 330 秒（MCP_TOOL_TIMEOUT：HTTP 的 MCP 它默认一次只等 60 秒，我们的命令行工具
     最长 120 秒、handoff 300 秒）。结果只认最后的 result：subtype success、is_error false、result 不空（dsh 的 successfulResult），
@@ -301,7 +301,7 @@ def own_login(info: dict | None) -> bool:
 
 def mcp_url() -> str:
     host = settings.host
-    if host in ("", "0.0.0.0", "::"):
+    if host in ("", "0.0.0.0", "::", "[::]"):  # 通配的监听地址连本机：Host 头写成通配地址会被 /mcp 的重绑定防护拒（421）
         host = "127.0.0.1"
     if ":" in host and not host.startswith("["):
         host = f"[{host}]"

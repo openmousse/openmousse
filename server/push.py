@@ -1,6 +1,6 @@
 """推送通知（Expo Push → APNs / FCM）：回复、建议卡、收件箱、起床报告都从这里推，锁屏也能看到，点开直接到对应的地方。
 
-- 手机端 app 启动并连上后把 Expo push token 交到 /api/push/register，存 grava.db 的 push_tokens。
+- 手机端 app 启动并连上后把 Expo push token 交到 /api/push/register，存 mousse.db 的 push_tokens。
 - 三个档位 level：ring 响铃（有声音、高优先级、interruptionLevel active）；quiet 静默（不出声，进通知中心，passive）；none 不推。
   server.json 的 push.quiet_hours（默认 ["23:00", "07:30"]，按 timezone）里 ring 自动降成 quiet。
 - 谁用哪档：用户发的消息回完 → ring；主对话转给 Agent（relay）→ none；系统触发（/api/chat/trigger）→ 触发方给的 level，默认 quiet；

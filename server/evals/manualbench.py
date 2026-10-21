@@ -75,7 +75,7 @@ CASES = [
     ("Prep me for tomorrow's meeting with my advisor", "", {"manual:准备会议"}, set()),
     ("把这个想法记到日志里：我觉得早上学习效率更高", "", {"skill:journal"}, set()),
     ("帮我建一个管读书的 Agent", "", {"skill:agent-builder"}, set()),
-    ("把「体重回到 75 kg 以下」这个目标标成完成", "", {"skill:goals"}, set()),
+    ("把「体重降到 65 kg 以下」这个目标标成完成", "", {"skill:goals"}, set()),
     ("做个页面，把这个月的花费画成图", "", {"skill:page"}, {"skill:board"}),
     ("这件事交给健身 Agent 去管吧", "", {"skill:handoff"}, set()),
     ("这份长报告太长了，派到后台去读，读完给我要点", "", {"skill:dispatch"}, set()),

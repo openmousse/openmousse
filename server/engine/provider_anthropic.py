@@ -1,6 +1,6 @@
-"""接 Claude：官方 anthropic SDK（1.x），只用 API 密钥（Anthropic 条款：第三方产品不许借 Claude 订阅登录，见 engine/README）。
+"""接 Claude：官方 anthropic SDK（1.x），只用 API 密钥（Anthropic 条款：第三方产品不许借 Claude 订阅登录；要用自己的套餐走 claude_brain.py，交给本机登录着的官方 Claude Code）。
 
-跟着 2026 年的接口走（claude-api 技能 2026-10 的说法；10/16 又对照了 pi、OpenClaw、Hermes 的源码，见 ~/openmousse-wt/engine/research/）：
+跟着 2026 年的接口走（claude-api 技能 2026-10 的说法；10/16 又对照了 pi、OpenClaw、Hermes 的源码）：
   - 思考：新型号一律 thinking adaptive，深浅靠 output_config.effort（Opus 5.5 关不掉思考，默认 medium）；老型号什么都不带。
   - 回放：assistant 的内容块（带思考签名）原样存在 raw 里，下一轮原样发回去。换了型号也照发（官方说法：接口自己丢掉读不了的，
     自己删反而可能 400；pi、OpenClaw 是删的，这里跟官方）。只有两处动它：空白的文字块不发（接口不收）；签名被拒（400）时

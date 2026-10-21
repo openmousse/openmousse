@@ -56,7 +56,7 @@ docker compose -f docker/compose.yaml exec openmousse python3 tokens.py pair --s
 
 ## 更新
 
-重新构建或者拉新镜像（`git pull && docker compose -f docker/compose.yaml up -d --build`）。`mousse update` 在容器里不跑（`MOUSSE_INSTALL=docker`），会让你拉新镜像。卷原样留着。
+重新构建或者拉新镜像（`git pull && docker compose -f docker/compose.yaml up -d --build`）。`mousse update` 在容器里不跑（`MOUSSE_INSTALL=docker`），会告诉你怎么重建镜像。卷原样留着。
 
 ## 备份
 

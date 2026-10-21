@@ -28,7 +28,7 @@ PEOPLE = {
            "how they relate to {name} and what matters to them; what was promised either way and what was agreed to do regularly."),
 }
 TRUNK_WORDS = ("档案", "主干", "profile", "trunk")    # 不论哪种语言都当主干（除非真有一根枝叫这个）
-AGENT_PREFIXES = ("openclaw-", "grava-", "openmousse-")  # 来源的写法：openclaw-<Agent id>（memory-tree skill）、grava-<id>（作者的实例）
+AGENT_PREFIXES = ("openclaw-", "grava-", "openmousse-")  # 来源的写法：openclaw-<Agent id>（memory-tree skill）、grava-<id>（OpenMousse 服务器的 Agent 写的，存储里的值，别改）
 _BAD = re.compile(r'[\\/:*?"<>|#^\[\]\x00-\x1f]')
 _LINK = re.compile(r"^\s*\[\[([^\]|#]*)(?:[#|][^\]]*)?\]\]\s*$")
 

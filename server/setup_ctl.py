@@ -14,7 +14,10 @@
   python3 setup_ctl.py search <id | off | auto> [--key-stdin] [--url URL]   搜网页用哪家（要密钥的顺手存）
   python3 setup_ctl.py memory <sqlite | markdown> [文件夹]   世界树放哪（先只支持第一次选）
   python3 setup_ctl.py embeddings <id | off> [--model M]   按意思搜用哪家
-  python3 setup_ctl.py usage [天数]           用量
+  python3 setup_ctl.py usage [天数]           用量（登录了 Grok 订阅还有这一段的额度）
+  python3 setup_ctl.py grok [login | logout]  你自己的 Grok 订阅（SuperGrok / X Premium+，engine/grok_plan.py）：不写 = 看状态和额度；login = 打出网址
+                                             和码，在手机或电脑上点同意，这里等着；logout = 退出（撤销、删掉这台服务器上的令牌）
+  python3 setup_ctl.py grok background <on | off>   后台任务、定时任务、心跳能不能花你的 Grok 订阅（默认不能）
 环境变量 MOUSSE_NONINTERACTIVE=1（claw 替人装时）：三步不问，只打印现在的样子和接下来怎么配。
 """
 from __future__ import annotations
@@ -49,7 +52,12 @@ before writing, keeps keys in secrets.env (0600) and never prints them. The serv
   python3 setup_ctl.py search <id | off | auto> [--key-stdin] [--url URL]   which web search to use (saves its key too)
   python3 setup_ctl.py memory <sqlite | markdown> [FOLDER]   where the memory tree lives (only the first choice for now)
   python3 setup_ctl.py embeddings <id | off> [--model M]   search by meaning with which provider
-  python3 setup_ctl.py usage [DAYS]          usage
+  python3 setup_ctl.py usage [DAYS]          usage (plus this period's Grok subscription allowance when signed in)
+  python3 setup_ctl.py grok [login | logout]  your own Grok subscription (SuperGrok / X Premium+, engine/grok_plan.py): nothing = status
+                                             and allowance; login = prints a link and a code, approve on your phone or computer while this
+                                             waits; logout = signs out (revokes and removes the tokens on this server)
+  python3 setup_ctl.py grok background <on | off>   whether background tasks, scheduled jobs and heartbeats may use your Grok
+                                             subscription (they may not by default)
 With MOUSSE_NONINTERACTIVE=1 (a claw installing for you) the steps don't ask anything: they print where things stand and what to do next.
 """)
 
@@ -226,6 +234,13 @@ def show_logins(rows: list[dict]) -> None:
         if not r["ready"] and r["id"] == "chatgpt":  # 目录里的说法是给 app 的按钮写的；终端里走接口
             say("  " + L("ChatGPT 套餐不在这里连：照 server/README.zh-CN.md 的「用你自己的 ChatGPT 套餐」，POST /api/engine/chatgpt/login 拿授权链接",
                          "The ChatGPT plan isn't connected here: follow \"Your ChatGPT plan\" in server/README.md (POST /api/engine/chatgpt/login gives the sign-in link)"))
+        elif not r["ready"] and r["id"] == "grok":  # Grok 订阅（10/20）：设备码，终端里就能登
+            if r.get("denied"):
+                say("  " + str(r["denied"].get("message") or ""))
+            if interactive() and yes(L("现在登录 Grok 订阅吗（打出网址和码，在手机或电脑上点同意）", "Sign in to your Grok subscription now (a link and a code to approve on your phone or computer)"), False):
+                grok_login()
+            else:
+                say("  " + L("登录：python3 setup_ctl.py grok login", "To sign in: python3 setup_ctl.py grok login"))
         elif not r["ready"]:
             say("  " + str(r.get("how") or ""))
 
@@ -295,7 +310,7 @@ def step_models() -> None:
         how = pick(L("怎么跑模型" if start else "怎么跑模型（回车 = 不再加了）", "How to run models" if start else "How to run models (Enter = done adding)"), [
             ("cloud", L("云端：填一家的 API 密钥", "Cloud: an API key from a provider")),
             ("local", L("这台电脑上跑的（Ollama、LM Studio……）", "On this computer (Ollama, LM Studio…)") + (L(f"：探到 {'、'.join(found)}", f": found {', '.join(found)}") if found else "")),
-            ("login", L("复用已经登录的 Claude Code / ChatGPT", "Reuse Claude Code / ChatGPT you're signed in to")),
+            ("login", L("复用已经登录的 Claude Code / ChatGPT，或者登录 Grok 订阅", "Reuse Claude Code / ChatGPT you're signed in to, or sign in to Grok")),
             ("custom", L("自己填一个 OpenAI 兼容的地址", "Your own OpenAI-compatible address"))], "cloud" if start else "")
         if not how:
             break
@@ -443,6 +458,92 @@ def wizard() -> int:
     return 0
 
 
+# —— Grok 订阅（10/20，engine/grok_plan.py）：设备码在这个终端里走，令牌存进服务器的 data_dir（服务器开着的话下一次用到就认） ——————————
+
+async def _grok_login() -> int:
+    from engine import grok_plan
+    try:
+        s = await grok_plan.start_login()
+    except grok_plan.PlanError as e:
+        print(L(f"没开始：{e}", f"Didn't start: {e}"), file=sys.stderr)
+        return 1
+    say(L("在手机或电脑上打开这个网址，认一下码、点同意：", "Open this link on your phone or computer, check the code and approve:"))
+    say(f"  {s['url']}")
+    say(L(f"  码：{s['code']}（{s['expiresAt']} 以前有效）", f"  Code: {s['code']} (valid until {s['expiresAt']})"))
+    say(grok_plan.login_note())
+    say(L("等你点同意……（Ctrl-C 取消）", "Waiting for you to approve… (Ctrl-C cancels)"))
+    st = await grok_plan.wait_login()
+    if st["status"] == "done":
+        g = grok_plan.status()
+        say(L(f"登录好了{'：' + g['email'] if g.get('email') else ''}", f"Signed in{': ' + g['email'] if g.get('email') else ''}"))
+        return 0
+    say(L(f"没登录上：{st.get('error') or st['status']}", f"Not signed in: {st.get('error') or st['status']}"))
+    return 1
+
+
+def grok_login() -> int:
+    from engine import grok_plan
+    try:
+        return asyncio.run(_grok_login())
+    except KeyboardInterrupt:
+        grok_plan.cancel_login()
+        print()
+        say(L("取消了", "Cancelled"))
+        return 1
+
+
+def show_grok() -> None:
+    from engine import grok_plan
+    g = grok_plan.status()
+    if not g["enabled"]:
+        print(L("  Grok 订阅：关着（server.json 的 engine.grok = false）", "  Grok subscription: off (engine.grok = false in server.json)"))
+        return
+    if g["denied"]:
+        print(L(f"  Grok 订阅：被 xAI 拒了 · {g['denied'].get('message')}", f"  Grok subscription: refused by xAI · {g['denied'].get('message')}"))
+    elif g["needsReconnect"]:
+        print(L("  Grok 订阅：要重新登录（python3 setup_ctl.py grok login）", "  Grok subscription: needs signing in again (python3 setup_ctl.py grok login)"))
+    elif g["connected"]:
+        print(L(f"  Grok 订阅：登录着{' · ' + g['email'] if g.get('email') else ''}", f"  Grok subscription: signed in{' · ' + g['email'] if g.get('email') else ''}"))
+    else:
+        print(L("  Grok 订阅：没登录（python3 setup_ctl.py grok login）", "  Grok subscription: not signed in (python3 setup_ctl.py grok login)"))
+    if g["lastError"] and not g["denied"]:
+        print(L(f"  最近一次的错：{g['lastError'].get('message')}", f"  Last error: {g['lastError'].get('message')}"))
+    if g["connected"]:
+        print(L("  后台任务、定时任务、心跳：" + ("能花订阅" if g["background"]["allowed"] else "不花订阅（python3 setup_ctl.py grok background on 同意）"),
+                "  Background tasks, scheduled jobs, heartbeats: " + ("may use it" if g["background"]["allowed"] else
+                                                                       "don't use it (python3 setup_ctl.py grok background on to allow)")))
+    if g["ready"]:  # 这一段的额度：当场问一次（问不到说一声）
+        q = asyncio.run(grok_plan.quota_now())
+        line = grok_plan.quota_line(q)
+        if line:
+            print(L(f"  额度：{line}", f"  Allowance: {line}"))
+        if q and q.get("error"):
+            print(L(f"  （这一次没问到：{q['error']}）", f"  (couldn't check just now: {q['error']})"))
+
+
+def grok(rest: list[str]) -> int:
+    """grok [login | logout]：见文件开头。"""
+    from engine import grok_plan
+    sub = rest[0] if rest else "status"
+    if sub == "login":
+        return grok_login()
+    if sub == "logout":
+        r = asyncio.run(grok_plan.logout())
+        print(L("退出了：这台服务器上的令牌删掉了", "Signed out: the tokens on this server are removed") + (f"\n  {r['note']}" if r.get("note") else ""))
+        return 0
+    if sub == "status":
+        show_grok()
+        return 0
+    if sub == "background" and len(rest) == 2 and rest[1] in ("on", "off"):
+        grok_plan.set_background(rest[1] == "on")
+        print(L("好了：后台任务、定时任务、心跳" + ("能花你的 Grok 订阅了" if rest[1] == "on" else "不花你的 Grok 订阅"),
+                "Done: background tasks, scheduled jobs and heartbeats " + ("may use your Grok subscription" if rest[1] == "on"
+                                                                            else "won't use your Grok subscription")))
+        return 0
+    print(usage())
+    return 2
+
+
 def warn_invalid() -> None:
     """写完以后整份查一遍 server.json（ops/confcheck.py，第 7 批）：只提醒，不拦、不改（有 ✗ 就说一声，怎么查）。"""
     try:
@@ -535,6 +636,8 @@ def main(argv: list[str]) -> int:
             model = _opt(rest, "--model")
             call(sa.put_purposes, body={"embeddings": "off" if rest[0] == "off" else {"id": rest[0], **({"model": model} if model else {})}})
             print(L("好了", "Done"))
+        elif cmd == "grok":  # 10/20：Grok 订阅
+            return grok(rest)
         elif cmd == "usage":
             u = call(sa.get_usage, int(rest[0]) if rest and rest[0].isdigit() else 30)
             tot = u["total"]
@@ -545,6 +648,9 @@ def main(argv: list[str]) -> int:
             for m in u["byModel"]:
                 cost = L("套餐", "plan") if m["billing"] == "plan" else f"${m['cost']:.4f}"
                 print(f"  {m['model']:<40} {m['turns']:>5}  {cost}")
+            from engine import grok_plan  # 10/20：Grok 订阅这一段的额度
+            if line := grok_plan.quota_line((u.get("plans") or {}).get("grok")):
+                print(L(f"Grok 订阅：{line}", f"Grok subscription: {line}"))
             emb = u["embeddings"]["total"]
             if emb["requests"]:
                 est = L(f"（估的 {emb['estimatedTokens']}）", f" ({emb['estimatedTokens']} estimated)") if emb["estimatedTokens"] else ""

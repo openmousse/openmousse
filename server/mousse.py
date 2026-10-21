@@ -32,6 +32,7 @@ Agent 自己跑的命令里（环境里有 MOUSSE_AGENT，主机命令 engine/ho
   mousse sessions cleanup [--older-than 90d] [--dry-run]   清旧的内核会话记录，再 VACUUM
   mousse diagnostics [--out FILE.zip] [--print]        打一个诊断包（不带对话、密钥、令牌、邮箱）
   mousse uninstall [--full] [--dry-run] [--yes]        卸载（默认只拿掉服务和软链；--full 先备份再全删）
+  mousse owner migrate [--apply]                       库里的「你自己」从老值 leo 换成 owner（默认只看；--apply 先备份再改）
 
   mousse node pair '<链接>' | run | install | uninstall | status
 把这台电脑当成节点（第 8 批）：后面的原样交给 node_host.py（见那个文件开头）。
@@ -101,6 +102,7 @@ Operations (batch 7; the code is in ops/, mousse <command> --help for the detail
   mousse sessions cleanup [--older-than 90d] [--dry-run]   remove old engine session transcripts, then VACUUM
   mousse diagnostics [--out FILE.zip] [--print]        a diagnostics bundle (no conversations, keys, tokens or emails)
   mousse uninstall [--full] [--dry-run] [--yes]        uninstall (services and links; --full deletes everything after a backup)
+  mousse owner migrate [--apply]                       change 'you' in the database from the old 'leo' to 'owner' (reports by default; --apply backs up first)
 
   mousse node pair '<link>' | run | install | uninstall | status
 Use this computer as a node: the rest goes to node_host.py as is (see the top of that file).

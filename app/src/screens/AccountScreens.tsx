@@ -4,8 +4,8 @@ import React, { useEffect, useRef, useState } from 'react';
 import { ActivityIndicator, Alert, Pressable, ScrollView, StyleSheet, TextInput, View } from 'react-native';
 import Constants from 'expo-constants';
 import { useNavigation, useRoute } from '@react-navigation/native';
-import Svg, { Circle } from 'react-native-svg';
 import { ChevronLeft, Mail } from '../components/icons';
+import { Mark } from '../components/Mark';
 import { Group, GroupLabel, GroupNote, Row, RoundButton, SettingsHeader } from '../components/settings';
 import { useSheet } from '../components/Sheet';
 import { Btn, Screen, T, showError } from '../components/ui';
@@ -25,17 +25,6 @@ export const loginSkipped = () => skipped;
 
 const EMAIL = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 const RESEND_S = 45;
-
-function Halo({ size = 88 }: { size?: number }) {
-  const t = useTheme();
-  return (
-    <Svg width={size} height={size} viewBox="0 0 96 96" accessibilityElementsHidden importantForAccessibility="no-hide-descendants">
-      <Circle cx={48} cy={48} r={40} stroke={t.cyan} strokeWidth={6} opacity={0.25} fill="none" />
-      <Circle cx={48} cy={48} r={28} stroke={t.cyan} strokeWidth={6} fill="none" />
-      <Circle cx={48} cy={48} r={10} fill={t.cyan} />
-    </Svg>
-  );
-}
 
 export function LoginScreen() {
   const t = useTheme();
@@ -105,7 +94,7 @@ export function LoginScreen() {
           <View style={{ flex: 1, paddingHorizontal: space.xl }}>
             {fromSettings ? <View style={{ paddingTop: 6 }}><RoundButton onPress={() => nav.goBack()} label={L('返回', 'Back')}><ChevronLeft size={22} color={t.ink} /></RoundButton></View> : null}
             <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center', gap: 12 }}>
-              <Halo />
+              <Mark size={108} decorative />
               <T v="largeTitle" style={{ marginTop: 8 }}>{Constants.expoConfig?.name ?? 'OpenMousse'}</T>
               <T v="body" color={t.ink2} style={{ textAlign: 'center' }}>{L('你的 Agent，运行在你自己的机器上。', 'Your Agent, running on your own machine.')}</T>
             </View>
@@ -117,7 +106,7 @@ export function LoginScreen() {
                 style={[type.body, styles.input, { backgroundColor: t.surface, color: t.ink, borderColor: t.line }]} />
               {msg ? <T v="callout" color={t.bad}>{msg}</T> : null}
               <Pressable onPress={busy ? undefined : send} accessibilityRole="button" style={({ pressed }) => [styles.primary, { backgroundColor: t.cyan, opacity: pressed || busy ? 0.7 : 1 }]}>
-                {busy ? <ActivityIndicator color="#FFFFFF" /> : <T v="headline" color="#FFFFFF" style={{ fontSize: 17 }}>{L('发送验证码', 'Send code')}</T>}
+                {busy ? <ActivityIndicator color={t.onCyan} /> : <T v="headline" color={t.onCyan} style={{ fontSize: 17 }}>{L('发送验证码', 'Send code')}</T>}
               </Pressable>
               {offline ? <Btn kind="quiet" label={L('暂时跳过，下次登录', 'Continue for now, sign in later')} onPress={() => { skipped = true; goOn(); }} /> : null}
             </View>
@@ -147,7 +136,7 @@ export function LoginScreen() {
             <View style={{ flex: 1 }} />
             <View style={{ gap: 6, paddingBottom: space.xl }}>
               <Pressable onPress={busy ? undefined : () => verify()} accessibilityRole="button" style={({ pressed }) => [styles.primary, { backgroundColor: t.cyan, opacity: pressed || busy ? 0.7 : 1 }]}>
-                {busy ? <ActivityIndicator color="#FFFFFF" /> : <T v="headline" color="#FFFFFF" style={{ fontSize: 17 }}>{L('继续', 'Continue')}</T>}
+                {busy ? <ActivityIndicator color={t.onCyan} /> : <T v="headline" color={t.onCyan} style={{ fontSize: 17 }}>{L('继续', 'Continue')}</T>}
               </Pressable>
               <Pressable onPress={wait > 0 || busy ? undefined : send} accessibilityRole="button" style={{ height: 44, alignItems: 'center', justifyContent: 'center' }}>
                 <T v="callout" color={wait > 0 ? t.ink3 : t.cyan}>{wait > 0 ? L(`未收到？${wait} 秒后可重新发送`, `Didn't get it? Resend in ${wait}s`) : L('重新发送验证码', 'Resend code')}</T>

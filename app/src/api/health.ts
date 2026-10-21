@@ -60,7 +60,7 @@ const iosAtLeast = (v: string) => {
   const [x, y = 0] = v.split('.').map(Number);
   return a > x || (a === x && b >= y);
 };
-// 生殖健康这一类不同步：不申请权限、不读、不上传。症状和医疗类照常同步，但只给 app 看，Grava 的工具读不到。
+// 生殖健康这一类不同步：不申请权限、不读、不上传。症状和医疗类照常同步，但只给 app 看，助手的工具读不到。
 const EXCLUDED = new Set([
   'HKQuantityTypeIdentifierBasalBodyTemperature',
   'HKCategoryTypeIdentifierMenstrualFlow', 'HKCategoryTypeIdentifierIntermenstrualBleeding', 'HKCategoryTypeIdentifierPersistentIntermenstrualBleeding',

@@ -10,6 +10,7 @@ import pytest
 from engine import commands, goal
 from engine.errors import EngineError
 from engine.session import text_of
+from stored_values import ASSISTANT_ROLE
 from test_engine_commands import rows, say, until
 from test_engine_events import running_step
 
@@ -60,11 +61,11 @@ def test_it_keeps_going_until_the_judge_says_done(server_json, model, cli):
     g = run(go())
     assert g["status"] == "done" and g["turns"] == 2 and g["reason"] == "both steps are finished"
     got = [(r["role"], r["origin"], r["text"]) for r in rows(thread)]
-    assert got[0][:2] == ("user", "command") and got[1][:2] == ("grava", "command") and "Goal set" in got[1][2]
+    assert got[0][:2] == ("user", "command") and got[1][:2] == (ASSISTANT_ROLE, "command") and "Goal set" in got[1][2]
     assert [(r, t) for r, _o, t in got[2:]] == [("auto", goal.shown({"goal": "finish the fictional two-step checklist", "turns": 0})),
-                                                ("grava", "Step one is done."),
+                                                (ASSISTANT_ROLE, "Step one is done."),
                                                 ("auto", goal.shown({"goal": "finish the fictional two-step checklist", "turns": 1})),
-                                                ("grava", "Step two is done; all finished."), ("auto", "Goal done: both steps are finished")]
+                                                (ASSISTANT_ROLE, "Step two is done; all finished."), ("auto", "Goal done: both steps are finished")]
     first, judge = f.requests[0][1], f.requests[1][1]
     assert text_of([m for m in first.messages if m["role"] == "user"][-1]).startswith("[Continuing toward your standing goal]")
     assert judge.tools == [] and judge.json and "strict judge" in judge.system  # 判的那一次：零工具、一个 JSON
@@ -147,7 +148,7 @@ def test_the_users_own_turn_goes_first(server_json, model, cli):
     out, started_now, g = run(go())
     assert "Goal set" in out[-1][1]["text"] and not started_now
     assert g["status"] == "done" and g["turns"] == 2  # 用户自己那一轮也算一轮（照 Hermes）
-    assert [r["text"] for r in rows(thread) if r["role"] == "grava" and r["origin"] != "command"] == ["Looking.\n\nYour day is clear.", "Archive tidied."]
+    assert [r["text"] for r in rows(thread) if r["role"] == ASSISTANT_ROLE and r["origin"] != "command"] == ["Looking.\n\nYour day is clear.", "Archive tidied."]
 
 
 from test_engine_commands import fake, tools  # noqa: E402,F401 — 假模型、假命令行（上面经 request 拿）

@@ -26,6 +26,7 @@ from pathlib import Path
 from . import branches as B
 from . import config as C
 from . import origins as O
+from . import secrets as K
 from . import store as S
 
 STABLE_DAYS, RECENT_DAYS, CROWDED = 14, 30, 30
@@ -292,7 +293,9 @@ def check(conn, data, *, others: dict[int, dict] | None = None, start: int = 1) 
                 step["section"] = " ".join(str(st.get("section") or "").split())
                 if not step["section"]:
                     say("promote 要写 section：并进档案的哪一节", "promote needs section: which profile section")
-                step["text"] = " ".join(str(st.get("text") or "").split()) or (x["text"] if x else "")
+                # 并进档案（USER.md、origins.json）的那句先隐去密钥：模型没写就用旧叶子的原文，那可能是 0.7.0 以前写的。
+                # 在这里换，计划 JSON、查重用的 profile_id 和真写进去的是同一句
+                step["text"] = K.redact(" ".join(str(st.get("text") or "").split()) or (x["text"] if x else ""))[0]
             elif op == "branch":
                 to = target(st.get("to"))
                 step["to"] = to

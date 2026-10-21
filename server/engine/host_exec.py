@@ -20,7 +20,8 @@
   - 内联代码：sh / bash -c、python -c、node -e、perl -e、ruby -e、awk……（代码就在参数里，名单管不住）
   - 照 Hermes 的危险命令识别（改写自 tools/approval_detection.py，见下）：rm -rf、chmod 777、mkfs、dd、关机、杀全部进程、
     下载即执行、解码了再交给 shell、上传凭据、改系统配置和 shell 配置、git reset --hard / push --force / clean -f、卸载……
-  - 动服务器自己的：docker 删 / 停容器（沙箱在那里）、~/.openmousse
+  - 动服务器自己的：docker 删 / 停容器（沙箱在那里）、~/.openmousse、setup_ctl 的 grok login / logout / background（10/21：谁能花
+    Grok 订阅由主人自己定，接口只认主人的设备；命令行直接写文件，Agent 跑它就绕过了那一道）
 怎么跑：不经 shell（切词后 exec：管道、重定向、&&、$VAR 都不认，写了就不跑并说明）；程序先按（干净的）PATH 找成绝对路径，跑的就是
   比过名单的那一个；工作目录 = 这个 Agent 的工作区（cwd 只能是里面的子文件夹）；环境变量：名字里带 KEY / TOKEN / SECRET / PASSWORD /
   CREDENTIAL / AUTH……的、网址里带着密码的、LD_* / DYLD_* / NODE_OPTIONS / PYTHONPATH 这类能改程序行为的、我们自己的 MOUSSE_* 都去掉
@@ -490,8 +491,11 @@ WRAPPERS = {"env", "nice", "nohup", "timeout", "stdbuf", "time", "ionice", "task
 PRIVILEGE = {"sudo", "doas", "su", "pkexec", "chroot", "runuser", "machinectl", "systemd-run", "firejail"}
 OWN = [(re.compile(r"\bdocker\b.*\b(rm|rmi|stop|kill|restart|prune|down)\b", _FLAGS), "docker: removes or stops containers (the sandboxes run there)"),
        (re.compile(r"\.openmousse(?:/|\b)", _FLAGS), "touches OpenMousse's own config or data"),
-       (re.compile(r"\bmousse(?:\.py)?\s+(?:update|restore|uninstall|config\s+(?:set|unset)|sessions\s+cleanup)\b|\bmousse(?:\.py)?\s+[^;|&\n]*--fix\b",
-                   _FLAGS), "an OpenMousse operator command that changes things (update, restore, uninstall, config set, cleanup, --fix)")]
+       (re.compile(r"\bmousse(?:\.py)?\s+(?:update|restore|uninstall|config\s+(?:set|unset)|sessions\s+cleanup)\b|\bmousse(?:\.py)?\s+[^;|&\n]*--fix\b"
+                   r"|\bmousse(?:\.py)?\s+owner\s+migrate\b[^;|&\n]*--apply\b",
+                   _FLAGS), "an OpenMousse operator command that changes things (update, restore, uninstall, config set, cleanup, --fix, owner migrate)"),
+       (re.compile(r"\bsetup_ctl(?:\.py)?\b[^;|&\n]*\bgrok\s+(?:login|logout|background)\b", _FLAGS),
+        "an OpenMousse operator command that changes who may spend the user's Grok subscription (grok login / logout / background)")]
 
 
 def _base(argv0: str) -> str:

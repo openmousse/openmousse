@@ -2,7 +2,7 @@
 
 只给主人回合（你自己和你的 Agent 说话，engine/owner.py）。赛博回合只拿 cyber.py 给的（名片），外人回合什么都不拿。
 
-放什么（照 OpenClaw 拼系统提示的做法；10/16 读的源码和取舍见 ~/openmousse-wt/engine/README.md「第 4 项」）：
+放什么（照 OpenClaw 拼系统提示的做法，10/16 读的源码）：
   role      它是谁：Agent 的名字和职责（groups 表，app 里能改，和 chat.agent_role 同一份）；主对话 = 助手
   files     它自己工作区里的规矩文件，按 OpenClaw 的顺序 AGENTS.md、SOUL.md、IDENTITY.md、（档案）、TOOLS.md、MEMORY.md：
             一个文件最多 2 万字、合计 6 万（OpenClaw 的 bootstrapMaxChars / bootstrapTotalMaxChars），超了留头 75%、尾 25%，中间写明截掉多少。
@@ -14,7 +14,7 @@
   tree      世界树里它该看的枝：枝的 agents 写了它的那几根（连小枝），主对话看全部；新的在前，最多 6000 字，带叶子 id 和信几分
             （13d：quoted 带用户原话或用户自己写的 / inferred 平台推断的，engine/memgate.py）
   digest    上一次的日结（往回最多找 7 天）：<data_dir>/digest/<对话>/<日>.md；对话就是 Agent 自己的，再看 OpenClaw 的
-            shared/digest/<Agent>/（Grava 切过来那天，日结还是 OpenClaw 的 Agent 写的）。最多 4000 字
+            shared/digest/<Agent>/（从 OpenClaw 切过来那天，日结还是 OpenClaw 的 Agent 写的）。最多 4000 字
   tail      上一次聊到哪：app 里这个对话最近一个有消息的日子的最后 10 句（OpenClaw 重置时 session-memory 钩子存最后 15 条），
             一句最多 600 字、合计 3000；【自动触发】那几轮（日结之类）跳过；最后一句没回上的写明。对外接口的对话（api:…）
             app 里没有记录，从它前几天最近的那条会话里取（engine/openai_api.py）
@@ -41,6 +41,7 @@ from pathlib import Path
 from typing import Any
 
 from config import settings
+from stored_values import ASSISTANT_ROLE
 
 FILES = ("AGENTS.md", "SOUL.md", "IDENTITY.md", "TOOLS.md", "MEMORY.md")
 FILE_MAX = 20_000         # 工作区的一个文件（OpenClaw 默认）
@@ -266,7 +267,7 @@ def digest_part(thread: str, agent: str, day: str) -> Part:
     for i in range(1, DIGEST_DAYS + 1):
         d = logical(day, i)
         places = [chat.digest_path(thread, d)]
-        if thread == agent:  # Grava：OpenClaw 的 Agent 自己写的日结
+        if thread == agent:  # 从 OpenClaw 切过来的：OpenClaw 的 Agent 自己写的日结
             places.append(settings.openclaw_home / "shared" / "digest" / agent / f"{d}.md")
         for p in places:
             text = _read(p)
@@ -290,21 +291,21 @@ def tail_part(thread: str, day: str) -> Part:
     # 斜杠命令那几行、压缩的提示（第 2 批，origin command / btw / notice）不是对话，跳过
     with chat._lock, chat.db() as conn:
         last = conn.execute("SELECT ts FROM messages WHERE thread=? AND julianday(ts)<julianday(?) AND julianday(ts)>=julianday(?) "
-                            "AND role IN ('user','auto','grava') AND IFNULL(origin, '') NOT IN ('command', 'btw', 'notice') ORDER BY id DESC LIMIT 1",
+                            f"AND role IN ('user','auto','{ASSISTANT_ROLE}') AND IFNULL(origin, '') NOT IN ('command', 'btw', 'notice') ORDER BY id DESC LIMIT 1",
                             (thread, start, since)).fetchone()
         if last is None:
             return Part("tail", "Where the last conversation ended", live=False)
         pday = chat.day_of(last["ts"])
         a, b = chat.day_bounds(pday)
         rows = conn.execute("SELECT role, text, status FROM messages WHERE thread=? AND julianday(ts)>=julianday(?) AND julianday(ts)<julianday(?) "
-                            "AND role IN ('user','auto','grava') AND IFNULL(origin, '') NOT IN ('command', 'btw', 'notice') ORDER BY id DESC LIMIT ?",
+                            f"AND role IN ('user','auto','{ASSISTANT_ROLE}') AND IFNULL(origin, '') NOT IN ('command', 'btw', 'notice') ORDER BY id DESC LIMIT ?",
                             (thread, a, b, TAIL_MSGS * 4)).fetchall()
     kept, skip = [], False
     for r in reversed(rows):
         if r["role"] == "auto" and (r["text"] or "").startswith(AUTO_TRIGGER):
             skip = True  # 定时脚本那一轮（日结写在 digest 里）：连它的回复一起跳过
             continue
-        if r["role"] == "grava" and skip:
+        if r["role"] == ASSISTANT_ROLE and skip:
             skip = False
             continue
         skip = False
@@ -317,9 +318,9 @@ def tail_part(thread: str, day: str) -> Part:
         t = " ".join((r["text"] or "").split())
         t = t if len(t) <= TAIL_MSG_MAX else t[:TAIL_MSG_MAX] + "…"
         who = {"user": "User", "auto": "Automatic message"}.get(r["role"], "You")
-        bad = r["role"] == "grava" and r["status"] not in (None, "ok")
+        bad = r["role"] == ASSISTANT_ROLE and r["status"] not in (None, "ok")
         lines.append(f"{who}{' (' + str(r['status']) + ')' if bad else ''}: {t}")
-    if kept[-1]["role"] != "grava":
+    if kept[-1]["role"] != ASSISTANT_ROLE:
         lines.append("(That last message never got a reply.)")
     elif chat.stopped_by_user(kept[-1]["status"], kept[-1]["text"]):  # 用户点了停（10/19 彩排）：不是没做完的待办
         lines.append("(The user stopped your last reply there: that request was called off, so don't pick it back up unless they ask again.)")

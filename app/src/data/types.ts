@@ -1,5 +1,6 @@
 // app 里的数据类型。2026-09-23 起全部对应服务器上的真实来源（server/data.py 的表格写了每一项的真源）。
 import type { ForwardCard } from '../api/forward';
+import type { AssistantRole } from './stored';
 import type { Output } from '../api/outputs';
 import type { MeetingConfirmed, MeetingMember, MeetingStatus, MeetingTodo } from '../api/meetings';
 
@@ -52,7 +53,8 @@ export interface Approval {
 }
 
 /** 收件箱：要你点头的事。exec = OpenClaw 的执行命令审批（id 是 exec:<审批 id>），其余是 Agent 自己交上来的提案。 */
-export type InboxKind = 'exec' | 'task' | 'write' | 'send' | 'spend' | 'schedule' | 'push' | 'skill' | 'agent' | 'block' | 'project' | 'code' | 'calendar' | 'social' | 'egress' | 'app' | 'tool' | 'other';
+/** info：只读的通知（服务器 inbox.info，10/20）：看完就行，点「知道了」只是收起（记成已读，不起一轮） */
+export type InboxKind = 'exec' | 'task' | 'write' | 'send' | 'spend' | 'schedule' | 'push' | 'skill' | 'agent' | 'block' | 'project' | 'code' | 'calendar' | 'social' | 'egress' | 'app' | 'tool' | 'info' | 'other';
 /** 名片 agent 要你表态的卡（server/cardagent.py）：约时间（decision，能「换个时间」）还是问你私事（private，「知道了」）；谁问的、从哪来（a2a / chat） */
 /** review = Doorman 扣下了名片 agent 的一句（original 原话、reasons 原因）：照发 / 改一下 / 不发 */
 export interface InboxSocialInfo { ask: 'decision' | 'private' | 'review'; counter: boolean; peer: string; channel: string; original?: string; reasons?: { kind: string; detail: string }[] }
@@ -102,6 +104,23 @@ export interface InboxItem {
   followNote?: string;
   /** app 自己加的：老服务器（/api/approvals）没有 ISO 时间，只有显示用的文字 */
   whenText?: string;
+  /** 一张卡多条（server/inbox.py，2026-10-17；每周修剪是 itemsKind tree-prune）：caps 有 items 才能逐条点，没有就照旧整张点 */
+  items?: InboxCardItem[];
+  itemsKind?: string;
+  caps?: string[];
+}
+/** 卡上的一条：核对的结果（check.state ok / mismatch / missing / unverifiable / none / flagged / outside，text 服务器写好）、默认怎么定、
+ *  逐条点过的（还没提交）、「修改」时写的那句和之前的样子（was）。data 给程序用（待定的那几条是 {held: id}）。 */
+export interface InboxCardItem {
+  id: string;
+  text: string;
+  detail: string;
+  check: { state: string; text: string; thread?: string; day?: string; message?: string } | null;
+  default: 'approve' | 'reject';
+  decision: 'approve' | 'reject' | null;
+  note: string;
+  was: { text: string; note: string; at: string }[];
+  data?: Record<string, unknown> | null;
 }
 /** 这次打开 app 以来点过头的事：「今天」页上收成一行回执，留到换天。 */
 export interface Receipt { item: InboxItem; day: string }
@@ -175,6 +194,8 @@ export interface Task {
   minutes?: number | null;
   /** 到单个任务的时间上限被停了 */
   timedOut?: boolean;
+  /** 被服务重启打断了（自己的内核，10/20；状态照旧是「失败」）：写「被重启打断」，能重派 */
+  interrupted?: boolean;
   /** 进行中：正在做哪一步（「在读 L2.pdf」） */
   step?: string;
   /** 派的时间（毫秒），分「今天」和「更早」用 */
@@ -240,6 +261,8 @@ export interface TaskCardInfo {
   /** 今天第几个派的 */
   seq?: number | null;
   dailyLimit?: number | null;
+  /** 被服务重启打断了（自己的内核，10/20；status 照旧是「失败」） */
+  interrupted?: boolean;
 }
 
 /**
@@ -309,6 +332,9 @@ export interface MinutesCardInfo {
   todos: MeetingTodo[];
   open: string[];
   confirmed: MeetingConfirmed | null;
+  /** 主线第三步：群聊结束那一行下面的小结卡借这个样子（group = true：meeting 是群的 id，line = 最近一次小结的一句话，open = 还在争的） */
+  group?: boolean;
+  line?: string;
 }
 /** Agent 在这条回复里发布的页面（server/pages.py）：version = 这次发的第几版，latest = 现在最新一版；reads = 它要读的表（只读）。 */
 export interface PageChatCard { kind: 'page'; id: string; page: string; version: number; latest: number; title: string; summary: string; note: string; agent: string; reads: string[]; deleted: boolean; status: 'done' | 'deleted'; thread: string; messageId: number | null; createdAt: string }
@@ -433,29 +459,33 @@ export interface SideChat {
 export interface Message {
   id: string;
   /** auto：系统自动触发的一条（建议卡实时更新），显示成一行灰字 */
-  role: 'user' | 'grava' | 'auto';
+  role: 'user' | AssistantRole | 'auto';
   body: MessageBody;
   time: string;
   /** 实际回答的模型 */
   modelId?: string;
   /** 请求的是这个模型，但回退链换成了 modelId */
   fallbackFrom?: string;
+  /** 为什么换（自己的内核的 done 才有、不进库：rate_limit / overloaded / cooldown …，见 server/engine/fallback.py）；重读记录就没了 */
+  fallbackReason?: string;
   /** 这一条没拿到回复时的原因 */
   error?: string;
   /** 回复进行中发的，还在排队（服务器 status queued）：这条回完和排着的一起发给它 */
   queued?: boolean;
-  /** 回复进行中发的、插进了正在跑的那一轮（服务器 status steered，走 Gateway 对话通道时）：它做到下一步就看到 */
+  /** 回复进行中发的、插进了正在跑的那一轮（服务器 status steered，走 Gateway 对话通道、自己的内核时）：它做到下一步就看到 */
   steered?: boolean;
+  /** 插进去了但这一轮没来得及用上就结束了（自己的内核的 steer_missed，10/20）：排到下一轮，那一轮开跑时去掉 */
+  missed?: boolean;
   /** 长按「引用」着发的：引的是这个对话里哪条（app 在气泡上面显示原话，点了跳回去） */
-  replyTo?: { id: string; role: 'user' | 'grava'; text: string };
+  replyTo?: { id: string; role: 'user' | AssistantRole; text: string };
   /** 合并转发给这个 Agent 的：气泡上面画转发卡（server/forward.py） */
   forward?: ForwardCard;
   /** 斜杠命令的回答（server/engine/commands.py）：不是模型的回复，流里的字不进正在跑的那条回复 */
   command?: boolean;
 }
 
-/** Grava 的建议（起床报告、主动提醒，第 8 步起才有）。 */
-/** Grava 出的三餐建议卡（kind = meal_plan 的 data），格式见 workspace skills/diet/SKILL.md。 */
+/** 助手的建议（起床报告、主动提醒，第 8 步起才有）。 */
+/** 助手出的三餐建议卡（kind = meal_plan 的 data），格式见 workspace skills/diet/SKILL.md。 */
 export interface MealPlanItem { name: string; amount?: number | string | null; unit?: string | null; kcal?: number | null; protein?: number | null }
 export interface MealPlanMeal { label: string; time?: string | null; items: MealPlanItem[]; kcal?: number | null; protein?: number | null; carb?: number | null; fat?: number | null; note?: string | null }
 export interface MealPlan { meals: MealPlanMeal[]; totals?: { kcal?: number | null; protein?: number | null; carb?: number | null; fat?: number | null } | null; vs_target?: string | null; why?: string | null; shopping?: string[] | null }
@@ -477,7 +507,7 @@ export interface FeedItem {
   seen?: boolean;
 }
 
-/** 日志（L4 journal）：感受、想法、决定、记录。Grava 在对话里记。 */
+/** 日志（L4 journal）：感受、想法、决定、记录。助手在对话里记。 */
 export interface JournalEntry { id: string; ts: string; date: string; time: string; groupId: string | null; kind: 'feeling' | 'thought' | 'decision' | 'note'; text: string; tags: string[]; context: string | null; source: string }
 
 /** 求职与申请跟踪（L4 applications）。 */
@@ -512,7 +542,7 @@ export interface Goal {
   category: GoalCategory;
   title: string;
   detail: string;
-  /** YYYY-MM-DD、YYYY-MM，或者一句话（「2027 秋」） */
+  /** YYYY-MM-DD、YYYY-MM，或者一句话（「2027 春」） */
   due: string;
   /** 截止还有几天（due 是日子才有） */
   daysLeft: number | null;
@@ -539,7 +569,7 @@ export interface Goal {
   state: 'in' | 'above' | 'below' | null;
   /** 最新读数超过 30 天 */
   stale: boolean;
-  /** 谁加的（leo / main / Agent id；老目标是 null） */
+  /** 谁加的（你自己：data/owner.ts 的 isOwner / main / Agent id；老目标是 null） */
   addedBy: string | null;
   closedAt: string | null;
 }
@@ -595,6 +625,7 @@ export interface ProfileItem {
   id: string;
   section: string;
   text: string;
+  /** 从哪来：服务器按条目末尾的标签翻好的名字（你确认过 / 对话 / 某某导出），不是标签本身 */
   sources: string[];
   date: string | null;
 }
@@ -631,7 +662,7 @@ export interface SecurityInfo {
 export interface DayInfo { day: string; count: number; first: string; lastTs: string }
 /** 关键词搜索命中：对话 / 建议卡 / 日志。 */
 /** kind friend：好友聊天（thread 为 null，friend = 哪位好友，id 是那条消息在服务器上的行 id） */
-export interface SearchHit { kind: 'message' | 'card' | 'journal' | 'friend'; id: string; thread: string | null; role: 'user' | 'grava' | 'auto' | 'friend'; day: string; ts: string; time: string; snippet: string;
+export interface SearchHit { kind: 'message' | 'card' | 'journal' | 'friend'; id: string; thread: string | null; role: 'user' | AssistantRole | 'auto' | 'friend'; day: string; ts: string; time: string; snippet: string;
   friend?: { id: string; name: string } }
 
 /** 「要记得的」的分组：可疑的安全提醒置顶 / 过了的 / 明天 / 一周内 / 以后 / 没定日子的要办 / 邮件动态（没日子的钱和状态）。 */
@@ -661,7 +692,7 @@ export interface ScheduleEntry {
   allDay: boolean;
   /** 来源小标：课程缩写 / 邮箱 / Agent 名；你自己加的是空 */
   badge: string;
-  /** 自己的日程是谁加的（leo / main / Agent id）；求职和申请是哪个 Agent */
+  /** 自己的日程是谁加的（你自己：data/owner.ts 的 isOwner / main / Agent id）；求职和申请是哪个 Agent */
   by: string | null;
   /** 原文（邮件那封、作业页面） */
   link: string | null;
@@ -720,7 +751,7 @@ export interface TreeLeaf {
   id: string;
   text: string;
   kind: 'fact' | 'preference' | 'decision' | 'event';
-  /** 笔记里写的来源：claude / chatgpt / gemini / claude-code / notion / grava-<Agent> / leo（你在手机上写的）/ prune（每周修剪改写的） */
+  /** 笔记里写的来源：claude / chatgpt / gemini / claude-code / notion / 这台服务器的 Agent（server/stored_values.py 的 TREE_AGENT_PREFIX + id）/ 你自己写的（data/owner.ts 的 isOwner）/ prune（每周修剪改写的） */
   source: string;
   sourceName: string;
   /** 最早是哪里记下的（每周修剪改写过的，顺着找回原来的平台）；「按来源」按它分 */
@@ -734,6 +765,45 @@ export interface TreeLeaf {
   tags: string[];
   /** YYYY-MM-DD */
   observedAt: string;
+  createdAt: string;
+  /** 出处和「用得上的时候」（服务器 10/17 起、树有这几列才给）：原话（没有是空串）、平时会怎么问到它 */
+  quote?: string;
+  cues?: string[];
+  /** 来自哪次对话：没有出处是 null */
+  said?: TreeSaid | null;
+  /** 信几分（13d）：profile 档案 / quoted 带你的原话或你自己写的 / inferred 平台推断的 */
+  tier?: 'profile' | 'quoted' | 'inferred';
+}
+
+/** 一片叶子来自哪次对话（memtree.said_of）。link：这台服务器上的对话 = {thread, day, messageId?}；Zen 想完的主题 = {topic, thought?}；网页 = {url}。 */
+export interface TreeSaid {
+  platform: string;
+  platformName: string;
+  thread: string;
+  message: string;
+  threadName?: string;
+  link?: { thread: string; day: string; messageId?: number } | { topic: string; thought?: string } | { url: string };
+}
+
+/** 待定（server/memhold.py，2026-10-19）：别人说的要记的，先放这里，主人逐条同意了才长成叶子。 */
+export interface HeldItem {
+  id: string;
+  text: string;
+  kind: TreeLeaf['kind'];
+  /** owner = 关于你；person = 关于说话的那个人或别人 */
+  about: 'owner' | 'person';
+  /** 谁说的（显示名）；via = 经谁的 Agent（空 = 本人说的） */
+  who: string;
+  via: string;
+  channel: 'friend' | 'a2a' | 'card' | 'group' | string;
+  channelName: string;
+  /** 「许然 的 Agent（别人的 Agent）」这样一句，服务器按语言写好 */
+  whoLine: string;
+  quote: string;
+  cues: string[];
+  /** 内容检查挡下的毛病，外加 asked（对方要求记下的） */
+  flags: string[];
+  status: 'held' | 'approved' | 'rejected' | 'expired';
   createdAt: string;
 }
 

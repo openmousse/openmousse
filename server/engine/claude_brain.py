@@ -65,6 +65,9 @@ Agent，我们的工具和关卡照旧在我们的服务器上把关。
   queue）；排着的时候点了停就不起它。按量模型的回合不受影响；后台任务的外援另有 tasks.max_external；转交过来的那一轮（origin relay）
   不排队（发起它的那一轮正占着位子等它）。一次性调用（ask，见下）也占这些位子，但排在所有整轮对话后面，同时最多
   engine.claude_code.max_oneshot 个（默认比 max_concurrent 少一个：总留一个位子给整轮对话，后台的打分挤不掉主对话）。
+  10/20：短的一次性调用（timeout 不超过 SHORT 秒：会议挑发言人、播客的建议……）排在长的（学习页……）前面；平常的位子轮不到时能多开
+  engine.claude_code.burst 个（默认 0 = 不多开），长的占着位子十几分钟，短的也不会因为排队把自己的时间耗光。同时跑的最多
+  max_concurrent + burst 个，整轮对话照旧永远不排在一次性调用后面。
 跑不了（10/19 彩排）：出错分几类（Turn.kind_of）：auth 登录掉了、quota 套餐额度用完、broken 命令跑不起来（找不到、版本不对认不得
   我们的参数、这个型号用不了），这三类换个模型才好；别的（过载、超时、连不上、普通的限流，fallback.py 也不冷却的那几种）一会儿就好，不换。
   它自己编的那条回复（model <synthetic>、带 error：接口报错、没登录、额度用完）不当成它说的话给用户看，只拿来认是哪一类。
@@ -121,6 +124,9 @@ IDLE = 600.0                         # 一直没动静多久就停（秒）
 INT_GRACE, TERM_GRACE = 2.0, 1.5     # 停：SIGINT 以后等几秒再 SIGTERM，再等几秒 SIGKILL
 PUMP = 0.1                           # 多久看一次有没有插话、停、超时
 MAX_CONCURRENT = 2                   # 同时最多跑几个 claude 进程（engine.claude_code.max_concurrent）
+# 短的一次性调用：给它的时间（timeout，排队也算）不超过这么多秒。会议挑发言人 40–45、播客的建议 / 准备 / 提问 45–60、会议纪要 120、
+# 有备用时的压缩摘要 120（compact.SUMMARY_TIMEOUT 的一半）都算；学习页 900、课程大纲 300、会议的发言 300 算长的（10/20）
+SHORT = 120.0
 QUEUE_TICK = 10.0                    # 排队时多久再报一次「还在排」（没人在看的一轮的看门狗按事件算动静）
 RECORD_MAX = 40_000                  # 交给它的那段记录最多多少字（多了留后面的）
 RECORD_ENTRY = 4_000                 # 记录里一条话最多多少字
@@ -196,6 +202,17 @@ def max_oneshot() -> int:
     except (TypeError, ValueError):
         n = 0
     return max(1, min(cap, n)) if n > 0 else max(1, cap - 1)
+
+
+def burst() -> int:
+    """平常的位子轮不到时，短的一次性调用（timeout 不超过 SHORT 秒）最多再多开几个 claude 进程（engine.claude_code.burst，10/20，
+    默认 0 = 不多开、和以前一样；true = 1）。为什么：学习页这种一次性调用能把一次性的位子占十几分钟，会议挑发言人、播客的建议这些
+    40–60 秒的调用排在后面，排队的时间算在它们自己的超时里，等着等着就超时了。多开的只给短的：整轮对话、长的一次性调用照旧只用
+    max_concurrent / max_oneshot 那些位子，同时跑的总数最多 max_concurrent + burst（一个 claude 进程约 0.3 GB）。"""
+    try:
+        return max(0, int(cfg().get("burst") or 0))
+    except (TypeError, ValueError):
+        return 0
 
 
 def builtin_tools() -> list[str]:
@@ -465,6 +482,7 @@ class Turn:
     origin: str | None = None                   # 这一轮的来路：交给经 MCP 跑的工具（脚本再引出一轮时带上，engine/mcp_engine.py）
     effort: str | None = None                   # 第 2 批：这一轮的 --effort（/think、engine.think，engine/think.py；不给 = engine.claude_code.effort）
     oneshot: bool = False                       # 一次性调用（ask）：零工具、没有 MCP；排位子时排在整轮对话后面（_acquire）
+    short: bool = False                         # 短的一次性调用（timeout 不超过 SHORT 秒）：排在长的前面，平常的位子轮不到时能多开（burst）
     input_closed: bool = False
     stopping: str | None = None                 # user / idle
     t0: float = field(default_factory=time.monotonic)
@@ -1158,15 +1176,18 @@ def _flush(session: DbSession, turn: Turn, name: str, add: Callable[[dict], None
 
 @dataclass
 class _Slots:
-    """同时跑的 claude 进程占的位子（max_concurrent）：busy = 占着的（once = 其中一次性调用占的），queue = 排着的
-    [(Future, 是不是一次性调用)]：整轮对话先轮到（它们之间先来先得），一次性调用排在所有整轮对话后面、最多同时 max_oneshot 个。"""
+    """同时跑的 claude 进程占的位子：busy = 平常的位子（max_concurrent 个）占着几个，once = 其中一次性调用占的（最多 max_oneshot 个），
+    extra = 多开的位子（burst 个，只给短的一次性调用）占着几个；queue = 排着的 [(Future, 哪一道)]。道（LANES，也是轮到的先后）：
+    full 整轮对话 / short 短的一次性调用（timeout 不超过 SHORT 秒）/ long 别的一次性调用；同一道里先来先得（_hand_out）。"""
     loop: Any = None
     busy: int = 0
     once: int = 0
+    extra: int = 0
     queue: list = field(default_factory=list)
 
 
 _slots = _Slots()
+LANES = ("full", "short", "long")
 
 
 def _slots_here() -> _Slots:
@@ -1178,74 +1199,88 @@ def _slots_here() -> _Slots:
     return _slots
 
 
-def _can_take(s: _Slots, oneshot: bool) -> bool:
-    return s.busy < max_concurrent() and (not oneshot or s.once < max_oneshot())
+def _lane(turn: Turn) -> str:
+    return "full" if not turn.oneshot else "short" if turn.short else "long"
 
 
-def _next_waiter(s: _Slots) -> tuple[asyncio.Future, bool] | None:
-    """下一个该轮到的：排着的整轮对话里最早的；没有整轮对话在排，才轮到一次性调用里最早的（它们另有上限）。"""
-    for fut, oneshot in s.queue:
-        if not oneshot and not fut.done():
-            return fut, oneshot
-    for fut, oneshot in s.queue:
-        if not fut.done():
-            return fut, oneshot
+def _where(s: _Slots, lane: str) -> str | None:
+    """这一道现在能占哪里：pool = 平常的位子（整轮对话占到 max_concurrent 为止，一次性的另有 max_oneshot 的上限）；burst = 多开的
+    （只给短的一次性调用，平常的位子轮不到它时）；None = 排着。"""
+    if s.busy < max_concurrent() and (lane == "full" or s.once < max_oneshot()):
+        return "pool"
+    if lane == "short" and s.extra < burst():
+        return "burst"
     return None
 
 
-def _hand_out(s: _Slots) -> None:
-    """空出来的位子按先后交给排着的（位子直接交到它手上：busy / once 这里就算上）。"""
-    s.queue = [(f, o) for f, o in s.queue if not f.done()]
-    while (nxt := _next_waiter(s)) is not None and _can_take(s, nxt[1]):
-        fut, oneshot = nxt
-        s.queue.remove(nxt)
-        fut.set_result(None)
+def _take(s: _Slots, lane: str, where: str) -> None:
+    if where == "burst":
+        s.extra += 1
+    else:
         s.busy += 1
-        s.once += int(oneshot)
+        s.once += int(lane != "full")
 
 
-def _release(oneshot: bool = False) -> None:
-    """还一个位子，排着的接上（_hand_out）。"""
+def _hand_out(s: _Slots) -> None:
+    """空出来的位子按先后交给排着的（直接交到它手上：Future 的结果是 pool / burst，计数这里就算上）。先整轮对话，再短的、长的；同一道
+    里前面的拿不到，后面的也拿不到（条件一样），后面的道照样看：整轮对话在等平常的位子时，短的照样能用多开的（它们用不上那个）。"""
+    s.queue = [w for w in s.queue if not w[0].done()]
+    for w in sorted(s.queue, key=lambda w: LANES.index(w[1])):  # sorted 不打乱同一道里的先后
+        where = _where(s, w[1])
+        if where is not None:
+            s.queue.remove(w)
+            w[0].set_result(where)
+            _take(s, w[1], where)
+
+
+def _release(lane: str = "full", where: str = "pool") -> None:
+    """还一个位子（占的是哪一道、哪一种位子），排着的接上（_hand_out）。"""
     s = _slots_here()
-    s.busy = max(0, s.busy - 1)
-    if oneshot:
-        s.once = max(0, s.once - 1)
+    if where == "burst":
+        s.extra = max(0, s.extra - 1)
+    else:
+        s.busy = max(0, s.busy - 1)
+        if lane != "full":
+            s.once = max(0, s.once - 1)
     _hand_out(s)
 
 
-def _give_back(s: _Slots, fut: asyncio.Future, oneshot: bool) -> None:
+def _give_back(s: _Slots, w: tuple) -> None:
     """不排了（停了、被取消）：还在排的出队；位子已经交到它手上的还回去。"""
-    if (fut, oneshot) in s.queue:
-        s.queue.remove((fut, oneshot))
+    fut, lane = w
+    if w in s.queue:
+        s.queue.remove(w)
     elif fut.done() and not fut.cancelled():
-        _release(oneshot)
+        _release(lane, fut.result())
     if not fut.done():
         fut.cancel()
 
 
-async def _acquire(turn: Turn) -> bool:
-    """占一个位子；满了就排队：事件 phase queued（chat.note_engine 画进 app 的「在想」，app 照「正在思考」显示），每 QUEUE_TICK 秒再报
-    一次（没人在看的一轮的看门狗按事件算动静），事件表记一步 queue（等了多久）。排队时点了停（或者看门狗停了它）→ False，这一轮不起它。
-    一次性调用（turn.oneshot）排在整轮对话后面：有整轮对话在排、一次性的已经占满 max_oneshot 个，它都不插进去。"""
+async def _acquire(turn: Turn) -> str | None:
+    """占一个位子 → 占的是哪一种（pool / burst，_release 时照还）；满了就排队：事件 phase queued（chat.note_engine 画进 app 的「在想」，
+    app 照「正在思考」显示），每 QUEUE_TICK 秒再报一次（没人在看的一轮的看门狗按事件算动静），事件表记一步 queue（等了多久）。排队时
+    点了停（或者看门狗停了它）→ None，这一轮不起它。一次性调用（turn.oneshot）排在整轮对话后面：有整轮对话在排、一次性的已经占满
+    max_oneshot 个，它都不插进去；短的（turn.short）排在长的前面，平常的位子轮不到它时能用多开的（burst）。
+    排队的时间不另设上限：它本来就算在调用方自己的 timeout 里（有备用时套餐只拿一半，等不到就换），另设一个只会让本来等得到的提前失败。"""
     s = _slots_here()
-    oneshot = turn.oneshot
-    waiting = any(not f.done() and (oneshot or not o) for f, o in s.queue)  # 排在它前面的：整轮对话只看整轮对话，一次性的谁都看
-    if _can_take(s, oneshot) and not waiting:
-        s.busy += 1
-        s.once += int(oneshot)
-        return True
+    lane = _lane(turn)
     fut = asyncio.get_running_loop().create_future()
-    s.queue.append((fut, oneshot))
-    sid = events.step_open(turn.tid, type_="queue", name=KEY, detail=f"{s.busy} running", conversation=turn.conversation)
+    w = (fut, lane)
+    s.queue.append(w)
+    _hand_out(s)  # 有空的就当场交到它手上：排在它前面的（同一道、更前面的道）先拿
+    if fut.done():
+        return fut.result()
+    sid = events.step_open(turn.tid, type_="queue", name=KEY, detail=f"{s.busy + s.extra} running", conversation=turn.conversation)
     t0 = time.monotonic()
     stop = asyncio.ensure_future(turn.control.aborted.wait())
+    rank = LANES.index(lane)
     try:
         while not fut.done() and not stop.done():
-            ahead = [f for f, o in s.queue if not f.done() and (oneshot or not o)]
+            ahead = [f for f, x in s.queue if not f.done() and LANES.index(x) <= rank]  # 排在它前面的：同一道和更前面的道
             turn.emit({"type": "phase", "phase": "queued", "ahead": ahead.index(fut) if fut in ahead else 0})
             await asyncio.wait({fut, stop}, timeout=QUEUE_TICK, return_when=asyncio.FIRST_COMPLETED)
     except asyncio.CancelledError:
-        _give_back(s, fut, oneshot)
+        _give_back(s, w)
         events.step_close(sid, status="aborted", data={"waited_ms": int((time.monotonic() - t0) * 1000)}, conversation=turn.conversation,
                           turn=turn.tid)
         raise
@@ -1253,13 +1288,14 @@ async def _acquire(turn: Turn) -> bool:
         stop.cancel()
     waited = {"waited_ms": int((time.monotonic() - t0) * 1000)}
     if turn.control.aborted.is_set():  # 排着的时候停了（轮到的同一刻停的也算停了）
-        _give_back(s, fut, oneshot)
+        _give_back(s, w)
         events.step_close(sid, status="aborted", data=waited, conversation=turn.conversation, turn=turn.tid)
-        return False
-    events.step_close(sid, status="ok", data=waited, conversation=turn.conversation, turn=turn.tid)
+        return None
+    events.step_close(sid, status="ok", data={**waited, **({"burst": True} if fut.result() == "burst" else {})}, conversation=turn.conversation,
+                      turn=turn.tid)
     turn.last = time.monotonic()  # 排队的时间不算「没动静」
     turn.emit({"type": "phase", "phase": "waiting_for_model"})
-    return True
+    return fut.result()
 
 
 async def _run(turn: Turn, info: dict, agent: str, system: str, tools: list[Tool], name: str, msg: dict, prefix: str, *, gate,
@@ -1267,14 +1303,15 @@ async def _run(turn: Turn, info: dict, agent: str, system: str, tools: list[Tool
     """起一个 claude 跑这一轮：令牌、临时配置、开头的文件都只活到这一轮结束。同时跑的有上限（max_concurrent），满了排队；
     转交过来的那一轮（origin relay）不排：发起它的那一轮正占着位子等它的回答，排队就互相等死了。"""
     queued = turn.origin != "relay"
-    if queued and not await _acquire(turn):
+    where = await _acquire(turn) if queued else None
+    if queued and where is None:
         turn.stopping = turn.stopping or "user"
         return
     try:
         await _start(turn, info, agent, system, tools, name, msg, prefix, gate=gate, conversation=conversation, persist=persist, resume=resume)
     finally:
-        if queued:
-            _release()
+        if where is not None:
+            _release(_lane(turn), where)
 
 
 async def _start(turn: Turn, info: dict, agent: str, system: str, tools: list[Tool], name: str, msg: dict, prefix: str, *, gate,
@@ -1405,7 +1442,7 @@ async def ask(system: str, prompt: str | dict, *, model: str, origin: str | None
     control = Control()
     tid = events.turn_open(conversation=conversation, kind="owner", model=model, session=None, agent=agent, origin=origin)
     turn = Turn(tid=tid, conversation=conversation, model=model, tools={}, emit=lambda _e: None, on_text=lambda _t: None, control=control,
-                idle=idle_limit(), origin=origin, oneshot=True)
+                idle=idle_limit(), origin=origin, oneshot=True, short=float(timeout) <= SHORT)
     late = {"hit": False}
 
     def deadline() -> None:  # 到点了：排着的不起它，在答的照停的办法停
@@ -1440,8 +1477,10 @@ async def ask(system: str, prompt: str | dict, *, model: str, origin: str | None
 
 
 async def _run_once(turn: Turn, info: dict, system: str, name: str, msg: dict, effort_: str | None, max_tokens: int | None) -> None:
-    """起一个 claude -p 答这一句：开头的文件只活到它答完。位子和整轮对话共用（max_concurrent），排在它们后面（_acquire）。"""
-    if not await _acquire(turn):
+    """起一个 claude -p 答这一句：开头的文件只活到它答完。位子和整轮对话共用（max_concurrent），排在它们后面（_acquire）；短的
+    （turn.short）排在长的前面，平常的位子轮不到时能用多开的（burst）。"""
+    where = await _acquire(turn)
+    if where is None:
         turn.stopping = turn.stopping or "user"
         return
     system_file = None
@@ -1454,7 +1493,7 @@ async def _run_once(turn: Turn, info: dict, system: str, name: str, msg: dict, e
             env["CLAUDE_CODE_MAX_OUTPUT_TOKENS"] = str(int(max_tokens))
         await drive(turn, cmd, work, env, line(msg, str(uuid.uuid4()), None))
     finally:
-        _release(True)
+        _release(_lane(turn), where)
         if system_file is not None:
             try:
                 system_file.unlink()

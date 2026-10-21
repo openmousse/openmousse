@@ -128,9 +128,11 @@ def latest_tag() -> str | None:
 def preflight(stash: bool) -> None:
     """不能更的几种（见文件开头）→ Refused。"""
     if (os.environ.get("MOUSSE_INSTALL") or "").strip().lower() == "docker":
-        raise Refused(L("这是 Docker 装的：容器里不更新。拉新镜像、重建容器：docker compose pull && docker compose up -d（或者你起它的那一条 docker run）",
-                        "This is a Docker install: it doesn't update inside the container. Pull the new image and recreate the container: "
-                        "docker compose pull && docker compose up -d (or the docker run you started it with)"))
+        raise Refused(L("这是 Docker 装的：容器里不更新。在主机上的仓库里重建镜像、换掉容器：git pull && docker compose -f docker/compose.yaml up -d --build"
+                        "（用的是别处拉来的镜像就拉新的；或者照你起它的那一条 docker run 重来）",
+                        "This is a Docker install: it doesn't update inside the container. Rebuild the image and recreate the container from the "
+                        "repository on the host: git pull && docker compose -f docker/compose.yaml up -d --build (with an image pulled from elsewhere, "
+                        "pull the new one; or rerun the docker run you started it with)"))
     repo = repo_dir()
     r = C.git("rev-parse", "--show-toplevel", repo=repo, timeout=20)
     if r.returncode != 0 or Path(r.stdout.strip()).resolve() != repo.resolve():

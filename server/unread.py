@@ -3,7 +3,7 @@
 - read_marks(thread, last_read, updated_at)：last_read = 读到的最后一条 messages.id。表第一次建的时候把已有的每个线程标成读到最新，
   老消息不会一下子全变未读；之后新开的线程没有这一行 = 从头算。
 - 只算这些线程：main、每个 Agent（groups）、没归档的独立空间。学习台（study-*）、任务（task:*）之类不算。
-- n = 读到的位置之后助手回了几条（role=grava）；mine = 其中回的是你自己发的话（messages.origin=user），定时器、收件箱触发的不算。
+- n = 读到的位置之后助手回了几条（role = ASSISTANT_ROLE）；mine = 其中回的是你自己发的话（messages.origin=user），定时器、收件箱触发的不算。
 - 角标 badge = 收件箱待你点头（含 OpenClaw 执行审批）+ 各线程 mine 之和（免打扰的线程不算，threads 里那一项带 muted）+ 朋友发来还没看的（friends：{朋友 id: {n, last, muted?}}，
   免打扰的朋友不算进角标）。
 - 新卡片 feedNew：feed_items.seen_at 为空、没划掉的卡（app 用 /api/feed/seen 标成看过，见 data.py）。
@@ -23,6 +23,7 @@ from chat import TZ, _lock, now_iso
 from data import ddb
 from i18n import L
 from push import preview
+from stored_values import ASSISTANT_ROLE
 
 router = APIRouter()
 
@@ -37,13 +38,23 @@ def udb() -> sqlite3.Connection:
 
 
 def tracked(conn: sqlite3.Connection) -> list[str]:
-    """算未读的线程：main、每个 Agent、没归档的独立空间（项目）、没想完的思考主题。"""
+    """算未读的线程：main、每个 Agent、没归档的独立空间（项目）、没想完的思考主题、没结束的会议、赛博的一对一、没结束的群聊。"""
     topics = []
     if conn.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='think_topics'").fetchone():  # 思考主题（think.py）
         topics = [r["id"] for r in conn.execute("SELECT id FROM think_topics WHERE status='open' ORDER BY created_at")]
     try:  # 没结束的会议和 Agent 群（meetings.py）
         import meetings  # 延迟导入：meetings 依赖 chat
         topics += meetings.tracked(conn)
+    except Exception:  # noqa: BLE001
+        pass
+    try:  # 赛博的一对一（cybers.py，主线第三步；没开就是空）
+        import cybers  # 延迟导入：cybers 依赖 chat
+        topics += cybers.tracked(conn)
+    except Exception:  # noqa: BLE001
+        pass
+    try:  # 没结束的群聊（groupchat.py，主线第三步；没开就是空）
+        import groupchat  # 延迟导入：groupchat 依赖 chat
+        topics += groupchat.tracked(conn)
     except Exception:  # noqa: BLE001
         pass
     return (["main"] + [r["id"] for r in conn.execute("SELECT id FROM groups ORDER BY position, created_at")]
@@ -55,8 +66,8 @@ def counts(conn: sqlite3.Connection) -> dict[str, dict]:
     marks = {r["thread"]: r["last_read"] for r in conn.execute("SELECT thread, last_read FROM read_marks")}
     out = {}
     for th in tracked(conn):
-        r = conn.execute("""SELECT COUNT(*) n, IFNULL(SUM(origin='user'), 0) mine, MAX(id) last FROM messages
-            WHERE thread=? AND role='grava' AND id>?""", (th, marks.get(th) or 0)).fetchone()
+        r = conn.execute(f"""SELECT COUNT(*) n, IFNULL(SUM(origin='user'), 0) mine, MAX(id) last FROM messages
+            WHERE thread=? AND role='{ASSISTANT_ROLE}' AND id>?""", (th, marks.get(th) or 0)).fetchone()
         if r["n"]:
             out[th] = {"n": r["n"], "mine": r["mine"], "lastId": r["last"]}
     return out

@@ -26,6 +26,8 @@ import { useStore, useThreadOnScreen } from '../store';
 import { radius, space, type, useTheme, type Theme } from '../theme';
 import { loadDraft, saveDraft } from '../drafts';
 import { supports } from '../api/version';
+import { useButlerOn } from '../api/butler';
+import { FriendGroupRows } from '../components/agents/FriendGroupRows';
 import { AskCard, AskOutCard, InRound, PairLens, askOutcome, isLocalOut, toRounds, type Round } from './FriendAgentsScreen';
 import { Action } from '../components/ChatView';
 import { podFeatures } from '../api/podcast';
@@ -172,12 +174,13 @@ export function FriendClear({ name, close, run }: { name: string; close: () => v
   );
 }
 
-/** 好友一边的列表（2026-10-13 起和 Grava 一边同一种行）：置顶的在前，左滑或长按 置顶 / 免打扰 / 删除（只删聊天记录）。searchOpen：页头点了搜索。 */
+/** 好友一边的列表（2026-10-13 起和助手一边同一种行）：置顶的在前，左滑或长按 置顶 / 免打扰 / 删除（只删聊天记录）。searchOpen：页头点了搜索。 */
 export function FriendsHome({ searchOpen }: { searchOpen?: boolean }) {
   const t = useTheme();
   const nav = useNavigation<any>();
   const sheet = useSheet();
   const { unread, reload } = useStore();
+  const butler = useButlerOn();  // 主线第三步：开着管家，下面那一行就是管家
   const [data, setData] = useState<Home | null>(null);
   const [err, setErr] = useState('');
   const [q, setQ] = useState('');
@@ -262,6 +265,7 @@ export function FriendsHome({ searchOpen }: { searchOpen?: boolean }) {
           </Card>
         </View>
       ) : null}
+      <FriendGroupRows query={q} />{/* 主线第三步：有人在的好友群（好友群开着才有） */}
       {searching && live.length ? <View style={pad}><SectionLabel>{L('好友', 'Friends')}</SectionLabel></View> : null}
       {live.length ? (
         <View>
@@ -309,11 +313,12 @@ export function FriendsHome({ searchOpen }: { searchOpen?: boolean }) {
       ) : null}
       {!searching && (data?.friends.length || data?.ready) ? (
         <View style={pad}>
-          <Pressable onPress={() => nav.navigate('CardAgent')} accessibilityRole="button" style={({ pressed }) => [styles.linkRow, { backgroundColor: t.surface, opacity: pressed ? 0.7 : 1 }]}>
+          <Pressable onPress={() => nav.navigate(butler ? 'Butler' : 'CardAgent')} accessibilityRole="button" style={({ pressed }) => [styles.linkRow, { backgroundColor: t.surface, opacity: pressed ? 0.7 : 1 }]}>
             <View style={[styles.cardIcon, { backgroundColor: t.goldSoft }]}><IdCard size={17} color={t.gold} /></View>
             <View style={{ flex: 1, gap: 2 }}>
-              <T v="headline" style={{ fontSize: 15 }}>{L('我的名片 Agent', 'My card agent')}</T>
-              <T v="caption" color={t.ink3}>{data?.agent ? L('按档位设置好友可查询的内容', 'What friends can ask about, by tier') : L('尚未开启：好友的提问需要你亲自回复', "Not enabled: you answer friends' questions yourself")}</T>
+              <T v="headline" style={{ fontSize: 15 }}>{butler ? L('我的管家', 'My butler') : L('我的名片 Agent', 'My card agent')}</T>
+              <T v="caption" color={t.ink3}>{butler ? L('只对外 · 替你出面：好友群、好友的追问', 'Speaks for you outside: friend groups, friends’ questions')
+                : data?.agent ? L('按档位设置好友可查询的内容', 'What friends can ask about, by tier') : L('尚未开启：好友的提问需要你亲自回复', "Not enabled: you answer friends' questions yourself")}</T>
             </View>
             <ChevronRight size={16} color={t.ink3} />
           </Pressable>
@@ -1327,7 +1332,7 @@ export function MyNameScreen() {
         <View style={{ flex: 1 }} />
         <Pressable onPress={save} disabled={!v.trim() || busy} accessibilityRole="button"
           style={({ pressed }) => [styles.primary, { backgroundColor: v.trim() ? t.cyan : t.surface2, opacity: pressed || busy ? 0.7 : 1 }]}>
-          {busy ? <ActivityIndicator color="#FFFFFF" /> : <T v="headline" color={v.trim() ? '#FFFFFF' : t.ink3}>{L('继续', 'Continue')}</T>}
+          {busy ? <ActivityIndicator color={v.trim() ? t.onCyan : t.ink3} /> : <T v="headline" color={v.trim() ? t.onCyan : t.ink3}>{L('继续', 'Continue')}</T>}
         </Pressable>
         <Pressable onPress={next} accessibilityRole="button" style={{ height: 44, alignItems: 'center', justifyContent: 'center', marginTop: 6 }}>
           <T v="callout" color={t.ink2}>{L('跳过', 'Skip for now')}</T>
@@ -1522,6 +1527,8 @@ const LEVEL_TONE: Record<string, 'good' | 'gold' | 'neutral'> = { detail: 'good'
 export function CardAgentScreen() {
   const t = useTheme();
   const nav = useNavigation<any>();
+  const butler = useButlerOn();
+  useEffect(() => { if (butler) nav.replace('Butler'); }, [butler, nav]);  // 主线第三步：开着管家 = 名片 Agent 升级了，换到管家的资料页
   const [data, setData] = useState<CardSettings | null>(null);
   const [tier, setTier] = useState<AnyTier>('friend');
   const [status, setStatus] = useState<string | null>(null);

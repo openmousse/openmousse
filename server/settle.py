@@ -33,6 +33,7 @@ import cards
 import chat
 from chat import _lock, now_iso
 from i18n import L
+from stored_values import ASSISTANT_ROLE
 
 MARK = "【自动触发】"   # 协议标记，不翻译：app 按它把这一行显示成灰字
 CATCH_UP_EVERY = 30.0   # 补漏多久看一次（秒）
@@ -92,7 +93,7 @@ def from_app(r: dict) -> bool:
 
 
 def known(thread: str) -> bool:
-    """这个线程 app 里有记录（别的工具在 agent:main:grava:… 下开的会话不算 app 的线程）。"""
+    """这个线程 app 里有记录（别的工具在 agent:main:<SESSION_TAG>:… 下开的会话不算 app 的线程）。"""
     with _lock, chat.db() as conn:
         return conn.execute("SELECT 1 FROM messages WHERE thread=? LIMIT 1", (thread,)).fetchone() is not None
 
@@ -203,7 +204,7 @@ def save(thread: str, rows: list[dict], text: str, model: str | None, t0: float 
     add_line(thread, rows, ts0)
     with _lock, chat.db() as conn:
         return conn.execute("INSERT INTO messages(thread, role, text, model, ts, status, origin) VALUES(?,?,?,?,?,?,?)",
-                            (thread, "grava", text, model, cards.iso(t1) or ts0, "ok", "user")).lastrowid
+                            (thread, ASSISTANT_ROLE, text, model, cards.iso(t1) or ts0, "ok", "user")).lastrowid
 
 
 async def catch_up() -> int:

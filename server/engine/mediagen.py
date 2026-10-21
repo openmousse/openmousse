@@ -13,6 +13,8 @@
     fal/<模型路径>                 fal 的队列：POST https://queue.fal.run/<模型路径>（Authorization: Key <FAL_KEY>）→ request_id、status_url、
                                    response_url；问 status 到 COMPLETED，再取结果里的 video.url 下载（data: 地址，或者照 web_fetch 只去公网）。
                                    status / 结果的地址不在队列那台主机上就不用它给的（密钥不发给别的主机），照 <owner>/<app>/requests/<id> 自己拼
+    grok/grok-imagine-video        10/20：用户自己的 Grok 订阅（engine/grok_media.py：一段 1–15 秒、没有声音；算订阅的额度、不另付钱；
+                                   登录了才能选）。这一轮能不能花照 models.may_spend（点了卡同意的照交卡那一轮的来路算），起活之前就查
   engine.use.music
     google/lyria-3-clip-preview（30 秒）、google/lyria-3.5（整首）  Interactions API，response_format {type: audio}：content 里的 audio（MP3）
                                    和歌词（text）；没有「纯音乐」的开关：写进提示词
@@ -101,6 +103,8 @@ class Job:
     text: str = ""                 # 做好了 / 没做成的那一句
     task: asyncio.Task | None = None
     done: asyncio.Event = field(default_factory=asyncio.Event)
+    kind: str | None = None        # 10/20：起这件活的那一轮是谁的（Grok 订阅照它看能不能花）
+    origin: str | None = None
 
 
 _jobs: dict[str, Job] = {}
@@ -304,8 +308,12 @@ async def _fal(c: media.Choice, body: dict, kind: str) -> Made:
 
 
 async def generate(tool: str, c: media.Choice, prompt: str, o: dict, ref: media.Source | None, *, conversation: str | None,
-                   agent: str | None) -> Made:
-    """照 c 做一件（见文件开头）。出错抛 media.MediaError（报错里不带密钥）。记一行花费。"""
+                   agent: str | None, kind: str | None = None, origin: str | None = None) -> Made:
+    """照 c 做一件（见文件开头）。出错抛 media.MediaError（报错里不带密钥）。记一行花费。
+    kind / origin（10/20）：起这件活的那一轮是谁的：grok 照它看能不能花订阅（不给 = 不能）。"""
+    if c.provider == media.GROK:  # 10/20：Grok 订阅：不能花就不做（不记花费）
+        from . import grok_media
+        grok_media.check(kind, origin)
     with media.Meter(PURPOSE[tool], c, conversation, agent) as m:
         if tool == VIDEO and c.provider == "google":
             made, (i, out) = await _omni(c, prompt, o, ref)
@@ -328,6 +336,11 @@ async def generate(tool: str, c: media.Choice, prompt: str, o: dict, ref: media.
                 body["duration"] = str(int(o["seconds"])) if tool == VIDEO else int(o["seconds"])
             made = await _fal(c, body, "video" if tool == VIDEO else "audio")
             m.unit, m.units, m.unpriced = "video" if tool == VIDEO else "song", 1.0, True  # fal 按模型计价，价目表里没有：null
+        elif tool == VIDEO and c.provider == media.GROK:  # 10/20：Grok 订阅（engine/grok_media.py）：算订阅的额度，钱记 0
+            from . import grok_media
+            raw, secs = await grok_media.video(c, prompt, o, ref)
+            made = Made(raw, "video/mp4", "mp4", secs)
+            m.unit, m.units, m.cost = "video", 1.0, 0.0
         else:
             can = "google, fal" if tool == VIDEO else "google, elevenlabs, fal"
             raise media.MediaError("config", L(f"{c.provider} 做不了这一样（能写的：{can}）", f"{c.provider} can't do this (use {can})"))
@@ -364,8 +377,8 @@ def _done_text(job: Job, made: Made, a: dict, *, later: bool) -> str:
 async def _work(job: Job, c: media.Choice, o: dict, ref: media.Source | None, name: str) -> None:
     zh, en = _what(job.tool)
     try:
-        made = await asyncio.wait_for(generate(job.tool, c, job.prompt, o, ref, conversation=job.conversation, agent=job.agent),
-                                      TIMEOUT[job.tool])
+        made = await asyncio.wait_for(generate(job.tool, c, job.prompt, o, ref, conversation=job.conversation, agent=job.agent,
+                                               kind=job.kind, origin=job.origin), TIMEOUT[job.tool])
     except asyncio.CancelledError:
         job.status, job.text = "stopped", f"Stopped: {job.id} didn't finish."
         job.done.set()
@@ -476,6 +489,10 @@ def _opts(tool: str, c: media.Choice, args: dict) -> dict:
                                 f"aspect_ratio isn't valid ({ratio}; use {' or '.join(OMNI_RATIOS)})" if omni else f"aspect_ratio isn't valid ({ratio})"))
         if res and not (res in OMNI_RESOLUTIONS if omni else RESOLUTION.match(res)):
             raise ToolFailure(L(f"resolution 写得不对（{res}）", f"resolution isn't valid ({res}; e.g. {' / '.join(OMNI_RESOLUTIONS)})"))
+        if c.provider == media.GROK:  # 10/20：Grok 订阅的比例、清晰度、长短先在这边查（engine/grok_media.py）
+            from . import grok_media
+            secs = args.get("seconds")
+            grok_media.video_opts(ratio, res, float(secs) if isinstance(secs, (int, float)) and not isinstance(secs, bool) else None)
         o.update({"aspect_ratio": ratio or None, "resolution": res or None})
     else:
         lyrics = str(args.get("lyrics") or "").strip()
@@ -496,6 +513,8 @@ def _opts(tool: str, c: media.Choice, args: dict) -> dict:
 
 def estimate(c: media.Choice | None) -> str:
     """卡上、说明里那一句：一段视频大概多少钱。"""
+    if c is not None and c.provider == media.GROK:  # 10/20：Grok 订阅
+        return L("不另付钱：算你的 Grok 订阅的额度", "no extra charge: it counts against your Grok subscription's allowance")
     if c is not None and c.provider == "google" and c.model.startswith("gemini-omni"):
         lo, hi = (s * OMNI_PER_SECOND for s in OMNI_SECONDS)
         return L(f"约 ${lo:.2f}–{hi:.2f}（Omni Flash 一段 3–10 秒，720p 每秒约 ${OMNI_PER_SECOND:.2f}；1080p、4K 是放大的，可能更贵）",
@@ -533,6 +552,13 @@ async def run(tool: str, args: dict, ctx: ToolCtx) -> str:
                 "it's ready; don't call again.")
     from . import spend
     spend.before_tool(ctx, c.provider)  # 第 4 批：今天的花费到了上限就不做（本机的不拦）
+    origin = ctx.origin  # 后台的那件活照这个算；点了卡同意的照交卡那一轮的来路（handkit.run_approved，10/21：不升成主人自己引出来的）
+    if c.provider == media.GROK:  # 10/20：Grok 订阅：这一轮不能花就不起活
+        from . import grok_media
+        try:
+            grok_media.check(ctx.kind, origin)
+        except media.MediaError as e:
+            raise ToolFailure(L(f"没生成（{c.ref}）：{e}", f"Not generated ({c.ref}): {e}")) from None
     if sum(1 for j in _jobs.values() if j.agent == who and j.status == "running") >= MAX_RUNNING:
         raise ToolFailure(L(f"已经有 {MAX_RUNNING} 件在做了：等它们做完再来", f"{MAX_RUNNING} are already being made; wait for them to finish"))
     o = _opts(tool, c, args)
@@ -546,7 +572,7 @@ async def run(tool: str, args: dict, ctx: ToolCtx) -> str:
         ref.mime = images.sniff(ref.data) or ref.mime
     name = re.sub(r"[^\w-]+", "-", str(args.get("name") or en).strip())[:40].strip("-") or en
     _prune()
-    job = Job(("vg_" if tool == VIDEO else "mg_") + uuid.uuid4().hex[:8], tool, who, ctx.conversation, c.ref, prompt)
+    job = Job(("vg_" if tool == VIDEO else "mg_") + uuid.uuid4().hex[:8], tool, who, ctx.conversation, c.ref, prompt, kind=ctx.kind, origin=origin)
     _jobs[job.id] = job
     job.task = asyncio.ensure_future(_work(job, c, o, ref, name))
     can_tell = host_process.deliverable(ctx.conversation)
@@ -604,6 +630,9 @@ def tool(tool_name: str, agent: str) -> Tool | None:
     def cls(a: dict) -> tuple[str, str]:
         if str(a.get("action") or "").strip().lower() == "status":
             return READ, L("只看在做的那几件", "Only looks at the ones being made")
+        if tool_name == VIDEO and c is not None and c.provider == media.GROK:  # 10/20：Grok 订阅：不另付钱，照旧每段先问
+            return levelled(VIDEO, (ASK, L("算你的 Grok 订阅的额度（不另付钱）；每段先问你", "Uses your Grok subscription's allowance "
+                                           "(no extra charge); each clip asks you first")))
         if tool_name == VIDEO:
             return levelled(VIDEO, (ASK, L(f"按量花钱：{estimate(c)}", f"It costs money: {estimate(c)}")))
         return levelled(MUSIC, (UNDO, L("只在这个对话里多一个附件；一首几美分到几毛，记在用量里",
@@ -630,6 +659,15 @@ def tool(tool_name: str, agent: str) -> Tool | None:
                  f"starting picture. It costs money ({estimate(c)}), so each one asks the user first. It takes a while: if it isn't ready right "
                  "away it carries on in the background and comes into this chat by itself (with the file under that reply); don't call again "
                  "for the same one, action status shows progress.")
+        if c is not None and c.provider == media.GROK:  # 10/20：Grok 订阅：没有声音、1–15 秒、不另付钱
+            desc = L(f"生成一段短视频（{c.ref}，Grok 订阅，没有声音）：写清拍什么（主体、动作、镜头），可以给一张起始图（image）；seconds 1–15（默认 8），"
+                     "aspect_ratio 1:1、16:9、9:16、4:3、3:4、3:2、2:3，resolution 480p / 720p。算用户 Grok 订阅的额度（不另付钱），每次照样先交卡等他"
+                     "点头。要一会儿：没马上好就在后台接着做，做好了自己发进这个对话；别为同一件再调，action status 看进度。",
+                     f"Generate a short silent video ({c.ref}, the user's Grok subscription): say what to show (subject, action, camera); image "
+                     "gives a starting picture; seconds 1–15 (default 8), aspect_ratio 1:1, 16:9, 9:16, 4:3, 3:4, 3:2 or 2:3, resolution 480p or "
+                     "720p. It uses the user's Grok subscription allowance (no extra charge), and each one still asks the user first. It takes a "
+                     "while: if it isn't ready right away it carries on in the background and comes into this chat by itself; don't call again "
+                     "for the same one, action status shows progress.")
     else:
         props = {**common, "prompt": {"type": "string", "description": L("什么样的音乐：风格、情绪、乐器、主题", "What kind of music: style, mood, instruments, theme")},
                  "lyrics": {"type": "string", "description": L("歌词（可选）", "Lyrics (optional)")},

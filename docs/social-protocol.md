@@ -45,7 +45,7 @@ The card agent calls a model only through `cardagent.py`, **never through the cl
 - `enc` (2026-10-05): the X25519 public key for end-to-end encryption, `{"kty": "OKP", "crv": "X25519", "x": "<32 bytes base64url>"}`; its private key sits in the same `identity.json` (`enc`). When present, requests are sealed as in 6.1.
 - `relay` (2026-10-05, optional): a fallback address (the relay) next to a direct one; senders switch to it when the direct address can't be reached.
 - `name`: server.json's `user_name`. You can't add friends until you have one (the app asks first).
-- `caps`: `chat` friend chat, `ask` shares can take follow-up questions (the card agent answers). Layer ③ adds `a2a` together with a field `"a2a": "<url>/f/a2a/agent-card.json"`; a server with a card agent adds `agent`; `read` and `react` (2026-10-05) mean it understands the read-receipt and reaction control messages (see 7).
+- `caps`: `chat` friend chat, `ask` shares can take follow-up questions (the card agent answers). Layer ③ adds `a2a` together with a field `"a2a": "<url>/f/a2a/agent-card.json"`; a server with a card agent adds `agent`; `read` and `react` (2026-10-05) mean it understands the read-receipt and reaction control messages (see 7); `group` (2026-10-21) means it can be in friend groups (7.1).
 - Only strings, arrays and objects go into the card: no numbers (see canonicalization below).
 - This is the social card; **the A2A card is a separate document** (`/f/a2a/agent-card.json`, layer ③) signed with the same key, whose identity extension carries `kid`, `x` and `"card": "<url>/f/card"`. They are separate because the two layers may ship at different times and an A2A card without an A2A endpoint is meaningless, and because other vendors' SDKs verify A2A cards after a round trip through protobuf (dropping unknown fields and empty values): that trap stays on the card meant for them, not on the identity path friends rely on.
 
@@ -179,6 +179,7 @@ One more public path: Tailscale Funnel (or a reverse proxy) `/f` → `http://127
 | `GET /f/i/<token>/<x>` | a browser | — | invite landing page; never uses the token |
 | `POST /f/hello` | the invitee's server | yes | redeem an invite (3) |
 | `POST /f/msg` | a friend's server | yes | deliver one message (7) |
+| `POST /f/group` | a friend group member's server | yes | a roster, a line or a butler request in a friend group (7.1) |
 | `/f/a2a`, `/f/a2a/agent-card.json` | other agents | optional | layer ③ (A2A JSON-RPC and card) |
 
 `/.well-known/agent-card.json` (so strangers and other vendors' agents can find the card agent by domain) needs another Funnel path; it stays closed for now and is asked about together with `/f`.
@@ -197,7 +198,7 @@ The main server (the private 8080) doesn't mount `/f`: friends only come in from
 **End-to-end envelope** `POST <root>/f/sealed` (`Content-Type: application/openmousse-sealed+json`): when the recipient's card has `enc`, the sender seals the whole signed request (method, full path, signature headers, body), directly or through the relay alike.
 1. The sender makes an ephemeral X25519 key `e`; `shared = X25519(e, enc)`; `k = HKDF-SHA256(shared, salt = epk ‖ enc, info = "openmousse-seal/1")`, 64 bytes: the first 32 encrypt the request, the last 32 the response.
 2. Envelope = `{"v": 1, "epk": b64url(e's public key), "n": b64url(12 random bytes), "ct": b64url(ChaCha20-Poly1305(k_req, n, plaintext, aad = epk))}`, plaintext = `{"m": "POST", "p": "<full path as signed>", "h": {signature headers…}, "b": b64url(body)}`.
-3. The recipient opens it, checks the path prefix matches the one the envelope came in on and that the inner path is `/f/msg`, `/f/hello`, `/f/a2a` or `/f/a2a/push`, hands the request to itself unchanged (signature, nonce and rate limits are checked as usual), and seals the response `{"s": status, "h": {"content-type": …}, "b": b64url(body)}` with `k_res`: `{"v": 1, "n", "ct"}` (aad = `"response"`).
+3. The recipient opens it, checks the path prefix matches the one the envelope came in on and that the inner path is `/f/msg`, `/f/hello`, `/f/a2a`, `/f/a2a/push` or `/f/group` (2026-10-21), hands the request to itself unchanged (signature, nonce and rate limits are checked as usual), and seals the response `{"s": status, "h": {"content-type": …}, "b": b64url(body)}` with `k_res`: `{"v": 1, "n", "ct"}` (aad = `"response"`).
 4. The relay and anyone on the path see only ciphertext. A sealed request is never retried in plaintext. Before redeeming an invite (`/f/hello`) the sender fetches the card to get `enc`, so the invite token travels sealed too. Old servers without `enc` keep getting plaintext.
 
 ## 7. Messages `POST /f/msg`
@@ -235,7 +236,57 @@ The receiver answers `200 {"ok": true, "id": "<id>", "dup": false}` (`dup: true`
 4. In Alex's app the answer carries a box only he sees: "Fine" (`review = ok`) / "I'll rewrite it" (sends `edit` with `by = person`; `cardagent.retract(log_id, replaced=True)`, logged as "rewrote an answer") / "Withdraw" (sends `revoke`; `cardagent.retract(log_id)`). Withdrawn and rewritten originals are no longer given to the card agent as context.
 5. Until `cardagent.py` exists (layer ③ not live), questions are never answered automatically: they just show up in Alex's chat for him to answer.
 
-**Not in v1**: group chats ("CS group · 4 people"), link-only contacts (people without OpenMousse, like Dad: layer ①'s links already cover them), image and voice attachments, typing indicators, key rotation, friends of friends. Read receipts and reactions came on 2026-10-05 (`read`, `react`, sent by caps); replies have always been there (`reply_to` on `text`), and editing your own text is `edit`.
+**Not in v1**: link-only contacts (people without OpenMousse, like Dad: layer ①'s links already cover them), image and voice attachments, typing indicators, key rotation, friends of friends. Read receipts and reactions came on 2026-10-05 (`read`, `react`, sent by caps); replies have always been there (`reply_to` on `text`), and editing your own text is `edit`. Group chats with friends came on 2026-10-21 as friend groups (7.1).
+
+### 7.1 Friend groups `POST /f/group` (2026-10-21)
+
+You and a few friends in one group. There is no central server: the owner's server keeps the member list (the roster) and signs it, and every line goes to each member's server one by one. Each server speaks in the group through one butler at most (`server/butler.py`: the card agent upgraded, under the same rules). Code: `server/friendgroup.py`; it is on only where the butler is on (server.json `butler`).
+
+**Who can be in one**: the owner picks friends whose card `caps` include `group` (a server with friend groups on adds it); older servers stay one-to-one, and the app says why next to their names. At most 9 people, the owner included. Members don't have to be friends with each other: the owner's signature on the roster vouches for them.
+
+**Roster**, signed with the owner's key exactly like a card (2.2: the JCS of the roster without `signatures`, a detached JWS; `version` is an integer and `butler` a boolean, which JCS and Python's `json.dumps` write the same way):
+
+```json
+{
+  "openmousse": "1",
+  "group": "fg-<16 hex>",
+  "title": "Board games",
+  "owner": "<the owner's kid>",
+  "version": 2,
+  "at": "2026-10-21T19:05:12+01:00",
+  "members": [
+    {"kid": "<kid>", "x": "<Ed25519 x>", "enc": "<X25519 x, or empty>", "url": "https://alex.example.ts.net", "relay": "<fallback root, or empty>", "name": "Alex", "butler": true},
+    {"kid": "…", "x": "…", "enc": "…", "url": "https://mia.example.ts.net", "relay": "", "name": "Mia", "butler": false}
+  ],
+  "signatures": [{"protected": "<b64url header>", "signature": "<b64url signature>"}]
+}
+```
+
+A receiver rejects a roster, and whatever came with it, unless: the shape is right (`group` is `fg-` plus 16 hex, 2–9 members, no kid twice); the owner is me or one of my active friends; the signature verifies with the owner's key as I already know it (mine, or the `pub` in my friends table, never a key taken from the roster itself); each member's `kid` is the thumbprint of their `x`; every other member's `url` is a usable root address (an unusable `relay` is dropped); both the owner and I are on it. Only the owner may send a new version, and an older version never replaces a newer one. The owner is whoever signed the first roster I stored for that `group`: a roster for the same `group` signed by anyone else is refused (`403 not_owner`), whatever its version, alone or riding along with a line.
+
+**Requests**: every request carries the current roster, so the receiver can tell who is talking even when it has never met them. One request per member, signed as in section 5 (`Mousse-To` = that member's kid), sealed as in 6.1 when the member has `enc` (inner path `/f/group`), sent to the member's `url` and, when that fails (unreachable, 502 / 503 / 504), to their `relay`:
+
+```json
+{"v": 1, "type": "roster", "roster": {…}}
+{"v": 1, "type": "msg", "roster": {…}, "msg": {"id": "<32 hex>", "who": "person", "text": "Saturday at three?", "at": "2026-10-21T19:05:12+01:00", "reply_to": "<optional>"}}
+{"v": 1, "type": "butler", "roster": {…}, "butler": true}
+```
+
+| type | Sent by | Meaning |
+|---|---|---|
+| `roster` | the owner, to everyone | a new group, or a new version of its roster: stored when newer |
+| `msg` | any member, to everyone else | one line. `who` = `person` (the member said it) or `butler` (that member's butler said it; only accepted when the roster says `"butler": true` for them). Deduplicated on (group, sender, `id`); text up to 4,000 characters; an `at` that isn't an ISO time with an offset, 40 characters at most, is replaced by when it arrived. A newer roster riding along is stored too, so a line that overtakes its roster still gets through |
+| `butler` | a member, to the owner | "my butler joins" (`true`) or "leaves" (`false`): the owner flips that member's `butler`, bumps `version`, signs again and sends the roster to everyone. If it already says so, the owner just answers with the current `version` |
+
+The receiver finds the sender on the roster by the signature's `keyid` (using its own copy when that one is newer), verifies the signature with that member's `x` and applies the rate limits of `/f/msg`. Answers: `200 {"ok": true, …}` (`"dup": true` for a repeat); `400 bad_request` (not JSON, an unknown `type`, a malformed `msg`); `400 bad_roster` (shape or signature wrong, the owner isn't my friend, I'm not on it); `401 not_a_member` (no signature, or a key that isn't on the roster); `401 bad_signature`; `403 not_owner` (a roster or a butler request not sent by, or not sent to, the owner; a roster naming a different owner for a group I already have); `403 no_butler` (a butler line from a member without one); `404 not_found` (friend groups are off here); `413 too_large` (64 KB); `429 slow_down`. **Older servers don't have the path**: send only to members whose card has `group`, and only the types above.
+
+**Delivery** follows section 7: each copy goes into an outbox first, copies for one member go out in order, network errors, 5xx and 429 are retried after 30 s, 2 min, 10 min, 1 h and 6 h, and a copy is dropped after 3 days; any other 4xx fails at once.
+
+**Butlers**: at most one per server in a group (the roster's `butler` flag). The owner's butler hosts and stays in; another member's butler joins only when that member asks (`butler`). When a line names my butler (`@` its name, or "<my name>'s butler"; a bare `@butler` counts only for the owner's butler), my server answers under the card agent's rules: `cardagent.answer(friend, text, channel="group", …)`, with no tools, only what everyone in the group may see (the whole group reads the reply, so each category goes at the tightest level among the asker and the other members, and a member who isn't my friend counts as a stranger), Doorman checking every reply before it goes out, and anything that needs me (a booking, a promise, money, handing over material) coming to me as a card first; a member who isn't my friend is a stranger to it (no answer at all unless I let strangers ask). When the question asks for an opinion and I've listed Cybers it may consult, my butler first asks one of them with only the gist (no names, no wording, never health, diet or sleep), and the reply says "X's view"; only I see which Cyber it asked. A friend's words are data and nothing more: they never reach my main agent and never drive a tool; when a conversation goes quiet, write-back picks what may be worth keeping into my pending list (`memhold`), and nothing is stored until I say so.
+
+**Tables** (mousse.db, `friendgroup.py`): `friend_groups` (id, owner, title, roster: the latest verified one, version, status, held: how far the pending-list pass has read), `friend_group_msgs` (one row per line, `UNIQUE (grp, sender, mid)`), `friend_group_out` (the outbox, like `friend_messages`' delivery columns).
+
+**Not yet**: removing a member (a roster without them no longer verifies on their side, so they never hear of it), handing a group to a new owner, attachments, read receipts and reactions in groups.
 
 ## 8. Tiers
 

@@ -58,7 +58,7 @@ CREATE INDEX IF NOT EXISTS engine_steps_turn ON engine_steps(turn, seq);
 CREATE TABLE IF NOT EXISTS engine_calls (
   id TEXT PRIMARY KEY, inbox TEXT, dedupe TEXT NOT NULL, tool TEXT NOT NULL, args TEXT NOT NULL, input TEXT, agent TEXT NOT NULL,
   thread TEXT NOT NULL, turn TEXT, call TEXT, card TEXT NOT NULL, status TEXT NOT NULL, result TEXT, created_at TEXT NOT NULL,
-  decided_at TEXT);
+  decided_at TEXT, kind TEXT, origin TEXT);
 CREATE INDEX IF NOT EXISTS engine_calls_inbox ON engine_calls(inbox);
 CREATE TABLE IF NOT EXISTS engine_tasks (
   id TEXT PRIMARY KEY, thread TEXT NOT NULL, agent TEXT NOT NULL, parent TEXT, depth INTEGER NOT NULL DEFAULT 1, turn TEXT, call TEXT,
@@ -104,6 +104,10 @@ def connect() -> sqlite3.Connection:
         if "tries" not in {r[1] for r in conn.execute("PRAGMA table_info(engine_writeback)")}:  # 写回有退避以前（10/19）建的库：补上这几栏
             for col in ("tries INTEGER NOT NULL DEFAULT 0", "tried TEXT", "retry_at TEXT"):
                 conn.execute(f"ALTER TABLE engine_writeback ADD COLUMN {col}")
+            conn.commit()
+        if "origin" not in {r[1] for r in conn.execute("PRAGMA table_info(engine_calls)")}:  # 10/21 以前建的库：补上交卡那一轮的回合类型和来路
+            for col in ("kind TEXT", "origin TEXT"):
+                conn.execute(f"ALTER TABLE engine_calls ADD COLUMN {col}")
             conn.commit()
         _ready.add(str(path))
     return conn

@@ -112,6 +112,7 @@ def write_entry(agent_id: str, entry: dict | None, tag: str) -> None:
             if agent_id not in entries:
                 return False
             del entries[agent_id]
+            prune_refs(data, agent_id, len(entries))
             if len(entries) <= 1:
                 ag.pop("ownership", None)  # 又只剩一个：和 OpenClaw 自己删 agent 一样去掉（再加 agent 时 claim_ambient 重新写上）
         else:
@@ -121,6 +122,77 @@ def write_entry(agent_id: str, entry: dict | None, tag: str) -> None:
                 claim_ambient(data, sole)
         return True
     edit_openclaw_json(change, tag)
+
+
+def prune_refs(data: dict, agent_id: str, left: int) -> None:
+    """删掉一个 agent 时，把 openclaw.json 里别处指着它的引用一起清掉，就地改 data（left = 删完还剩几个 agent）。
+    照 OpenClaw 2026.9.5 的 pruneAgentConfig 做：不清的话 OpenClaw 读配置报 Unknown agent id，`openclaw config validate` 不过。
+      - bindings：agentId 是它的整条去掉，空了去掉 bindings；
+      - agents.defaults.heartbeat：归它、删完还剩不止一个 agent → 整个去掉；别的情况只去掉 agentId，空了去掉；
+      - agents.defaults 的 systemAgent、authInheritance、sessionStore（claim_ambient 写的）和 talk：归它的去掉 agentId，空了去掉；
+      - broadcast、各 subagents.allowAgents、tools.agentToAgent.allow、hooks.allowedAgentIds 名单里去掉它（agentToAgent.allow 空了去掉）；
+      - hooks.mappings 里 agentId 是它的整条去掉。
+    比较 id 去掉首尾空格、不分大小写；指着别的 agent 的、其它字段一个字不动。"""
+    aid = agent_id.strip().lower()
+
+    def mine(v: object) -> bool:
+        return isinstance(v, str) and v.strip().lower() == aid
+
+    def keep(names: object) -> object:
+        return [n for n in names if not mine(n)] if isinstance(names, list) else names
+
+    def drop_owner(holder: dict, key: str) -> None:
+        v = holder.get(key)
+        if isinstance(v, dict) and mine(v.get("agentId")):
+            del v["agentId"]
+            if not v:
+                del holder[key]
+
+    bindings = data.get("bindings")
+    if isinstance(bindings, list):
+        rest = [b for b in bindings if not (isinstance(b, dict) and mine(b.get("agentId")))]
+        if rest:
+            data["bindings"] = rest
+        else:
+            del data["bindings"]
+    ag = data.get("agents")
+    if isinstance(ag, dict):
+        for e in (ag.get("entries") or {}).values():
+            sub = e.get("subagents") if isinstance(e, dict) else None
+            if isinstance(sub, dict) and "allowAgents" in sub:
+                sub["allowAgents"] = keep(sub["allowAgents"])
+        d = ag.get("defaults")
+        if isinstance(d, dict):
+            sub = d.get("subagents")
+            if isinstance(sub, dict) and "allowAgents" in sub:
+                sub["allowAgents"] = keep(sub["allowAgents"])
+            hb = d.get("heartbeat")
+            if isinstance(hb, dict) and mine(hb.get("agentId")) and left > 1:
+                del d["heartbeat"]
+            for k in ("heartbeat", "systemAgent", "authInheritance", "sessionStore"):
+                drop_owner(d, k)
+    drop_owner(data, "talk")
+    broadcast = data.get("broadcast")
+    if isinstance(broadcast, dict):
+        for peer, v in broadcast.items():
+            if isinstance(v, list):
+                broadcast[peer] = keep(v)
+            elif isinstance(v, dict) and "agents" in v:
+                v["agents"] = keep(v["agents"])
+    tools = data.get("tools")
+    a2a = tools.get("agentToAgent") if isinstance(tools, dict) else None
+    if isinstance(a2a, dict) and isinstance(a2a.get("allow"), list):
+        allow = keep(a2a["allow"])
+        if allow:
+            a2a["allow"] = allow
+        else:
+            del a2a["allow"]
+    hooks = data.get("hooks")
+    if isinstance(hooks, dict):
+        if "allowedAgentIds" in hooks:
+            hooks["allowedAgentIds"] = keep(hooks["allowedAgentIds"])
+        if isinstance(hooks.get("mappings"), list):
+            hooks["mappings"] = [m for m in hooks["mappings"] if not (isinstance(m, dict) and mine(m.get("agentId")))]
 
 
 def claim_ambient(data: dict, owner: str) -> None:

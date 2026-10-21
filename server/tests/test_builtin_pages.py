@@ -240,7 +240,7 @@ def test_models_show_the_engine_chain_logins_purposes_and_usage(env, no_gateway,
     assert m["claudeCode"]["available"] and m["claudeCode"]["billing"] == "subscription" and m["claudeCode"]["plan"] == "max"
     assert set(m["chatgpt"]) >= {"connected", "ready", "plan"} and "email" not in m["chatgpt"]
     rows = {x["id"]: x for x in m["purposes"]}
-    assert set(rows) == {"chat", "background", "writing", "outsider", "embeddings"}
+    assert set(rows) == {"chat", "background", "writing", "json", "compact", "outsider", "embeddings"}
     assert rows["chat"]["current"] == "deepseek/deepseek-flash" and rows["background"]["effective"] == "deepseek/deepseek-flash"
     assert rows["outsider"]["parts"]["card"]["effective"] == "deepseek/deepseek-flash"
     assert m["usage"]["days"] == 30 and m["usage"]["total"]["cost"] >= 0.5  # 主人的设备看得到花了多少
@@ -442,7 +442,7 @@ def test_upcoming_lists_engine_jobs_and_heartbeats_and_toggles_them(env, no_gate
 
 
 def test_upcoming_under_openclaw_still_reads_openclaw_cron(env, monkeypatch):
-    env.cfg(claw={"kind": "openclaw"})
+    env.cfg(claw={"kind": "openclaw"}, upcoming={"titles": {"heartbeat-main": {"zh": "心跳检查（main）", "en": "Heartbeat check (main)"}}})
     asked = []
 
     async def gw(method, params=None, timeout=30):
@@ -460,6 +460,41 @@ def test_upcoming_under_openclaw_still_reads_openclaw_cron(env, monkeypatch):
     assert env.client.post("/api/upcoming/oc-job-1", headers=H, json={"enabled": False}).json() == {"ok": True}
     assert ("cron.update", {"id": "oc-job-1", "patch": {"enabled": False}}) in asked
     data.forget_cache("cron")
+    env.cfg(claw={"kind": "openclaw"})  # 没配 upcoming.titles：照定时任务自己的名字
+    items = env.client.get("/api/upcoming", headers=H).json()["upcoming"]
+    assert items[0]["title"] == "heartbeat-main"
+    data.forget_cache("cron")
+
+
+def test_upcoming_timer_titles_and_reminders_come_from_config(env, monkeypatch):
+    """systemd 定时器只列 upcoming.titles 里有的（repeat 写 weekly 才是每周）；一次性提醒只在配了 reminder_prefix 时列。"""
+    nxt = int((datetime.now().timestamp() + 3600) * 1e6)
+    listed = [{"unit": "daily-backup.timer", "next": nxt}, {"unit": "weekly-tidy.timer", "next": nxt}, {"unit": "other.timer", "next": nxt},
+              {"unit": "mousse-reminder-1.timer", "next": nxt}]
+
+    class Proc:
+        def __init__(self, out: bytes):
+            self.out = out
+
+        async def communicate(self):
+            return self.out, b""
+
+    async def fake_exec(*args, **kw):
+        if "list-timers" in args:
+            return Proc(json.dumps(listed).encode())
+        return Proc(b"Water the plants")  # systemctl show <unit> -p Description
+    monkeypatch.setattr(data.asyncio, "create_subprocess_exec", fake_exec)
+    env.cfg()
+    assert asyncio.run(data.timers()) == []  # 什么都没配：一个都不列
+    env.cfg(upcoming={"titles": {"daily-backup.timer": {"zh": "每日备份", "en": "Daily backup"},
+                                 "weekly-tidy.timer": {"zh": "每周整理", "en": "Weekly tidy-up", "repeat": "weekly"}, "heartbeat-main": "Heartbeat"},
+                      "reminder_prefix": "mousse-reminder-"})
+    rows = {r["id"]: r for r in asyncio.run(data.timers())}
+    assert set(rows) == {"daily-backup.timer", "weekly-tidy.timer", "mousse-reminder-1.timer"}
+    assert (rows["daily-backup.timer"]["title"], rows["daily-backup.timer"]["repeat"]) == ("Daily backup", "Daily")
+    assert (rows["weekly-tidy.timer"]["title"], rows["weekly-tidy.timer"]["repeat"]) == ("Weekly tidy-up", "Weekly")
+    assert rows["mousse-reminder-1.timer"]["title"] == "Water the plants" and rows["mousse-reminder-1.timer"]["source"] == "reminder"
+    assert data.cron_titles() == {"heartbeat-main": "Heartbeat"}  # 不是 .timer 的给 OpenClaw 的定时任务
 
 
 # —— 新建 Agent 的工作区和技能名单 ———————————————————————————————————————————————————————

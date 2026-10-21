@@ -22,7 +22,7 @@ from pathlib import Path
 
 from config import REPO, settings
 
-VERSION = "2026.10.13-3"
+VERSION = "2026.10.21"
 API = 1
 FEATURES = (
     "card.name",  # PATCH /api/card {name}：在 app 里设好友看到的名字
@@ -54,6 +54,23 @@ FEATURES = (
     "nodes",            # 设备节点（第 8 批，nodes.py）：/api/nodes…（节点的 hello / poll / result / bye，主人的列表、开关、批准、移除、出节点配对码）；
                         # 开没开看 GET /api/nodes：没开（engine.nodes，claw 要是 builtin）是 404
     "talk",             # 对讲（第 8 批，app 的对讲页）：GET /api/chat/transcribe → {ready, why}，语音转写配好了没有（不转写、不花钱）
+    "setup.purposes.oneshot",  # 10/20：/api/setup/purposes 多了一问一答（json）、压缩摘要（compact）两行，每行带 plan / planReady / mayPlan /
+                               # backups / lastFailure；PUT 收 json、compact（engine/setup_api.py）
+    "inbox.info",       # 10/20：收件箱的只读卡 kind info（inbox.py）：点同意 / 拒绝 / 修改都只是收起（done、已读），不起一轮；app 只给一个「知道了」
+    "cybers",           # 赛博（主线第三步，cybers.py）：/api/cybers…（建 / 改 / 删、一对一走赛博回合、记忆、装载、改法）、通讯录、一句话新建；
+                        # 开没开看 GET /api/cybers：没开（server.json 的 cybers，claw 要是 builtin）是 404
+    "groupchat",        # 群聊（主线第三步，groupchat.py）：/api/groupchats…（你和赛博、功能 Agent 碰撞想法；@ 一位、@所有 Agent 讨论一轮、
+                        # 主持人、仅你可见的卡）、对话列表的群聊行（/api/chats?with=group）；开没开看 GET /api/groupchats：没开是 404
+    "meetings.records",  # 会议（主线第三步）：GET /api/meetings/records（会议记录，按谁发起筛、搜）、GET /api/meetings/options（发起页能请谁，
+                         # 含赛博和 health 标记、「会后保留」的默认值、byOrigin、records）、POST /api/meetings 收 auto（定了告诉我，
+                         # 只在 byOrigin 开着时算）；会议的成员带 kind / avatar / tag。画不画「会议记录」看 options 的 records
+    "think.discuss",    # 想法「拿去讨论」（主线第三步，ideatalk.py）：/api/think/ideas/{id}/discuss|cyber|group|podcast|agent|points；
+                        # 想法（think.frag_json）带 discussion {kind, id}：在哪讨论（Zen 里「讨论中」）；开没开看 GET …/discuss：
+                        # 赛博、群聊都关着（claw 要是 builtin）是 404
+    "butler",           # 管家（主线第三步，butler.py：名片 Agent 升级）：/api/butler…（资料、对外口径的例句和改一句、可以请教的赛博、说过的话）；
+                        # 开没开看 GET /api/butler：没开（server.json 的 butler，claw 要是 builtin）是 404，app 照旧用「我的名片 Agent」那一页
+    "friendgroups",     # 好友群（主线第三步，friendgroup.py；协议 docs/social-protocol.md 7.1）：/api/friendgroups…（建群、收发、管家进不进、
+                        # 已读）、/f/group；跟着管家开，开没开看 GET /api/friendgroups：没开是 404
 )
 
 

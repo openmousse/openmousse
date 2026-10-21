@@ -1,6 +1,7 @@
 {
   "app_name": "Mousse",
   "user_name": "",
+  "owner_id": "owner",
   "timezone": "Asia/Shanghai",
   "bind": {"host": "127.0.0.1", "port": 8080},
   "openclaw_home": "~/.openclaw",
@@ -17,6 +18,7 @@
     "tailscale_nodes": [],
     "trust_loopback": false
   },
+  "mcp": {"allowed_hosts": []},
   "nutrition_targets": null,
   "push": {"quiet_hours": ["23:00", "07:30"]},
   "tasks": {"daily_limit": 10, "max_minutes": 30, "notify_done": true},

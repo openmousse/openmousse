@@ -1,6 +1,7 @@
-import React, { createContext, useContext, useEffect, useMemo, useState } from 'react';
+import React, { createContext, useCallback, useContext, useEffect, useMemo, useState } from 'react';
 import { Platform, useColorScheme } from 'react-native';
 import type { AgentColor } from './data/types';
+import { readLocal, writeLocal } from './deviceStore';
 
 /**
  * Agent 的颜色：浅底（soft）+ 前景（fg，图标和字），另有色板上的圆点（swatch）。
@@ -9,23 +10,34 @@ import type { AgentColor } from './data/types';
  */
 type Tint = { soft: string; fg: string; swatch: string };
 
-// Grava 的视觉身份来自头像：引力透镜。墨黑力场、金色光环、青色数据流。
-// 金 = Grava 自己（头像、发送、当前选中）；青 = 数据与进度；语义色只表示状态。
+// 助手的视觉身份来自头像：引力透镜。墨黑力场、金色光环、青色数据流。
+// 金 = 助手自己（头像、发送、当前选中）；青 = 数据与进度；语义色只表示状态。
 const light = {
   mode: 'light' as 'light' | 'dark',
   bg: '#F1F3F4',
   surface: '#FFFFFF',
   surface2: '#E7EAEC',
+  /** 占位。浅色弹层不抬，读不到这一档。顺着 surface → surface2 再灰一档。 */
+  surface3: '#CFD5D9',
   ink: '#12151A',
   ink2: '#4B535C',
   ink3: '#7D858F',
+  /** 占位。浅色弹层不抬，读不到。和 ink3 同一个值，误读也不变样。 */
+  ink3Lift: '#7D858F',
   line: '#DCE0E3',
+  /** 占位。浅色弹层不抬，读不到。和 line 同一个值，误读也不变样。 */
+  lineLift: '#DCE0E3',
   gold: '#9A6B16',
   goldFill: '#D9AE62',
   goldSoft: '#F5EAD3',
   onGold: '#2A1E06',
   cyan: '#0F7A93',
   cyanSoft: '#DAF0F5',
+  /** 青底上的字和图标。浅色仍是白；深色用页面底色，白字压在 #5CCFE6 上只有 1.8:1。 */
+  onCyan: '#FFFFFF',
+  /** 青点（标志、此刻）。填充深浅都是设计系统的 #5CCFE6；浅色另描 dotEdge。文字青仍用 cyan。 */
+  dot: '#5CCFE6',
+  dotEdge: '#0E738A',
   chartA: '#1488A3',
   chartB: '#B07D22',
   track: '#E1E5E8',
@@ -60,16 +72,26 @@ const dark: typeof light = {
   bg: '#0B0D10',
   surface: '#14171C',
   surface2: '#1E2329',
+  /** 比 surface2 再亮一档，步子同 bg → surface → surface2。深色弹层里 surface2 读成它。 */
+  surface3: '#282E35',
   ink: '#ECEEF0',
   ink2: '#A6AEB7',
   ink3: '#737C86',
+  /** 深色弹层里 ink3 读成它。页面上的 #737C86 在弹层卡片上不够小字的 4.5:1。 */
+  ink3Lift: '#858E98',
   line: '#252A31',
+  /** 深色弹层里 line 读成它。同一路灰（R、R+5、R+12）。#252A31 在抬过的卡片上太淡。 */
+  lineLift: '#343940',
   gold: '#DDB56A',
   goldFill: '#D9AE62',
   goldSoft: '#30271A',
   onGold: '#2A1E06',
   cyan: '#5CCFE6',
   cyanSoft: '#10303A',
+  onCyan: '#0B0D10',
+  dot: '#5CCFE6',
+  /** 深色不描边：描边色与填充相同。 */
+  dotEdge: '#5CCFE6',
   chartA: '#2A97B0',
   chartB: '#B5873A',
   track: '#252A31',
@@ -105,11 +127,31 @@ export const agentTint = (t: Theme, color?: AgentColor | string | null): Tint =>
   (color && Object.prototype.hasOwnProperty.call(t.tints, color) ? t.tints[color as AgentColor] : t.tints.cyan);
 export type Appearance = 'system' | 'light' | 'dark';
 
+/** 没选过外观时用深色。选过的值存在本机，重启还在。 */
+const APPEARANCE_KEY = 'mousse.appearance';
+
+export function parseAppearance(raw: string | null | undefined): Appearance {
+  return raw === 'light' || raw === 'dark' || raw === 'system' ? raw : 'dark';
+}
+
+function loadAppearance(): Appearance {
+  return parseAppearance(readLocal(APPEARANCE_KEY));
+}
+
 const Ctx = createContext<{ t: Theme; appearance: Appearance; setAppearance: (a: Appearance) => void }>({
-  t: light,
-  appearance: 'system',
+  t: dark,
+  appearance: 'dark',
   setAppearance: () => {},
 });
+
+// 深色弹层里 surface 读成 surface2，surface2 读成 surface3，ink3 读成 ink3Lift，line 读成 lineLift。
+// 别的颜色不抬。弹层面板在这个包裹外面，仍是真正的 surface；在外面取的 t 也是没抬的颜色。
+const LiftCtx = createContext(false);
+
+/** 包住底部弹层的内容。深色里表面两档各抬一档，说明字和细线换成弹层里够对比的那一档；浅色不抬，读到的颜色和页面上一样。 */
+export function LiftSurface({ children }: { children: React.ReactNode }) {
+  return <LiftCtx.Provider value={true}>{children}</LiftCtx.Provider>;
+}
 
 // 网页预览时，宿主页面可能在 <html> 上标 data-theme，优先于系统设置。
 function useHostTheme(): 'light' | 'dark' | null {
@@ -132,15 +174,29 @@ function useHostTheme(): 'light' | 'dark' | null {
 export function ThemeProvider({ children }: { children: React.ReactNode }) {
   const system = useColorScheme();
   const host = useHostTheme();
-  const [appearance, setAppearance] = useState<Appearance>('system');
+  const [appearance, setAppearanceState] = useState<Appearance>(loadAppearance);
+  const setAppearance = useCallback((a: Appearance) => {
+    setAppearanceState(a);
+    writeLocal(APPEARANCE_KEY, a);
+  }, []);
   const value = useMemo(() => {
-    const resolved = appearance === 'system' ? host ?? system ?? 'light' : appearance;
+    // 跟随系统但系统没给深浅时，落在深色（和没选过一样），不闪一下浅色。
+    const resolved = appearance === 'system' ? host ?? system ?? 'dark' : appearance;
     return { t: resolved === 'dark' ? dark : light, appearance, setAppearance };
-  }, [appearance, host, system]);
+  }, [appearance, host, system, setAppearance]);
   return <Ctx.Provider value={value}>{children}</Ctx.Provider>;
 }
 
-export const useTheme = () => useContext(Ctx).t;
+export function useTheme(): Theme {
+  const base = useContext(Ctx).t;
+  const lift = useContext(LiftCtx);
+  return useMemo(
+    () => (lift && base.mode === 'dark'
+      ? { ...base, surface: base.surface2, surface2: base.surface3, ink3: base.ink3Lift, line: base.lineLift }
+      : base),
+    [base, lift],
+  );
+}
 export const useAppearance = () => {
   const { appearance, setAppearance } = useContext(Ctx);
   return { appearance, setAppearance };

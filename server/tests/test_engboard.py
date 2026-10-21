@@ -24,25 +24,25 @@ SAMPLE = f"""# 待办事项
 
 > 顶上的说明，不算任何一节
 
-## 主线（{md(TODAY)} Mia 定）：第一步把内核全部做完 → 第二步群聊和 Agents
+## 主线（{md(TODAY)} Mia 定）：第一步把同步层全部做完 → 第二步分享和协作
 
-**第一步：内核全部做完（约 10–12 个 session）**
-- [x] 1 第 0 步 · 原型 + 定合同：分支 `engine-builtin`（{md(TODAY)} 合 main）
-- [ ] 2 三种回合 + 工具表 + 基本关卡：主人回合也上内核
+**第一步：同步层全部做完（约 10–12 个 session）**
+- [x] 1 第 0 步 · 原型 + 定接口：分支 `sync-layer`（{md(TODAY)} 合 main）
+- [ ] 2 三种冲突 + 合并表 + 基本校验：离线编辑也走同步层
 - [ ] 3 事件流接 app
 
-**第二步：群聊和 Agents（约 4 个 session）**，细节见下面
-- [ ] 赛博和通讯录（新建流程）
+**第二步：分享和协作（约 4 个 session）**，细节见下面
+- [ ] 共享清单和成员（新建流程）
 
-## 待办合进 Grava「今天」：三类 + 工程看板（{md(TODAY)} · CC）
+## 离线模式合进主线：三类 + 冲突提示（{md(TODAY)} · CC）
 
 - **下一个 session 从这里开始**：开分支
-- [x] 三件有期限的已加进 Grava
-- [ ] ① 服务器（Mia 改过的记在 schedule_marks，以他为准）：待办带类别；重启前先问 Mia
-- [ ] ③ 搬那 29 件：搬完在 todos.md 原地写「→ 已搬到 Grava（item:…）」，不打勾
+- [x] 三件有期限的已加进日程
+- [ ] ① 服务器（Mia 改过的记在 overrides 表，以她为准）：清单带分类；上线前先问 Mia
+- [ ] ③ 搬那 29 条旧菜谱：搬完在 todos.md 原地写「→ 已搬到新库（rec:…）」，不打勾
 - [ ] 等 Mia 定：A / B / C
-- [ ] 拍板 · 正式 CLA、注册商标 （出处：下一个 session（9/28 16:35））
-- [ ] 旧条目 → 已搬到 Grava（item:ev-1）
+- [ ] 拍板 · 换图标、定配色 （出处：下一个 session（9/28 16:35））
+- [ ] 旧条目 → 已搬到新库（rec:ev-1）
 - [ ] ~~原来的想法~~（不做了：换了做法）
 
 ```
@@ -69,33 +69,33 @@ def board_env(tmp_path, server_json):
 def test_parse_lines_and_states():
     lines = eb.parse(SAMPLE, TODAY, names=("Mia",))
     names = [x.name for x in lines]
-    assert names == ["主线", "待办合进 Grava「今天」", "设计系统"]
+    assert names == ["主线", "离线模式合进主线", "设计系统"]
     main = lines[0]
-    assert main.main and [i.group for i in main.items][:1] == ["第一步：内核全部做完（约 10–12 个 session）"]
+    assert main.main and [i.group for i in main.items][:1] == ["第一步：同步层全部做完（约 10–12 个 session）"]
     assert [i.state for i in main.items] == ["done", "todo", "todo", "todo"]
     todo = lines[1]
     assert todo.start_here and todo.day == TODAY
     states = [i.state for i in todo.items]
-    # 括号里的「Mia 改过的」、做事规矩「重启前先问 Mia」不算等你；「」里引的「→ 已搬到」不算搬走
+    # 括号里的「Mia 改过的」、做事规矩「上线前先问 Mia」不算等你；「」里引的「→ 已搬到」不算搬走
     assert states == ["done", "todo", "todo", "wait", "wait", "moved", "dropped"]
     assert len(todo.items) == 7  # 代码块里的不算
 
 
 def test_moved_notes():
-    assert eb.item_state(False, "申请文书：等老师改完 → 已搬到 Grava（item:ev-1），以后状态看 Grava") == "moved"
-    assert eb.item_state(False, "推荐信 → 剩下的已搬到 Grava（item:ev-2）") == "moved"
-    assert eb.item_state(False, "小组展示 → 已在 Grava（Canvas：Group presentation）") == "moved"
-    assert eb.item_state(False, "批阅完出下一版 CV → 不搬：还没投的几家在 Grava 求职表里") == "moved"
+    assert eb.item_state(False, "菜谱导入：等接口定了 → 已搬到新库（rec:ev-1），以后状态看那边") == "moved"
+    assert eb.item_state(False, "图标素材 → 剩下的已搬到新库（rec:ev-2）") == "moved"
+    assert eb.item_state(False, "购物清单 → 已在日程里（提醒：周六买菜）") == "moved"
+    assert eb.item_state(False, "改完出下一版设计稿 → 不搬：还没做的几页在设计看板里") == "moved"
     # 括号里说的是一半搬走了，这一条还开着
-    assert eb.item_state(False, "Notion 没接（体脂这一半 → 已搬到 Grava（item:ev-3）；Notion 那一半是工程，留在这里）") == "todo"
+    assert eb.item_state(False, "日历没接（提醒这一半 → 已搬到新库（rec:ev-3）；日历那一半是工程，留在这里）") == "todo"
 
 
 def test_line_names():
-    assert eb.line_name("开发设备分工：Mac、服务器、GitHub（10/15 · CC）") == "开发设备分工"
-    assert eb.line_name("OpenMousse：第一个朋友试用后的四项优化（10/5）") == "OpenMousse：第一个朋友试用后的四项优化"
-    assert eb.line_name("求职：Acme（10/3 · CC）") == "求职：Acme"
-    assert eb.line_name("下一个 session 从这里开始：OpenMousse 界面重做（10/13）") == "OpenMousse 界面重做"
-    assert eb.line_name("2026-09-26 新增：学习台 + Canvas（Claude Code）") == "学习台 + Canvas"
+    assert eb.line_name("测试设备分工：平板、旧手机、模拟器（10/15 · CC）") == "测试设备分工"
+    assert eb.line_name("Larder：第一轮试用后的四项优化（10/5）") == "Larder：第一轮试用后的四项优化"
+    assert eb.line_name("上架：Acme（10/3 · CC）") == "上架：Acme"
+    assert eb.line_name("下一个 session 从这里开始：Larder 界面重做（10/13）") == "Larder 界面重做"
+    assert eb.line_name("2026-09-26 新增：购物清单 + 扫码（Claude Code）") == "购物清单 + 扫码"
 
 
 def test_owner_name_comes_from_config():
@@ -107,28 +107,28 @@ def test_owner_name_comes_from_config():
 
 def test_short_title(server_json):
     server_json({"user_name": "Mia"})
-    assert eb.short_title("1 第 0 步 · 原型 + 定合同：分支 `engine-builtin`，`server/engine/`（循环、会话树、插话 / 中止）+ Anthropic 和 OpenAI 兼容两家接口；名片 Agent") \
-        == "第 0 步 · 原型 + 定合同"
-    assert eb.short_title("拍板 · 正式 CLA、律师看商业授权、注册商标 （出处：下一个 session（9/28 16:35））") == "正式 CLA、律师看商业授权、注册商标"
-    assert eb.short_title("**Mia：轮换 Notion token**（他说自己来）：Notion → Settings") == "轮换 Notion token"
-    assert eb.short_title("后台任务：派活、台账、做完回到原对话") == "后台任务：派活、台账、做完回到原对话"
+    assert eb.short_title("1 第 0 步 · 原型 + 定接口：分支 `sync-layer`，`app/sync/`（队列、版本号、重试 / 回滚）+ iOS 和 Android 两端；分享页") \
+        == "第 0 步 · 原型 + 定接口"
+    assert eb.short_title("拍板 · 换图标、定配色、改应用名 （出处：下一个 session（9/28 16:35））") == "换图标、定配色、改应用名"
+    assert eb.short_title("**Mia：轮换测试服务器的密钥**（她说自己来）：控制台 → 设置") == "轮换测试服务器的密钥"
+    assert eb.short_title("离线队列：排队、重试、做完回到原页面") == "离线队列：排队、重试、做完回到原页面"
 
 
 def test_sync_and_board(board_env):
     assert eb.sync() is None
     b = eb.board()
-    assert b["main"] == [{"name": "内核", "done": 1, "total": 3}, {"name": "群聊和 Agents", "done": 0, "total": 1}]
-    assert "三种回合 + 工具表 + 基本关卡" in b["mainNote"]
+    assert b["main"] == [{"name": "同步层", "done": 1, "total": 3}, {"name": "分享和协作", "done": 0, "total": 1}]
+    assert "三种冲突 + 合并表 + 基本校验" in b["mainNote"]
     # 这周做完：主线第 0 步（条目里写了今天）+ 三件有期限的（标题里的日子是今天）；设计系统那条是 30 天前的节
     assert b["weekDone"] == 2
     assert b["todo"] == 5 and b["wait"] == 3  # 主线的 3 条 + ① ③；等 Mia 定、拍板、Mia 看样张
     by = {x["name"]: x for x in b["lines"]}
-    assert by["待办合进 Grava「今天」"]["status"] == "doing"
-    assert (by["待办合进 Grava「今天」"]["done"], by["待办合进 Grava「今天」"]["total"]) == (1, 5)
+    assert by["离线模式合进主线"]["status"] == "doing"
+    assert (by["离线模式合进主线"]["done"], by["离线模式合进主线"]["total"]) == (1, 5)
     assert "设计系统" in {x["name"] for x in b["older"]}  # 30 天前的线收进「更早的线」
     cols = {c["key"]: c for c in b["columns"]}
     assert cols["wait"]["count"] == 3 and cols["done"]["count"] == 2
-    assert cols["wait"]["cards"][0]["tags"][0]["text"] == "待办合进 Grava「今天」"
+    assert cols["wait"]["cards"][0]["tags"][0]["text"] == "离线模式合进主线"
 
 
 def bump(p, text: str) -> None:
@@ -153,13 +153,13 @@ def test_tick_keeps_identity_and_dates(board_env):
 
 def test_removed_section_keeps_done(board_env):
     eb.sync()
-    text = SAMPLE.split("## 待办合进")[0] + "## 设计系统" + SAMPLE.split("## 设计系统")[1]
+    text = SAMPLE.split("## 离线模式")[0] + "## 设计系统" + SAMPLE.split("## 设计系统")[1]
     bump(board_env, text)
     assert eb.sync() is None
     b = eb.board()
     assert b["weekDone"] == 2  # 整节挪走了，那节做完的照样算
     assert b["wait"] == 1      # 那节没做完的不再算
-    assert "待办合进 Grava「今天」" in {x["name"] for x in b["older"]}
+    assert "离线模式合进主线" in {x["name"] for x in b["older"]}
 
 
 def test_unchanged_file_is_not_reparsed(board_env, monkeypatch):
@@ -174,10 +174,10 @@ def test_unchanged_file_is_not_reparsed(board_env, monkeypatch):
 def test_line_items(board_env):
     eb.sync()
     b = eb.board()
-    lid = next(x["id"] for x in b["lines"] if x["name"] == "待办合进 Grava「今天」")
+    lid = next(x["id"] for x in b["lines"] if x["name"] == "离线模式合进主线")
     d = eb.line_items(lid)
     assert d["status"] == "doing"
-    assert [x["title"] for x in d["done"]] == ["三件有期限的已加进 Grava"]
+    assert [x["title"] for x in d["done"]] == ["三件有期限的已加进日程"]
     assert {x["state"] for x in d["wait"]} == {"wait"} and len(d["wait"]) == 2
     assert len(d["todo"]) == 2  # 搬走的、不做了的不列
     with pytest.raises(HTTPException):
@@ -187,17 +187,17 @@ def test_line_items(board_env):
 def test_renamed_section_is_the_same_line(board_env):
     eb.sync()
     before = eb.board()
-    bump(board_env, SAMPLE.replace("## 待办合进 Grava「今天」：三类 + 工程看板", "## 待办合进 Grava「今天」改名了：三类 + 工程看板"))
+    bump(board_env, SAMPLE.replace("## 离线模式合进主线：三类 + 冲突提示", "## 离线模式合进主线改名了：三类 + 冲突提示"))
     eb.sync()
     after = eb.board()
     assert after["weekDone"] == before["weekDone"]
-    assert "待办合进 Grava「今天」改名了" in {x["name"] for x in after["lines"]}
-    assert "待办合进 Grava「今天」" not in {x["name"] for x in after["lines"] + after["older"]}
+    assert "离线模式合进主线改名了" in {x["name"] for x in after["lines"]}
+    assert "离线模式合进主线" not in {x["name"] for x in after["lines"] + after["older"]}
 
 
 def test_reworded_done_item_counts_once(board_env):
     eb.sync()
-    bump(board_env, SAMPLE.replace("- [x] 三件有期限的已加进 Grava", "- [x] 把三件有截止日的事写进了 Grava 的日程层，改动号 115 到 117，能撤销"))
+    bump(board_env, SAMPLE.replace("- [x] 三件有期限的已加进日程", "- [x] 把三件有截止日的事写进了日程层，改动号 115 到 117，能撤销"))
     eb.sync()
     assert eb.board()["weekDone"] == 2
 

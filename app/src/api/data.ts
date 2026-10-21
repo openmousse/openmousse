@@ -1,6 +1,6 @@
 // app 其余页面的数据接口（server/data.py）。每一项的真源写在 data.py 顶部的表格里。
 import type {
-  ActivityEntry, AgentColor, ChatCard, DayInfo, HandoffCard, SearchHit, Application, Approval, AvatarConfig, FeedItem, Group, GroupIcon, InboxAction, InboxItem, InboxProposalInfo, InboxStatus, JournalEntry, MemoryItem, ModelsInfo, ProfileItem, SecurityInfo, SideChat, Task, TaskQuota, ThreadCards, UnreadSummary, UpcomingTask,
+  ActivityEntry, AgentColor, ChatCard, DayInfo, HandoffCard, SearchHit, Application, Approval, AvatarConfig, FeedItem, Group, GroupIcon, InboxAction, InboxCardItem, InboxItem, InboxProposalInfo, InboxStatus, JournalEntry, MemoryItem, ModelsInfo, ProfileItem, SecurityInfo, SideChat, Task, TaskQuota, ThreadCards, UnreadSummary, UpcomingTask,
 } from '../data/types';
 import { L } from '../lang';
 import { httpStatus, request } from './base';
@@ -69,7 +69,25 @@ function normalizeInbox(raw: Partial<InboxItem> & { id: string }): InboxItem {
     skill: proposalInfo(raw.skill),
     agent: proposalInfo(raw.agent),
     social: raw.social && typeof raw.social === 'object' ? raw.social : undefined,
+    ...cardItems(raw),
   };
+}
+
+/** 一张卡多条（items、itemsKind、caps）：没有就不带这几个字段（老服务器、普通的卡）。 */
+function cardItems(raw: Partial<InboxItem>): Pick<InboxItem, 'items' | 'itemsKind' | 'caps'> {
+  if (!Array.isArray(raw.items)) return {};
+  const str = (v: unknown) => (typeof v === 'string' ? v : '');
+  const items: InboxCardItem[] = raw.items.filter((x) => x && typeof x.id === 'string' && typeof x.text === 'string').map((x) => {
+    const c = x.check && typeof x.check === 'object' ? x.check : null;
+    return {
+      id: x.id, text: x.text, detail: str(x.detail),
+      check: c ? { state: str(c.state), text: str(c.text), ...(c.thread ? { thread: str(c.thread) } : {}), ...(c.day ? { day: str(c.day) } : {}), ...(c.message ? { message: str(c.message) } : {}) } : null,
+      default: x.default === 'reject' ? 'reject' : 'approve',
+      decision: x.decision === 'approve' || x.decision === 'reject' ? x.decision : null,
+      note: str(x.note), was: Array.isArray(x.was) ? x.was : [], data: x.data && typeof x.data === 'object' ? x.data : null,
+    };
+  });
+  return { items, itemsKind: str(raw.itemsKind), caps: Array.isArray(raw.caps) ? raw.caps.map(String) : [] };
 }
 
 /** 老服务器的一条审批，换成收件箱的样子（执行命令）。 */
@@ -92,7 +110,7 @@ function normalizeCard(raw: any): ChatCard | null {
   if (raw.kind === 'task') {
     return { ...raw, messageId: msgNum(raw.messageId), title: str(raw.title), step: str(raw.step), result: str(raw.result), minutes: num(raw.minutes) ?? 0,
       tools: num(raw.tools) ?? 0, round: num(raw.round) ?? 1, deliverable: Array.isArray(raw.deliverable) ? raw.deliverable.map(String) : [],
-      status: ['进行中', '完成', '失败', '已取消'].includes(raw.status) ? raw.status : '完成', timedOut: !!raw.timedOut } as ChatCard;
+      status: ['进行中', '完成', '失败', '已取消'].includes(raw.status) ? raw.status : '完成', timedOut: !!raw.timedOut, interrupted: !!raw.interrupted } as ChatCard;
   }
   if (raw.kind === 'project' && typeof raw.logId === 'number') {  // Agent 在回复里改了项目卡（server/projects.py）
     return { ...raw, messageId: msgNum(raw.messageId), title: str(raw.title), summary: str(raw.summary), action: str(raw.action), actor: str(raw.actor),
@@ -129,6 +147,8 @@ function normalizeCard(raw: any): ChatCard | null {
   return null;
 }
 export const cardOf = normalizeCard;
+/** 收件箱条目的样子补齐（群聊里「仅你可见」的卡是服务器给的条目 JSON，画之前照这里补一遍，api/groups.ts）。 */
+export const inboxOf = normalizeInbox;
 
 /** 未读摘要：只留 n > 0 的线程。回来的不像摘要（比如只有 {ok}）就返回 null，别拿它把本地的清空。 */
 /** 服务器给的消息 id 是 "db<数字>"（和对话记录里一样），老版本给过数字：都换成数字，store 拿它比新旧。 */
@@ -231,6 +251,15 @@ export const dataApi = {
     return { ...base, status: AFTER[action], decidedAt: now, note: note ?? base.note };
   },
 
+  /** 一张卡多条：「修改」一条（服务器按 note 重出这一条，回到没定）→ 改过以后的整张卡。409 / 422 的报错是服务器的原话。 */
+  reviseInboxItem: (id: string, xid: string, note: string) =>
+    request<{ item: Partial<InboxItem> & { id: string } }>(`/api/inbox/${encodeURIComponent(id)}/items/${encodeURIComponent(xid)}`, { method: 'POST', body: { action: 'revise', note }, timeoutMs: 120000 })
+      .then((j) => normalizeInbox(j.item)),
+  /** 一张卡多条：提交（decisions = 每条同意还是拒绝；只做同意的，一条都没同意就是拒绝）→ 定下来的那张卡。 */
+  submitInboxItems: (id: string, decisions: Record<string, 'approve' | 'reject'>) =>
+    request<{ item: Partial<InboxItem> & { id: string } }>(`/api/inbox/${encodeURIComponent(id)}`, { method: 'POST', body: { action: 'submit', decisions }, timeoutMs: 120000 })
+      .then((j) => normalizeInbox(j.item)),
+
   /** 未读摘要。老服务器上没有这个接口：返回 null（serverSupport.unread 变成 false，之后不再请求）。 */
   unread: async (): Promise<UnreadSummary | null> => {
     if (serverSupport.unread === false) return null;
@@ -271,10 +300,14 @@ export const dataApi = {
   task: (id: string) => request<{ task: Task }>(`/api/tasks/${id}`, { timeoutMs: 60000 }).then((j) => j.task),
   cancelTask: (id: string) => request(`/api/tasks/${id}/cancel`, { method: 'POST', timeoutMs: 60000 }),
   reviseTask: (id: string, note: string) => request(`/api/tasks/${id}/revise`, { method: 'POST', body: { note }, timeoutMs: 60000 }),
+  /** 重派（只有自己的内核有）：被重启打断的、没做成的、到点停的、停掉的照原来的说明再派一个新的，结果回到原对话，算今天的额度。
+   *  不用重派的服务器回 409，报错里是它的原话。→ 新任务的 id */
+  retryTask: (id: string) => request<{ id: string }>(`/api/tasks/${id}/retry`, { method: 'POST', timeoutMs: 60000 }).then((j) => j.id),
 
   activity: () => request<{ activity: ActivityEntry[] }>('/api/activity', { timeoutMs: 60000 }).then((j) => j.activity),
 
   profile: () => request<{ items: ProfileItem[]; file: string }>('/api/profile'),
+  /** 改一条（text = null 删掉）：服务器写成你今天确认的版本，旧的一版另存（标签由服务器定，app 不写） */
   editProfile: (id: string, text: string | null) => request(`/api/profile/${id}`, { method: 'PUT', body: { text } }),
 
   memories: () => request<{ items: MemoryItem[]; file: string; updated: string }>('/api/memories'),

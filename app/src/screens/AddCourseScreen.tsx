@@ -127,7 +127,7 @@ function Step1({ c, onDone }: { c: study.Course | null; onDone: (name: string, c
     <View style={{ gap: space.md }}>
       <T v="title" style={{ fontWeight: '700' }}>{L('课程信息', 'About the course')}</T>
       <T v="callout" color={t.ink2}>{L('保存为课程档案，生成学习页、闪卡和小测时都会参考，可随时修改。', 'Saved as the course profile; every study page, flashcard and quiz uses it.')}</T>
-      <TextInput value={name} onChangeText={setName} placeholder={L('课程名称，例如：行为经济学', 'Course name, e.g. Behavioural Economics')} placeholderTextColor={t.ink3} accessibilityLabel={L('课程名称', 'Course name')}
+      <TextInput value={name} onChangeText={setName} placeholder={L('课程名称，例如：线性代数', 'Course name, e.g. Linear Algebra')} placeholderTextColor={t.ink3} accessibilityLabel={L('课程名称', 'Course name')}
         style={[type.body, styles.input, { backgroundColor: t.surface, color: t.ink }]} />
       <TextInput value={term} onChangeText={setTerm} placeholder={L('学校和学期（可选）', 'School and term (optional)')} placeholderTextColor={t.ink3}
         style={[type.body, styles.input, { backgroundColor: t.surface, color: t.ink }]} />
@@ -135,7 +135,7 @@ function Step1({ c, onDone }: { c: study.Course | null; onDone: (name: string, c
       <View style={styles.wrap}>{EXAMS().map(([k, label]) => <Chip key={k} label={label} on={exam.includes(k)} onPress={() => setExam(flip(exam, k))} />)}</View>
       <SectionLabel>{L('学习偏好', 'How you like to learn')}</SectionLabel>
       <View style={styles.wrap}>{LEARNS().map(([k, label]) => <Chip key={k} label={label} on={learn.includes(k)} onPress={() => setLearn(flip(learn, k))} />)}</View>
-      <TextInput value={notes} onChangeText={setNotes} multiline placeholder={L('补充说明（可选）：例如已学过微观经济学，未学过前景理论', "Anything else (optional): e.g. I know micro but not prospect theory")} placeholderTextColor={t.ink3}
+      <TextInput value={notes} onChangeText={setNotes} multiline placeholder={L('补充说明（可选）：例如已学过微积分，未学过特征值', "Anything else (optional): e.g. I know calculus but not eigenvalues")} placeholderTextColor={t.ink3}
         style={[type.body, styles.input, { backgroundColor: t.surface, color: t.ink, minHeight: 80, textAlignVertical: 'top' }]} />
       <Btn label={busy ? L('正在创建…', 'Creating…') : L('下一步：现有材料', 'Next: what you have')} onPress={next} />
     </View>
@@ -185,7 +185,7 @@ function Step2({ c, setC, reload, onNext }: { c: study.Course; setC: (c: study.C
     <Card style={{ padding: 0, borderWidth: 1.5, borderColor: have[k] ? t.cyan : t.surface }}>
       <Pressable onPress={() => toggle(k)} accessibilityRole="button" accessibilityState={{ selected: !!have[k] }} style={styles.hhead}>
         <View style={{ flex: 1, gap: 2 }}><T v="headline" style={{ fontSize: 15 }}>{title}</T><T v="caption" color={t.ink3} style={{ fontSize: 12.5 }}>{sub}</T></View>
-        <View style={[styles.check, { borderColor: have[k] ? t.cyan : t.ink3, backgroundColor: have[k] ? t.cyan : t.surface }]}>{have[k] ? <Check size={12} color="#fff" /> : null}</View>
+        <View style={[styles.check, { borderColor: have[k] ? t.cyan : t.ink3, backgroundColor: have[k] ? t.cyan : t.surface }]}>{have[k] ? <Check size={12} color={t.onCyan} /> : null}</View>
       </Pressable>
       {have[k] ? <View style={{ paddingHorizontal: space.md, paddingBottom: space.md, gap: space.sm }}>{body}</View> : null}
     </Card>
@@ -456,7 +456,7 @@ function Step5({ c, reload, onDone }: { c: study.Course; reload: () => Promise<v
             return (
               <Pressable key={s.id} onPress={() => setPick((p) => { const n = new Set(p); if (on) n.delete(s.id); else n.add(s.id); return n; })} accessibilityRole="checkbox" accessibilityState={{ checked: on }}
                 style={[styles.genRow, i > 0 && { borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: t.line }]}>
-                <View style={[styles.box, { borderColor: on ? t.cyan : t.ink3, backgroundColor: on ? t.cyan : t.surface }]}>{on ? <Check size={12} color="#fff" /> : null}</View>
+                <View style={[styles.box, { borderColor: on ? t.cyan : t.ink3, backgroundColor: on ? t.cyan : t.surface }]}>{on ? <Check size={12} color={t.onCyan} /> : null}</View>
                 <T v="body" style={{ flex: 1, fontSize: 15 }}>{`S${s.n} ${s.topic}`}</T>
               </Pressable>
             );
@@ -465,7 +465,7 @@ function Step5({ c, reload, onDone }: { c: study.Course; reload: () => Promise<v
       ) : !jobs.length ? <T v="callout" color={t.ink3}>{L('暂无材料齐全的节。', 'No session has all its materials yet.')}</T> : null}
       {ready.length ? (
         <Pressable onPress={() => setCards((x) => !x)} accessibilityRole="checkbox" accessibilityState={{ checked: cards }} style={[styles.genRow, { paddingHorizontal: 0 }]}>
-          <View style={[styles.box, { borderColor: cards ? t.cyan : t.ink3, backgroundColor: cards ? t.cyan : t.surface }]}>{cards ? <Check size={12} color="#fff" /> : null}</View>
+          <View style={[styles.box, { borderColor: cards ? t.cyan : t.ink3, backgroundColor: cards ? t.cyan : t.surface }]}>{cards ? <Check size={12} color={t.onCyan} /> : null}</View>
           <T v="body" style={{ flex: 1, fontSize: 15 }}>{L('同时生成闪卡和小测', 'Flashcards and quiz too')}</T>
         </Pressable>
       ) : null}
@@ -480,7 +480,7 @@ function Step5({ c, reload, onDone }: { c: study.Course; reload: () => Promise<v
 
 const TIPS = () => ({
   2: L('在上方选择课程网站，「位置」会随之更新。如未找到，请发送截图，我会指出具体位置。', "Pick your course site above and \"Where\" follows it. If you can't find something, send me a screenshot."),
-  1: L('可逐项填写，也可直接告诉我，例如「这学期的行为经济学，期末闭卷，学过微观」。', 'Fill it in, or tell me directly, e.g. "Behavioural economics, closed-book final, I know micro".'),
+  1: L('可逐项填写，也可直接告诉我，例如「这学期的线性代数，期末闭卷，学过微积分」。', 'Fill it in, or tell me directly, e.g. "Linear algebra, closed-book final, I know calculus".'),
   3: L('如有错误请直接说明，我会修改并标黄；修改可撤销。', "Say what's wrong; I'll fix it and highlight the change. It can be undone."),
   4: L('缺少的阅读材料我可以查找公开版本；如未找到，再由你决定是否跳过。', "I can look for public copies of missing readings."),
   5: L('每生成完一节，我会在此通知。如需调整学习页的写法，请直接告诉我。', "I'll post here when each session is done. To change how the notes are written, tell me here."),

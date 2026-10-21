@@ -16,6 +16,7 @@ import engine
 from engine import media, store, tools, tts
 from engine.loop import ToolFailure
 from evals.fakemedia import FAKE_MP3, PCM_SECONDS, FakeMedia
+from stored_values import ASSISTANT_ROLE
 from test_engine import FakeModel
 from test_engine_events import collect, msg_row, until
 
@@ -169,7 +170,7 @@ def test_spoken_clip_hangs_on_the_reply_after_a_real_turn(env, conf, server_json
     assert len(shown) == 1 and shown[0]["kind"] == "audio" and shown[0]["name"].endswith(".mp3") and shown[0]["status"] == "generated"
     assert attachment(shown[0]["id"])["message_id"] == r.reply_id  # app 在回复下面显示、点开能放
     h = chat.history("t-tts-chat")
-    assert any(m.get("attachments") for m in h["messages"] if m["role"] == "grava")
+    assert any(m.get("attachments") for m in h["messages"] if m["role"] == ASSISTANT_ROLE)
 
 
 def test_voice_replies_per_conversation(env, conf, server_json, fx, monkeypatch):

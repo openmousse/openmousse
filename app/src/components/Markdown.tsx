@@ -1,12 +1,13 @@
-// Grava 的回复是 Markdown（粗体、列表、代码、链接、表格），按主题样式渲染，不再露出 ** 和反引号。
+// 助手的回复是 Markdown（粗体、列表、代码、链接、表格），按主题样式渲染，不再露出 ** 和反引号。
 // 用原版 react-native-markdown-display（纯 JS）。@ronradtke 那个 fork 依赖 @react-native-vector-icons（原生字体模块），热更新到没有它的包上会启动即崩（2026-09-23 的事故）。
 import React, { useMemo } from 'react';
 import { Linking, Platform } from 'react-native';
 import MarkdownDisplay, { MarkdownIt } from 'react-native-markdown-display';
 import { radius, type, useTheme } from '../theme';
 
-const md = MarkdownIt({ typographer: false, linkify: true, breaks: true });
-const mono = Platform.select({ ios: 'Menlo', android: 'monospace', default: 'ui-monospace, SFMono-Regular, Menlo, monospace' });
+// 能选字的回复（SelectableMarkdown.tsx）用同一个解析器和等宽字体：两边排出来的段落、链接一样
+export const md = MarkdownIt({ typographer: false, linkify: true, breaks: true });
+export const mono = Platform.select({ ios: 'Menlo', android: 'monospace', default: 'ui-monospace, SFMono-Regular, Menlo, monospace' });
 
 const openLink = (url: string) => { Linking.openURL(url).catch(() => {}); return false; };
 

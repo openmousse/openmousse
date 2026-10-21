@@ -6,7 +6,7 @@
   A2A 名片是另一份（第三层的 a2a.py），用同一把钥匙、同一个 sign_jws()。
 - 服务器之间的请求：RFC 9421 HTTP Message Signatures 的一个固定用法——签 @method、@path、content-digest（RFC 9530）和
   mousse-to（收件人 kid），带 created / nonce / keyid，alg ed25519。authenticate() 只认人：没签名 = 陌生人；签了就必须全对，否则 401。
-- 表都在 grava.db：friends / friend_invites / friend_messages / social_nonces / social_settings（第一次用到时建）。
+- 表都在 mousse.db：friends / friend_invites / friend_messages / social_nonces / social_settings（第一次用到时建）。
 - 档位：close 亲近 / friend 朋友 / mate 同学 / stranger 陌生（表里没有的都算陌生），每档能问到什么存 social_settings.tiers。
   健康和世界树不是档位里的键：没有能打开的开关。
 - 地址（2026-10-05）：根地址可以带一段路径前缀，中继给的地址就是 https://relay.openmousse.ai/u/<kid>（见 relay.py）。
@@ -942,7 +942,7 @@ async def authenticate(request: Request, limit: int = BODY_MAX) -> tuple[bytes, 
 
 SEAL_TYPE = "application/openmousse-sealed+json"
 SEAL_INFO = b"openmousse-seal/1"
-SEALED_PATHS = ("/f/msg", "/f/hello", "/f/a2a", "/f/a2a/push")  # 信封里只能装这几个请求
+SEALED_PATHS = ("/f/msg", "/f/hello", "/f/a2a", "/f/a2a/push", "/f/group")  # 信封里只能装这几个请求（/f/group：好友群，friendgroup.py）
 
 
 def _seal_keys(shared: bytes, epk: bytes, rpk: bytes) -> tuple[bytes, bytes]:

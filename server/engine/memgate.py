@@ -17,7 +17,7 @@
   GATE（主人自己的话）：经历 write；叶子 add / edit write、forget propose（掏空了回不来）；档案 propose；做法 propose。
   别人的话（outside）：经历 write（记下发生过什么，比如名片 Agent 的 card_log）；叶子 hold；档案、做法 deny（要进档案得先成叶子、再修剪）。
   回合：owner（主人回合）照 GATE；background（没人在看、替主人做的：对话结束的写回、skill 回看）同 owner，但叶子只给写回用
-  （写回自己挑、按规则.md 打分、最多 3 条）；cyber（赛博回合，Leo 10/16：赛博有自己的知识库、记忆、工具和技能，会学习成长）：
+  （写回自己挑、按规则.md 打分、最多 3 条）；cyber（赛博回合，10/16：赛博有自己的知识库、记忆、工具和技能，会学习成长）：
   它自己的那份（own：它的经历、它的知识库）write，它自己的做法（技能）propose；主人的叶子 hold（觉得该进主人世界树的先进待定）、
   主人的档案和做法 deny；outsider（外人回合）一律 deny（它本来就零工具；它引出来的内容要记，走待定）。
 读写表 TABLE（画布第 10 张的草案，照它定）：
@@ -341,3 +341,37 @@ def memory_table():
 def dump() -> str:
     """命令行看一眼（调试用）：闸和读写表的 JSON。"""
     return json.dumps(table(), ensure_ascii=False, indent=1)
+
+
+# —— 密钥 ——————————————————————————————————————————————————————————————————————
+# 开源包在 store.add 里认密钥，叶子上记隐去了几处。作者的 memory_tree.py 不经过那里。
+# 这里只在 builtin、而且选的是那份脚本时，交给它之前先换掉。OpenClaw 原样返回。
+
+def scrub(text: str) -> str:
+    """builtin 才把密钥换成占位符。不是 builtin、或包太旧没有 secrets：原样返回。"""
+    if not text:
+        return text
+    try:
+        import claw
+    except ImportError:
+        return text
+    if not claw.is_builtin():
+        return text
+    try:
+        from openmousse_tree.secrets import redact
+    except ImportError:
+        return text
+    return redact(text)[0]
+
+
+def scrub_script(text: str) -> str:
+    """工作区那份脚本不经过 store.add。开源包这条路原样交出去，由包自己记「隐去过几处」（这里先换掉的话，计数会变成 0）。"""
+    if not text:
+        return text
+    try:
+        import sources
+    except ImportError:
+        return text
+    if sources.tree_script() is None:
+        return text
+    return scrub(text)

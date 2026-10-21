@@ -6,6 +6,7 @@
 import React, { useState } from 'react';
 import { Linking, Pressable, StyleSheet, Switch, TextInput, View } from 'react-native';
 import { agentName } from '../brand';
+import { isOwner } from '../data/owner';
 import type { RememberGroup, ScheduleEntry } from '../data/types';
 import * as sched from '../api/schedule';
 import { L } from '../i18n';
@@ -484,7 +485,7 @@ export function ItemEditor({ e, day, past, close, onChanged }: { e?: ScheduleEnt
   const [aStart, setAStart] = useState(e?.actualStart ?? '');
   const [aEnd, setAEnd] = useState(e?.actualEnd ?? '');
   const [busy, setBusy] = useState(false);
-  const who = e?.by && e.by !== 'leo' ? (groups.find((g) => g.id === e.by)?.name ?? (e.by === 'main' ? agentName() : e.by)) : '';
+  const who = e?.by && !isOwner(e.by) ? (groups.find((g) => g.id === e.by)?.name ?? (e.by === 'main' ? agentName() : e.by)) : '';
   const step = (v: string, set: (x: string) => void, n: number, fallback: string) => {
     const m = toMin(v) ?? toMin(fallback) ?? 9 * 60;
     set(fromMin(m + n));

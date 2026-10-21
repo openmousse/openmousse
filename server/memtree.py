@@ -20,7 +20,7 @@ memory_tree 的函数都拿跨进程锁、会先按库的最新状态重建索�
   POST /api/tree/platforms {name}    加一个平台（DeepSeek、通义千问、Kimi……）：发一个新令牌，重启世界树服务
   DELETE /api/tree/platforms/{id}    删掉一个平台：它的地址立即作废，重启世界树服务
 
-两种世界树都能接：作者实例的 workspace scripts/memory_tree.py，或安装器装的开源版（treelib.py；0.3 起也有枝、规则和每周修剪，
+两种世界树都能接：工作区里自己写的 scripts/memory_tree.py，或安装器装的开源版（treelib.py；0.3 起也有枝、规则和每周修剪，
 每周修剪的卡在 treeprune.py）。
 
 活动记录由 memory_tree 自己写，只写做了什么、不写记忆内容；actor 是「你 · 世界树」。这里不打印、不记录叶子的内容。
@@ -43,17 +43,18 @@ from pydantic import BaseModel
 import chat
 import sources
 from chat import _lock, db
-from config import settings
+from config import OWNER_IDS, settings
 from i18n import L
+from stored_values import TREE_AGENT_PREFIX, TREE_SOURCE
 
 router = APIRouter()
 ID_RE = re.compile(r"[\w-]{1,64}")
 ACTIONS = ("confirm", "forget", "move")
-# 各 AI 平台（世界树 MCP 的接入名 → 显示名）；Grava 自己的 Agent 写的是 grava-<agent id>
+# 各 AI 平台（世界树 MCP 的接入名 → 显示名）；这台服务器自己的 Agent 写的是 TREE_AGENT_PREFIX + <agent id>
 PLATFORMS = {"claude": "Claude", "chatgpt": "ChatGPT", "gemini": "Gemini", "claude-code": "Claude Code", "notion": "Notion",
              "deepseek": "DeepSeek", "qwen": "Qwen", "kimi": "Kimi"}
 PLATFORM_ID = re.compile(r"[a-z][a-z0-9-]{1,23}")
-APP_PLATFORMS = ("openmousse", "grava", "app")  # 叶子的出处是这台服务器上的对话（messages 表）：能跳回去、能回原话核对
+APP_PLATFORMS = ("openmousse", TREE_SOURCE, "app")  # 叶子的出处是这台服务器上的对话（messages 表）：能跳回去、能回原话核对
 ZEN = "zen"  # 出处是 Zen 想完的一个主题（think.py，2026-10-19）：thread = 主题 id（tp-…），message = 原话出自的那条想法（th-…）或聊聊里的消息 id
 # 出处不是一个 AI 平台、是这台服务器上的别处（显示名）：Zen；别人说的、主人在待定里同意了的（memhold.py，2026-10-19）
 PLACES = {ZEN: "Zen", "friend": ("朋友", "Friend"), "a2a": ("别人的 Agent", "Someone's agent"), "group": ("群聊", "Group chat")}
@@ -75,14 +76,14 @@ def agent_names() -> dict[str, str]:
     return {**names, "main": settings.app_name}
 
 
-AGENT_PREFIXES = ("grava-", "openclaw-")  # 作者的实例写 grava-<id>；开源版的 memory-tree skill 写 openclaw-<id>
-OWNER_SOURCES = ("leo", "owner")  # 用户自己写的：手机上直接写的笔记（作者的实例）/ mousse-tree 管理页、命令行（开源版）；记忆检索按意思搜时往前排
+AGENT_PREFIXES = (TREE_AGENT_PREFIX, "openclaw-")  # 工作区那份世界树脚本写 TREE_AGENT_PREFIX + <id>；开源版的 memory-tree skill 写 openclaw-<id>
+OWNER_SOURCES = OWNER_IDS  # 用户自己写的（leo：工作区那份世界树里手机上直接写的笔记 / owner：mousse-tree 管理页、命令行）；记忆检索按意思搜时往前排
 
 
 def agent_of(source: str, agents: dict[str, str] | None = None) -> str | None:
-    """grava-<id> / openclaw-<id> → 那个 Agent 的 id（grava / grava-main / openclaw-main → main）；内核和 /mcp 经 MOUSSE_AGENT
+    """TREE_AGENT_PREFIX + <id> / openclaw-<id> → 那个 Agent 的 id（TREE_SOURCE、前缀 + main、openclaw-main → main）；内核和 /mcp 经 MOUSSE_AGENT
     写的就是 Agent id 本身（main、g-…，agents 里有它才算）；别的来源不是 Agent。"""
-    if source == "grava":
+    if source == TREE_SOURCE:
         return "main"
     prefix = next((p for p in AGENT_PREFIXES if source.startswith(p)), None)
     if prefix:
@@ -162,7 +163,7 @@ def snapshot() -> dict:
     mt = sources.memory_tree
     agents = agent_names()
     branch_col = "branch" if getattr(mt, "HAS_BRANCHES", True) else "NULL AS branch"  # 开源版世界树没有枝
-    prov = getattr(mt, "HAS_PROVENANCE", False)  # 树有出处和「用得上的时候」这几列（开源版 0.4、作者那份 10/17 起）
+    prov = getattr(mt, "HAS_PROVENANCE", False)  # 树有出处和「用得上的时候」这几列（开源版 0.4、工作区那份 10/17 起）
     more = ", quote, platform, thread, message, cues" if prov else ""
     with contextlib.closing(mt.connect()) as conn:  # connect() 先按库的最新状态刷新索引
         branches = mt.branch_tree(conn)
@@ -271,15 +272,14 @@ def guide(pid: str) -> tuple[str, list[str]]:
 
 
 def tree_unit() -> str | None:
-    """世界树的 systemd 用户服务：作者的实例叫 grava-tree，安装器装的叫 mousse-tree。"""
-    for unit in ("grava-tree", "mousse-tree"):
-        try:
-            r = subprocess.run(["systemctl", "--user", "show", "-p", "LoadState", "--value", f"{unit}.service"], capture_output=True, text=True, timeout=5)
-        except (OSError, subprocess.TimeoutExpired):
-            return None
-        if r.stdout.strip() == "loaded":
-            return unit
-    return None
+    """世界树的 systemd 用户服务（装上了才算）：安装器装的叫 mousse-tree.service；叫别的名字写 server.json 的 connectors.units.tree。"""
+    from connectors import unit_name  # 延迟导入：connectors 也要读这个模块
+    unit = unit_name("tree")
+    try:
+        r = subprocess.run(["systemctl", "--user", "show", "-p", "LoadState", "--value", unit], capture_output=True, text=True, timeout=5)
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+    return unit if r.stdout.strip() == "loaded" else None
 
 
 def restart_tree(port: int) -> bool:
@@ -288,7 +288,7 @@ def restart_tree(port: int) -> bool:
     if not unit:
         return False
     try:
-        subprocess.run(["systemctl", "--user", "restart", f"{unit}.service"], capture_output=True, timeout=20, check=True)
+        subprocess.run(["systemctl", "--user", "restart", unit], capture_output=True, timeout=20, check=True)
     except (OSError, subprocess.SubprocessError):
         return False
     for _ in range(24):
@@ -301,7 +301,7 @@ def restart_tree(port: int) -> bool:
 
 
 def storage_of(mt: ModuleType) -> dict:
-    """真身放在哪：开源版自己报；作者的实例是 Obsidian 库里的笔记（memory_tree.NOTES）。"""
+    """真身放在哪：开源版自己报；工作区那份脚本是 Obsidian 库里的笔记（memory_tree.NOTES）。"""
     if hasattr(mt, "storage"):
         return mt.storage()
     notes = getattr(mt, "NOTES", None)

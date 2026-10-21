@@ -1,11 +1,12 @@
 // 我 → 世界树（server/memtree.py）：你在 Claude、ChatGPT、Gemini 和各个 Agent 那里说过的关于你的事，一条一片叶子，挂在枝上。
 // 顶上是等你确认的（逐条确认 / 忘记）；下面按枝看（主干 = 档案 → 大枝 → 小枝，点开看叶子）或按来源看。
-// 点一片叶子：弹层标题是「类型 · 挂在哪根枝」，里面是全文、来源 · 日期、标签，确认 / 挪到别的枝 / 忘记。
-// 真身是笔记文件夹（作者的实例：Obsidian 库里的「世界树」；开源版可以是笔记文件夹或服务器上的 tree.db），这里只是看和整理。
+// 点一片叶子：弹层标题是「类型 · 挂在哪根枝」，里面是全文、来源 · 日期、标签，「出处」（原话、来自哪次对话、打开原对话）、
+// 「用得上的时候」（cues），确认 / 修改（= 挪到别的枝）/ 忘记（2026-10-20 设计第 21 张；记忆页的年轮、待确认、按枝看都开这一个）。
+// 真身是笔记文件夹（工作区里自己写的世界树脚本：比如 Obsidian 库里的「世界树」；开源版可以是笔记文件夹或服务器上的 tree.db），这里只是看和整理。
 // 开源版世界树没有枝：不显示「按枝」和挪枝，只按来源看。最上面是「接到你的 AI」（components/TreeConnect.tsx）。
 import React, { useCallback, useEffect, useState } from 'react';
-import { Pressable, ScrollView, StyleSheet, View } from 'react-native';
-import { useNavigation } from '@react-navigation/native';
+import { Linking, Pressable, ScrollView, StyleSheet, View } from 'react-native';
+import { useNavigation, useRoute } from '@react-navigation/native';
 import { loadConnect } from '../api/tree';
 import { agentName } from '../brand';
 import { Check, ChevronRight, GitBranch, IdCard, Trash2 } from '../components/icons';
@@ -14,29 +15,30 @@ import { useSheet } from '../components/Sheet';
 import { SourcePill } from '../components/SourceBadge';
 import { ConnectSection } from '../components/TreeConnect';
 import { Btn, Card, Disclosure, NavHeader, Pill, PullRefresh, Screen, SectionLabel, Segmented, T, showError } from '../components/ui';
-import type { TreeBranch, TreeConnect, TreeInfo, TreeLeaf, TreeStorage } from '../data/types';
+import type { TreeBranch, TreeConnect, TreeInfo, TreeLeaf, TreeSaid, TreeStorage } from '../data/types';
 import { L, lang } from '../i18n';
+import { navigationRef } from '../navigation';
 import { useStore } from '../store';
 import { radius, space, useTheme } from '../theme';
 import { needsUpdate } from '../api/version';
 
 // —— 文字 ————————————————————————————————————————————————————————————
 
-const kindLabel = (k: TreeLeaf['kind']) => ({ fact: L('事实', 'Fact'), preference: L('偏好', 'Preference'), decision: L('决定', 'Decision'), event: L('近况', 'Update') })[k] ?? k;
+export const kindLabel = (k: TreeLeaf['kind']) => ({ fact: L('事实', 'Fact'), preference: L('偏好', 'Preference'), decision: L('决定', 'Decision'), event: L('近况', 'Update') })[k] ?? k;
 const parts = (iso: string) => iso.split('-').map(Number);
 /** 列表里的日子：9/26。 */
-const shortDate = (iso: string) => { const [, m, d] = parts(iso); return m && d ? `${m}/${d}` : ''; };
+export const shortDate = (iso: string) => { const [, m, d] = parts(iso); return m && d ? `${m}/${d}` : ''; };
 /** 弹层里的日子：9月26日（不是今年的带年份）。 */
-function longDate(iso: string): string {
+export function longDate(iso: string): string {
   const [y, m, d] = parts(iso);
   if (!y || !m || !d) return '';
   const same = y === new Date().getFullYear();
   return lang() === 'zh' ? `${same ? '' : `${y}年`}${m}月${d}日` : new Date(y, m - 1, d).toLocaleDateString('en', same ? { month: 'short', day: 'numeric' } : { year: 'numeric', month: 'short', day: 'numeric' });
 }
 /** 主干（档案）的叫法。 */
-const trunkLabel = (name: string) => L(`${name}（主干）`, `${name} (trunk)`);
+export const trunkLabel = (name: string) => L(`${name}（主干）`, `${name} (trunk)`);
 /** 列表里一片叶子的标题：memoryTitle 取得出完整的一句（冒号前那段、第一句）就用它；要截断时用去掉括号的原文，最多两行。 */
-const leafTitle = (text: string) => { const t = memoryTitle(text); return t.endsWith('…') ? clean(text) || t : t; };
+export const leafTitle = (text: string) => { const t = memoryTitle(text); return t.endsWith('…') ? clean(text) || t : t; };
 /** 展开一根枝时上面那行小字：它管什么，再加上哪个 Agent 记下的默认挂在这里。 */
 function branchNote(b: TreeBranch): string {
   const who = b.agents.map((a) => a.name);
@@ -46,12 +48,12 @@ function branchNote(b: TreeBranch): string {
   return [about, agents].filter(Boolean).join(lang() === 'zh' ? '' : ' ');
 }
 /** 中文里夹英文名字时前后空一格（「ChatGPT 记下的」「健身规划记下的」）。 */
-const spaced = (name: string) => (/[A-Za-z0-9]$/.test(name) ? `${name} ` : name);
+export const spaced = (name: string) => (/[A-Za-z0-9]$/.test(name) ? `${name} ` : name);
 
 // —— 小零件 ——————————————————————————————————————————————————————————
 
 /** 最早是谁记下的：Agent 用它自己的颜色，AI 平台和你自己是中性色。 */
-function OriginPill({ leaf }: { leaf: TreeLeaf }) {
+export function OriginPill({ leaf }: { leaf: TreeLeaf }) {
   return leaf.agent ? <SourcePill source={leaf.agent} label={leaf.originName} /> : <Pill label={leaf.originName} />;
 }
 
@@ -66,7 +68,7 @@ function SmallBtn({ label, onPress, primary, disabled }: { label: string; onPres
 }
 
 /** 一片叶子：一句标题（最多两行），下面一行小字 = 来源 · 日子（按来源看时换成挂在哪根枝）；待确认的前面标着「待确认」。点一下看全文和操作。 */
-function LeafRow({ leaf, where, first }: { leaf: TreeLeaf; where?: string; first?: boolean }) {
+export function LeafRow({ leaf, where, first }: { leaf: TreeLeaf; where?: string; first?: boolean }) {
   const t = useTheme();
   const open = useLeafSheet();
   return (
@@ -84,8 +86,8 @@ function LeafRow({ leaf, where, first }: { leaf: TreeLeaf; where?: string; first
 
 // —— 弹层：一片叶子、忘记、挪枝 ——————————————————————————————————————————
 
-/** 打开某片叶子的弹层（叶子列表、等你确认的卡都用它）。 */
-function useLeafSheet() {
+/** 打开某片叶子的弹层（叶子列表、等你确认的卡、记忆页的年轮都用它）。 */
+export function useLeafSheet() {
   const sheet = useSheet();
   const { tree } = useStore();
   const trunk = tree?.kind === 'ok' ? tree.data.trunk.name : '';
@@ -95,7 +97,89 @@ function useLeafSheet() {
   return (leaf: TreeLeaf) => sheet.open({ title: title(leaf), content: (close) => <LeafSheet leaf={leaf} close={close} /> });
 }
 
-function LeafSheet({ leaf, close }: { leaf: TreeLeaf; close: () => void }) {
+/** 出处那一行的「在哪说的」：主对话 / 和健身的对话 / Zen 的主题 / ChatGPT（别的平台写它的名字）。 */
+function saidWhere(said: TreeSaid): string {
+  const link = said.link;
+  if (link && 'thread' in link) {
+    if (link.thread === 'main') return L('主对话', 'the main chat');
+    const name = said.threadName || said.platformName;
+    return name ? L(`和${spaced(name)}的对话`, `chat with ${name}`) : '';
+  }
+  if (link && 'topic' in link) return L('Zen 的主题', 'a Zen topic');
+  if (link && 'url' in link) {
+    const host = /^https?:\/\/([^/?#]+)/i.exec(link.url)?.[1]?.replace(/^www\./, '') ?? '';
+    return [said.platformName, host].filter(Boolean).filter((x, i, a) => a.indexOf(x) === i).join(' · ');
+  }
+  return said.platformName;
+}
+
+/** 打开出处：这台服务器上的对话 → 那天的记录、滚到那条；Zen → 那个主题；网址 → 浏览器。弹层在导航器外面，用 navigationRef。 */
+function openSaid(link: NonNullable<TreeSaid['link']>, close: () => void) {
+  if ('url' in link) { Linking.openURL(link.url).catch((e) => showError(L('无法打开', "Couldn't open it"), e)); return; }
+  close();
+  if ('thread' in link) navigationRef.navigate('HistoryDay', { thread: link.thread, day: link.day, focus: link.messageId ? `db${link.messageId}` : undefined });
+  else navigationRef.navigate('ThinkTalk', { id: link.topic });
+}
+
+/**
+ * 「出处」：原话、来自哪天哪次对话、打开原对话（2026-10-20，设计第 21 张）。中性色：金色只给时段，琥珀只给等你点头。
+ * 附原话的是你本人说的（tier quoted）；别人说的、你在待定里同意了的也带原话，但算推断（tier inferred），照实写。
+ */
+function Provenance({ leaf, close }: { leaf: TreeLeaf; close: () => void }) {
+  const t = useTheme();
+  const said = leaf.said ?? null;
+  const quote = leaf.quote ?? '';
+  if (!said && !quote) return null;
+  const day = said?.link && 'day' in said.link ? said.link.day : leaf.observedAt;
+  const from = [day ? L(`来自 ${shortDate(day)}`, `From ${shortDate(day)}`) : '', said ? saidWhere(said) : ''].filter(Boolean).join(' · ');
+  return (
+    <View style={styles.part}>
+      <T v="label" color={t.ink3} style={styles.caps}>{L('出处', 'Source')}</T>
+      {quote ? (
+        <View style={[styles.said, { borderLeftColor: t.line }]}>
+          <T v="callout" selectable style={{ lineHeight: 21 }}>{L(`原话「${quote}」`, `Original words: "${quote}"`)}</T>
+        </View>
+      ) : null}
+      {from || said?.link ? (
+        <View style={styles.fromRow}>
+          {from ? <T v="caption" color={t.ink2} numberOfLines={2} style={{ flex: 1, fontWeight: '400' }}>{from}</T> : <View style={{ flex: 1 }} />}
+          {said?.link ? (
+            <Pressable onPress={() => openSaid(said.link!, close)} accessibilityRole="link" hitSlop={8} style={({ pressed }) => [styles.openLink, { opacity: pressed ? 0.6 : 1 }]}>
+              <T v="caption" color={t.ink}>{L('打开原对话', 'Open the original chat')}</T>
+              <ChevronRight size={14} color={t.ink3} />
+            </Pressable>
+          ) : null}
+        </View>
+      ) : null}
+      {quote ? (
+        <T v="caption" color={t.ink3} style={{ fontWeight: '400', lineHeight: 17 }}>{leaf.tier === 'inferred'
+          ? L('这句原话不是你本人说的，这一条算推断。', "These aren't your own words, so this entry counts as inferred.")
+          : L('附原话的条目来自你本人的表述，不是推测。', 'An entry with original words comes from what you said yourself, not a guess.')}</T>
+      ) : null}
+    </View>
+  );
+}
+
+/** 「用得上的时候」：平时会怎么问到它（cues），一句一个小块。 */
+function Cues({ cues }: { cues: string[] }) {
+  const t = useTheme();
+  if (!cues.length) return null;
+  return (
+    <View style={styles.part}>
+      <T v="label" color={t.ink3} style={styles.caps}>{L('用得上的时候', 'When it comes up')}</T>
+      <T v="caption" color={t.ink2} style={{ fontWeight: '400' }}>{L('以下问法会匹配到这一条：', 'Questions like these will bring it up:')}</T>
+      <View style={styles.chips}>
+        {cues.map((c) => (
+          <View key={c} style={[styles.cue, { backgroundColor: t.surface2 }]}>
+            <T v="callout" color={t.ink2} selectable>{c}</T>
+          </View>
+        ))}
+      </View>
+    </View>
+  );
+}
+
+export function LeafSheet({ leaf, close }: { leaf: TreeLeaf; close: () => void }) {
   const t = useTheme();
   const sheet = useSheet();
   const { tree, treeAction } = useStore();
@@ -116,6 +200,8 @@ function LeafSheet({ leaf, close }: { leaf: TreeLeaf; close: () => void }) {
         {leaf.source === 'prune' && leaf.origin !== 'prune' ? <T v="caption" color={t.ink3} style={{ fontWeight: '400' }}>{L('已在每周修剪时改写', 'Rewritten during the weekly pruning')}</T> : null}
         {leaf.tags.length ? <T v="caption" color={t.ink3} style={{ fontWeight: '400' }}>{leaf.tags.map((x) => `#${x}`).join(' ')}</T> : null}
       </View>
+      <Provenance leaf={leaf} close={close} />
+      <Cues cues={leaf.cues ?? []} />
       {leaf.status === 'pending' ? (
         <>
           <T v="caption" color={t.warn} style={{ fontWeight: '400' }}>{L(`${spaced(leaf.originName)}记录的内容，等待你确认。确认前，各平台读取时均会标注「待确认」。`, `${leaf.originName} saved this and it's waiting for you. Until you confirm, every app sees it marked as unconfirmed.`)}</T>
@@ -123,7 +209,8 @@ function LeafSheet({ leaf, close }: { leaf: TreeLeaf; close: () => void }) {
         </>
       ) : null}
       <View style={{ flexDirection: 'row', gap: space.sm }}>
-        {branchable ? <Btn flex kind="quiet" label={L('移到其他枝', 'Move')} icon={<GitBranch size={16} color={t.ink} />}
+        {/* 「修改」= 挪到别的枝（世界树的接口只有确认、忘记、挪枝；没有枝的树不出） */}
+        {branchable ? <Btn flex kind="quiet" label={L('修改', 'Edit')} icon={<GitBranch size={16} color={t.ink} />}
           onPress={() => sheet.open({ title: L('移到哪根枝？', 'Move it to which branch?'), content: (c) => <MoveSheet leaf={leaf} close={c} /> })} /> : null}
         <Btn flex kind="danger" label={L('忘记', 'Forget')} icon={<Trash2 size={16} color={t.bad} />}
           onPress={() => sheet.open({ title: L('忘记此条？', 'Forget this?'), content: (c) => <ForgetSheet leaf={leaf} close={c} /> })} />
@@ -132,7 +219,7 @@ function LeafSheet({ leaf, close }: { leaf: TreeLeaf; close: () => void }) {
   );
 }
 
-function ForgetSheet({ leaf, close }: { leaf: TreeLeaf; close: () => void }) {
+export function ForgetSheet({ leaf, close }: { leaf: TreeLeaf; close: () => void }) {
   const t = useTheme();
   const { tree, treeAction } = useStore();
   const [busy, setBusy] = useState(false);
@@ -160,7 +247,7 @@ function ForgetSheet({ leaf, close }: { leaf: TreeLeaf; close: () => void }) {
 }
 
 /** 挪到哪根枝：一组一行，大枝在前（加粗）、它的小枝跟在后面；现在挂的那根标着勾，点别的就挪过去。 */
-function MoveSheet({ leaf, close }: { leaf: TreeLeaf; close: () => void }) {
+export function MoveSheet({ leaf, close }: { leaf: TreeLeaf; close: () => void }) {
   const t = useTheme();
   const { tree, treeAction } = useStore();
   const [busy, setBusy] = useState<string | null>(null);
@@ -198,7 +285,7 @@ function MoveSheet({ leaf, close }: { leaf: TreeLeaf; close: () => void }) {
 
 // —— 等你确认 ————————————————————————————————————————————————————————
 
-function PendingCard({ leaves }: { leaves: TreeLeaf[] }) {
+export function PendingCard({ leaves }: { leaves: TreeLeaf[] }) {
   const t = useTheme();
   const open = useLeafSheet();
   const sheet = useSheet();
@@ -258,7 +345,8 @@ function BranchRow({ branch, leaves, open, onToggle }: { branch: TreeBranch; lea
   );
 }
 
-function ByBranch({ data }: { data: TreeInfo }) {
+/** 按枝看。flat：不包卡片（记忆页的「全部记忆」卡里，2026-10-20）。 */
+export function ByBranch({ data, flat }: { data: TreeInfo; flat?: boolean }) {
   const t = useTheme();
   const nav = useNavigation<any>();
   const [open, setOpen] = useState<Record<string, boolean>>({});
@@ -274,8 +362,9 @@ function ByBranch({ data }: { data: TreeInfo }) {
   }
   const bare = data.branches.filter((b) => b.total === 0);
   const sep = { borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: t.line };
+  const Wrap = flat ? View : Card;
   return (
-    <Card style={{ paddingVertical: space.xs }}>
+    <Wrap style={flat ? undefined : { paddingVertical: space.xs }}>
       <Pressable onPress={() => nav.navigate('Identity')} accessibilityRole="button" accessibilityLabel={L(`${trunkLabel(data.trunk.name)}，${data.trunk.count} 条，打开基础档案`, `${trunkLabel(data.trunk.name)}, ${data.trunk.count} items, opens your profile`)}
         style={({ pressed }) => [styles.branch, { opacity: pressed ? 0.6 : 1 }]}>
         <IdCard size={18} color={t.cyan} />
@@ -315,13 +404,13 @@ function ByBranch({ data }: { data: TreeInfo }) {
           ) : null}
         </View>
       ) : null}
-    </Card>
+    </Wrap>
   );
 }
 
 // —— 按来源 ——————————————————————————————————————————————————————————
 
-function BySource({ data }: { data: TreeInfo }) {
+export function BySource({ data }: { data: TreeInfo }) {
   const t = useTheme();
   return (
     <>
@@ -345,7 +434,7 @@ function BySource({ data }: { data: TreeInfo }) {
 // —— 页面 ————————————————————————————————————————————————————————————
 
 /** 真身放在哪：一句话。 */
-function storageLine(s: TreeStorage): string {
+export function storageLine(s: TreeStorage): string {
   if (s.kind === 'sqlite') return L('原始数据存储在你服务器上的数据库文件中（tree.db）。', ' The real copy is a database file on your server (tree.db).');
   if (s.kind === 'markdown') {
     const folder = s.path.split('/').filter(Boolean).pop() || s.path;
@@ -371,7 +460,7 @@ function TrunkLink({ data }: { data: TreeInfo }) {
   );
 }
 
-function Note({ children, tone }: { children: React.ReactNode; tone?: 'bad' }) {
+export function Note({ children, tone }: { children: React.ReactNode; tone?: 'bad' }) {
   const t = useTheme();
   return <Card style={{ marginTop: space.md, gap: 4 }}>{typeof children === 'string' ? <T v="callout" color={tone === 'bad' ? t.bad : t.ink2}>{children}</T> : children}</Card>;
 }
@@ -379,8 +468,10 @@ function Note({ children, tone }: { children: React.ReactNode; tone?: 'bad' }) {
 export function TreeScreen() {
   const t = useTheme();
   const nav = useNavigation<any>();
+  const params = useRoute<any>().params as { view?: string } | undefined;
   const { tree, connected, booting, loading, dataErrors, reload } = useStore();
-  const [view, setView] = useState<'branch' | 'source'>('branch');
+  // 记忆页「全部记忆」卡里点「来源」进来的直接按来源看（params.view = source）
+  const [view, setView] = useState<'branch' | 'source'>(params?.view === 'source' ? 'source' : 'branch');
   const [connect, setConnect] = useState<TreeConnect | null>(null);
   // 「接到你的 AI」不进全局 store：只有这一页用，每次打开 / 下拉 / 加删平台后重读
   const loadAi = useCallback(() => loadConnect().then(setConnect).catch(() => setConnect(null)), []);
@@ -449,6 +540,12 @@ const styles = StyleSheet.create({
   chip: { flexDirection: 'row', alignItems: 'center', gap: 4, borderWidth: 1, borderRadius: radius.pill, paddingHorizontal: 12, paddingVertical: 7 },
   date: { fontWeight: '400', fontVariant: ['tabular-nums'] },
   quote: { borderRadius: radius.md, paddingVertical: 12, paddingHorizontal: space.md },
+  part: { gap: space.sm },
+  caps: { textTransform: 'uppercase' },
+  said: { borderLeftWidth: 3, paddingLeft: space.md, paddingVertical: 2 },
+  fromRow: { flexDirection: 'row', alignItems: 'center', gap: space.sm },
+  openLink: { flexDirection: 'row', alignItems: 'center', gap: 2, minHeight: 24 },
+  cue: { borderRadius: radius.md, paddingHorizontal: 12, paddingVertical: 7 },
   pending: { paddingVertical: 12, gap: 8 },
   pendingFoot: { flexDirection: 'row', alignItems: 'center', gap: space.sm },
   pendingMeta: { flex: 1, flexDirection: 'row', alignItems: 'center', gap: 6 },

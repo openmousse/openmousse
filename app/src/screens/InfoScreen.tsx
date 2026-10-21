@@ -8,7 +8,7 @@ import { agentName } from '../brand';
 import { AgentMemory } from '../components/AgentMemory';
 import { useAgentBoard } from '../components/blocks/BoardContext';
 import { AgentFace, PillTabs, ProjectFace } from '../components/ChatParts';
-import { Archive, ArchiveRestore, Bell, Brain, CalendarDays, ChevronLeft, ClipboardList, Cpu, MessageCircle, Palette, Pencil, Pin, Settings, Trash2 } from '../components/icons';
+import { Archive, ArchiveRestore, Bell, Brain, CalendarDays, ChevronLeft, ClipboardList, Cpu, MessageCircle, MessagesSquare, Palette, Pencil, Pin, Settings, Trash2 } from '../components/icons';
 import { LensAvatar } from '../components/LensAvatar';
 import { ModelSwitch, modelOf } from '../components/ModelPicker';
 import { ArchiveSheet, projectLine } from '../components/ProjectCard';
@@ -16,6 +16,7 @@ import { useSheet } from '../components/Sheet';
 import { Group as Box, GroupLabel, GroupNote, Row } from '../components/settings';
 import { Btn, Card, PullRefresh, Screen, T, showError } from '../components/ui';
 import * as fr from '../api/friends';
+import { meetingsApi } from '../api/meetings';
 import type { Friend } from '../api/friends';
 import { supports } from '../api/version';
 import { L } from '../i18n';
@@ -168,6 +169,13 @@ function ThreadInfo({ kind, id, onBack }: { kind: Kind; id: string; onBack: () =
   const row = list.rows.find((r) => r.id === id);
   const side = sideChats.find((c) => c.id === id);
   const isMain = kind === 'main';
+  const [records, setRecords] = useState(false);  // 「会议记录」：meetings.by_origin 开着，或者有开着时收走的会（服务器 options 的 records）
+  useEffect(() => {
+    if (!isMain || !supports('meetings.records')) return undefined;
+    let live = true;
+    meetingsApi.options().then((o) => { if (live) setRecords(o.records ?? o.byOrigin); }).catch(() => {});
+    return () => { live = false; };
+  }, [isMain]);
   const title = isMain ? agentName() : side?.title ?? row?.title ?? '';
   const model = modelOf(threadModel[id] ?? threadModel.main)?.short;
   const face = isMain ? <LensAvatar size={60} config={avatar} /> : <ProjectFace size={60} archived={side?.archived} />;
@@ -184,6 +192,7 @@ function ThreadInfo({ kind, id, onBack }: { kind: Kind; id: string; onBack: () =
           <Row first icon={<Cpu size={18} color={t.ink2} />} title={L('本对话的模型', 'Model for this chat')} chevron={false}
             right={<ModelSwitch value={threadModel[id] ?? threadModel.main} onChange={(m) => setThreadModel(id, m)} />} />
           <Row icon={<CalendarDays size={18} color={t.ink2} />} title={L('聊天记录', 'Chat history')} onPress={() => nav.navigate('History', { thread: id })} />
+          {isMain && records ? <Row icon={<MessagesSquare size={18} color={t.ink2} />} title={L('会议记录', 'Meeting records')} sub={L(`${agentName()} 发起的、定了告诉我的，开完都在这里`, `Meetings ${agentName()} started and ones that ran on their own`)} onPress={() => nav.navigate('MeetingRecords')} /> : null}
           {list.server && !isMain && !side?.archived ? <SwitchLine icon={<Pin size={18} color={t.ink2} />} title={L('置顶', 'Pin')} sub={L('排在主对话之后', 'Right after the main chat')} value={!!row?.pinned} onChange={(v) => prefs(id, { pinned: v })} /> : null}
           {list.server ? <SwitchLine icon={<Bell size={18} color={t.ink2} />} title={L('免打扰', 'Mute')} sub={L('不推送通知，未读不计入角标', "No notifications; unread doesn't count in the badge")} value={!!row?.muted} onChange={(v) => prefs(id, { muted: v })} /> : null}
           {isMain ? <Row icon={<MessageCircle size={18} color={t.ink2} />} title={L('共用会话的渠道', 'Channels sharing this session')} value={sharedChannels.length ? sharedChannels.join('、') : L('仅 app', 'App only')} chevron={false} /> : null}

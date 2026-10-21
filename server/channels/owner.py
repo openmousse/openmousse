@@ -24,6 +24,7 @@ import time
 from pathlib import Path
 
 from i18n import L, LS
+from stored_values import ASSISTANT_ROLE
 
 from . import accounts, hub, outbox, store
 from . import format as fmt
@@ -367,7 +368,7 @@ async def recover(runner) -> None:
         with chat._lock, chat.db() as conn:  # noqa: SLF001
             m = conn.execute("SELECT thread FROM messages WHERE id=?", (uid,)).fetchone() if uid else None
             thread = m["thread"] if m else thread_for(runner.acc, ib)
-            reply = conn.execute("SELECT id, text FROM messages WHERE thread=? AND id>? AND role='grava' ORDER BY id LIMIT 1",
+            reply = conn.execute(f"SELECT id, text FROM messages WHERE thread=? AND id>? AND role='{ASSISTANT_ROLE}' ORDER BY id LIMIT 1",
                                  (thread, uid)).fetchone() if uid else None
         route = route_of(runner, ib, row["id"], thread)
         run = chat.RUNS.get(thread)

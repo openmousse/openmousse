@@ -167,3 +167,11 @@ export { default as Bluetooth } from 'lucide-react-native/icons/bluetooth';
 export { default as BluetoothOff } from 'lucide-react-native/icons/bluetooth-off';
 export { default as BatteryMedium } from 'lucide-react-native/icons/battery-medium';
 export { default as Tv } from 'lucide-react-native/icons/tv';
+// 记忆标签（2026-10-20）：底栏第四格，两道环和一个点（年轮）
+export { default as Rings } from 'lucide-react-native/icons/disc-2';
+// 赛博和通讯录（主线第三步，2026-10-21）：通讯录、形象的「随机一个」「上传」、新建群聊、新建赛博
+export { default as BookUser } from 'lucide-react-native/icons/book-user';
+export { default as Shuffle } from 'lucide-react-native/icons/shuffle';
+export { default as Upload } from 'lucide-react-native/icons/upload';
+export { default as UsersRound } from 'lucide-react-native/icons/users-round';
+export { default as UserRoundPlus } from 'lucide-react-native/icons/user-round-plus';

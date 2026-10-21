@@ -10,6 +10,7 @@ import asyncio
 import dataclasses
 import json
 import stat
+import time
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -19,6 +20,7 @@ import engine
 from engine import claude_brain, compact, events, models, owner, runners
 from engine.errors import EngineError
 from engine.session import DbSession, user
+from stored_values import SESSION_TAG
 from test_engine_claude_code import BUILTIN, cc, serving, until  # noqa: F401 — cc 是那边的 fixture（假的 claude + /mcp），这里经 claude 拿
 
 pytest.importorskip("mcp")
@@ -88,6 +90,25 @@ def test_only_the_owners_own_one_shots_may_spend_the_plan(claude, server_json):
     assert models.route("json", "claude-code/opus") == API
     assert models.purpose_chain("compact", "claude-code/haiku") == ["moonshot/kimi-k3"] and models.purpose_chain("json", "claude-code/sonnet") is None
     assert models.purpose_chain("compact", "moonshot/kimi-k3") == []
+
+
+def test_on_openclaw_routes_never_start_claude_code(claude, server_json):
+    """10/20：接的是 OpenClaw（不是自己的内核）时，engine.route 不回套餐：json、writing、compact 写了 claude-code/…（或 chatgpt/…）也换成
+    outside() 挑的按量模型，挑不到回 None，调用方照旧走自己的退路（OpenClaw 的 llm-task……）。和 10/19 以前一样。"""
+    import llmjson
+    server_json({"claw": {"kind": "openclaw"}, "engine": {"model": API, "use": {"json": "claude-code/sonnet", "writing": "chatgpt/gpt-test",
+                                                                                 "compact": ["claude-code/haiku"]}}})
+    for p in ("json", "writing", "compact"):
+        assert models.route(p, kind="owner", origin="user") == API, p
+    assert models.route("json", "claude-code/opus", kind="owner", origin="user") == API  # 调用方指定的套餐也不认
+    model = claude.fake_model([{"text": '{"todos": []}'}])
+    v, via = run(llmjson.ask("Write the minutes.", {"x": 1}, MINUTES, kind="owner", origin="user"))
+    assert v == {"todos": []} and via == f"builtin:{API}" and [r[0] for r in model.requests] == [API]
+    assert claude.records() == []  # 一次都没起 claude
+    server_json({"claw": {"kind": "openclaw"}, "engine": {"model": "claude-code/opus", "use": {"json": "claude-code/sonnet"}}})
+    assert models.route("json", kind="owner", origin="user") is None  # 挑不到按量的：不走内核
+    server_json({"claw": {"kind": "builtin"}, "engine": {"model": API, "use": {"json": "claude-code/sonnet"}}})
+    assert models.route("json", kind="owner", origin="user") == "claude-code/sonnet"  # 自己的内核照旧
 
 
 def test_the_one_shot_cap_reads_the_config(server_json):
@@ -173,6 +194,7 @@ def test_a_failed_plan_call_switches_to_the_pay_per_use_backup(claude, server_js
     before = {t["id"] for t in events.turns("json", 200)}
     v, via = run(llmjson.ask("Write the minutes.", {"x": 1}, MINUTES, timeout=7, kind="owner", origin="user"))
     assert v == {"todos": ["from the backup"]} and via == f"builtin:{API}" and [r[0] for r in model.requests] == [API]
+    assert len(claude.records("start")) == 1  # 套餐只试了一次，换了一次
     new = [t for t in events.turns("json", 200) if t["id"] not in before]
     assert [(t["model"], t["status"]) for t in reversed(new)] == [("claude-code/sonnet", "error"), (API, "done")]
     assert {"auth": "signed out", "quota": "usage limit", "timeout": "didn't answer within"}[kind] in new[-1]["error"]
@@ -203,7 +225,22 @@ def test_a_missing_login_switches_too(claude, server_json, monkeypatch):
     assert via == f"builtin:{API}" and claude.records() == []
 
 
-def test_without_a_backup_the_error_goes_where_it_went_before(claude, server_json, monkeypatch):
+@pytest.fixture
+def old_path(monkeypatch):
+    """llmjson 以前的退路（via_complete → think.complete → owner.stream）换成只记一笔：套餐没做成以后它一次都不该被叫到。"""
+    import llmjson
+    got: list = []
+
+    async def via_complete(prompt, input_, schema, timeout, origin=None):
+        got.append((input_, origin))
+        return {"todos": ["from the old path"]}, "complete"
+    monkeypatch.setattr(llmjson, "via_complete", via_complete)
+    return got
+
+
+def test_without_a_backup_a_failed_plan_says_why_and_the_old_path_stays_for_others(claude, server_json, old_path):
+    """10/20：套餐没做成、没配备用：当场报错，说清是哪一类、去哪换，不再退回老路。engine.fallback = false 照旧直接报；用的不是套餐时，
+    老的退路照旧（fallback_input 不带别人的话）。"""
     import llmjson
     use(server_json, {"fallback": False}, json="claude-code/sonnet")
     claude.scenario_([[LIMIT]])
@@ -211,18 +248,53 @@ def test_without_a_backup_the_error_goes_where_it_went_before(claude, server_jso
     with pytest.raises(llmjson.LLMError) as e:  # engine.fallback = false：直接报，说清是哪一类
         run(llmjson.ask("Write the minutes.", {"x": 1}, MINUTES, kind="owner", origin="user"))
     assert "usage limit" in str(e.value) and model.requests == []
-    use(server_json, json="claude-code/sonnet")  # 默认：照旧退回原来的路，fallback_input 照旧（不带别人的话）
-    got: list = []
-
-    async def via_complete(prompt, input_, schema, timeout, origin=None):
-        got.append((input_, origin))
-        return {"todos": ["from the old path"]}, "complete"
-    monkeypatch.setattr(llmjson, "via_complete", via_complete)
+    use(server_json, json="claude-code/sonnet")  # 默认（engine.fallback 开着）：照样当场报，老路一次不走
+    with pytest.raises(llmjson.LLMError) as e:
+        run(llmjson.ask("Write the minutes.", {"transcript": "a friend's words"}, MINUTES, fallback_input={"transcript": "mine only"},
+                        kind="owner", origin="user"))
+    assert "hit its usage limit" in str(e.value) and "Models by purpose" in str(e.value) and old_path == [] and model.requests == []
+    with pytest.raises(llmjson.LLMError):  # 只许零工具的：一样当场报
+        run(llmjson.ask("Notes about a friend.", {"transcript": "a friend's words"}, MINUTES, tool_free_only=True, kind="owner", origin="user"))
+    assert old_path == [] and len(claude.records("start")) == 3  # 三次调用，每次只起一个 claude
+    use(server_json, json=API)  # 用的不是套餐：内核这条路没成，照旧退回老路
+    model.script.append(EngineError("the model went away", kind="config"))
     v, via = run(llmjson.ask("Write the minutes.", {"transcript": "a friend's words"}, MINUTES, fallback_input={"transcript": "mine only"},
                              kind="owner", origin="user"))
-    assert via == "complete" and got == [({"transcript": "mine only"}, "user")]
+    assert via == "complete" and old_path == [({"transcript": "mine only"}, "user")] and [r[0] for r in model.requests] == [API]
     with pytest.raises(llmjson.LLMError):  # 只许零工具的：内核这条路没成，别的 claw 又没有 llm-task
+        model.script.append(EngineError("the model went away", kind="config"))
         run(llmjson.ask("Notes about a friend.", {"transcript": "a friend's words"}, MINUTES, tool_free_only=True, kind="owner", origin="user"))
+
+
+@pytest.mark.parametrize("step,words", [(SIGNED_OUT, "is signed out"), (LIMIT, "hit its usage limit"), ({"sleep": 6}, "didn't answer in time")])
+def test_a_failed_plan_one_shot_starts_claude_once_and_never_switches_quietly(claude, server_json, monkeypatch, old_path, step, words):
+    """主人那份（10/19 定的）：主对话、一问一答都是套餐，没写备用。套餐没做成：假的 claude 只起一次（以前退回老路，默认模型也是套餐，
+    同一个套餐又跑一遍、再等一个完整的超时），也不换成按量的模型（有密钥也不换：没写成备用）；报错说清是哪一类、去哪换。"""
+    import llmjson
+    server_json({"claw": {"kind": "builtin"}, "engine": {"model": "claude-code/opus", "models": [API], "use": {"json": "claude-code/sonnet"}}})
+    monkeypatch.setenv("DEEPSEEK_API_KEY", "test-deepseek-key")
+    model = claude.fake_model([])
+    claude.scenario_([[step]])
+    t0 = time.monotonic()
+    with pytest.raises(llmjson.LLMError) as e:
+        run(llmjson.ask("Write the minutes.", {"x": 1}, MINUTES, timeout=4, kind="owner", origin="user"))
+    msg = str(e.value)
+    assert words in msg and "claude-code/sonnet" in msg and "no other model was used" in msg and "Models by purpose" in msg
+    assert len(claude.records("start")) == 1 and old_path == [] and model.requests == []
+    assert time.monotonic() - t0 < 8  # 只等了一次
+
+
+def test_when_the_backup_fails_too_the_error_says_both(claude, server_json, monkeypatch, old_path):
+    import llmjson
+    use(server_json, json=["claude-code/sonnet", API])
+    monkeypatch.setenv("DEEPSEEK_API_KEY", "test-deepseek-key")
+    claude.scenario_([[SIGNED_OUT]])
+    model = claude.fake_model([EngineError("DeepSeek is down", kind="config")])
+    with pytest.raises(llmjson.LLMError) as e:
+        run(llmjson.ask("Write the minutes.", {"x": 1}, MINUTES, kind="owner", origin="user"))
+    msg = str(e.value)
+    assert "is signed out" in msg and "the backup didn't work either" in msg and "DeepSeek is down" in msg
+    assert len(claude.records("start")) == 1 and [r[0] for r in model.requests] == [API] and old_path == []
 
 
 # —— 一问一答（owner.stream：Zen「想完了」、会议的发言）————————————————————————————————————————
@@ -250,7 +322,7 @@ def test_zen_done_drafts_on_the_plan(claude, server_json, monkeypatch, tmp_path)
     start = claude.records("start")[-1]
     assert start["argv"][start["argv"].index("--model") + 1] == "opus" and "--no-session-persistence" in start["argv"]
     assert "Sunday rowing" in text_in(claude.records("stdin")[-1])
-    t = events.turns("agent:main:grava:tp-0c0c0c0a:draft")[0]  # 一问一答记在它的键下
+    t = events.turns(f"agent:main:{SESSION_TAG}:tp-0c0c0c0a:draft")[0]  # 一问一答记在它的键下
     assert (t["kind"], t["model"], t["origin"]) == ("owner", "claude-code/opus", "user")
 
 
@@ -328,6 +400,50 @@ def test_a_failed_plan_summary_falls_back_to_the_turns_own_model(claude, server_
     assert [t["model"] for t in events.turns("compact:t-cc-compact-fail")] == ["moonshot/kimi-k3", "claude-code/haiku"]
 
 
+# —— 有备用时套餐只给一半时间（10/20）————————————————————————————————————————————————————————
+
+def test_with_a_backup_a_silent_plan_question_gets_half_the_time(claude, server_json, monkeypatch):
+    """一问一答（owner.stream）：有备用、套餐一直不答，过一半就换上按量的，换上的拿剩下的；没备用照给满（以前有备用也给满，换上的再给满）。"""
+    server_json({"claw": {"kind": "builtin"}, "engine": {"model": "claude-code/opus", "fallbacks": [API]}})
+    monkeypatch.setenv("DEEPSEEK_API_KEY", "test-deepseek-key")
+    claude.scenario_([[{"sleep": 30}]])
+    model = claude.fake_model([{"text": "answered by the backup"}])
+    asked = [{"role": "user", "content": "what did the fair cost?"}]
+    t0 = time.monotonic()
+    assert run(owner.stream(asked, "agent:main:meet-half", None, lambda t: None, timeout=8, origin="user")) == "answered by the backup"
+    took = time.monotonic() - t0
+    assert 3.5 < took < 8 and [r[0] for r in model.requests] == [API] and model.requests[0][1].timeout <= 4.5  # 换上的拿剩下的时间
+    t = next(x for x in events.turns("agent:main:meet-half") if x["model"] == "claude-code/opus")
+    assert t["status"] == "error" and "within 4s" in t["error"] and len(claude.records("start")) == 1
+    server_json({"claw": {"kind": "builtin"}, "engine": {"model": "claude-code/opus"}})  # 没备用：给满
+    t0 = time.monotonic()
+    with pytest.raises(EngineError) as e:
+        run(owner.stream(asked, "agent:main:meet-full", None, lambda t: None, timeout=4, origin="user"))
+    assert e.value.kind == "timeout" and "within 4s" in str(e.value) and time.monotonic() - t0 >= 3.5
+
+
+def test_with_a_backup_a_silent_plan_summary_gets_half_the_time(claude, server_json, monkeypatch):
+    """压缩摘要：套餐卡住时不再等满（以前 300 秒，换上的再给 300 秒）：有备用（这里是这一轮自己的按量模型）过一半就换；没备用给满。"""
+    use(server_json, compact="claude-code/haiku")
+    monkeypatch.setattr(compact, "SUMMARY_TIMEOUT", 8)
+    claude.scenario_([[{"sleep": 30}]])
+    model = claude.fake_model([{"text": "<summary>From the turn's own model.</summary>"}])
+    view = chat_session("cc-compact-half").view()
+    spec = engine.Spec(kind="owner", model=API, conversation="t-cc-half", agent="main", origin="user")
+    t0 = time.monotonic()
+    summary, _, turns = run(compact.summarize(view, len(view.rows), spec))
+    took = time.monotonic() - t0
+    assert summary == "From the turn's own model." and 3.5 < took < 8 and len(turns) == 2
+    assert [r[0] for r in model.requests] == [API] and model.requests[0][1].timeout <= 4.5  # 换上的拿剩下的时间
+    plan_turn = next(x for x in events.turns("compact:t-cc-half") if x["model"] == "claude-code/haiku")
+    assert plan_turn["status"] == "error" and "within 4s" in plan_turn["error"]
+    full = dataclasses.replace(spec, model="claude-code/opus", conversation="t-cc-full")  # 这一轮自己的也是套餐、没有链：给满
+    t0 = time.monotonic()
+    with pytest.raises(EngineError):
+        run(compact.summarize(view, len(view.rows), full))
+    assert time.monotonic() - t0 >= 7.5 and "within 8s" in events.turns("compact:t-cc-full")[0]["error"]
+
+
 # —— 位子：和整轮对话共用、排在后面 ———————————————————————————————————————————————————————
 
 def json_call(conv: str):
@@ -395,6 +511,76 @@ def test_a_one_shot_that_waits_too_long_times_out_and_switches(claude, procs, se
     assert [c for k, c in procs.order if k == "start"] == ["t-os-hold"]  # 一次性的那个从没起过
     t = events.turns("os-wait")[-1]
     assert t["model"] == "claude-code/sonnet" and t["status"] == "error" and "didn't answer within" in t["error"]
+
+
+# —— 长活占着位子时，短的照样跑完（10/20：engine.claude_code.burst）——————————————————————————————————
+
+def cc_cfg(server_json, **cfg) -> None:
+    server_json({**BUILTIN, "engine": {**BUILTIN["engine"], "claude_code": cfg}})
+
+
+def one(conv: str, timeout: float):
+    """一次一次性 JSON：timeout 900 的是学习页那种长的，45 的是会议挑发言人那种短的（claude_brain.SHORT = 120）。"""
+    return engine.ask_json("Answer it.", {"x": conv}, model="claude-code/sonnet", kind="owner", origin="user", conversation=conv, timeout=timeout)
+
+
+def test_the_burst_setting_reads_the_config(server_json):
+    for v, want in ((None, 0), (1, 1), ("2", 2), (True, 1), (-3, 0), ("lots", 0)):
+        cc_cfg(server_json, **({} if v is None else {"burst": v}))
+        assert claude_brain.burst() == want, v
+    assert claude_brain.SHORT == 120
+
+
+def test_with_burst_a_short_one_shot_runs_beside_a_long_one_and_chats_never_wait(claude, procs, server_json):
+    """学习页那种 900 秒的一次性调用占着唯一的一次性位子：45 秒的短调用一下就开跑（多开一个），不等长的；整轮对话照样马上起；
+    位子都满了以后再来的短的排着，同时跑的不超过 max_concurrent + burst。"""
+    cc_cfg(server_json, burst=1)
+    claude.scenario_([[{"say": '{"page": "long"}'}, {"sleep": 4}], [{"say": '{"agents": ["g-events"]}'}, {"sleep": 1}],
+                      [{"say": "Main chat answer."}, {"sleep": 1}], [{"say": '{"agents": []}'}]])
+    claude.fake_model([])
+    seen: list[dict] = []
+
+    async def go():
+        async with serving(claude):
+            long_ = asyncio.create_task(one("os-long", 900))
+            await until(lambda: procs.once == 1)
+            t0 = time.monotonic()
+            short = asyncio.create_task(one("os-short", 45))
+            await until(lambda: procs.once == 2)
+            started = time.monotonic() - t0
+            main = asyncio.create_task(owner.respond("t-burst-main", DAY, "hi", "claude-code/opus", lambda x: None, on_event=seen.append))
+            await until(lambda: procs.now == 3)
+            more = asyncio.create_task(one("os-short-2", 45))  # 平常的位子、多开的位子都满了：排着
+            await asyncio.sleep(0.3)
+            full = procs.now
+            out = await asyncio.gather(short, main, more)
+            return started, full, out, long_.done(), await long_
+    started, full, (s, m, s2), long_done_early, lv = run(go())
+    assert started < 2 and full == 3 and procs.peak == 3  # 短的一下就起了；同时跑的最多 max_concurrent + burst
+    assert s[0] == {"agents": ["g-events"]} and m.status == "done" and s2[0] == {"agents": []} and lv[0] == {"page": "long"}
+    assert not long_done_early  # 两个短的、一轮主对话都跑完了，长的还在跑
+    assert not any(e.get("phase") == "queued" for e in seen)  # 主对话没排队
+    assert [st for st in events.steps(events.turns("os-short")[0]["id"]) if st["type"] == "queue"] == []  # 第一个短的一点没排
+    q = next(st for st in events.steps(events.turns("os-short-2")[0]["id"]) if st["type"] == "queue")
+    assert q["status"] == "ok" and q["data"]["burst"] is True  # 后来的排了一会儿，轮到的是多开的那个位子
+
+
+def test_without_burst_it_is_as_before_and_short_ones_go_first(claude, procs, server_json):
+    """burst = 0（默认，已有的安装照旧）：不多开，短的照样排在占着位子的长的后面；排着的长的和短的，空出来的位子先给短的。"""
+    cc_cfg(server_json)
+    claude.scenario_([[{"say": '{"n": 1}'}, {"sleep": 1}], [{"say": '{"n": 2}'}], [{"say": '{"n": 3}'}]])
+    claude.fake_model([])
+
+    async def go():
+        first = asyncio.create_task(one("os-l1", 900))
+        await until(lambda: procs.once == 1)
+        later = asyncio.create_task(one("os-l2", 900))
+        await asyncio.sleep(0.2)
+        short = asyncio.create_task(one("os-s", 45))
+        return await asyncio.gather(first, later, short)
+    (a, _), (b, _), (c, _) = run(go())
+    assert [c for k, c in procs.order if k == "start"] == ["os-l1", "os-s", "os-l2"] and (a, c, b) == ({"n": 1}, {"n": 2}, {"n": 3})
+    assert procs.peak == procs.peak_once == 1  # 没多开：一次性的照旧最多 max_oneshot 个
 
 
 # —— 给本机脚本的接口 ——————————————————————————————————————————————————————————————————

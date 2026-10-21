@@ -11,6 +11,7 @@ import pytest
 import bridges
 from engine import commands, owner, providers
 from engine.session import DbSession, day_key, text_of
+from stored_values import ASSISTANT_ROLE
 from test_engine import FakeModel
 
 MODEL = "deepseek/deepseek-flash"
@@ -131,7 +132,7 @@ def test_a_command_is_answered_without_the_model_and_kept_out_of_the_session(ser
     assert "Not running" in done["text"] and MODEL in done["text"] and done["status"] == "ok"
     assert f.requests == []  # 没调模型
     got = rows("t-cmd-status")
-    assert [(r["role"], r["origin"]) for r in got] == [("user", "command"), ("grava", "command")]
+    assert [(r["role"], r["origin"]) for r in got] == [("user", "command"), (ASSISTANT_ROLE, "command")]
     assert got[0]["text"] == "/status" and evs[0][1]["userId"] == f"db{got[0]['id']}" and done["id"] == f"db{got[1]['id']}"
     import chat
     assert DbSession.latest(day_key("t-cmd-status", chat.day_of(chat.now_iso()))) is None  # 没开会话
@@ -268,11 +269,11 @@ def test_command_rows_stay_out_of_seed_and_tail(server_json):
     thread = "t-cmd-rows"
     with chat._lock, chat.db() as conn:
         for role, text, origin, ts in (("user", "plan the week", None, "2026-10-18T20:00:00+00:00"),
-                                       ("grava", "Here's a plan.", "user", "2026-10-18T20:01:00+00:00"),
+                                       (ASSISTANT_ROLE, "Here's a plan.", "user", "2026-10-18T20:01:00+00:00"),
                                        ("user", "/status", "command", "2026-10-18T20:02:00+00:00"),
-                                       ("grava", "**t** · not running", "command", "2026-10-18T20:02:01+00:00"),
+                                       (ASSISTANT_ROLE, "**t** · not running", "command", "2026-10-18T20:02:01+00:00"),
                                        ("user", "/btw what's a fortnight", "command", "2026-10-19T08:00:00+00:00"),
-                                       ("grava", "(Side question) Two weeks.", "btw", "2026-10-19T08:00:05+00:00")):
+                                       (ASSISTANT_ROLE, "(Side question) Two weeks.", "btw", "2026-10-19T08:00:05+00:00")):
             last = conn.execute("INSERT INTO messages(thread, role, text, ts, status, origin) VALUES(?,?,?,?,?,?)",
                                 (thread, role, text, ts, "ok", origin)).lastrowid
     tail = context.tail_part(thread, "2026-10-19").text

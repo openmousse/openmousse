@@ -221,11 +221,12 @@ def server():
 async def app(scope, receive, send) -> None:
     """ASGI：一个请求一个传输（无状态，回 JSON）。mcp_bridge.Gate 认过令牌、把它放进 scope["state"][STATE] 以后交过来。"""
     import anyio
+    import mcp_bridge
     from mcp.server.streamable_http import StreamableHTTPServerTransport
-    from mcp.server.transport_security import TransportSecuritySettings
     srv = server()
+    # 和 /mcp 的那 14 个工具同一份 Host / Origin 名单（mcp_bridge.security_settings）；外援的令牌不单独开一扇门
     transport = StreamableHTTPServerTransport(mcp_session_id=None, is_json_response_enabled=True, event_store=None,
-                                              security_settings=TransportSecuritySettings(enable_dns_rebinding_protection=False))
+                                              security_settings=mcp_bridge.security_settings())
 
     async def serve(*, task_status=anyio.TASK_STATUS_IGNORED) -> None:
         async with transport.connect() as (read, write):

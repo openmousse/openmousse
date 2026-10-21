@@ -3,13 +3,14 @@ import { AppState, LayoutAnimation, Platform, type AppStateStatus } from 'react-
 import { useFocusEffect } from '@react-navigation/native';
 import { loadAgentName, loadServerConfig, persistAgentName, serverConfigured } from './api/base';
 import { agentName, setAgentName } from './brand';
-import { HttpApi, OfflineApi, timeNow, type GravaApi } from './api/client';
+import { HttpApi, OfflineApi, timeNow, type ChatApi } from './api/client';
 import { dataApi, missing, resetServerSupport, serverSupport } from './api/data';
 import { healthSupported, loadWake, postSignal, startHealthBackground, syncHealth, type WakeState } from './api/health';
 import { flushShareOutbox, refreshWidget, shareConfig, startLive, syncLive } from './api/native';
 import { HEALTH_KEYS, OPENCLAW, loadHealthParts, loadLive, probe, type ClawInfo, type LiveData } from './api/live';
 import { OLD_SERVER, setServerInfo, supports, type ServerInfo } from './api/version';
 import { chatsApi, type ChatList } from './api/chats';
+import { ASSISTANT_ROLE } from './data/stored';
 import { onPushReceived, onPushResponse, registerCategories, registerPush, setAppBadge, type PushAction, type PushInfo } from './api/push';
 import { useBanner, type BannerSpec } from './components/Banner';
 import { kindLabel } from './components/InboxCard';
@@ -19,7 +20,7 @@ import type {
   Application, JournalEntry, PendingFile,
   ActivityEntry, AgentColor, AvatarConfig, ChatCard, FeedItem, Goal, GoalChange, GoalMetric, GoalStatus, GoalTrend, Group, GroupIcon, GroupPatch, InboxAction, InboxItem, MemoryItem, Message, ModelsInfo, ProfileItem, PushTarget, Receipt,
   ProjectCard, ProjectChangeCard, ScheduleChangeCard, ScheduleEntry, SecurityInfo, SideChat, Task, TaskQuota, ThreadCards, UnreadSummary, UpcomingTask,
-  ConnectorsState, TreeAction, TreeState,
+  ConnectorsState, HeldItem, TreeAction, TreeState,
 } from './data/types';
 import * as sched from './api/schedule';
 import * as projectsApi from './api/projects';
@@ -82,7 +83,7 @@ interface State {
   inboxByThread: Record<string, InboxItem[]>;
   /** 未读：各线程没看的消息、新卡片、等你点头的数量、图标角标 */
   unread: UnreadSummary;
-  /** 「对话」tab 的 Grava 一边（/api/chats；老服务器 null，页面用 groups / sideChats / unread 自己拼） */
+  /** 「对话」tab 的助手一边（/api/chats；老服务器 null，页面用 groups / sideChats / unread 自己拼） */
   chats: ChatList | null;
   /** 正显示在屏幕上的对话（app 在前台时）。不为它弹小窗，新消息直接算已读。 */
   activeThread: string | null;
@@ -119,6 +120,8 @@ interface State {
   wake: WakeState | null;
   /** 世界树（各 AI 平台共用的记忆）：null = 还没读过；服务器没接 / 版本太老时是 missing / unsupported */
   tree: TreeState | null;
+  /** 待定（别人说的要记的，server/memhold.py）：null = 还没读过；老服务器没有 = 空。记忆页「待确认」和底栏角标用 */
+  held: HeldItem[] | null;
   /** 我 → 连接：助手接着的每样东西现在怎么样。null = 还没读过 */
   connectors: ConnectorsState | null;
   /** 哪几块正在读 */
@@ -127,7 +130,7 @@ interface State {
   dataErrors: Partial<Record<DataKey, string>>;
 }
 
-export type DataKey = 'groups' | 'sideChats' | 'tasks' | 'inbox' | 'inboxRecent' | 'unread' | 'chats' | 'feed' | 'schedule' | 'remember' | 'upcoming' | 'goals' | 'weightTrend' | 'journal' | 'applications' | 'memories' | 'activity' | 'profile' | 'models' | 'security' | 'avatar' | 'wake' | 'tree' | 'connectors';
+export type DataKey = 'groups' | 'sideChats' | 'tasks' | 'inbox' | 'inboxRecent' | 'unread' | 'chats' | 'feed' | 'schedule' | 'remember' | 'upcoming' | 'goals' | 'weightTrend' | 'journal' | 'applications' | 'memories' | 'activity' | 'profile' | 'models' | 'security' | 'avatar' | 'wake' | 'tree' | 'held' | 'connectors';
 
 interface Actions {
   /** 重新探测服务器，读回全部数据和对话记录。 */
@@ -151,7 +154,7 @@ interface Actions {
   transcribe(file: PendingFile): Promise<string>;
   /** 长按删除：只从对话记录里去掉。 */
   deleteMessage(threadId: string, msgId: string): Promise<void>;
-  /** 撤回 / 重新编辑：这条和之后的都去掉，Grava 也忘掉，返回原文。 */
+  /** 撤回 / 重新编辑：这条和之后的都去掉，助手也忘掉，返回原文。 */
   rewindMessage(threadId: string, msgId: string): Promise<string>;
   setThreadModel(threadId: string, modelId: string): void;
   /** 收件箱里的一条：同意 / 不要 / 改一下（note 是意见）。成功后这一条在「今天」页收成回执。 */
@@ -170,6 +173,13 @@ interface Actions {
   editProfile(id: string, text: string | null): Promise<void>;
   /** 世界树的一片叶子：确认（待确认 → 当前）/ 忘记 / 挪到别的枝（branch 写枝名，主干写档案）。做完重读世界树和活动记录。 */
   treeAction(id: string, action: TreeAction, branch?: string): Promise<void>;
+  /** 待定里别人说的一条：记下（长成叶子，算推断）/ 不记。做完重读待定（记下的连世界树一起）。
+   *  回新长成的叶子 id（approve 才有；和已有的叶子重复 = 没长新的，undefined）。 */
+  heldAction(id: string, action: 'approve' | 'reject'): Promise<string | undefined>;
+  /** 一张卡多条（记忆页的每周修剪）：「修改」一条，服务器按 note 重出、回到没定；收件箱里换成改过的那张。 */
+  reviseInboxItem(id: string, xid: string, note: string): Promise<InboxItem>;
+  /** 一张卡多条：带着每条的决定提交。和 decide 一样收成回执；修剪动了世界树、待定可能长成叶子：跟着重读这两样。 */
+  submitInboxItems(id: string, decisions: Record<string, 'approve' | 'reject'>): Promise<InboxItem>;
   /** 连接页下拉刷新：让服务器跳过缓存重新查一遍。 */
   refreshConnectors(): Promise<void>;
   addGroup(g: { name: string; purpose: string; icon: GroupIcon; color: AgentColor; modelId: string; template?: string }): Promise<string>;
@@ -199,6 +209,8 @@ interface Actions {
   cancelTask(id: string): Promise<void>;
   /** 修改意见发给做这件事的同一个子会话。 */
   reviseTask(id: string, note: string): Promise<void>;
+  /** 重派（自己的内核）：照原来的说明再派一个新的，结果回到原对话；做完重读那个对话的卡和任务列表。服务器不让（409）就抛它的原话。→ 新任务的 id */
+  retryTask(id: string): Promise<string>;
   /** 对话里日程卡的「撤销」（撤销过的再点 = 做回来）。 */
   undoScheduleCard(card: ScheduleChangeCard): Promise<void>;
   /** 加一个目标（id 为 null）或改一个（只带改了的字段，null = 清掉）。返回服务器的一句话摘要。 */
@@ -298,14 +310,16 @@ const LOADERS: Record<DataKey, () => Promise<Partial<State>>> = {
   avatar: async () => { const a = await dataApi.avatar(); return a ? { avatar: a } : {}; },
   wake: async () => ({ wake: await loadWake() }),
   tree: async () => ({ tree: await treeApi.load() }),
+  held: async () => ({ held: await treeApi.loadHeld() }),
   connectors: async () => ({ connectors: await connectorsApi.load() }),
 };
 const ALL_KEYS = Object.keys(LOADERS) as DataKey[];
 /**
  * 连上时不跟大家一起读的：线程列表先读（对话记录要等它），未读等对话记录读完再读，「已处理」进那一页才读；
- * 世界树和连接到「我」这一页或它们自己那页才读（连接第一次要问 Gateway，一秒多，别在启动时跟别的请求抢连接）。
+ * 连接到「我」这一页或它自己那页才读（连接第一次要问 Gateway，一秒多，别在启动时跟别的请求抢连接）；
+ * 世界树和待定（底栏「记忆」的角标要它们的数）等启动那一批读完再读（refreshLive 最后），不跟启动抢。
  */
-const STARTUP_KEYS = ALL_KEYS.filter((k) => !['groups', 'sideChats', 'unread', 'inboxRecent', 'tree', 'connectors'].includes(k));
+const STARTUP_KEYS = ALL_KEYS.filter((k) => !['groups', 'sideChats', 'unread', 'inboxRecent', 'tree', 'held', 'connectors'].includes(k));
 /** 后台轮询的：不亮「正在读」、读失败也不报错，没变化就不更新（不让整棵树白白重画）。 */
 const QUIET = new Set<DataKey>(['unread', 'wake', 'chats']);
 /** 回到前台时：离上次同步健康数据超过这么久才再同步一次（起床判断要看最新的睡眠分段） */
@@ -318,7 +332,7 @@ const cardBusy = (c: ChatCard) => (c.kind === 'handoff' ? c.status === 'running'
   : c.kind === 'meeting' ? c.status === 'running' : false);  // 会议进行中：会议卡的状态、纪要卡要跟着刷
 
 export function StoreProvider({ children }: { children: React.ReactNode }) {
-  const api = useRef<GravaApi>(new OfflineApi());
+  const api = useRef<ChatApi>(new OfflineApi());
   const banner = useBanner();
   const [s, setS] = useState<State>(() => ({
     connected: false,
@@ -376,6 +390,7 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
     avatar: { style: 'lens', ring: '#D9AE62', stream: '#5CCFE6' },
     wake: null,
     tree: null,
+    held: null,
     connectors: null,
     loading: {},
     dataErrors: {},
@@ -471,6 +486,17 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
     if (card.kind === 'project') { loadProjectRef.current(card.project).catch(() => {}); reload('sideChats').catch(() => {}); }  // 改了项目卡：顶上那张跟着变
   }, [reload]);
 
+  /** 插进这一轮的几条没赶上（自己的内核的 steer_missed）：「已插入」改成「未赶上本轮」，下一轮开跑（send 的 dequeued）时去掉。
+   *  事件在这一轮的连接上收到（发上一条的、接回来的），不一定是那几条自己的：按对话、按 id 改。 */
+  const markMissed = useCallback((threadId: string) => (ids: string[]) => {
+    const set = new Set(ids);
+    setS((st) => {
+      const cur = st.threads[threadId];
+      if (!cur?.some((m) => set.has(m.id) && !m.missed)) return st;
+      return { ...st, threads: { ...st.threads, [threadId]: cur.map((m) => (set.has(m.id) ? { ...m, steered: false, missed: true } : m)) } };
+    });
+  }, []);
+
   /** 读回所有线程的对话记录；服务端还在回的线程接回去。 */
   const loadThreads = useCallback(async (fresh?: Partial<State>) => {
     const st0 = { ...latest.current, ...fresh };
@@ -504,7 +530,7 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
     for (const tid of inFlight) {
       const still = () => (sending.current[tid] ?? 0) > 0;
       const queued = !!hist.find(([x]) => x === tid)?.[1]?.messages.some((m) => m.queued);
-      api.current.attach(tid, (partial) => setPartial(tid, partial), onLiveCard(tid))
+      api.current.attach(tid, (partial) => setPartial(tid, partial), onLiveCard(tid), markMissed(tid))
         .then((reply) => {
           setPartial(tid, null, true);  // 和下面加进这条回复同一次重画
           setS((st) => (reply ? { ...appendMsg(st, tid, reply), typing: { ...st.typing, [tid]: still() } } : { ...st, typing: { ...st.typing, [tid]: still() } }));
@@ -516,7 +542,7 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
           if (queued && !still()) timers.current.push(setTimeout(() => { refreshRef.current(tid).catch(() => {}); }, 500));
         });
     }
-  }, [loadThreadCards, onLiveCard]);
+  }, [loadThreadCards, onLiveCard, markMissed]);
 
   /** 重读一个对话里的收件箱（对话里跟着消息显示的那些卡）。 */
   const loadThreadInbox = useCallback(async (threadId: string) => {
@@ -538,7 +564,7 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
       setS((st) => ({ ...st, typing: { ...st.typing, [threadId]: true } }));
       // 还有这边发出去、没拿到回复的：别把「输入中」关掉（它们各自回完再关）
       const still = () => (sending.current[threadId] ?? 0) > 0;
-      api.current.attach(threadId, (partial) => setPartial(threadId, partial), onLiveCard(threadId))
+      api.current.attach(threadId, (partial) => setPartial(threadId, partial), onLiveCard(threadId), markMissed(threadId))
         .then((reply) => {
           setPartial(threadId, null, true);  // 和下面加进这条回复同一次重画
           setS((st) => (reply ? { ...appendMsg(st, threadId, reply), typing: { ...st.typing, [threadId]: still() } } : { ...st, typing: { ...st.typing, [threadId]: still() } }));
@@ -550,7 +576,7 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
           if (h.messages.some((m) => m.queued) && !still()) timers.current.push(setTimeout(() => { refreshRef.current(threadId).catch(() => {}); }, 500));
         });
     }
-  }, [loadThreadInbox, loadThreadCards, onLiveCard]);
+  }, [loadThreadInbox, loadThreadCards, onLiveCard, markMissed]);
   useEffect(() => { refreshRef.current = refreshThread; }, [refreshThread]);
 
   /** 收件箱变了：对话里的卡也重读。新出现的待处理在哪些对话、哪些对话里还有没办完的、正看着的那个。 */
@@ -850,6 +876,7 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
       const rest = reload(...STARTUP_KEYS);
       const live = loadLive().then(({ data, errors }) => setS((st) => ({ ...st, live: data, liveErrors: errors, liveLoading: false })));
       await Promise.all([lists, rest, live]);
+      reload('tree', 'held').catch(() => {});  // 底栏「记忆」的角标（待确认的条数）：启动那一批读完再读
       // Apple 健康：每次连上都把最近两周重推一遍（服务端按天覆盖），推完刷新看板；然后告诉服务器手机有动静（起床判断用）。
       // 后台被叫醒的那种启动不算动静，也不推全部指标。
       (healthSupported() ? syncHealthNow(fg) : Promise.resolve()).catch(() => {}).finally(() => { if (fg) postSignal('foreground').catch(() => {}); });
@@ -930,7 +957,7 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
     // '（见附件）' 是占位标记，和服务端 chat.py 一致，ChatView 按原文比较后隐藏：不翻译。
     const mine: Message = {
       id: id('u'), role: 'user', time: timeNow(), body: { type: 'text', text: text || '（见附件）', attachments: pending },
-      ...(quoted ? { replyTo: { id: quoted.id, role: quoted.role === 'user' ? 'user' : 'grava', text: quoted.body.text.replace(/\s+/g, ' ').slice(0, 200) } } : {}),
+      ...(quoted ? { replyTo: { id: quoted.id, role: quoted.role === 'user' ? 'user' : ASSISTANT_ROLE, text: quoted.body.text.replace(/\s+/g, ' ').slice(0, 200) } } : {}),
     };
     let myId = mine.id;  // 服务器给了 id 以后换成 "db<id>"
     sending.current[threadId] = (sending.current[threadId] ?? 0) + 1;
@@ -953,14 +980,15 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
     });
     const patchMine = (patch: Partial<Message>) => setS((st) => ({ ...st, threads: { ...st.threads, [threadId]: (st.threads[threadId] ?? []).map((m) => (m.id === myId ? { ...m, ...patch } : m)) } }));
     const swapId = (userId: string) => { const from = myId; myId = userId; setS((st) => ({ ...st, threads: { ...st.threads, [threadId]: (st.threads[threadId] ?? []).map((m) => (m.id === from ? { ...m, id: userId } : m)) } })); };
-    // 它正在回复时发的：先排队（气泡下面标「排队」），排着的那一轮开跑时去掉；插进正在跑的那一轮的标「插话」
+    // 它正在回复时发的：先排队（气泡下面标「排队」），排着的那一轮开跑时去掉；插进正在跑的那一轮的标「插话」；
+    // 插进去了却没赶上那一轮的（missed，markMissed 改的）也在下一轮开跑时去掉
     const queuedAs = (userId: string, steer: boolean) => { swapId(userId); patchMine(steer ? { steered: true } : { queued: true }); };
-    const dequeued = () => patchMine({ queued: false });
+    const dequeued = () => patchMine({ queued: false, missed: false });
     api.current.send(threadId, text, modelId, (partial) => setPartial(threadId, partial), swapId, files,
       { ...(opts?.inboxId ? { inboxId: opts.inboxId } : {}), ...(opts?.ref ? { ref: opts.ref } : {}), ...(opts?.save ? { save: opts.save } : {}), ...(opts?.replyTo ? { replyTo: opts.replyTo } : {}),
         ...(opts?.study ? { study: opts.study } : {}),
-        onCard: onLiveCard(threadId), onQueued: queuedAs, onDequeued: dequeued })
-      .catch((e: unknown): Message => ({ id: id('r'), role: 'grava', time: timeNow(), modelId, body: { type: 'text', text: L('（此消息发送失败。）', "(This message wasn't sent.)") }, error: errText(e) }))
+        onCard: onLiveCard(threadId), onQueued: queuedAs, onDequeued: dequeued, onMissed: markMissed(threadId) })
+      .catch((e: unknown): Message => ({ id: id('r'), role: ASSISTANT_ROLE, time: timeNow(), modelId, body: { type: 'text', text: L('（此消息发送失败。）', "(This message wasn't sent.)") }, error: errText(e) }))
       // 可能刚写了一张建议卡、提了一件要你点头的事、转给了某个 Agent、派了任务
       .then((reply) => {
         reload('feed', 'schedule', 'remember', 'goals'); loadThreadInbox(threadId).catch(() => {}); loadThreadCards(threadId, true).catch(() => {});
@@ -974,7 +1002,7 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
           // 排着的几条拿到的是同一条回复（appendMsg 按 id 去重）；都回完了才不算「输入中」
           const left = Math.max(0, (sending.current[threadId] ?? 1) - 1);
           sending.current[threadId] = left;
-          const list = (st.threads[threadId] ?? []).map((m) => (m.id === myId && m.queued ? { ...m, queued: false } : m));
+          const list = (st.threads[threadId] ?? []).map((m) => (m.id === myId && (m.queued || m.missed) ? { ...m, queued: false, missed: false } : m));
           return {
             ...appendMsg({ ...st, threads: { ...st.threads, [threadId]: list } }, threadId, reply),
             typing: { ...st.typing, [threadId]: left > 0 },
@@ -983,7 +1011,7 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
           };
         });
       });
-  }, [reload, loadThreadInbox, loadThreadCards, onLiveCard]);
+  }, [reload, loadThreadInbox, loadThreadCards, onLiveCard, markMissed]);
 
   // 调试用：开发服务器（npm run web）里 ?say=你好 会在连上后自动往主对话发一条（真的发给 agent），方便截图流式输出。
   // 生产构建不认它：否则别人发一个带 ?say= 的链接，点开就等于替你给 agent 下指令。
@@ -1013,7 +1041,8 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
     transcribe: (file) => api.current.transcribe(file),
     refreshBoards: async () => {
       setS((st) => ({ ...st, liveLoading: true }));
-      const [{ data, errors }] = await Promise.all([loadLive(), reload('feed', 'journal', 'applications', 'goals')]);
+      // weightTrend：体重折线 2026-10-20 起在健身看板的「长期」里，看板下拉也要重读
+      const [{ data, errors }] = await Promise.all([loadLive(), reload('feed', 'journal', 'applications', 'goals', 'weightTrend')]);
       setS((st) => ({ ...st, live: data, liveErrors: errors, liveLoading: false }));
     },
     refreshThread,
@@ -1063,6 +1092,34 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
       await treeApi.act(lid, action, branch);
       await reload('tree');
       reload('activity').catch(() => {});  // 活动记录要问 Gateway（几秒），不让弹层等它
+    },
+    heldAction: async (hid, action) => {
+      setS((st) => (st.held ? { ...st, held: st.held.filter((x) => x.id !== hid) } : st));  // 先收起来；没成就按服务器重读回来
+      let leaf: string | undefined;
+      try {
+        const r = await treeApi.actHeld(hid, action);
+        leaf = r.duplicate ? undefined : r.leaf;
+      } finally {
+        await reload(...(action === 'approve' ? ['held', 'tree'] as DataKey[] : ['held'] as DataKey[]));
+      }
+      reload('activity').catch(() => {});
+      return leaf;
+    },
+    reviseInboxItem: async (iid, xid, note) => {
+      const card = await dataApi.reviseInboxItem(iid, xid, note);
+      // 对话里接着的那张（inboxByThread）也换成改过的，和 settle 一样
+      const swap = (list: InboxItem[]) => list.map((i) => (i.id === iid ? card : i));
+      setS((st) => ({ ...st, inbox: swap(st.inbox), inboxByThread: Object.fromEntries(Object.entries(st.inboxByThread).map(([tid, list]) => [tid, swap(list)])) }));
+      return card;
+    },
+    submitInboxItems: async (iid, decisions) => {
+      const item = await dataApi.submitInboxItems(iid, decisions);
+      const done = { ...item, decidedAt: item.decidedAt ?? new Date().toISOString() };
+      LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut);
+      setS((cur) => settle(cur, done));
+      reload('unread', 'activity', 'tree', 'held').catch(() => {});
+      if (done.thread) loadThreadInbox(done.thread).catch(() => {});
+      return done;
     },
     refreshConnectors: async () => {
       setS((st) => ({ ...st, loading: { ...st.loading, connectors: true } }));
@@ -1163,6 +1220,13 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
       if (where) loadThreadCards(where).catch(() => {});
       await reload('tasks', 'activity');
     },
+    retryTask: async (tid) => {
+      const where = cardThread(tid);  // 新派的那个挂在同一个对话里（没有挂在哪条回复上，按时间排进去）
+      const next = await dataApi.retryTask(tid);
+      if (where) loadThreadCards(where).catch(() => {});
+      await reload('tasks', 'activity');
+      return next;
+    },
     undoScheduleCard: async (card) => {
       const r = await sched.undo(card.logId, card.status === 'undone');
       const swap = (c: ChatCard) => (c.id === card.id ? { ...c, status: r.card.status } as ChatCard : c);
@@ -1206,7 +1270,7 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
         setS((st) => ({ ...st, dataErrors: { ...st.dataErrors, goals: errText(e) } }));
       }
     },
-  }), [refreshLive, reload, syncHealthNow, send, refreshThread, decide, markFeedSeen, markRead, setActiveThread, loadThreadCards, loadProject, afterProject]);
+  }), [refreshLive, reload, syncHealthNow, send, refreshThread, decide, markFeedSeen, markRead, setActiveThread, loadThreadCards, loadThreadInbox, loadProject, afterProject]);
 
   const value = useMemo(() => ({ ...s, ...actions }), [s, actions]);
   return <Ctx.Provider value={value}>{children}</Ctx.Provider>;

@@ -26,6 +26,7 @@ import think
 import treelib
 import treeprune
 from config import TZ
+from stored_values import TREE_SOURCE
 
 
 def run(coro):
@@ -162,7 +163,7 @@ def test_new_agent_gets_a_branch_and_old_ones_get_theirs_once(tree, server_json)
 
 
 def test_agent_branch_needs_the_open_source_tree(tree, monkeypatch):
-    monkeypatch.setattr(sources, "memory_tree", types.ModuleType("memory_tree"))  # 选中的是作者那份
+    monkeypatch.setattr(sources, "memory_tree", types.ModuleType("memory_tree"))  # 选中的是工作区那份
     assert treelib.agent_created("g-x", "X") is None and treelib.sync_agents() == []
     assert B.of_agent(treelib.connect(), "g-x") == []
 
@@ -203,7 +204,7 @@ elif sys.argv[1] == "add":
 
 @pytest.fixture
 def script_tree(tmp_path, monkeypatch):
-    """选中的是作者那份：workspace 的 scripts/memory_tree.py（这里是个假的，把参数记进 memory_tree.log）。"""
+    """选中的是工作区那份：workspace 的 scripts/memory_tree.py（这里是个假的，把参数记进 memory_tree.log）。"""
     path = tmp_path / "scripts" / "memory_tree.py"
     path.parent.mkdir()
     path.write_text(FAKE_SCRIPT, encoding="utf8")
@@ -214,7 +215,7 @@ def script_tree(tmp_path, monkeypatch):
 
 
 def test_tree_tool_runs_whichever_tree_sources_picked(tree, script_tree, monkeypatch):
-    assert bridges.command("tree") == ["python3", str(script_tree)]  # 作者那份：和 think.py 一样用 python3 跑脚本
+    assert bridges.command("tree") == ["python3", str(script_tree)]  # 工作区那份：和 think.py 一样用 python3 跑脚本
     monkeypatch.setattr(sources, "memory_tree", treelib)
     monkeypatch.setattr(shutil, "which", lambda name: f"/opt/bin/{name}")
     exe = Path(sys.executable).parent / "mousse-tree"
@@ -228,7 +229,7 @@ def test_think_writes_to_the_script_when_sources_picked_it(script_tree):
     assert think.remember_tree("小林认为慢慢来比较快", "人", ["想法"]) == {"id": "s1", "duplicate": False}
     calls = [json.loads(x) for x in script_tree.with_suffix(".log").read_text().splitlines()]
     assert calls[0] == ["branches"]
-    assert calls[1][:4] == ["add", "--source", "grava", "--kind"] and calls[1][-2:] == ["--branch", "人"]
+    assert calls[1][:4] == ["add", "--source", TREE_SOURCE, "--kind"] and calls[1][-2:] == ["--branch", "人"]
 
 
 def test_think_falls_back_to_the_package(tree):

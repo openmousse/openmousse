@@ -1,18 +1,20 @@
 // 回复进行中的那一块：还没出字时是「在想 / 在做」——绕着环转的点、现在在哪一步、用了几秒、做过的几步、最近一段思考摘要；
 // 开始出字以后，做过的步骤收成一行放在文字上面，文字下面三个点一闪一闪，直到回完。
-// 步骤和思考来自服务器的 progress 事件（只在 Gateway 的 WebSocket 对话通道上有，api/progress.ts）；没有的时候只有动画和计时。
+// 步骤和思考来自服务器的 progress 事件（Gateway 的 WebSocket 对话通道、自己的内核，api/progress.ts）；没有的时候只有动画和计时。
+// 每一步怎么说：自己的内核给了 label / doing（server/engine/steps.py：「查看日程」「正在查看日程」）就用它的，后面只接 note（文件名、
+// 域名这类）；交给你点头的那一步后面写「· 等你确认」（琥珀）。没给的（OpenClaw 的对话通道、老服务器）照下面这张表配。
 import React, { useEffect, useState } from 'react';
 import { Animated, Easing, Platform, StyleSheet, View } from 'react-native';
-import type { ReplyProgress, ReplyStep } from '../api/progress';
+import { useModelSwitch, type ReplyProgress, type ReplyStep } from '../api/progress';
 import { L } from '../i18n';
 import { useTheme } from '../theme';
-import { Dots, Spinner, useNow } from './ChatCards';
-import { Check, CircleAlert } from './icons';
+import { Dots, Spinner, modelLabel, useNow } from './ChatCards';
+import { Check, CircleAlert, Clock } from './icons';
 import { T } from './ui';
 
 const native = Platform.OS !== 'web';
 
-/** OpenClaw 的工具名 → [中文名, 英文名, 中文进行时, 英文进行时]。没列的按「调用工具」。 */
+/** OpenClaw 的工具名 → [中文名, 英文名, 中文进行时, 英文进行时]（OpenClaw 的对话通道还在用；自己的内核给 label）。没列的按「调用工具」。 */
 const TOOLS: Record<string, [string, string, string, string]> = {
   exec: ['运行命令', 'Command', '正在运行命令', 'Running a command'],
   process: ['运行命令', 'Command', '正在运行命令', 'Running a command'],
@@ -33,13 +35,21 @@ const TOOLS: Record<string, [string, string, string, string]> = {
   'llm-task': ['调用模型', 'Model call', '正在调用模型', 'Calling a model'],
 };
 const tool = (name: string) => TOOLS[name] ?? TOOLS[name.replace(/-/g, '_')] ?? ['调用工具', 'Tool', '正在调用工具', 'Using a tool'];
-const stepName = (s: ReplyStep) => { const x = tool(s.tool); return L(x[0], x[1]); };
-const stepDetail = (s: ReplyStep) => s.detail || (TOOLS[s.tool] ? '' : s.tool);
+const stepName = (s: ReplyStep) => { if (s.label) return s.label; const x = tool(s.tool); return L(x[0], x[1]); };
+/** 名字后面的灰字：服务器说了人话的只接 note；没说的照旧是标题，表里没有的工具写工具名。 */
+const stepDetail = (s: ReplyStep) => (s.label ? s.note ?? '' : s.detail || (TOOLS[s.tool] ? '' : s.tool));
+/** 交给你点头了：自己的内核标 wait（老服务器把「等你点头」写在 detail 里，照旧显示）。 */
+const waits = (s: ReplyStep) => !!s.label && !!s.wait;
 
 /** 现在在做什么（标题那一行）。 */
 function phaseLabel(p: ReplyProgress | null): string {
   const running = p?.steps.filter((s) => s.status === 'running') ?? [];
-  if (running.length) { const x = tool(running[running.length - 1].tool); return L(x[2], x[3]); }
+  if (running.length) {
+    const s = running[running.length - 1];
+    if (s.doing) return s.doing;
+    const x = tool(s.tool);
+    return L(x[2], x[3]);
+  }
   switch (p?.phase) {
     case 'preparing_workspace': return L('正在准备', 'Getting ready');
     case 'preparing_context': return L('正在读取上下文', 'Loading context');
@@ -83,13 +93,16 @@ function FadeIn({ children }: { children: React.ReactNode }) {
 function StepRow({ s }: { s: ReplyStep }) {
   const t = useTheme();
   const detail = stepDetail(s);
+  const wait = waits(s);
   return (
     <View style={styles.step}>
       <View style={styles.stepIcon}>
-        {s.status === 'running' ? <Spinner size={13} color={t.gold} /> : s.status === 'failed' ? <CircleAlert size={13} color={t.bad} /> : <Check size={13} color={t.good} />}
+        {s.status === 'running' ? <Spinner size={13} color={t.gold} /> : s.status === 'failed' ? <CircleAlert size={13} color={t.bad} />
+          : wait ? <Clock size={13} color={t.warn} /> : <Check size={13} color={t.good} />}
       </View>
       <T v="caption" numberOfLines={1} style={{ flex: 1, fontSize: 13 }} color={s.status === 'running' ? t.ink : t.ink2}>
         {stepName(s)}{detail ? <T v="caption" color={t.ink3} style={{ fontSize: 13 }}>{`  ${detail}`}</T> : null}
+        {wait ? <T v="caption" color={t.warn} style={{ fontSize: 13 }}>{L(' · 等你确认', ' · awaiting your approval')}</T> : null}
       </T>
     </View>
   );
@@ -137,6 +150,31 @@ export function StepsLine({ progress }: { progress: ReplyProgress | null }) {
         {L(`${steps.length} 个步骤 · ${names}`, `${steps.length} ${steps.length === 1 ? 'step' : 'steps'} · ${names}`)}
       </T>
     </View>
+  );
+}
+
+/** 为什么换了模型（server/engine/fallback.py 的 reason_of；换下用户自己的 Claude Code 时是 engine/owner.py 的 quota / broken / auth）。
+ *  认不出的不写原因。 */
+const REASONS: Record<string, [string, string]> = {
+  rate_limit: ['限流', 'rate limited'], overloaded: ['过载', 'overloaded'], server: ['服务出错', 'server error'], timeout: ['超时', 'timed out'],
+  network: ['连不上', 'unreachable'], auth: ['密钥或登录无效', 'key or sign-in rejected'], billing: ['额度用完', 'out of credit'],
+  model_not_found: ['型号不存在', 'model unavailable'], context_overflow: ['上下文太长', 'context too long'], cooldown: ['在冷却', 'cooling down'],
+  quota: ['套餐额度用完', 'plan limit reached'], broken: ['无法运行', "couldn't run"],
+};
+export const switchReason = (reason?: string) => { const x = reason ? REASONS[reason] : undefined; return x ? L(x[0], x[1]) : ''; };
+
+/** 回复进行中换了模型（model_switch）：这条回复下面一行小字，琥珀，和回完以后模型那行「已按回退链切换」一个颜色。 */
+export function SwitchLine({ thread }: { thread: string }) {
+  const t = useTheme();
+  const sw = useModelSwitch(thread);
+  if (!sw || sw.from === sw.to) return null;
+  const from = modelLabel(sw.from);
+  const to = modelLabel(sw.to);
+  const why = switchReason(sw.reason);
+  return (
+    <T v="caption" color={t.warn} style={{ fontSize: 13 }} accessibilityLiveRegion="polite">
+      {why ? L(`${from} ${why}，这一轮换成 ${to} 回答`, `${from} ${why}; this turn uses ${to}`) : L(`已换成 ${to}`, `Switched to ${to}`)}
+    </T>
   );
 }
 

@@ -429,7 +429,9 @@ def test_tools_go_through_the_kernel_gate_and_the_token_is_scoped(cc, monkeypatc
     call = tools_mod.call_of(pend["inbox"])
     assert call["tool"] == "journal" and json.loads(call["args"]) == ["delete", "j-cc-1"] and call["turn"] == events.turns("g-cc")[0]["id"]
     detail = {s["tool"]: (s["detail"], s["status"]) for s in steps_of(evs)}
-    assert detail["journal"] == ("journal delete · waiting for your OK", "done") and detail["board"][1] == "failed"
+    assert detail["journal"] == ("journal delete · awaiting your approval", "done") and detail["board"][1] == "failed"
+    said = {s["tool"]: (s["label"], s.get("wait")) for s in steps_of(evs)}  # 10/20：每一步说人话（engine/steps.py）
+    assert said["journal"] == ("Delete a journal entry", True) and said["diet"] == ("Check the meal log", None)
     assert r.text == "Deleting needs your OK."
 
 

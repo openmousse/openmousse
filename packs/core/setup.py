@@ -497,6 +497,8 @@ def write_server_json(a: argparse.Namespace, oc: dict, home: Path, workspace: Pa
     cfg = load_json(SERVER_JSON) if SERVER_JSON.exists() else {}
     fresh = not cfg
     before = json.dumps(cfg, sort_keys=True)
+    if fresh:  # 新装：你自己改的东西在库里记成 owner。已有的 server.json 不加（没有这个键 = leo，见 server/config.py 的 owner_id）
+        cfg["owner_id"] = "owner"
     new_tokens: dict[str, str] = {}
 
     def setdefault(key: str, value):
@@ -1348,8 +1350,9 @@ def lan_ip() -> str | None:
     return None
 
 
-def print_trial(cfg: dict, repo: Path, managed: bool, started: bool) -> None:
-    """试装装完：网页版在哪、服务怎么停和起、手机怎么连（同一个局域网或 Tailscale）、装了什么记在哪。"""
+def print_trial(cfg: dict, repo: Path, managed: bool, started: bool, tree: bool = False) -> None:
+    """试装装完：网页版在哪、服务怎么停和起（tree = 装了世界树：它的服务试装不起，说一句怎么起）、手机怎么连（同一个局域网或 Tailscale）、
+    装了什么记在哪。"""
     port = (cfg.get("bind") or {}).get("port") or 8080
     dist = Path(str(cfg.get("dist") or repo / "app" / "dist")).expanduser()
     print(L("试装：只在这台电脑上（127.0.0.1），没开公网，没碰 OpenClaw。", "Trial install: this computer only (127.0.0.1), nothing public, OpenClaw untouched."))
@@ -1363,6 +1366,10 @@ def print_trial(cfg: dict, repo: Path, managed: bool, started: bool) -> None:
         print(L(f"  服务在后台跑着（没装成开机自启）。停：`{stop_cmd('openmousse-server')}`；电脑重启以后再起：`{start_cmd('openmousse-server')}`",
                 f"  The server runs in the background (not as a login service). Stop it: `{stop_cmd('openmousse-server')}`; after a reboot, start it "
                 f"again: `{start_cmd('openmousse-server')}`"))
+        if tree:
+            print(L(f"  世界树的服务没起（给 AI 平台经 MCP 连的；自带的内核直接读树，用不到它）。要起：`{stop_cmd('mousse-tree')}; {start_cmd('mousse-tree')}`",
+                    f"  The memory tree service isn't started (it's for AI apps over MCP; the built-in engine reads the tree directly). To start it: "
+                    f"`{stop_cmd('mousse-tree')}; {start_cmd('mousse-tree')}`"))
     elif not managed:
         print_manual_start(False)
     ip = lan_ip()
@@ -1592,7 +1599,7 @@ def main() -> None:
         print_manual_start(not a.no_tree and (venv / "bin/mousse-tree").exists())
     print()
     if trial:
-        print_trial(cfg, repo, MANAGED, started)
+        print_trial(cfg, repo, MANAGED, started, tree=not a.no_tree and (venv / "bin/mousse-tree").exists())
     else:
         print(L("手机怎么连：", "Connecting the phone:"))
     tok_zh, tok_en = ("上面的令牌", "the token above") if "phone" in new_tokens and not os.environ.get("MOUSSE_NONINTERACTIVE") else ("手机令牌", "your phone token")
@@ -1615,8 +1622,8 @@ def main() -> None:
                 "`~/.openmousse/venv/bin/python ~/.openmousse/repo/server/tokens.py pair --server <that address>`"))
     else:
         print(L(f"  app 连接页填 {url} 和令牌", f"  Enter {url} and the token in the app"))
-    print(L("  app：怎么装见仓库 README 的「两种用法」（作者的 TestFlight，或自己构建 app/）",
-            "  The app: see \"Two ways to get the app\" in the repository README (the author's TestFlight, or build app/ yourself)."))
+    print(L("  app：怎么装见仓库里的 app/README.zh-CN.md（OpenMousse 的 TestFlight，或自己构建 app/）",
+            "  The app: see app/README.md in the repository (the OpenMousse TestFlight build, or build app/ yourself)."))
     if public is not None:
         print()
         print(L("AI 平台怎么连世界树：", "Connecting AI platforms to the memory tree:"))

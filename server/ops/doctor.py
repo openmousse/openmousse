@@ -411,6 +411,7 @@ def perm_targets(cfg: dict) -> list[tuple[str, str, Path, int]]:
             ("perm.config", "server.json", C.config_path(), 0o600),
             ("perm.db", L("数据库 mousse.db", "Database mousse.db"), C.db_path(cfg), 0o600),
             ("perm.chatgpt", L("ChatGPT 套餐的凭据", "ChatGPT plan credentials"), C.chatgpt_dir(cfg), 0o700),
+            ("perm.grok", L("Grok 订阅的凭据", "Grok subscription credentials"), C.grok_dir(cfg), 0o700),  # 10/20：engine/grok_plan.py
             ("perm.tree", L("世界树的配置（各平台的令牌）", "Memory tree config (platform tokens)"), C.tree_home() / "config.json", 0o600)]
 
 
@@ -423,7 +424,7 @@ def check_perms(c: Ctx) -> list[Check]:
         if m is None:
             continue  # 没有这个文件：没用过，不算毛病
         if m & 0o077:
-            world = bool(m & 0o004) and cid in ("perm.secrets", "perm.config", "perm.chatgpt", "perm.tree")
+            world = bool(m & 0o004) and cid in ("perm.secrets", "perm.config", "perm.chatgpt", "perm.grok", "perm.tree")
             out.append(Check(cid, "error" if world else "warn", title, L(f"{C.tilde(p)} 是 {m:o}，别的用户读得到", f"{C.tilde(p)} is {m:o}: other users can read it"),
                              f"chmod {want:o} {C.tilde(p)}", fixable=True, repair=_chmod(p, want)))
         else:

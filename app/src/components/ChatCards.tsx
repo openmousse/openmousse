@@ -14,7 +14,7 @@ import { L } from '../i18n';
 import { openTarget, openThread } from '../navigation';
 import { useStore } from '../store';
 import { radius, space, type, useTheme } from '../theme';
-import { BookOpen, CalendarDays, Check, ChevronRight, CircleAlert, Clock, CornerDownLeft, FileText, FolderKanban, ListChecks, LoaderCircle, Pencil, Send, Square, X } from './icons';
+import { BookOpen, CalendarDays, Check, ChevronRight, CircleAlert, Clock, CornerDownLeft, FileText, FolderKanban, ListChecks, LoaderCircle, Pencil, RotateCw, Send, Square, X } from './icons';
 import { Markdown } from './Markdown';
 import { SourceBadge } from './SourceBadge';
 import { modelOf } from './ModelPicker';
@@ -70,7 +70,7 @@ export function Dots({ color }: { color: string }) {
 }
 
 const secs = (n: number) => (n < 60 ? L(`${n} 秒`, `${n}s`) : L(`${Math.floor(n / 60)} 分 ${n % 60} 秒`, `${Math.floor(n / 60)}m ${n % 60}s`));
-/** 中文里名字是英文（比如 Grava）时，和汉字之间空一格。 */
+/** 中文里名字是英文（比如 Mousse）时，和汉字之间空一格。 */
 const zh = (name: string, rest: string) => (/[A-Za-z0-9]$/.test(name) ? `${name} ${rest}` : `${name}${rest}`);
 
 // —— 转交卡 ——————————————————————————————————————————————————————
@@ -175,12 +175,28 @@ function SmallBtn({ label, icon: Icon, onPress, primary, busy }: { label: string
   );
 }
 
+/** 重派（自己的内核，10/20）：从头再做一遍，结果回到原对话，算今天的额度。手机上先问一句；服务器不让（409）照它的原话提示。 */
+function useRetry(card: TaskCardInfo) {
+  const { claw, retryTask } = useStore();
+  const [busy, setBusy] = useState(false);
+  const go = () => { setBusy(true); retryTask(card.id).catch((e) => showError(L('重派失败', "Couldn't retry"), e)).finally(() => setBusy(false)); };
+  const retry = () => {
+    if (!native) { go(); return; }
+    Alert.alert(L('重派此任务？', 'Retry this task?'), L('从头再做一遍，结果回到原对话。计入今天的额度。', 'It starts over, and the result comes back to this chat. It counts toward today\'s allowance.'), [
+      { text: L('取消', 'Cancel'), style: 'cancel' },
+      { text: L('重派', 'Retry'), onPress: go },
+    ]);
+  };
+  return { can: claw.kind === 'builtin', busy, retry };
+}
+
 /** 派出去的一个后台任务。onRevise：点「改一下」/「接着做」（对话把输入框换成「改：标题」，发出去直接交给做它的子会话）。 */
 export function TaskCardView({ card, onRevise }: { card: TaskCardInfo; onRevise: (card: TaskCardInfo) => void }) {
   const t = useTheme();
   const nav = useNavigation<any>();
   const { cancelTask } = useStore();
   const [stopping, setStopping] = useState(false);
+  const again = useRetry(card);
   const revising = card.round > 1 && card.roundStatus === 'running';
   const running = card.status === '进行中' || revising;
   const now = useNow(running);
@@ -190,12 +206,13 @@ export function TaskCardView({ card, onRevise }: { card: TaskCardInfo; onRevise:
 
   if (card.status === '已取消' && !revising) {
     return (
-      <View style={[styles.rcpt, { backgroundColor: t.surface, borderColor: t.line }]} accessible accessibilityLabel={L(`已停止：${card.title}`, `Stopped: ${card.title}`)}>
+      <View style={[styles.rcpt, { backgroundColor: t.surface, borderColor: t.line }]}>
         <View style={[styles.circle, { backgroundColor: t.surface2 }]}><X size={15} color={t.ink2} /></View>
-        <View style={{ flex: 1, gap: 2 }}>
+        <View style={{ flex: 1, gap: 2 }} accessible accessibilityLabel={L(`已停止：${card.title}`, `Stopped: ${card.title}`)}>
           <T v="headline" numberOfLines={1} style={{ fontSize: 15 }}>{L(`已停止 · ${card.title}`, `Stopped · ${card.title}`)}</T>
           <T v="callout" color={t.ink2} style={{ fontSize: 13, lineHeight: 18 }}>{L(`已运行 ${card.minutes} 分钟`, `Ran for ${card.minutes} min`)}</T>
         </View>
+        {again.can ? <SmallBtn label={L('重派', 'Retry')} icon={RotateCw} busy={again.busy} onPress={again.retry} /> : null}
       </View>
     );
   }
@@ -203,11 +220,15 @@ export function TaskCardView({ card, onRevise }: { card: TaskCardInfo; onRevise:
   const failedRound = card.round > 1 && card.roundStatus === 'failed';
   const failed = !running && (card.status === '失败' || failedRound);
   const timedOut = failed && card.timedOut && !failedRound;
+  const cut = failed && !!card.interrupted && !failedRound;  // 被服务重启打断（不是它自己没做成）
+  // 重派只认任务本身没做成的；做完了、改的那一轮失败的（failedRound）服务器不让重派（409），那种照旧「修改」
+  const canRetry = failed && card.status === '失败' && again.can;
   const [statusText, statusColor, StatusIcon] = running
     ? [card.round > 1 ? L(`第 ${card.round} 轮 · 进行中`, `Round ${card.round} · running`) : L('进行中', 'Running'), t.cyan, null]
     : timedOut ? [L('已达时限', 'Time limit reached'), t.warn, Clock]
-      : failed ? [failedRound ? L(`第 ${card.round} 轮失败`, `Round ${card.round} failed`) : L('失败', 'Failed'), t.bad, CircleAlert]
-        : [card.round > 1 ? L(`第 ${card.round} 轮 · 完成`, `Round ${card.round} · done`) : L('完成', 'Done'), t.good, Check];
+      : cut ? [L('被重启打断', 'Interrupted by a restart'), t.warn, CircleAlert]
+        : failed ? [failedRound ? L(`第 ${card.round} 轮失败`, `Round ${card.round} failed`) : L('失败', 'Failed'), t.bad, CircleAlert]
+          : [card.round > 1 ? L(`第 ${card.round} 轮 · 完成`, `Round ${card.round} · done`) : L('完成', 'Done'), t.good, Check];
   // 右上角的用时和用量是第一轮的：改过之后标题那一行留给「第 N 轮」
   const metaBits = card.round > 1 ? [] : [
     running ? L(`${minutes} 分钟`, `${minutes} min`) : null,
@@ -280,9 +301,11 @@ export function TaskCardView({ card, onRevise }: { card: TaskCardInfo; onRevise:
       ) : null}
 
       {failed ? (
-        <T v="callout" color={timedOut ? t.ink2 : t.bad}>
+        <T v="callout" color={timedOut || cut ? t.ink2 : t.bad}>
           {timedOut ? L(`运行 ${card.minutes} 分钟后达到${card.limitMinutes ? ` ${card.limitMinutes} 分钟的` : ''}时长上限，任务未完成。`, `Stopped after ${card.minutes} min at the${card.limitMinutes ? ` ${card.limitMinutes}-minute` : ''} limit, unfinished.`)
-            : card.error || L('子会话出错。', 'The sub-session hit an error.')}
+            : cut ? (card.tools ? L(`做到第 ${card.tools} 步时服务重启，任务未完成。`, `The server restarted at step ${card.tools}; the task didn't finish.`)
+              : L('服务重启，任务未完成。', "The server restarted; the task didn't finish."))
+              : card.error || L('子会话出错。', 'The sub-session hit an error.')}
         </T>
       ) : null}
 
@@ -307,8 +330,10 @@ export function TaskCardView({ card, onRevise }: { card: TaskCardInfo; onRevise:
         <>
           <View style={styles.row}>
             <SmallBtn label={timedOut ? L('继续', 'Continue') : L('修改', 'Revise')} icon={Pencil} onPress={() => onRevise(card)} />
+            {canRetry ? <SmallBtn label={L('重派', 'Retry')} icon={RotateCw} busy={again.busy} onPress={again.retry} /> : null}
             <SmallBtn label={failed && !preview ? L('查看过程', 'See steps') : L('查看全文', 'Full text')} icon={FileText} primary onPress={openDetail} />
           </View>
+          {canRetry ? <T v="caption" color={t.ink3}>{L('重派：从头再做一遍，结果回到原对话', 'Retry starts it over; the result comes back to this chat')}</T> : null}
           <View style={styles.row}>
             <ModelChip id={card.modelId} />
             <T v="caption" color={t.ink3} numberOfLines={1} style={{ flexShrink: 1 }}>

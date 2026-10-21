@@ -17,6 +17,7 @@ from channels import accounts, cards, hub, outbox, owner, people, router, store
 from channels import format as fmt
 from channels.base import Account, Channel, ChannelError, Inbound
 from engine import providers
+from stored_values import ASSISTANT_ROLE
 from test_engine import FakeModel
 
 BOXES: dict[str, FakeChannel] = {}
@@ -532,7 +533,7 @@ def test_a_reply_waiting_at_restart_is_sent_afterwards(server_json, fake):
     with chat._lock, chat.db() as conn:
         uid_ = conn.execute("INSERT INTO messages(thread, role, text, ts) VALUES(?,?,?,?)", (thread, "user", "still there?", chat.now_iso())).lastrowid
         conn.execute("INSERT INTO messages(thread, role, text, ts, status) VALUES(?,?,?,?,?)",
-                     (thread, "grava", "(Didn't get a reply: the server restarted)", chat.now_iso(), "error"))
+                     (thread, ASSISTANT_ROLE, "(Didn't get a reply: the server restarted)", chat.now_iso(), "error"))
     one = ib(a, "still there?", sender="boss9")
     (rid,) = store.ingest("fake", a, [one])
     store.finish(rid, "waiting", who="owner", ref=f"db{uid_}")

@@ -65,6 +65,7 @@ def first_config(env, data: Path) -> dict:
     ws = data / "workspace"
     return {
         "app_name": str(env.get("MOUSSE_NAME") or "").strip()[:40] or "Mousse",
+        "owner_id": "owner",                          # 新装：你自己改的东西在库里记成 owner（见 server/config.py 的 owner_id）
         "timezone": tz_of(env),
         "language": lang,
         "bind": {"host": "0.0.0.0", "port": PORT},   # 容器里听所有地址；宿主那边 compose 只绑 127.0.0.1

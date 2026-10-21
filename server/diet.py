@@ -1,6 +1,6 @@
 """饮食记录（2026-10-13）：吃了什么、每样多少、营养从哪来，外加营养目标和个人食物库。训练还在训记，饮食记在服务自己的库里。
 
-表（服务的库；Grava 是 grava.db）
+表（服务的库 mousse.db）
 - diet_foods：个人食物库。每 100 g（饮品 100 ml，basis = ml）的 kcal / 蛋白质 / 碳水 / 脂肪（糖、纤维、饱和脂肪、盐放 extra），
   常用份量 portions（[{"label": "1 个（去壳）", "grams": 65}]），来源 source（xunji / off / cofid / usda / label 拍标签 / manual / estimate）、
   出处 source_ref（训记 uniquekey / 条码 / CoFID 编号 / fdcId）和一句说明 source_note，aliases = 别的叫法（训记里随手记的缩写也放这里）。
@@ -17,7 +17,7 @@
 
 查营养（/api/diet/lookup）的顺序：个人食物库 → 包装食品查 Open Food Facts（条码 / 名称）或拍标签 → CoFID → USDA；都查不到就由 Agent 估算并标「估算」。
 
-数据源：server.json 的 diet.source = "local"（默认：这里的表）或 "xunji"（还从训记读：作者迁移前用）。/api/diet/day 两种都给同一个结构
+数据源：server.json 的 diet.source = "local"（默认：这里的表）或 "xunji"（还从训记读：迁移前用）。/api/diet/day 两种都给同一个结构
 （看板、今天页不用改）；写入接口只写这里的表。训记是可选数据源，OpenMousse 默认用自带的记录。
 
 接口
@@ -54,7 +54,7 @@ from pydantic import BaseModel, ConfigDict, Field
 import nutrition
 import sources
 from chat import _lock, db, log_activity, now_iso
-from config import TZ, raw, settings
+from config import TZ, is_owner, owner_id, raw, settings
 from i18n import L
 
 router = APIRouter()
@@ -77,9 +77,11 @@ UNITS = {"g": "g", "克": "g", "gram": "g", "grams": "g", "ml": "ml", "毫升": 
 DATE_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 TIME_RE = re.compile(r"^([01]?\d|2[0-3]):([0-5]\d)$")
 ESTIMATE_RE = re.compile(r"估算|估计|大约|estimate", re.I)
-# 带这些字样的多半是包装食品（品牌、超市自有品牌）：自动模式下查名字也去问 Open Food Facts
+# 带这些字样的多半是包装食品（品牌、超市自有品牌，几个地方的都有）：自动模式下查名字也去问 Open Food Facts
 BRANDS = re.compile(r"m&s|marks|tesco|sainsbury|waitrose|ocado|lidl|aldi|co-?op|asda|morrisons|alpro|huel|pret|belvita|weetabix|optimum|"
-                    r"myprotein|danone|müller|muller|yeo|fage|oatly|heinz|kellogg|nestl|cadbury|innocent|graze|nature valley|quaker|\bon\b", re.I)
+                    r"myprotein|danone|müller|muller|yeo|fage|oatly|heinz|kellogg|nestl|cadbury|innocent|graze|nature valley|quaker|\bon\b|"
+                    r"\b(?:walmart|great value|costco|kirkland|trader joe|whole foods|kroger|safeway|carrefour|rewe|edeka|albert heijn|"
+                    r"mercadona|migros|7-eleven|lawson|familymart|aeon)\b|盒马|山姆|伊利|蒙牛|康师傅|农夫山泉", re.I)
 
 _ready = False
 _xj_lock = threading.Lock()  # 训记模式：同一时间只查一次（训记同一接口 15 秒一次）
@@ -217,8 +219,9 @@ def source_label() -> str:
 
 
 def actor_of(by: str | None) -> str:
+    """谁记的：不给 = 你自己（owner_id()）；给了 leo / owner（新旧都认）也记成 owner_id()；别的原样（main、Agent 的 id）。"""
     b = (by or "").strip()
-    return b[:40] if b else "leo"
+    return owner_id() if not b or is_owner(b) else b[:40]
 
 
 # —— 食物库 ————————————————————————————————————————————————————————————
@@ -370,7 +373,7 @@ def target_out(r: sqlite3.Row | None) -> dict | None:
     p, c, f = (r["protein"] or 0), (r["carb"] or 0), (r["fat"] or 0)
     kcal = r["kcal"] if r["kcal"] is not None else p * 4 + c * 4 + f * 9
     src = r["source"]
-    label = sources.xunji_name() if src == "xunji" else (L("手动设定", "Set manually") if src in ("leo", "app", "manual") else
+    label = sources.xunji_name() if src == "xunji" else (L("手动设定", "Set manually") if is_owner(src) or src in ("app", "manual") else
                                                          L("档案", "Profile") if src == "profile" else L("Agent 设定", "Set by an Agent"))
     out = {"kcal": round(kcal), "protein": round(p), "carb": round(c), "fat": round(f), "water_ml": round(r["water_ml"]) if r["water_ml"] else None,
            "source": label, "kcal_derived": bool(r["kcal_derived"]), "since": r["effective_from"]}
@@ -613,7 +616,7 @@ def add_entries(body: EntriesIn):
         out = [entry_out(r) for r in conn.execute(f"SELECT * FROM diet_entries WHERE id IN ({','.join('?' * len(ids))}) ORDER BY rowid", ids)]
     add = sums(rows)
     log_activity(L(f"记了{meal_label(meal)}：{len(rows)} 样，{add['kcal']} kcal", f"Logged {meal_label(meal).lower()}: {len(rows)} item(s), {add['kcal']} kcal"),
-                 "diet", None if by == "leo" else by)
+                 "diet", None if is_owner(by) else by)
     return {"ok": True, "preview": False, "batch": batch, "entries": out, "adds": add, "day": day_summary(d)}
 
 
@@ -682,7 +685,7 @@ def delete_entry(eid: str, by: str | None = None):
         if r["food_id"]:
             conn.execute("UPDATE diet_foods SET uses=MAX(uses-1, 0) WHERE id=?", (r["food_id"],))
     log_activity(L(f"删了一条饮食记录（{r['date']} {meal_label(r['meal'])}）", f"Deleted a meal log entry ({r['date']} {meal_label(r['meal']).lower()})"),
-                 "diet", None if actor_of(by) == "leo" else actor_of(by))
+                 "diet", None if is_owner(actor_of(by)) else actor_of(by))
     return {"ok": True, "deleted": eid, "day": day_summary(r["date"])}
 
 
@@ -703,7 +706,7 @@ def undo(body: UndoIn):
             if r["food_id"]:
                 conn.execute("UPDATE diet_foods SET uses=MAX(uses-1, 0) WHERE id=?", (r["food_id"],))
     d = rows[0]["date"]
-    log_activity(L(f"撤销了刚记的 {len(rows)} 样", f"Undid {len(rows)} logged item(s)"), "diet", None if actor_of(body.by) == "leo" else actor_of(body.by))
+    log_activity(L(f"撤销了刚记的 {len(rows)} 样", f"Undid {len(rows)} logged item(s)"), "diet", None if is_owner(actor_of(body.by)) else actor_of(body.by))
     return {"ok": True, "undone": len(rows), "day": day_summary(d)}
 
 
@@ -975,7 +978,7 @@ def log_plan(body: PlanLogIn):
         out = [entry_out(r) for r in conn.execute(f"SELECT * FROM diet_entries WHERE id IN ({','.join('?' * len(ids))}) ORDER BY rowid", ids)]
     add = sums(all_rows)
     labels = "、".join(str(m["label"]) for m in per_meal)
-    log_activity(L(f"按建议记了{labels}：{add['kcal']} kcal", f"Logged {labels} as planned: {add['kcal']} kcal"), "diet", None if by == "leo" else by)
+    log_activity(L(f"按建议记了{labels}：{add['kcal']} kcal", f"Logged {labels} as planned: {add['kcal']} kcal"), "diet", None if is_owner(by) else by)
     return {"ok": True, "preview": False, "card": card["id"], "batch": batch, "meals": per_meal, "already": [meals[i].get("label") for i in already],
             "entries": out, "adds": add, "warnings": warnings, "day": day_summary(d)}
 
@@ -1039,7 +1042,7 @@ def add_food(body: FoodIn):
     with _lock, dietdb() as conn:
         fid, created = save_food(conn, f, by)
         r = conn.execute("SELECT * FROM diet_foods WHERE id=?", (fid,)).fetchone()
-    log_activity(L(f"{'加' if created else '更新'}了食物库：{r['name']}", f"{'Added' if created else 'Updated'} a food: {r['name']}"), "diet", None if by == "leo" else by)
+    log_activity(L(f"{'加' if created else '更新'}了食物库：{r['name']}", f"{'Added' if created else 'Updated'} a food: {r['name']}"), "diet", None if is_owner(by) else by)
     return {"ok": True, "created": created, "food": food_out(r)}
 
 
@@ -1237,7 +1240,7 @@ def set_targets(body: TargetsIn):
     with _lock, dietdb() as conn:
         conn.execute("INSERT INTO diet_targets(effective_from, kcal, protein, carb, fat, water_ml, kcal_derived, source, note, created_by, created_at, day_type) "
                      "VALUES(?,?,?,?,?,?,?,?,?,?,?,?)", (d, vals["kcal"], vals["protein"], vals["carb"], vals["fat"], vals["water_ml"], vals["kcal_derived"],
-                                                        "leo" if by == "leo" else "agent", (body.note or "").strip()[:200] or None, by, now_iso(),
+                                                        owner_id() if is_owner(by) else "agent", (body.note or "").strip()[:200] or None, by, now_iso(),
                                                         None if body.clear else dt))
         if dt and not body.clear:
             other = "rest" if dt == "train" else "train"
@@ -1250,7 +1253,7 @@ def set_targets(body: TargetsIn):
                                                                     prev["source"], prev["note"], prev["created_by"], now_iso(), other))
         cur = targets_on(conn, today().isoformat())
     log_activity(L(f"营养目标从 {d} 起改了{('（' + day_type_label(dt) + '）') if dt else ''}", f"Nutrition targets changed from {d}"),
-                 "diet", None if by == "leo" else by)
+                 "diet", None if is_owner(by) else by)
     return {"ok": True, "from": d, "current": cur}
 
 

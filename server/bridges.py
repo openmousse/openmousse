@@ -151,7 +151,7 @@ def command(name: str) -> list[str] | None:
 
 
 def tree_command() -> list[str] | None:
-    """世界树跟 sources.py 选中的那一份走：作者实例的 scripts/memory_tree.py → python3 跑那个脚本（think.py 也这么调）；
+    """世界树跟 sources.py 选中的那一份走：工作区的 scripts/memory_tree.py → python3 跑那个脚本（think.py 也这么调）；
     开源版 → 服务同一个 venv 里的 mousse-tree（安装器装的），没有就看 PATH；都没接 → None。"""
     import sources
     if sources.memory_tree is None:

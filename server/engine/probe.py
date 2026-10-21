@@ -271,7 +271,7 @@ async def test_search(name: str, key: str | None = None, url: str | None = None)
     from .loop import ToolFailure
     t0 = time.monotonic()
     try:
-        hits = await web.search(name, "OpenMousse", 3, key=key, url=url)
+        hits = await web.search(name, "OpenMousse", 3, key=key, url=url, kind="owner", origin="user")  # 10/20：主人自己点的（grok 登录了订阅就测订阅）
     except ToolFailure as e:
         return {"ok": False, "results": 0, "ms": int((time.monotonic() - t0) * 1000), "error": error(_search_kind(str(e)), str(e), key or "")}
     return {"ok": True, "results": len(hits), "ms": int((time.monotonic() - t0) * 1000), "error": None}

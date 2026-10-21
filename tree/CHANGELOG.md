@@ -2,6 +2,12 @@
 
 Versions of `openmousse-tree` (the `mousse-tree` command and its MCP server). Older databases and note folders are upgraded in place the first time a newer version opens them; no memory is lost.
 
+## 0.7.0 (2026-10-21)
+
+- **Secrets**: `remember` (the MCP tool and `mousse-tree add`) replaces recognized keys and tokens with a placeholder before the leaf is stored. So do the weekly pruning's merges and rewrites (including the quote, tags and cues they carry over from older leaves), edits from the admin page, and sentences pruning moves into the profile. The leaf records how many places were redacted (`redacted` on the row; Markdown notes say `隐去过 N 处` or `redacted N`) and does not keep the original value.
+- **Export**: `TREE.md` and the profile bundle handed to platforms are redacted as they go out. Leaves already in the tree stay as they are; an old leaf is cleaned only in that export.
+- Shapes: vendor prefixes (Notion `ntn_` / `secret_`, Perplexity `pplx-`, OpenAI `sk-` / `sk-proj-`, Anthropic `sk-ant-`, GitHub `ghp_` / `github_pat_` / `gho_`, xAI `xai-`, Google `AIza`, Slack `xox[abpr]-`, AWS `AKIA`, Stripe `sk_live_` / `rk_live_`), JWTs, PEM private-key blocks, `token=` / `key=` query values, high-entropy strings of 32 or more characters (not paths, slugs or identifiers whose pieces read as words), and a UUID or a 32/40/64-digit hex id (commit hashes, page ids) only when a word like key, token, secret, password or bearer stands beside it.
+
 ## 0.6.0 (2026-10-19)
 
 - **Manuals**: a written procedure (how you write documents, log a workout, prepare a meeting) kept once next to the tree, with a name in everyday words, a few "when to use it" phrases, a one-line description and the body. Markdown storage keeps one note per manual in `manuals/` (edit them in Obsidian like any note); SQLite storage keeps them in the `manual` table of `tree.db`. Manuals are not memories: never leaves, never merged by pruning, never moved into the profile, never exported.

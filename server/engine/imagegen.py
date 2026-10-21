@@ -10,6 +10,8 @@
   comfyui/workflow  本机的 ComfyUI（默认 http://127.0.0.1:8188）：{"model": "comfyui/workflow", "workflow": "~/comfy/workflow_api.json",
                     "prompt_node": "6", "prompt_input": "text"}：把提示词写进那个节点，POST /prompt，等 /history/<id> 出结果，GET /view 拿图。
                     不花钱、不出门；参考图不收（要的话在工作流里自己接）
+  grok/<型号>       10/20：用户自己的 Grok 订阅（engine/grok_media.py：算订阅的额度、不另付钱；登录了才能选）：grok-imagine-image……；
+                    这一轮能不能花照 models.may_spend（后台的要同意过、经 /mcp、/v1 来的不行）
   对象里还能写 size、quality、background、format、aspect_ratio 的默认值，url、timeout。
 image_generate（主人回合；配了 engine.use.image 才有）：prompt + 可选的参考图（image / images：path、url、attachment 都认，同 view_image，最多
   REF_MAX 张）+ 张数（count 1–4）、size、aspect_ratio、quality、background、format。生成好的每一张：进图库（engine/images.py，工具结果里带图，
@@ -71,8 +73,13 @@ def _opt(c: media.Choice, args: dict, key: str, ok: tuple[str, ...] | re.Pattern
 
 
 async def generate(c: media.Choice, prompt: str, refs: list[media.Source], *, count: int, size: str | None, ratio: str | None, quality: str | None,
-                   background: str | None, fmt: str | None, conversation: str | None, agent: str | None) -> list[Picture]:
-    """按 c 生成 count 张（refs = 参考图）。出错抛 media.MediaError（报错里不带密钥）。记一行花费。"""
+                   background: str | None, fmt: str | None, conversation: str | None, agent: str | None, kind: str | None = None,
+                   origin: str | None = None) -> list[Picture]:
+    """按 c 生成 count 张（refs = 参考图）。出错抛 media.MediaError（报错里不带密钥）。记一行花费。
+    kind / origin（10/20）：这一轮是谁的（ToolCtx 的）：grok 照它看能不能花订阅（不给 = 不能）。"""
+    if c.provider == media.GROK:  # 10/20：Grok 订阅：这一轮不能花就不生（不记花费）
+        from . import grok_media
+        grok_media.check(kind, origin)
     with media.Meter("image", c, conversation, agent) as m:
         m.unit = "image"
         if c.provider == "openai" or c.opts.get("api") == "openai":
@@ -92,6 +99,10 @@ async def generate(c: media.Choice, prompt: str, refs: list[media.Source], *, co
                 raise media.MediaError("bad", L("ComfyUI 这里不收参考图（要的话在工作流里接）", "ComfyUI takes no reference images here (wire them into the workflow)"))
             pics = await _comfy(c, prompt, count)
             m.units, m.cost = float(len(pics)), 0.0
+        elif c.provider == media.GROK:  # 10/20：Grok 订阅（engine/grok_media.py）：算订阅的额度，钱记 0
+            from . import grok_media
+            pics = [Picture(d, mime) for d, mime in await grok_media.image(c, prompt, refs, count, ratio)]
+            m.cost = 0.0
         else:
             raise media.MediaError("config", L(f"{c.provider} 不会生图（能写的：openai、google、fal、comfyui）",
                                                f"{c.provider} can't make images (use openai, google, fal or comfyui)"))
@@ -273,7 +284,7 @@ def tool(agent: str) -> Tool | None:
             refs.append(src)
         try:
             pics = await generate(c, prompt, refs, count=count, size=size, ratio=ratio, quality=quality, background=background, fmt=fmt,
-                                  conversation=ctx.conversation, agent=ctx.agent)
+                                  conversation=ctx.conversation, agent=ctx.agent, kind=ctx.kind, origin=ctx.origin)
         except media.MediaError as e:
             raise ToolFailure(L(f"没生成出来（{c.ref}）：{e}", f"Image generation failed ({c.ref}): {e}")) from None
         import files

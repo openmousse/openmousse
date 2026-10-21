@@ -184,6 +184,8 @@ def test_owner_mail_that_passed_dmarc_gets_a_threaded_plain_reply(box, fake):
         r = await start(acc_id)
         imap.add(eml("owner_dmarc"))
         await until(lambda: smtp.to(OWNER))
+        # 假的 SMTP 收下信时，发件的那一步还没回来记 id（outbox 在 send 回来以后才 remember_sent）：等它记完再停，不然停在中间就没记上
+        await until(lambda: store.sent_id("email", acc_id, smtp.to(OWNER)[0]["msg"]["Message-ID"]))
         await until(lambda: not chat.busy("main"))
         await r.stop()
     run(go())

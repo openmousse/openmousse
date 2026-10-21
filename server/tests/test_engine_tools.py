@@ -18,6 +18,7 @@ import engine
 from engine import tools
 from engine.errors import EngineError
 from engine.session import DbSession, MemorySession, day_key, text_of, user
+from stored_values import ASSISTANT_ROLE
 from test_engine import FakeModel
 
 
@@ -106,7 +107,7 @@ def test_classify_reads_undoes_asks_and_unknowns():
     assert c("journal", ["delete", "j-1"])[:2] == ("ask", "journal delete")
     assert c("board", ["--agent", "diet", "alert", "delete", "a-1"])[:2] == ("ask", "board alert delete")
     assert c("diet", ["--by", "diet", "rm", "e-1"])[0] == "ask" and c("diet", ["add", "--meal", "lunch"])[0] == "undo"
-    assert c("diet", ["targets"])[0] == "read" and c("diet", ["targets", "set", "--protein", "120"])[0] == "undo"
+    assert c("diet", ["targets"])[0] == "read" and c("diet", ["targets", "set", "--protein", "100"])[0] == "undo"
     assert c("schedule", ["purge"])[:2] == ("ask", "schedule purge")  # 不认识的按撤不回
     assert c("schedule", [])[0] == "read" and c("journal", ["--help"])[0] == "read"  # 没有子命令：只打印用法
     assert c("handoff", ["--list"])[0] == "read" and c("handoff", ["fitness", "how was my sleep?"])[0] == "undo"
@@ -400,7 +401,7 @@ def test_new_days_session_copies_todays_earlier_messages(server_json, fake):
     ts = chat.now_iso()
     with chat._lock, chat.db() as conn:  # 切到内核之前，今天这个对话已经聊过两句
         a = conn.execute("INSERT INTO messages(thread, role, text, ts) VALUES('t-seed','user','earlier q',?)", (ts,)).lastrowid
-        conn.execute("INSERT INTO messages(thread, role, text, ts) VALUES('t-seed','grava','earlier a',?)", (ts,))
+        conn.execute(f"INSERT INTO messages(thread, role, text, ts) VALUES('t-seed','{ASSISTANT_ROLE}','earlier a',?)", (ts,))
     f = fake([{"text": "now"}])
 
     async def go():

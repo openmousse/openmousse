@@ -1,13 +1,15 @@
-import React, { useState } from 'react';
+import React, { useCallback, useState } from 'react';
 import { agentName } from '../brand';
 import { Alert, Pressable, ScrollView, StyleSheet, TextInput, View } from 'react-native';
-import { useNavigation } from '@react-navigation/native';
-import { CheckCheck, CircleX, Clock, Eraser, MessageCircle, Pencil, Trash2, X } from '../components/icons';
+import { useFocusEffect, useNavigation } from '@react-navigation/native';
+import { setupApi, type ModelChoice, type Purpose, type Purposes } from '../api/setup';
+import { supports } from '../api/version';
+import { Check, CheckCheck, ChevronRight, CircleX, Clock, Eraser, MessageCircle, Pencil, Trash2, X } from '../components/icons';
 import { LensAvatar } from '../components/LensAvatar';
 import { MemoryList } from '../components/MemoryList';
 import { modelOf, useBilling } from '../components/ModelPicker';
 import { useSheet } from '../components/Sheet';
-import { Btn, Card, ListRow, NavHeader, Pill, PullRefresh, Screen, SectionLabel, T } from '../components/ui';
+import { Btn, Card, ListRow, NavHeader, Pill, PullRefresh, Screen, SectionLabel, T, showError } from '../components/ui';
 import { MODELS, billingLabel, costLabel } from '../data/models';
 import type { ActivityEntry, AvatarConfig, ProfileItem } from '../data/types';
 import { L } from '../i18n';
@@ -50,14 +52,13 @@ function EditProfileSheet({ item, close }: { item: ProfileItem; close: () => voi
     setBusy(true);
     editProfile(item.id, value).then(close).catch((e) => Alert.alert(L('修改失败', "Couldn't update"), e instanceof Error ? e.message : String(e))).finally(() => setBusy(false));
   };
-  const today = new Date().toLocaleDateString('en-CA');
   return (
     <View style={{ gap: space.md }}>
       <TextInput value={text} onChangeText={setText} multiline autoFocus accessibilityLabel={L('档案内容', 'Profile item')}
         style={[type.body, styles.input, { backgroundColor: t.surface, color: t.ink, minHeight: 96, textAlignVertical: 'top' }]} />
       <T v="caption" color={t.ink3}>{L(
-        `保存后此条将标记为你今天确认（[L] ${today}），旧版本另存于服务器上，${agentName()} 无法检索。`,
-        `Once saved, this item is marked as confirmed by you today ([L] ${today}). The old version is kept separately on the server, where ${agentName()} can't search it.`,
+        `保存后此条标记为你今天确认，旧版本另存于服务器上，${agentName()} 无法检索。`,
+        `Once saved, this item is marked as confirmed by you today. The old version is kept separately on the server, where ${agentName()} can't search it.`,
       )}</T>
       <Btn label={busy ? L('正在保存…', 'Saving…') : L('保存', 'Save')} onPress={() => { if (!busy && text.trim()) run(text.trim()); }} />
       {confirm
@@ -232,6 +233,168 @@ function providerLabel(provider: string): string | undefined {
   return labels[provider];
 }
 
+// —— 一问一答、压缩摘要用哪个模型（服务器有 setup.purposes.oneshot 才有，10/20）——————————————————————
+// 看得出现在用哪个、是不是套餐、套餐跑不跑得了、出问题换不换；点一下换（PUT /api/setup/purposes），换完能撤销。别的用途以后另做。
+
+type PickId = 'json' | 'compact';
+type PutValue = string | null;  // 引用 | 'default' | null
+
+const pickName = (id: PickId) => (id === 'json' ? L('一问一答', 'One-shot answers') : L('压缩摘要', 'Compaction summaries'));
+const pickNote = (id: PickId) => (id === 'json'
+  ? L('会议纪要、学习页、播客、朋友画像这类一次性的调用。', 'One-off calls such as meeting minutes, study pages, podcasts and friend profiles.')
+  : L('对话太长时压成的摘要。', 'Summaries that shorten long chats.'));
+const followName = (id: PickId) => (id === 'json' ? L('跟后台和定时一样', 'Same as Background and scheduled') : L('跟对话自己的模型', "The chat's own model"));
+const nameOf = (id: string | null | undefined) => (id ? modelOf(id)?.name ?? id : '—');
+const failName = (k: string) => (({
+  auth: L('没登录', 'signed out'), quota: L('额度用完', 'usage limit reached'), broken: L('命令坏了', 'command broken'), timeout: L('超时', 'timed out'),
+} as Record<string, string>)[k] ?? L('出错', 'error'));
+
+const pad2 = (n: number) => String(n).padStart(2, '0');
+/** 14:05；不是今天的带上日子（10/19 14:05）。 */
+function atLabel(iso: string): string {
+  const ms = Date.parse(iso);
+  if (Number.isNaN(ms)) return '';
+  const d = new Date(ms);
+  const hm = `${pad2(d.getHours())}:${pad2(d.getMinutes())}`;
+  return d.toDateString() === new Date().toDateString() ? hm : `${d.getMonth() + 1}/${d.getDate()} ${hm}`;
+}
+
+/** 现在选中的那一项（撤销时也 PUT 回它）：json 跟着后台 = 'default'；compact 没写 = 'default'；单独选的 = 那个引用；json 没写 = null。 */
+function selectedOf(row: Purpose): PutValue {
+  const ref = typeof row.current === 'string' && row.current !== 'default' ? row.current : null;
+  if (row.id === 'json') return row.follows === 'background' ? 'default' : ref;
+  return ref ?? 'default';
+}
+
+function backupLine(row: Purpose): string {
+  const names = (row.backups ?? []).map(nameOf).join(' → ');
+  if (row.thenOwn) {
+    return names ? L(`出问题时换成 ${names}，最后用对话自己的模型（不是 Claude Code 时）`, `If it fails: ${names}, then the chat's own model (unless that's Claude Code)`)
+      : L('出问题时：用对话自己的模型（不是 Claude Code 时）', "If it fails: the chat's own model (unless that's Claude Code)");
+  }
+  return names ? L(`出问题时换成 ${names}`, `If it fails: switches to ${names}`) : L('出问题时：不自动换', 'If it fails: no automatic switch');
+}
+
+function PickCard({ row, onPress, changed, onUndo }: { row: Purpose; onPress: () => void; changed?: string; onUndo: () => void }) {
+  const t = useTheme();
+  const id = row.id as PickId;
+  const plan = !!row.plan;
+  const fail = row.lastFailure;
+  const warn = plan && (row.planReady === false || !!fail);
+  const follow = id === 'json' ? row.follows === 'background' : !!row.follows;
+  return (
+    <Pressable onPress={onPress} accessibilityRole="button" accessibilityLabel={`${pickName(id)}${L('：', ': ')}${nameOf(row.effective)}`}
+      accessibilityHint={L('点击更换', 'Tap to change')} style={({ pressed }) => ({ opacity: pressed ? 0.7 : 1 })}>
+      <Card style={{ gap: 6 }}>
+        <View style={{ flexDirection: 'row', alignItems: 'center', gap: space.sm }}>
+          <T v="headline" numberOfLines={1} style={{ flex: 1 }}>{nameOf(row.effective)}</T>
+          {row.effective ? <Pill label={plan ? L('套餐', 'Plan') : L('按量', 'Pay-as-you-go')} tone={plan ? 'gold' : 'cyan'} /> : null}
+          <ChevronRight size={18} color={t.ink3} />
+        </View>
+        <T v="callout" color={t.ink2}>{follow ? `${pickNote(id)} ${followName(id)}${L('。', '.')}` : pickNote(id)}</T>
+        {warn ? (
+          <T v="callout" color={t.warn}>{[L('套餐现在用不了', "The plan can't be used right now"), fail ? failName(fail.kind) : null, fail ? atLabel(fail.at) : null]
+            .filter(Boolean).join(' · ')}</T>
+        ) : null}
+        <T v="callout" color={t.ink2}>{backupLine(row)}</T>
+        {changed ? (
+          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, marginTop: 2 }}>
+            <Check size={15} color={t.good} />
+            <T v="callout" color={t.good} numberOfLines={1} style={{ flexShrink: 1 }}>{L(`已改成 ${changed}`, `Changed to ${changed}`)}</T>
+            <T v="callout" color={t.ink3}>·</T>
+            <Pressable onPress={onUndo} hitSlop={8} accessibilityRole="button"><T v="callout" color={t.gold}>{L('撤销', 'Undo')}</T></Pressable>
+          </View>
+        ) : null}
+      </Card>
+    </Pressable>
+  );
+}
+
+function PickSheet({ row, choices, close, onDone }: { row: Purpose; choices: ModelChoice[]; close: () => void; onDone: (pv: Purposes, to: string) => void }) {
+  const t = useTheme();
+  const id = row.id as PickId;
+  const [want, setWant] = useState<{ value: PutValue; name: string; plan: boolean } | null>(null);
+  const [busy, setBusy] = useState(false);
+  const on = selectedOf(row);
+  const opts = [
+    { value: 'default' as PutValue, name: followName(id), sub: '', plan: false },
+    ...choices.filter((c) => (row.mayPlan || !c.plan) && c.oneShot !== false).map((c) => ({ value: c.ref as PutValue, name: nameOf(c.ref), sub: c.plan ? L('花你自己的套餐', 'Uses your own plan') : c.providerName, plan: !!c.plan })),
+  ];
+  const save = async () => {
+    if (!want || busy) return;
+    setBusy(true);
+    try {
+      const pv = await setupApi.setPurposes(id === 'json' ? { json: want.value } : { compact: want.value });
+      close();
+      onDone(pv, want.name);
+    } catch (e) { showError(L('保存失败', "Couldn't save"), e); } finally { setBusy(false); }
+  };
+  if (want) {
+    return (
+      <View style={{ gap: space.md }}>
+        <T v="body">{L(`${pickName(id)}改成：${want.name}`, `${pickName(id)} will use: ${want.name}`)}</T>
+        {want.plan ? <T v="callout" color={t.ink2}>{L('花你自己的套餐。套餐出问题时按「出问题时」一行处理，也可以回到这里更换。', "Uses your own plan. If the plan has trouble, the \"If it fails\" line applies; you can also switch here.")}</T> : null}
+        <Btn label={busy ? L('正在保存…', 'Saving…') : L('确认', 'Confirm')} onPress={save} />
+        <Btn label={L('返回', 'Back')} kind="quiet" onPress={() => setWant(null)} />
+      </View>
+    );
+  }
+  return (
+    <View>
+      {opts.map((o, i) => (
+        <ListRow key={o.value ?? 'none'} title={o.name} sub={o.sub || undefined} last={i === opts.length - 1}
+          right={o.value === on ? <Check size={18} color={t.gold} /> : o.value === 'default' ? undefined
+            : <Pill label={o.plan ? L('套餐', 'Plan') : L('按量', 'Pay-as-you-go')} tone={o.plan ? 'gold' : 'cyan'} />}
+          onPress={() => (o.value === on ? close() : setWant(o))} />
+      ))}
+    </View>
+  );
+}
+
+/** 一问一答（和压缩摘要）那几张卡：读 /api/setup/purposes，点一下换，换完一行「已改成 X · 撤销」。 */
+function PickRows() {
+  const t = useTheme();
+  const sheet = useSheet();
+  const [pv, setPv] = useState<Purposes | null>(null);
+  const [err, setErr] = useState<string | null>(null);
+  const [changed, setChanged] = useState<Partial<Record<PickId, { to: string; undo: PutValue }>>>({});
+  const load = useCallback(() => setupApi.purposes(false).then((v) => { setPv(v); setErr(null); })
+    .catch((e) => setErr(e instanceof Error ? e.message : String(e))), []);
+  useFocusEffect(useCallback(() => { load(); }, [load]));
+  const open = (row: Purpose) => {
+    if (!pv || !row.applies) return;
+    const id = row.id as PickId;
+    const undo = selectedOf(row);
+    sheet.open({
+      title: L(`${pickName(id)}的模型`, `Model for ${pickName(id).toLowerCase()}`),
+      content: (close) => <PickSheet row={row} choices={pv.choices.models} close={close}
+        onDone={(next, to) => { setPv(next); setChanged((c) => ({ ...c, [id]: { to, undo } })); }} />,
+    });
+  };
+  const undo = async (id: PickId) => {
+    const c = changed[id];
+    if (!c) return;
+    try {
+      setPv(await setupApi.setPurposes(id === 'json' ? { json: c.undo } : { compact: c.undo }));
+      setChanged((x) => ({ ...x, [id]: undefined }));
+    } catch (e) { showError(L('撤销失败', "Couldn't undo"), e); }
+  };
+  if (!pv) return err ? <Card style={{ marginTop: space.xl }}><T v="callout" color={t.bad}>{L(`无法加载：${err}`, `Couldn't load: ${err}`)}</T></Card> : null;
+  return (
+    <>
+      {(['json', 'compact'] as PickId[]).map((id) => {
+        const row = pv.purposes.find((p) => p.id === id);
+        return row ? (
+          <View key={id}>
+            <SectionLabel>{pickName(id)}</SectionLabel>
+            <PickCard row={row} onPress={() => open(row)} changed={changed[id]?.to} onUndo={() => undo(id)} />
+          </View>
+        ) : null;
+      })}
+    </>
+  );
+}
+
 export function ModelsScreen() {
   const t = useTheme();
   const { models, claw } = useStore();
@@ -255,6 +418,7 @@ export function ModelsScreen() {
           `模型、回退和计费由 ${claw.name} 自行管理，请在其配置中修改。app 中可切换的模型在服务器 server.json 的 claw 段（models）中配置。`,
           `${claw.name} handles models, fallbacks and billing itself; change them there. The models the app can switch between are set in server.json on the server (models in the claw section).`,
         )}</T>
+        {claw.kind === 'builtin' && supports('setup.purposes.oneshot') ? <PickRows /> : null}
       </Page>
     );
   }

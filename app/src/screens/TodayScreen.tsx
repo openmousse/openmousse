@@ -18,6 +18,7 @@ import { InboxLive, PendingBlock } from '../components/today/Pending';
 import { MonthView, WeekView } from '../components/today/Range';
 import { ReportsBlock, useOpenReport } from '../components/today/Reports';
 import { CATS, CatFilter, type CatFilterValue } from '../components/today/Cats';
+import { nowMinute } from '../components/today/ring';
 import { addDays, dayTitle, daySub, toMin } from '../components/today/parts';
 import { L } from '../i18n';
 import { todayIso, useStore } from '../store';
@@ -32,14 +33,20 @@ export function TodayScreen() {
   return connected && !supports('today') ? <TodayLegacy /> : <TodayPage />;
 }
 
-/** 一天的三块（按日子缓存，先画上次的）；iso 为 null = 今天（服务器按用户的时区算）。bump 变了就重读。at = 读回来的时刻（现在线按它往后走）。 */
+/** 一天的三块（按日子缓存，先画上次的）；iso 为 null = 今天（服务器按用户的时区算）。bump 变了就重读。
+ * at = 读回来的时刻（现在线按它对准）；画的是别处留下的缓存（还没读到）就是 0，现在线改用设备的钟。 */
 function useDay(iso: string | null, connected: boolean, bump: number) {
   const [got, setGot] = useState<{ iso: string | null; data: TodayDay | null; error: string; at: number } | null>(null);
   useEffect(() => {
     if (!connected) return undefined;
     let alive = true;
     loadDay(iso).then((d) => { if (alive) setGot({ iso, data: d, error: '', at: Date.now() }); })
-      .catch((e) => { if (alive) setGot({ iso, data: cachedDay(iso), error: errText(e), at: Date.now() }); });
+      .catch((e) => {
+        if (!alive) return;
+        // 没读到，画缓存：缓存还是上次读到的那一份，就留着那次的 at（服务器的时刻和 at 是一对），不然是 0
+        const data = cachedDay(iso);
+        setGot((g) => ({ iso, data, error: errText(e), at: g && g.iso === iso && g.data === data ? g.at : 0 }));
+      });
     return () => { alive = false; };
   }, [iso, connected, bump]);
   const mine = got && got.iso === iso ? got : null;
@@ -71,7 +78,7 @@ function TodayPage() {
     if (focused) { setBump((n) => n + 1); setVisit((n) => n + 1); }
   }
   useEffect(() => {
-    const sub = AppState.addEventListener('change', (st) => { if (st === 'active') setBump((n) => n + 1); });
+    const sub = AppState.addEventListener('change', (st) => { if (st === 'active') { setClock(Date.now()); setBump((n) => n + 1); } });
     return () => sub.remove();
   }, []);
   // 现在线每 30 秒往后走；在这一页上每 5 分钟重读一次（「进行中」「已结束」跟着变）
@@ -89,7 +96,7 @@ function TodayPage() {
   const setDay = (iso: string) => setPicked(iso === today ? null : iso);
   const changed = useCallback(() => { setBump((n) => n + 1); reload('schedule', 'remember').catch(() => {}); }, [reload]);
   const serverNow = data?.now ? toMin(data.now) : null;
-  const nowMin = serverNow != null ? Math.min(24 * 60 - 1, serverNow + Math.max(0, Math.floor((Math.max(clock, at) - at) / 60000))) : null;
+  const nowMin = serverNow != null ? nowMinute(serverNow, at, Math.max(clock, at)) : null;  // 跟手机的钟，按服务器时区对齐
 
   const openEvent = (e: DayEvent) => sheet.open({ title: e.title, content: (close) => <EventDetail e={e} past={e.past || day < today} close={close} onChanged={changed} /> });
   // 从推送 / 小窗点进来：回到今天的日视图，打开那张卡（收件箱的卡、报告，或归在日程里的计划和复盘）

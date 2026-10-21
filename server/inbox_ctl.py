@@ -11,7 +11,8 @@
   python3 inbox_ctl.py get <id>
 
 kind：task 任务 / write 写进外部系统 / send 发给别人 / spend 花钱 / schedule 新定时任务 / push 新推送 / calendar 日历
-      / skill 新技能 / agent 新 Agent / block 看板 / code 改代码、配置、凭证 / other。
+      / skill 新技能 / agent 新 Agent / block 看板 / code 改代码、配置、凭证 / other
+      / info 只是告诉用户一件事、不要他做决定（每周的报告这类：默认不推送，他点「知道了」只是收起，你的对话里什么都不会来）。
 add 成功打印 id；--dedupe 相同、还在等的那条会原地更新（同一个 id）。30 天内被拒绝过的同一件事：退出码 3，别再提。
 不给 --source：当前目录在哪个 Agent 的工作区里就算它的，否则是 main。
 一张卡多条：add / update 加 --items-file 文件|-（JSON：[{"id": "1", "text": "一句话", "detail": "…", "default": "approve|reject"}, …]），
@@ -31,7 +32,7 @@ from pathlib import Path
 from config import settings
 from i18n import L, lang
 
-KINDS = ("task", "write", "send", "spend", "schedule", "push", "calendar", "skill", "agent", "block", "code", "other")
+KINDS = ("task", "write", "send", "spend", "schedule", "push", "calendar", "skill", "agent", "block", "code", "other", "info")
 
 
 def description() -> str:
@@ -49,7 +50,9 @@ Submit, revise and report on them from the command line. Goes through the server
   python3 inbox_ctl.py get <id>
 
 kind: task / write (to an outside system) / send (to other people) / spend (money) / schedule (new scheduled job) / push (new notification)
-      / calendar / skill (new skill) / agent (new Agent) / block (board block) / code (code, config, credentials) / other.
+      / calendar / skill (new skill) / agent (new Agent) / block (board block) / code (code, config, credentials) / other
+      / info (only tells the user something, nothing to decide, like a weekly report: no notification by default, and tapping "Got it"
+      just files it away; nothing comes back to your chat).
 add prints the id; with the same --dedupe, a pending item is updated in place (same id). Rejected in the last 30 days: exit code 3, don't propose it again.
 Without --source: the Agent whose workspace contains the current directory, otherwise main.
 One card, several items: add / update take --items-file FILE|- (JSON: [{"id": "1", "text": "one line", "detail": "…", "default": "approve|reject"}, …]);

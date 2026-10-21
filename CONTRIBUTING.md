@@ -11,7 +11,7 @@ Thanks for looking. OpenMousse is small and early; the most useful contributions
 
 ## Setting up
 
-You need an OpenClaw instance to try the whole thing, but each part can be worked on alone.
+You don't need OpenClaw: the built-in engine runs the whole thing on a model you pick, and each part can be worked on alone.
 
 ```bash
 git clone https://github.com/openmousse/openmousse && cd openmousse
@@ -23,11 +23,17 @@ cd app && npm install && npm run typecheck && npm run lint
 cd ../server && pip install -r requirements.txt
 MOUSSE_SERVER_CONFIG=/tmp/server.json python3 run.py        # see server.example.json and config.py
 
+# the built-in engine with no provider account: put "claw": {"kind": "builtin"} in /tmp/server.json, start a scripted
+# fake model (OpenAI-compatible on 127.0.0.1:8765/v1, it answers "echo: …") and connect it as the main chat's model
+python3 -m evals.fakemodel --echo &
+MOUSSE_SERVER_CONFIG=/tmp/server.json python3 setup_ctl.py add fake --url http://127.0.0.1:8765/v1 --key-stdin </dev/null
+# with a real model instead: MOUSSE_SERVER_CONFIG=/tmp/server.json python3 setup_ctl.py (model, web search, memory)
+
 # tree (memory over MCP)
 cd ../tree && pip install -e . && MOUSSE_TREE_HOME=/tmp/tree mousse-tree init --name Dev
 ```
 
-The CI workflow (`.github/workflows/ci.yml`) shows exactly what is checked: app typecheck + lint, Python pyflakes, `install.sh` syntax, a smoke test that boots the server on an empty instance, and the tree CLI.
+The CI workflow (`.github/workflows/ci.yml`) shows exactly what is checked: app typecheck + lint, Python lint (ruff, rules in `ruff.toml`) and the server's unit tests (`python -m pytest server/tests`), `install.sh` syntax, a smoke test that boots the server on an empty instance, and the tree CLI.
 
 ## Pull requests
 

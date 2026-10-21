@@ -2,7 +2,7 @@
 openmousse_tree.manuals），各处只留「去哪取」；每轮开头按用户这句话（加上上一句）搜手册和技能，只把命中的正文带进这一轮，别的不进。
 
 搜什么（catalog，按 Agent）：
-  manual  世界树的手册（选中的是开源版世界树、包 0.6 起；作者那份 scripts/memory_tree.py 还没有手册）：名字、什么时候用、一句说明、正文；
+  manual  世界树的手册（选中的是开源版世界树、包 0.6 起；工作区那份 scripts/memory_tree.py 还没有手册）：名字、什么时候用、一句说明、正文；
           手册写了 agents 的，那几个 Agent 优先
   skill   这个 Agent 能用的技能（tools.list_skills：工作区的 skills/、用户级的 skills/、packs/core/skills，同名的前面的优先；engine.skills.agents 写了
           名单的只给名单上的，engine/agent_skills.py）：名字 + frontmatter 的 when（有就用）+ description；正文还在 SKILL.md，不搬家，

@@ -12,6 +12,7 @@ import { AudioModule, setAudioModeAsync, type AudioRecorder } from 'expo-audio';
 import { httpStatus } from '../api/base';
 import { transcribeReady } from '../api/talk';
 import { needsUpdate, supports } from '../api/version';
+import { ASSISTANT_ROLE } from '../data/stored';
 import type { Message, PendingFile } from '../data/types';
 import { L } from '../lang';
 import { Barge, Ears } from './ears';
@@ -187,7 +188,7 @@ export class Talk {
     if (!this.awaiting || this.closed) return;
     if (typing) { this.sawTyping = true; return; }
     if (!this.sawTyping) return;
-    if (!last || last.role !== 'grava') { this.endWith(L('没有收到回复。', 'No reply was received.')); return; }
+    if (!last || last.role !== ASSISTANT_ROLE) { this.endWith(L('没有收到回复。', 'No reply was received.')); return; }
     if (last.error) { this.endWith(last.error); return; }
     this.take(last.body.text, true);
   }

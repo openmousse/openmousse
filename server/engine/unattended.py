@@ -9,7 +9,8 @@ fresh()    在一条新会话里跑一轮主人回合，不带那个对话的聊
            模型是 claude-code/…（第 11 项）：交给本机用户自己登录的 Claude Code 跑一次（engine/claude_brain.once：一次性的新会话、
            工具和关卡同上），看门狗照旧。它跑不了（登录掉了、命令坏了、额度用完，还没出字、没调工具）：换备用链里的（同主对话）。
            模型是 chatgpt/…（第 11b 项，用户自己的 ChatGPT 套餐）：定时任务、心跳是后台用，用户在设置里同意过才花（models.may_spend，
-           来路 auto）；没同意换成 models.outside() 挑的非套餐模型，没有就这一次记成出错，说清楚为什么。
+           来路 auto）；没同意换成 models.outside() 挑的非套餐模型，没有就这一次记成出错，说清楚为什么。grok/…（10/20，用户自己的
+           Grok 订阅）同样，同意单独记（engine/grok_plan.py）。
 in_chat()  照 chat.trigger 那条路在那个对话里跑（chat.start_run，origin auto，app 里一行灰字 + 回复）：接着这个对话当天的会话。
            那个对话正在回话就等它说完（最多 10 分钟）。推送按任务的档位，回完才推（回的要是「没要说的」就把这两条删掉、会话退回去、不推）。
 silent()   「没要说的」：整段，或者第一行、最后一行，是 [SILENT] / NO_REPLY / 静默 这类记号；或者 HEARTBEAT_OK 去掉以后剩下不到 300 字
@@ -37,6 +38,7 @@ from dataclasses import dataclass, field
 
 from config import settings
 from i18n import L
+from stored_values import ASSISTANT_ROLE
 
 from . import models
 from .errors import EngineError
@@ -171,6 +173,14 @@ async def fresh(agent: str, conversation: str, key: str, prompt: str, *, model: 
                 "Scheduled runs and heartbeats don't use your ChatGPT plan unless you allow it once in Settings (background tasks can use my "
                 "plan), or give them a model with an API key"))
         model = alt
+    if models.subscription(model) == "grok" and not models.may_spend(model, kind="owner", origin="auto"):  # 10/20：后台用 Grok 订阅也要先同意
+        alt = models.outside(model)
+        if not alt:
+            return Outcome(status="error", model=model, error=L(
+                "定时任务和心跳默认不花你的 Grok 订阅：要用的话同意一次（python3 setup_ctl.py grok background on），或者给它配一个用 API 密钥的模型",
+                "Scheduled runs and heartbeats don't use your Grok subscription unless you allow it once (python3 setup_ctl.py grok background "
+                "on), or give them a model with an API key"))
+        model = alt
     try:
         models.parse_ref(model)
         tools = tools_for(agent)
@@ -269,7 +279,7 @@ async def post(thread: str, label: str, gw: str, text: str, *, model: str, level
         aid = conn.execute("INSERT INTO messages(thread, role, text, model, ts, gw_text, origin) VALUES(?,?,?,?,?,?,?)",
                            (thread, "auto", AUTO_TRIGGER + label, None, ts, gw, "auto")).lastrowid
         rid = conn.execute("INSERT INTO messages(thread, role, text, model, requested, ts, status, origin) VALUES(?,?,?,?,?,?,?,?)",
-                           (thread, "grava", text, served or model, model, chat.now_iso(), "ok", "auto")).lastrowid
+                           (thread, ASSISTANT_ROLE, text, served or model, model, chat.now_iso(), "ok", "auto")).lastrowid
         conn.execute("INSERT INTO threads(id, updated_at) VALUES(?,?) ON CONFLICT(id) DO UPDATE SET updated_at=excluded.updated_at", (thread, ts))
     try:
         inbox.link_message(thread, inbox_mark, rid)

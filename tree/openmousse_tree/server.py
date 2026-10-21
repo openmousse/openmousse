@@ -231,6 +231,8 @@ def reply(r: dict, status: str, who: str) -> str:
                  f'An almost identical memory already exists [{r["id"]}] "{r.get("text", "")}"; not saved. If yours is the newer version, '
                  f"call remember again with supersedes={r['id']}.")
     out = L(f"已记住 [{r['id']}]，挂在「{r['branch']}」", f'Remembered [{r["id"]}] on "{r["branch"]}"')
+    if r.get("redacted"):
+        out += L(f"（隐去过 {r['redacted']} 处）", f" (redacted {r['redacted']})")
     if status == "pending":
         out += L(f"（待 {who} 确认）", f" (waiting for {who} to confirm)")
     if r.get("note"):

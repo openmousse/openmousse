@@ -154,7 +154,7 @@ def blank(course: str, title: str | None = None) -> dict:
 
 
 def short_code(name: str) -> str:
-    """课名的缩写：Behavioural Economics → BE；中文名取前四个字；本来就短的原样。"""
+    """课名的缩写：Linear Algebra → LA；中文名取前四个字；本来就短的原样。"""
     name = (name or "").strip()
     words = re.findall(r"[A-Za-z]+", name)
     if len(words) >= 2:

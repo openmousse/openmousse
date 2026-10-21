@@ -1,5 +1,6 @@
-// 目标页的零件（server/goals.py）：目标卡、点开的弹层（编辑 / 标记完成 / 不做了 / 去看板）、加和改的表单、
-// Agent 刚改过的那条（能撤销）、完成了的和不做了的（折起来）、体重的读数折线（训记为主，Apple 健康是空心圈）。
+// 目标的零件（server/goals.py）：点开的弹层（编辑 / 标记完成 / 不做了 / 去看板）、加和改的表单、
+// Agent 刚改过的那条（能撤销）、完成了的和不做了的（折起来），都给记忆页的「方向」用（components/memory/Directions.tsx）；
+// 体重的读数折线（训记为主，Apple 健康是空心圈），2026-10-20 起画在健身看板的「长期」里（FitnessBoard.tsx），有体重目标就带目标区间。
 import React, { useState } from 'react';
 import { Pressable, ScrollView, StyleSheet, Switch, TextInput, View } from 'react-native';
 import type { GoalFields } from '../api/goals';
@@ -8,7 +9,7 @@ import { L } from '../i18n';
 import { openTarget } from '../navigation';
 import { useStore } from '../store';
 import { agentTint, radius, space, type, useTheme } from '../theme';
-import { dayNum, Ring, TrendLine } from './charts';
+import { dayNum, TrendLine } from './charts';
 import { GroupBadge } from './GroupIcon';
 import { ArchiveRestore, Ban, Check, LayoutDashboard, Pencil, Plus } from './icons';
 import { Caption } from './LiveBoards';
@@ -37,7 +38,7 @@ export const shortDate = (iso: string) => {
   return y === thisYear() ? `${m}/${d}` : `${y}/${m}/${d}`;
 };
 
-/** 72–75 kg / 18% 以下 / 5,000 GBP 以上；没数字是空的。 */
+/** 60–65 kg / 25% 以下 / 5,000 以上；没数字是空的。 */
 export function targetText(g: Pick<Goal, 'targetLow' | 'targetHigh' | 'unit'>): string {
   const { targetLow: lo, targetHigh: hi, unit } = g;
   if (lo != null && hi != null) return lo === hi ? withUnit(lo, unit) : `${fmt(lo)}–${withUnit(hi, unit)}`;
@@ -46,7 +47,7 @@ export function targetText(g: Pick<Goal, 'targetLow' | 'targetHigh' | 'unit'>): 
   return '';
 }
 
-/** 截止怎么说：12月31日 / 2027年3月 / 原样（「2027 秋」）。 */
+/** 截止怎么说：12月31日 / 2027年3月 / 原样（「2027 春」）。 */
 export function dueText(due: string): string {
   const m = /^(\d{4})-(\d{2})(?:-(\d{2}))?$/.exec(due.trim());
   if (!m) return due;
@@ -58,90 +59,12 @@ export function dueText(due: string): string {
 
 export const isNumeric = (g: Goal) => g.targetLow != null || g.targetHigh != null || !!g.metric;
 
-/** 进度：服务器算好的（往下、往上都行）；老服务器没给就按往下走的算（体脂）。 */
-function progressOf(g: Goal): number {
-  if (g.progress != null) return g.progress;
-  if (g.current == null || g.targetHigh == null) return 0;
-  if (g.current <= g.targetHigh) return 1;
-  if (g.start == null || g.start <= g.current) return 0;
-  return Math.max(0, Math.min(1, (g.start - g.current) / (g.start - g.targetHigh)));
-}
-
 /** 离目标还差多少：在区间里 / 比目标高 5.4 kg / 比目标低 2 kg。 */
 function gapText(g: Goal): string {
   if (g.current == null || g.state == null) return '';
   if (g.state === 'in') return L('已达标', 'On target');
   const d = g.state === 'above' ? g.current - (g.targetHigh ?? g.current) : (g.targetLow ?? g.current) - g.current;
   return g.state === 'above' ? L(`高于目标 ${withUnit(d, g.unit)}`, `${withUnit(d, g.unit)} above target`) : L(`低于目标 ${withUnit(d, g.unit)}`, `${withUnit(d, g.unit)} below target`);
-}
-
-// —— 目标卡 ——————————————————————————————————————————————————————————
-
-/** 卡片下面一行小字：挂在哪个 Agent（带它的颜色）、读数的来源和日子、截止。 */
-function Meta({ g }: { g: Goal }) {
-  const t = useTheme();
-  const bits = [
-    g.currentSource && g.currentDate ? `${g.currentSource} ${shortDate(g.currentDate)}` : null,
-    g.due ? L(`截止 ${dueText(g.due)}`, `Due ${dueText(g.due)}`) : null,
-  ].filter(Boolean) as string[];
-  if (!g.groupId && !bits.length) return null;
-  return (
-    <View style={styles.meta}>
-      {g.groupId ? <SourcePill source={g.groupId} /> : null}
-      {bits.length ? <T v="caption" color={t.ink3} numberOfLines={1} style={{ flexShrink: 1, fontWeight: '400' }}>{bits.join(' · ')}</T> : null}
-    </View>
-  );
-}
-
-function NumericHead({ g }: { g: Goal }) {
-  const t = useTheme();
-  const target = targetText(g);
-  const gap = gapText(g);
-  const now = g.current != null ? withUnit(g.current, g.unit) : null;
-  const line = now
-    ? [L(`当前 ${now}`, `Current ${now}`), target ? L(`目标 ${target}`, `Target ${target}`) : null].filter(Boolean).join(' · ')
-    : target ? L(`目标 ${target} · 暂无读数`, `Target ${target} · no reading yet`) : L('暂无读数', 'No reading yet');
-  const ring = g.stale || g.current == null ? t.ink3 : g.state === 'in' ? t.good : undefined;
-  return (
-    <View style={{ gap: space.sm }}>
-      <View style={styles.row}>
-        <Ring size={60} stroke={6} value={g.stale ? 0 : progressOf(g)} target={1} color={ring}>
-          <T v="headline" style={[styles.tnum, { fontSize: 15 }]}>{g.current != null ? fmt(g.current) : '—'}</T>
-        </Ring>
-        <View style={{ flex: 1, minWidth: 0, gap: 4 }}>
-          <T v="headline">{g.title}</T>
-          <T v="callout" color={t.ink2} style={styles.tnum}>{line}</T>
-          {gap && !g.stale ? <T v="caption" color={g.state === 'in' ? t.good : t.ink2} style={{ fontSize: 13, fontWeight: '600' }}>{gap}</T> : null}
-        </View>
-      </View>
-      <Meta g={g} />
-      {g.stale ? (
-        <T v="caption" color={t.warn} style={styles.note}>{L(
-          `最近一次读数为 ${g.currentDate}，已过期。重新测量并记录到${g.currentSource ?? '你的记录'}或 Apple 健康后，此处将自动更新。`,
-          `The latest reading is from ${g.currentDate} and is out of date. Log a new measurement in ${g.currentSource ?? 'your app'} or Apple Health and this will update automatically.`,
-        )}</T>
-      ) : null}
-    </View>
-  );
-}
-
-/** 一个目标的卡片：数字目标带进度环；体重目标下面接着读数折线和目标区间。点开 = 详情和操作。 */
-export function GoalCard({ g, trend, onPress }: { g: Goal; trend?: GoalTrend | null; onPress: () => void }) {
-  const t = useTheme();
-  return (
-    <Pressable onPress={onPress} accessibilityRole="button" accessibilityHint={L('打开详情：编辑、标记完成、放弃', 'Opens details: edit, mark done, drop')}
-      style={({ pressed }) => ({ opacity: pressed ? 0.8 : 1 })}>
-      <Card style={{ gap: space.md }}>
-        {isNumeric(g) ? <NumericHead g={g} /> : (
-          <View style={{ gap: 6 }}>
-            <T v="headline">{g.title}</T>
-            <Meta g={g} />
-          </View>
-        )}
-        {trend ? <View style={[styles.split, { borderTopColor: t.line }]}><WeightBody trend={trend} band={g} /></View> : null}
-      </Card>
-    </Pressable>
-  );
 }
 
 // —— 体重的读数 ——————————————————————————————————————————————————————
@@ -200,18 +123,31 @@ function WeightBody({ trend, band }: { trend: GoalTrend; band?: { targetLow: num
   );
 }
 
-/** 没有体重目标时，健康那一节里单独一张体重卡：最新一次在上面，下面是折线。 */
-export function WeightCard({ trend }: { trend: GoalTrend }) {
+/**
+ * 体重卡（健身看板的「长期」，2026-10-20 从目标页挪过来）：最新一次在上面，下面是折线。
+ * goal：体重目标（有的话）：数字下面写目标和离目标还差多少，折线上画目标区间（原来体重目标卡里的那条线）。
+ */
+export function WeightCard({ trend, goal }: { trend: GoalTrend; goal?: Goal | null }) {
+  const t = useTheme();
   const s = trend.summary;
   if (!s) return null;
+  const target = goal ? targetText(goal) : '';
+  const gap = goal && !goal.stale ? gapText(goal) : '';
   return (
     <Card style={{ gap: space.md }}>
       <View style={[styles.row, { alignItems: 'baseline' }]}>
         <T v="headline" style={{ flex: 1 }}>{trend.label || L('体重', 'Weight')}</T>
         <Caption>{`${s.sourceName} · ${shortDate(s.latest.date)}`}</Caption>
       </View>
-      <T v="title" style={[styles.tnum, { fontSize: 26, fontWeight: '800', marginTop: -6 }]}>{withUnit(s.latest.value, trend.unit)}</T>
-      <WeightBody trend={trend} />
+      <View style={{ gap: 2, marginTop: -6 }}>
+        <T v="title" style={[styles.tnum, { fontSize: 26, fontWeight: '800' }]}>{withUnit(s.latest.value, trend.unit)}</T>
+        {target ? (
+          <T v="callout" color={t.ink2} style={styles.tnum}>
+            {[L(`目标 ${target}`, `Target ${target}`), gap].filter(Boolean).join(' · ')}
+          </T>
+        ) : null}
+      </View>
+      <WeightBody trend={trend} band={goal} />
     </Card>
   );
 }
@@ -381,7 +317,7 @@ export function GoalEditor({ g, close }: { g?: Goal; close: () => void }) {
         <View style={styles.field}>
           <View style={{ flex: 1, gap: 2 }}>
             <T v="body">{L('按数值追踪', 'Track a number')}</T>
-            <T v="caption" color={t.ink3} style={{ fontSize: 13, fontWeight: '400' }}>{L('例如体重 72–75 kg、存款 5,000', 'e.g. weight 72–75 kg, savings 5,000')}</T>
+            <T v="caption" color={t.ink3} style={{ fontSize: 13, fontWeight: '400' }}>{L('例如体重 60–65 kg、存款 5,000', 'e.g. weight 60–65 kg, savings 5,000')}</T>
           </View>
           <Switch value={numeric} onValueChange={setNumeric} accessibilityLabel={L('按数值追踪', 'Track a number')} trackColor={{ true: t.cyan, false: t.track }} thumbColor="#FFFFFF" />
         </View>
@@ -412,7 +348,7 @@ export function GoalEditor({ g, close }: { g?: Goal; close: () => void }) {
 
       <View style={[styles.box, { backgroundColor: t.surface }]}>
         <Field label={L('截止', 'Due')}>
-          <TextInput value={due} onChangeText={setDue} placeholder={L('选填：2026-12-31 或「2027 秋」', 'Optional: 2026-12-31 or "fall 2027"')} placeholderTextColor={t.ink3}
+          <TextInput value={due} onChangeText={setDue} placeholder={L('选填：2026-12-31 或「2027 春」', 'Optional: 2026-12-31 or "spring 2027"')} placeholderTextColor={t.ink3}
             maxLength={24} accessibilityLabel={L('截止', 'Due')} style={[type.body, { color: t.ink, paddingVertical: 12 }]} />
         </Field>
         <View style={[styles.quick, { borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: t.line }]}>
@@ -445,18 +381,6 @@ export function GoalEditor({ g, close }: { g?: Goal; close: () => void }) {
           onPress={() => { if (!busy) save(); }} flex />
       </View>
     </View>
-  );
-}
-
-/** 页头右边的「+ 加一个目标」。 */
-export function AddGoalButton({ onPress }: { onPress: () => void }) {
-  const t = useTheme();
-  return (
-    <Pressable onPress={onPress} accessibilityRole="button" accessibilityLabel={L('添加目标', 'Add goal')} hitSlop={8}
-      style={({ pressed }) => [styles.add, { opacity: pressed ? 0.6 : 1 }]}>
-      <Plus size={17} color={t.gold} />
-      <T v="callout" color={t.gold} style={{ fontWeight: '600' }}>{L('添加目标', 'Add goal')}</T>
-    </Pressable>
   );
 }
 
@@ -512,18 +436,21 @@ export function GoalChangesStrip() {
 
 // —— 完成了的、不做了的：折起来 ————————————————————————————————————————————————
 
-export function ClosedGoals({ onOpen }: { onOpen: (g: Goal) => void }) {
+/** 完成了的、不做了的，各折成一行。flat：不包卡片，接在别的卡片最后（记忆页的「方向」，2026-10-20）。 */
+export function ClosedGoals({ onOpen, flat }: { onOpen: (g: Goal) => void; flat?: boolean }) {
   const t = useTheme();
   const { goalsClosed } = useStore();
   const [open, setOpen] = useState<Record<string, boolean>>({});
   const groups = (['done', 'dropped'] as const).map((status) => ({ status, rows: goalsClosed.filter((g) => g.status === status) })).filter((x) => x.rows.length);
   if (!groups.length) return null;
+  const sep = { borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: t.line };
+  const Wrap = flat ? View : Card;
   return (
-    <Card style={{ paddingVertical: space.xs, marginTop: space.xl }}>
+    <Wrap style={flat ? sep : { paddingVertical: space.xs, marginTop: space.xl }}>
       {groups.map(({ status, rows }, gi) => {
         const on = !!open[status];
         return (
-          <View key={status} style={gi > 0 ? { borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: t.line } : undefined}>
+          <View key={status} style={gi > 0 ? sep : undefined}>
             <Pressable onPress={() => setOpen((m) => ({ ...m, [status]: !m[status] }))} accessibilityRole="button" accessibilityState={{ expanded: on }}
               style={({ pressed }) => [styles.fold, { opacity: pressed ? 0.6 : 1 }]}>
               <T v="headline" style={{ fontSize: 15 }}>{status === 'done' ? L('已完成', 'Done') : L('已放弃', 'Dropped')}</T>
@@ -539,7 +466,7 @@ export function ClosedGoals({ onOpen }: { onOpen: (g: Goal) => void }) {
           </View>
         );
       })}
-    </Card>
+    </Wrap>
   );
 }
 
@@ -548,7 +475,6 @@ const styles = StyleSheet.create({
   meta: { flexDirection: 'row', alignItems: 'center', gap: 6, flexWrap: 'wrap' },
   tnum: { fontVariant: ['tabular-nums'] },
   note: { fontSize: 13, lineHeight: 18, fontWeight: '400' },
-  split: { borderTopWidth: StyleSheet.hairlineWidth, paddingTop: space.md },
   axis: { flexDirection: 'row', alignItems: 'center', gap: space.sm },
   axisText: { fontSize: 11, fontWeight: '500' },
   legend: { flex: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 5 },
@@ -562,7 +488,6 @@ const styles = StyleSheet.create({
   quick: { flexDirection: 'row', gap: space.sm, paddingBottom: 12, paddingLeft: 64, flexWrap: 'wrap' },
   choice: { flexDirection: 'row', alignItems: 'center', gap: 6, height: 34, borderRadius: 17, borderWidth: 1, paddingHorizontal: 12 },
   btns: { flexDirection: 'row', gap: space.sm },
-  add: { flexDirection: 'row', alignItems: 'center', gap: 3, marginBottom: 6 },
   strip: { borderRadius: radius.md + 2, paddingTop: 4, paddingBottom: 8, paddingHorizontal: 14, marginTop: space.md },
   stripRow: { flexDirection: 'row', alignItems: 'center', gap: 10, paddingVertical: 10 },
   fold: { flexDirection: 'row', alignItems: 'center', gap: space.sm, paddingVertical: 13 },

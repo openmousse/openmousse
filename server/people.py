@@ -7,7 +7,7 @@
 - 录前告诉朋友：约朋友那页的提示和每人纪要里各写一句「会记进画像」。
 - 主持人和话题能用：和同一个人再录时，提纲、追问能接上「上次小林说……」；「今天聊点什么」能出「约小林聊……」和跟进。
 
-表（grava.db）
+表（mousse.db）
   people        id pp-xxxxxxxx、name、friend（对上的社交好友 id，可空）
   person_notes  id pn-xxxxxxxx、person、kind（view 看法 / doing 在做的事 / care 在意的 / ask 下次问问）、text（一句）、
                 quote（原话，从逐字稿摘）、episode + sid（段.句）+ at（一期里的秒）= 出处、

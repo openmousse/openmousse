@@ -1,7 +1,7 @@
 """对话结束时的写回（13b，2026-10-19）：一段对话停下来以后，固定走一步 —— 列候选 → 按规则.md 打分 → 最多选 MAX_LEAVES 条长成叶子，
-没选的留一笔。只在 claw = builtin 时跑（main.py 的 lifespan 起 start()）；OpenClaw 那条路照旧（Grava 靠日结和 Agent 自己写叶子）。
+没选的留一笔。只在 claw = builtin 时跑（main.py 的 lifespan 起 start()）；OpenClaw 那条路照旧（靠日结和 Agent 自己写叶子）。
 
-「对话结束」是哪一刻（对照鼻祖的源码，10/19 读的，见 ~/openmousse-wt/engine/README.md「记忆后端第二批」）：
+「对话结束」是哪一刻（对照鼻祖的源码，10/19 读的）：
   OpenClaw 在会话换掉时（/new、/reset、每天 / 闲置的自动重置，等下一句话进来才发现）把最后 15 条原样存进日记，压缩前另跑一轮只许往当天
   日记追加的 flush，夜里 Dreaming 按分数升进 MEMORY.md；Hermes 没有「会话结束」这一步，是每 10 句用户的话、回完以后在后台复盘一次；
   Letta V1 每 5 轮在主 Agent 之后跑 sleep-time Agent，新版 letta-code 每 25 步或压缩时跑反思，游标只在成功以后往前挪；pi 没有长期记忆。
@@ -16,7 +16,7 @@
   那边是对方说的）再从头数：有了新的话也照样等这一段停下来（或者跨过 04:00、从没写成的那一条起又攒够 TURNS 句）才再写，还在聊的不是每说
   一句都重来。会话没变（游标之后、失败的那一段之后都没有新的话）就不重跑。自己的对话、名片 Agent 的对话两条路一样。
   这一段里用户的话太少（不到 MIN_WORDS 个字：汉字一个算一个、英文一个词算一个）就不调模型，只把游标挪过去。
-缺东西（blocked）：调模型之前先看写回要的都在不在：核对原话的开源世界树包（openmousse_tree.provenance；作者那份世界树脚本不带它），一个写回
+缺东西（blocked）：调模型之前先看写回要的都在不在：核对原话的开源世界树包（openmousse_tree.provenance；工作区那份世界树脚本不带它），一个写回
   能花的模型。缺了：这一轮不调模型、不算一次失败，那一行记 blocked，error 写缺什么（这一句也是缺口的指纹：没变就不再记），GET 的时候说清楚
   怎么补（照仓库 README 装包）。包查过一次就记下来，服务重启或过一天再查（装了包要重启服务）；模型每次照 server.json 现挑（改了配置下一轮
   就接着写）。10/19 一台刚换到自带内核的实例：Python 里没装这个包，原来是先调模型、挑的时候才导入，每一段每一轮都白花一次，名片 Agent
@@ -61,6 +61,7 @@ from pydantic import BaseModel
 
 from config import raw, settings
 from i18n import L
+from stored_values import TREE_AGENT_PREFIX, TREE_SOURCE
 
 from . import memgate, models, store
 
@@ -375,6 +376,13 @@ def _wb(session: str) -> dict | None:
     return dict(r) if r else None
 
 
+def _scrubbed(text: str, limit: int | None = None) -> str:
+    """写回记录里不留密钥。先换再截断，免得一刀切在密钥中间就认不出来。不是 builtin 时原样返回（OpenClaw 不跑写回）。"""
+    from engine import memgate
+    text = memgate.scrub(text)
+    return text[:limit] if limit else text
+
+
 def _save(session: str, conversation: str, agent: str, **cols) -> None:
     now = store.now_iso()
     with store.tx() as conn:
@@ -411,18 +419,22 @@ def _fail(key: str, conversation: str, agent: str, prev: dict, last: str | None,
 
 
 async def write_leaf(agent: str, conversation: str, item: dict) -> tuple[str, bool]:
-    """一片叶子经 tree 工具同一条路写（bridges.run：按这个 Agent 跑、出处 = 这个对话、原话出自的那条消息）→ (叶子 id, 是不是树上已有的)。"""
+    """一片叶子经 tree 工具同一条路写（bridges.run：按这个 Agent 跑、出处 = 这个对话、原话出自的那条消息）→ (叶子 id, 是不是树上已有的)。
+    开源包由 store.add 认密钥并计数。工作区那份脚本不经过那里：builtin 才在参数里先换掉。OpenClaw 原样。"""
     import bridges
     import sources
-    args = ["add", "--text", item["text"], "--kind", item["kind"], "--quote", item["quote"]]
-    if sources.tree_script() is not None:  # 作者那份（Grava 的 memory_tree.py）要写 --source；开源包认 MOUSSE_AGENT
-        args += ["--source", "grava" if agent == "main" else f"grava-{agent}"]
+    from engine import memgate
+    text = memgate.scrub_script(item["text"])
+    quote = memgate.scrub_script(item["quote"])
+    args = ["add", "--text", text, "--kind", item["kind"], "--quote", quote]
+    if sources.tree_script() is not None:  # 工作区那份 memory_tree.py 要写 --source；开源包认 MOUSSE_AGENT
+        args += ["--source", TREE_SOURCE if agent == "main" else f"{TREE_AGENT_PREFIX}{agent}"]
     if item.get("branch"):
         args += ["--branch", item["branch"]]
     if item.get("supersedes"):
         args += ["--supersedes", item["supersedes"]]
     for c in item.get("cues") or []:
-        args += ["--cue", c]
+        args += ["--cue", memgate.scrub_script(c) if isinstance(c, str) else c]
     token = bridges.SAID.set((conversation, str(item.get("ref") or "")))
     try:
         out = await bridges.run("tree", args, None, agent, kill_on_cancel=True)
@@ -509,8 +521,8 @@ async def run_session(session_id: str, reason: str) -> dict:
                 (skipped.append({**item, "reason": "duplicate", "leaf": leaf}) if dup else picked.append({**item, "leaf": leaf}))
             card = await propose_procedures(agent, conversation, session_id, pick["procedures"])
         _save(session_id, conversation, agent, upto=last, status="done", reason=reason, **CLEAR,
-              candidates=json.dumps(out.get("candidates") if isinstance(out, dict) else [], ensure_ascii=False)[:20_000],
-              picked=json.dumps(picked, ensure_ascii=False), skipped=json.dumps(skipped, ensure_ascii=False),
+              candidates=_scrubbed(json.dumps(out.get("candidates") if isinstance(out, dict) else [], ensure_ascii=False), 20_000),
+              picked=_scrubbed(json.dumps(picked, ensure_ascii=False)), skipped=_scrubbed(json.dumps(skipped, ensure_ascii=False)),
               turn=card or None)
         return _wb(session_id) or {}
     except Exception as e:  # noqa: BLE001 — 写回是锦上添花：失败了记下来，游标不动，退避以后再试（连着 RETRIES 次就停）
@@ -601,8 +613,8 @@ async def run_card(ref: str, peer: str, peer_name: str) -> dict:
                 except ValueError as e:
                     pick["skipped"].append({**item, "reason": "error", "detail": str(e)[:120]})
         _save(key, ref, "main", upto=last, status="done", reason="idle", **CLEAR,
-              candidates=json.dumps(out.get("candidates") if isinstance(out, dict) else [], ensure_ascii=False)[:20_000],
-              picked=json.dumps(held, ensure_ascii=False), skipped=json.dumps(pick["skipped"], ensure_ascii=False))
+              candidates=_scrubbed(json.dumps(out.get("candidates") if isinstance(out, dict) else [], ensure_ascii=False), 20_000),
+              picked=_scrubbed(json.dumps(held, ensure_ascii=False)), skipped=_scrubbed(json.dumps(pick["skipped"], ensure_ascii=False)))
         return _wb(key) or {}
     except Exception as e:  # noqa: BLE001 — 和自己的对话一样：退避以后再试，连着 RETRIES 次就停
         said = any(m["role"] == "them" and m["ts"] > str(prev.get("tried") or "") for m in msgs)  # 上一次失败的那一段之后对方又说了话

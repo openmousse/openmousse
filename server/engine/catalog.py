@@ -355,6 +355,18 @@ LOGINS: dict[str, dict] = {
         "how": ("点「Continue with ChatGPT」，在浏览器里授权一次（手机上授权完把地址栏整串粘回来）。令牌只存在这台服务器上。",
                 "Tap Continue with ChatGPT and approve once in a browser (on a phone, paste the whole address bar back). The tokens stay on this server."),
         "docs": "https://openai.com/policies/sign-in-with-chatgpt-terms"},
+    # Grok 订阅（engine/grok_plan.py，10/20）：xAI 的 OAuth 设备码登录，令牌存在这台服务器上；不是命令行的登录，我们自己拿令牌
+    "grok": {
+        "name": ("Grok 订阅", "Grok subscription"), "role": "chat", "prefix": "grok",
+        "how": ("用你的 SuperGrok / X Premium+ 订阅登录：在服务器上跑 python3 setup_ctl.py grok login（或者 POST /api/engine/grok/login），"
+                "在手机或电脑上打开它给的网址、认一下码、点同意。令牌只存在这台服务器上。这不是 xAI 点名支持的接入：借的是 xAI 给几家点名的"
+                "第三方 agent 共用的登录入口（同意页上可能写着 Grok Build），xAI 随时可能拒（403），被拒了就改用 API 密钥（XAI_API_KEY）。",
+                "Sign in with your SuperGrok / X Premium+ subscription: run python3 setup_ctl.py grok login on the server (or POST "
+                "/api/engine/grok/login), open the link it gives on your phone or computer, check the code and approve. The tokens stay on "
+                "this server. This isn't an integration xAI has named or supports: it borrows the sign-in xAI shares with a few named "
+                "third-party agents (the consent page may say Grok Build), and xAI may refuse it (403) at any time. If it does, use an API "
+                "key (XAI_API_KEY) instead."),
+        "docs": "https://docs.x.ai/developers/quickstart"},
     "codex": {
         "name": "Codex", "role": "helper",
         "how": ("在这台服务器上装好 Codex 命令行，自己登录一次（codex login）：后台任务能交给它做。",
@@ -397,7 +409,11 @@ SEARCH: dict[str, dict] = {
                "sources": ["https://ai.google.dev/gemini-api/docs/google-search", "https://ai.google.dev/gemini-api/docs/pricing"]},
     "grok": {"name": "Grok (xAI)", "key_env": "XAI_API_KEY", "key_url": "https://console.x.ai/team/default/api-keys",
              "docs": "https://docs.x.ai/docs/guides/tools/search-tools", "free": None,
-             "note": ("回一段带出处的回答；要写明 provider: grok 才用", "Returns an answer with sources; only used when provider is set to grok"),
+             "note": ("回一段带出处的回答；要写明 provider: grok 才用。登录了 Grok 订阅时先走订阅（xAI 没写明搜索算不算在订阅里），"
+                      "订阅用不了才用 XAI_API_KEY（按量）",
+                      "Returns an answer with sources; only used when provider is set to grok. With your Grok subscription signed in it "
+                      "goes through the subscription first (xAI hasn't said whether search is included); XAI_API_KEY (pay as you go) is "
+                      "the fallback"),
              "sources": ["https://docs.x.ai/docs/guides/tools/search-tools", "https://docs.x.ai/developers/models"]},
     "kimi": {"name": ("Kimi 搜索", "Kimi search (Moonshot)"), "key_env": "MOONSHOT_API_KEY", "key_url": "https://platform.kimi.ai/console/api-keys",
              "docs": "https://platform.kimi.ai/docs/overview", "free": None,

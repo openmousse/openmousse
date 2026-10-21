@@ -3,11 +3,11 @@
 脚本在就加载，不在就是 None，对应接口回「还没接数据源」（HTTP 200，ok=false，missing_source=<类型>），
 其它功能照常。/api/health 的 `sources` 告诉 app 哪些类型接上了，没接的看板显示空状态而不是报错。
 
-  workouts / body           ← scripts/xunji.py（作者用的训记；换别的软件就写一个同名接口的适配器）
+  workouts / body           ← scripts/xunji.py（训记的适配器；换别的软件就写一个同名接口的适配器）
   meals                     ← 服务自己的饮食记录（diet.py，一直有）；server.json 的 diet.source = "xunji" 时还从训记读
   calendar                  ← scripts/calendar_ics.py（ICS 链接）
   health                    ← scripts/apple_health.py（恢复分、热量缺口、体能趋势；原始数据由手机推到 /api/health/daily，不需要脚本）
-  tree                      ← scripts/memory_tree.py（作者的世界树：Obsidian 库里的笔记，有枝）；没有它就用安装器装的开源版世界树
+  tree                      ← scripts/memory_tree.py（工作区里自己写的世界树，比如 Obsidian 库里的笔记，有枝）；没有它就用安装器装的开源版世界树
                               （openmousse_tree，见 treelib.py；0.3 起也有枝、规则和每周修剪）。各 AI 平台共用的记忆，见 memtree.py。
                               选中哪一份，tree 工具（bridges.py）和 think.py 就用哪一份（tree_script）
 
@@ -63,7 +63,7 @@ AVAILABLE: dict[str, bool] = {
 
 
 def tree_script() -> Path | None:
-    """选中的世界树是 workspace 的 scripts/memory_tree.py（作者的实例）→ 那个脚本（tree 工具和 think.py 起子进程跑它）；
+    """选中的世界树是 workspace 的 scripts/memory_tree.py（自己写的那份）→ 那个脚本（tree 工具和 think.py 起子进程跑它）；
     选中的是开源版（treelib）或者没接 → None。"""
     mt = memory_tree
     if mt is None or getattr(mt, "PACKAGE", False):

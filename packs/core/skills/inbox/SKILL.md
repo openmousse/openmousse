@@ -26,7 +26,8 @@ python3 $I withdraw ib-1a2b3c4d                          # 不需要了
 python3 $I list                                          # 还在等的；--status recent 看最近定下来的
 ```
 
-- `--kind`：task 任务 / write 写进外部系统 / send 发给别人 / spend 花钱 / schedule 新定时任务 / push 新推送 / calendar 外部日历 / skill 新技能 / agent 新 Agent / block 看板 / code 改代码、配置、凭证 / other。
+- `--kind`：task 任务 / write 写进外部系统 / send 发给别人 / spend 花钱 / schedule 新定时任务 / push 新推送 / calendar 外部日历 / skill 新技能 / agent 新 Agent / block 看板 / code 改代码、配置、凭证 / other / info 通知。
+- 只是告诉用户一件事、不要他做决定的（每周的报告、跑完的结果汇总），用 `--kind info`：默认不推送，卡上只有一个「知道了」，他点了只是收起（记成已读），你的对话里不会来「【收件箱】已同意…」，也不用报 done。要他拿主意的照旧用别的 kind。
 - `--source`：你是主对话就写 `main`，是某个 Agent 就写自己的 id（同意之后消息发回这个线程）。
 - 细节长（邮件全文、改动清单）就写进文件，用 `--detail-file 文件`（Markdown，`-` 是标准输入）。
 - 有时效的加 `--expires 2026-09-26T18:00`：过了还没点头就作废。

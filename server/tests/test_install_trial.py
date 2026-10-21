@@ -159,7 +159,9 @@ def test_trial_summary_says_where_the_web_version_is_and_how_phones_connect(setu
     out = capsys.readouterr().out
     assert "npm run web:build" in out and "http://127.0.0.1:8080" in out           # 还没构建：先说怎么构建
     assert "tailscale serve --bg 8080" in out and "MOUSSE_BIND=192.168.1.23" in out and "tokens.py pair" in out
-    assert "install-manifest.json" in out and "pkill" in out
+    assert "install-manifest.json" in out and "pkill" in out and "mousse-tree serve" not in out
+    setup.print_trial(cfg, tmp_path / "repo", managed=False, started=True, tree=True)
+    assert "mousse-tree serve" in capsys.readouterr().out                            # 世界树的服务试装不起：说怎么起
     (tmp_path / "dist").mkdir()
     setup.print_trial(cfg, tmp_path / "repo", managed=True, started=False)
     out = capsys.readouterr().out

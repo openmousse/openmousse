@@ -365,10 +365,24 @@ def test_cyber_turns_get_only_a_read_only_manual_tool(home, fake):
 
 
 def test_cyber_without_manuals_has_no_tools(home, fake, monkeypatch):
+    """没有手册、也没装载功能 Agent 的赛博：零工具。"""
     monkeypatch.setattr(sources, "memory_tree", None)
     f = fake([{"text": "嗨。"}])
     run(cyber.chat({"id": _thread["id"], "name": "Pip", "identity": "friendly"}, "你好"))
     assert f.requests[0][1].tools == [] and "You have no tools" in f.requests[0][1].system
+
+
+def test_cyber_turns_get_only_the_loadout_tool_and_manual(home, fake):
+    """主线第三步：赛博回合只有装载工具（ask_agent，engine/cyber_tools.py）、只提议的 propose_change 和 manual；主人回合的工具塞进来也一个都不给。"""
+    from engine import cyber_tools
+    f = fake([{"text": "嗨。"}])
+    ask = cyber_tools.ask_agent_tool({"id": "pip", "name": "Pip"}, [{"id": "g-notes", "name": "笔记库", "purpose": ""}], thread="cy-0000abcd",
+                                     ask=None)
+    propose = cyber_tools.propose_tool(propose=None)
+    run(cyber.chat({"id": _thread["id"], "name": "Pip", "identity": "friendly"}, "你好", tools=[ask, propose, *tools.for_agent("main")]))
+    req = f.requests[0][1]
+    assert [t["name"] for t in req.tools] == ["ask_agent", "propose_change", "manual"] and "- ask_agent:" in req.system
+    assert "- propose_change:" in req.system and "- manual (read-only)" in req.system
 
 
 def test_outsider_turns_never_touch_manuals(home, fake):

@@ -1,6 +1,6 @@
 """收件箱（app 里的「等你点头」）：Agent 想做、但要你同意才能做的事，和它们自己的提议，都进这里；OpenClaw 的执行审批也合进来。
 
-- 表 inbox（grava.db）一件事一行。Agent 经 server/inbox_ctl.py（→ POST /api/inbox）提交：要做什么（title，大白话）、为什么（why，理由和证据）、
+- 表 inbox（mousse.db）一件事一行。Agent 经 server/inbox_ctl.py（→ POST /api/inbox）提交：要做什么（title，大白话）、为什么（why，理由和证据）、
   会改变什么（changes，一条一件具体的事）、细节（detail，Markdown）、同意按钮上的字（approveLabel）。
 - 你在 app 里点：同意 → 在那个 Agent 的线程里发一句「【收件箱】已同意…」让它去做，它做完用 inbox_ctl.py done / fail 报结果（静默推一条）；
   拒绝 → 记下理由，同一个 dedupe 键 30 天内再提会被 409 rejected_before 挡回去；
@@ -32,8 +32,12 @@
   兼容老 app（还不会画逐条）：items 照样有，changes / detail 里每条一行；点「同意」= 每条照默认的来（和以前一样是一下子定下来）。
   JSON 里 caps 有 "items" 才是逐条的卡（新 app 据此画逐条）；server.json 的 "inbox": {"items": false} 关掉逐条（caps 空、逐条的接口回 409，
   老的点法照常）。「修改」用哪个模型：inbox.revise_model，不写就照 llmjson（engine.use.json / llm-task），内核的话用不花套餐的默认模型。
+  「修改」算主人自己的一问一答（10/21）：engine.use.json 是他自己的套餐时，app 里点的走套餐，经 /mcp、后台任务来的不花（ask_reviser）。
   待定（2026-10-19，memhold.py）：那一周的修剪卡交进来时（EXTEND_ITEMS）接上还在待定里的别人的话（id held-…，默认「拒绝」）；卡定下来以后
   （AFTER_ITEMS）只有逐条「提交」的才照每条做（同意的长成叶子），老 app 一下子点整张卡的不动它们。
+- kind info（10/20）：只读的卡，告诉你一件事、不要你做决定（每周的工程周报这类）。默认不推送（level none），也不发到聊天渠道（Telegram……）；
+  点了（app 的「知道了」、老 app 的「同意」「拒绝」「修改」、通知上的「同意」）都只是收起：卡记成 done、结果「已读」，不往任何对话发话、
+  不起一轮（钩子 read_only 回 silent）。「已处理」里点「跟进」是你自己要接着聊，照旧。
 - 这是征得同意的界面，不是沙箱：不检查是谁提交的；真正拦住危险动作的是 OpenClaw 的执行审批和各 skill 自己的规则。
 """
 from __future__ import annotations
@@ -62,8 +66,10 @@ from i18n import L, LS
 
 router = APIRouter()
 KINDS = ("task", "write", "send", "spend", "schedule", "push", "skill", "agent", "block", "project", "code", "calendar", "social", "egress", "app",
-         "tool", "tree", "trigger", "flow", "other", "node")  # node：设备节点报上来的命令面，服务器自己出、钩子批（nodes.py，第 8 批）
+         "tool", "tree", "trigger", "flow", "other", "node",  # node：设备节点报上来的命令面，服务器自己出、钩子批（nodes.py，第 8 批）
+         "info")  # info：只读的卡（10/20，见文件开头）
 RING_KINDS = {"task", "write", "send", "spend", "calendar", "egress", "app", "tool"}  # 你让它做、它要动外面的东西：响铃；它自己的提议：静默
+READ_ONLY = {"info"}  # 只读的卡：看完就行，不用你做决定（默认不推送、不发到聊天渠道；点了只是收起，read_only）
 OPEN = ("pending", "revising")  # 还没定下来的
 CTL = Path(__file__).resolve().parent / "inbox_ctl.py"
 MARK = "【收件箱】"  # 发进 Agent 线程的系统消息的开头（协议标记，不翻译；inbox skill 按它认）
@@ -77,7 +83,7 @@ _tasks: set[asyncio.Task] = set()  # 后台等待中的任务（留个引用，�
 HOOKS: dict[str, Callable[[dict, str], Awaitable[dict | None]]] = {}
 # 这些 kind 的「改一下」也交给钩子（hook(it, "revise")，你写的话在 it["note"]），不往线程里发话。钩子回 {"silent": True}（可以带 result）
 # = 不往线程里发任何话：同意后不发「【收件箱】已同意…」，改一下直接算处理完。
-REVISE_BY_HOOK = {"social", "egress", "app", "tool", "trigger", "flow"}  # trigger：从外面进来的事（engine/triggers.py），卡的标题是外来的字，不发进对话；flow：工作流要点头的那一步（engine/flows.py）
+REVISE_BY_HOOK = {"social", "egress", "app", "tool", "trigger", "flow", "info"}  # trigger：从外面进来的事（engine/triggers.py），卡的标题是外来的字，不发进对话；flow：工作流要点头的那一步（engine/flows.py）；info：只读的卡
 # 「改一下」必须写话的卡（别的 social 卡可以空着，比如「换个时间」）：fn(iid) -> bool，在锁外调。cardagent 注册：Doorman 扣下的那句（kind review）。
 NEEDS_NOTE: list[Callable[[str], bool]] = []
 PRIVATE_KINDS = {"social", "egress"}  # 线程是虚拟的、Agent 读不到的
@@ -104,6 +110,9 @@ AFTER_ITEMS: list[Callable[[dict, str], None]] = []
 # 新卡出来时（交进来的、改好重新交的）还要告诉谁（fn(卡, revised)，推送之后调，出错不影响交卡）：渠道层（server/channels/cards.py，第 6 批）
 # 登记，把卡发到主人的 Telegram，在聊天里点
 NEW_HOOKS: list[Callable[[dict, bool], Awaitable[None]]] = []
+# 别的模块自己的对话（主线第三步：赛博的一对一 cy-…，cybers.py 登记）：fn() → {线程: 名字}。卡能挂在那些对话上（check_thread 认），
+# 卡上写它的名字（source_name）
+THREAD_NAMES: list[Callable[[], dict[str, str]]] = []
 ITEMS_MAX, ITEM_TEXT_MAX, ITEM_DETAIL_MAX, ITEM_DATA_MAX, CHANGES_MAX = 40, 300, 4000, 16000, 12
 ITEM_ID = re.compile(r"[\w.-]{1,40}")
 DECISIONS = ("approve", "reject")
@@ -136,7 +145,7 @@ _migrated = False
 
 
 def default_level(kind: str) -> str:
-    return "ring" if kind in RING_KINDS else "quiet"
+    return "ring" if kind in RING_KINDS else "none" if kind in READ_ONLY else "quiet"
 
 
 def kind_label(kind: str) -> str:
@@ -146,15 +155,21 @@ def kind_label(kind: str) -> str:
             "agent": L("新 Agent", "New agent"), "block": L("看板", "Board"), "project": L("项目", "Project"), "code": L("改代码", "Code change"),
             "calendar": L("日历", "Calendar"), "social": L("朋友", "Friends"), "exec": L("运行命令", "Run a command"),
             "egress": L("代办", "Errand"), "app": L("连接器", "Connector"), "tool": L("操作", "Action"), "tree": L("世界树", "Memory tree"),
-            "other": L("其他", "Other"), "node": L("设备节点", "Device node")}.get(kind, kind)
+            "other": L("其他", "Other"), "node": L("设备节点", "Device node"), "info": L("通知", "Notice")}.get(kind, kind)
 
 
 def names() -> dict[str, str]:
-    """线程 / Agent id → 名字（groups 的名字、独立空间的标题）。"""
+    """线程 / Agent id → 名字（groups 的名字、独立空间的标题；THREAD_NAMES 里登记的模块的对话）。"""
     try:
-        return data.thread_names()
+        out = data.thread_names()
     except sqlite3.Error:
-        return {}
+        out = {}
+    for fn in THREAD_NAMES:
+        try:
+            out = {**fn(), **out}
+        except Exception:  # noqa: BLE001 — 那边读不了，少几个名字
+            pass
+    return out
 
 
 def source_name(source: str | None, nm: dict[str, str]) -> str:
@@ -350,19 +365,26 @@ class ReviseError(Exception):
 
 
 async def ask_reviser(prompt: str, input_: dict, required: tuple[str, ...]) -> dict:
-    """重出一条：一次外人回合式、零工具的模型调用。server.json 的 inbox.revise_model 指定模型（便宜的就行）；不写：内核（claw 是 builtin）
-    用 engine.use.json 或不花套餐的默认模型，别的 claw 照 llmjson（engine.use.json / OpenClaw 的 llm-task）。拿不到模型、出错抛 ReviseError。"""
+    """重出一条：一次零工具的模型调用，算主人自己的一问一答（10/21）：kind owner，来路是这个请求的 REQUEST_VIA（app 里点的 = user）。
+    engine.use.json 是他自己的套餐时，app 里点的走套餐；经 /mcp、后台任务来的照 may_spend 不花，换成不花套餐的。server.json 的
+    inbox.revise_model 指定模型（便宜的就行）；不写：内核（claw 是 builtin）用 engine.use.json 或不花套餐的默认模型，别的 claw 照 llmjson
+    （engine.use.json / OpenClaw 的 llm-task）。拿不到模型、出错抛 ReviseError；套餐没做成照 llmjson 的说法（plan_failed），不悄悄换按量的。"""
     import engine
     import llmjson
     from engine import models
     want = conf().get("revise_model") if isinstance(conf().get("revise_model"), str) else None
+    origin = chat.REQUEST_VIA.get() or "user"
+    ref = None
     try:
-        if claw.is_builtin() and (ref := engine.route("json", want) or models.outside(want)):
-            out, _ = await engine.ask_json(prompt, input_, model=ref, purpose="json", required=required, timeout=60)
+        if claw.is_builtin() and (ref := engine.route("json", want, kind="owner", origin=origin) or models.outside(want)):
+            out, _ = await engine.ask_json(prompt, input_, model=ref, purpose="json", required=required, timeout=60, kind="owner", origin=origin)
         else:
-            out, _ = await llmjson.ask(prompt, input_, {"type": "object", "required": list(required)}, timeout=60, model=want, tool_free_only=True)
+            out, _ = await llmjson.ask(prompt, input_, {"type": "object", "required": list(required)}, timeout=60, model=want, tool_free_only=True,
+                                       kind="owner", origin=origin)
     except (engine.EngineError, llmjson.LLMError) as e:
-        raise ReviseError(L(f"没重出来：{str(e)[:160]}", f"Couldn't redo it: {str(e)[:160]}")) from e
+        plan = isinstance(e, engine.EngineError) and e.kind != "refusal" and models.subscription(ref)
+        why = llmjson.plan_failed(ref, e) if plan else str(e)[:160]
+        raise ReviseError(L(f"没重出来：{why}", f"Couldn't redo it: {why}")) from e
     if not isinstance(out, dict):
         raise ReviseError(L("没重出来：模型回的不是一个对象", "Couldn't redo it: the model didn't return an object"))
     return out
@@ -500,7 +522,8 @@ async def push_new(it: dict, revised: bool = False) -> None:
     card = {"k": kl, "t": push.clip(it["title"], 60), "l": ([push.cut(why, 90)] if why else []) + [push.cut(c, 70) for c in it["changes"][:4]]}
     try:
         await push.send_push(it["sourceName"], body, {"thread": "today", "target": {"type": "inbox", "id": it["id"]}, "card": card}, thread_id="inbox",
-                             subtitle=L(f"改好了 · {kl}", f"Revised · {kl}") if revised else L(f"要你点头 · {kl}", f"Needs your OK · {kl}"),
+                             subtitle=kl if it["kind"] in READ_ONLY else L(f"改好了 · {kl}", f"Revised · {kl}") if revised
+                             else L(f"要你点头 · {kl}", f"Needs your OK · {kl}"),
                              level=it["level"], category="inbox", collapse=f"inbox:{it['id']}", kind="inbox")
     except Exception:  # noqa: BLE001 — 推送失败不影响收件箱本身
         pass
@@ -610,13 +633,35 @@ def follow_context(iid: str) -> tuple[dict, str] | None:
 
 
 def mark_followed(it: dict, note: str) -> None:
-    """用户跟进了一件定下来的事：记下时间和他说的话；做完 / 没做成的改回 approved（在做），等 Agent 再报结果。"""
+    """用户跟进了一件定下来的事：记下时间和他说的话；做完 / 没做成的改回 approved（在做），等 Agent 再报结果（只读的卡没有要做的，不改回）。"""
     ts = now_iso()
-    reopen = it["status"] in ("done", "failed")
+    reopen = it["status"] in ("done", "failed") and it["kind"] not in READ_ONLY
     with _lock, idb() as conn:
         conn.execute("UPDATE inbox SET followed_at=?, follow_note=?, updated_at=?" + (", status='approved'" if reopen else "")
                      + " WHERE id=? AND status=?", (ts, note, ts, it["id"], it["status"]))
     log_activity(L(f"跟进{it['sourceName']}的「{it['title']}」", f'Followed up on "{it["title"]}" with {it["sourceName"]}'), "edit")
+
+
+async def read_only(it: dict, action: str) -> dict | None:
+    """只读的卡（READ_ONLY）：同意、拒绝、修改都只是收起（见文件开头）：卡记成 done、结果「已读」，不往任何对话发话、不起一轮。
+    Agent 自己撤回的（withdraw）不用管。"""
+    if action == "withdraw":
+        return None
+    return {"silent": True, "status": "done", "result": L("已读", "Read")}
+
+
+def read_only_follow(it: dict) -> str:
+    """「已处理」里点了只读的卡的「跟进」：你自己要接着聊（照常起一轮），前情说清它只是一条通知、没有要做的、不用报结果。"""
+    t, i = it["title"], it["id"]
+    return LS(f"（这条是在接着说收件箱里的通知「{t}」（{i}）：它只是告诉用户一件事，没有要做的。原来的内容用 `python3 {CTL} get {i}` 看；"
+              "回答他问的就行，不用报 done / fail。）",
+              f'(This message follows up on the inbox notice "{t}" ({i}): it only told the user something, and there is nothing to do. '
+              f"See it with `python3 {CTL} get {i}`; just answer what they ask, no need to report done / fail.)")
+
+
+for _k in READ_ONLY:
+    HOOKS[_k] = read_only
+    FOLLOW_TEXT[_k] = read_only_follow
 
 
 def start(thread: str, text: str) -> None:
@@ -785,7 +830,9 @@ async def add(body: ItemIn):
 
 
 async def notify_new(it: dict, revised: bool = False) -> None:
-    """新卡告诉 NEW_HOOKS 里登记的（渠道层）。谁出错都不影响交卡。"""
+    """新卡告诉 NEW_HOOKS 里登记的（渠道层）。谁出错都不影响交卡。只读的卡（READ_ONLY）不发：渠道里的卡是「要你点头」、带同意 / 拒绝按钮的。"""
+    if it["kind"] in READ_ONLY:
+        return
     for fn in NEW_HOOKS:
         try:
             await fn(it, revised)
@@ -828,6 +875,7 @@ async def act(iid: str, body: ActIn):
     ts = now_iso()
     with _lock, idb() as conn:
         expire(conn)
+        conn.commit()  # 过期先记下：这次点头被拒时事务会撤回，不能把刚标上的 expired 一起撤掉
         r = conn.execute("SELECT * FROM inbox WHERE id=?", (iid,)).fetchone()
         if not r:
             raise HTTPException(404, L("收件箱里没有这一条", "No such inbox item"))
@@ -892,9 +940,10 @@ async def act(iid: str, body: ActIn):
             out["run"] = kick(it["thread"], approve_text(it, note))
     elif action == "reject":
         log_activity(L(f"拒绝了{who}的「{title}」", f'Declined "{title}" from {who}'), "denied")
-        if done and done.get("result") and not done.get("failed"):  # 钩子写了办成什么样（Doorman 那张：没发，告诉对方答不了）
+        if done and done.get("result") and not done.get("failed"):  # 钩子写了办成什么样（Doorman 那张：没发，告诉对方答不了；只读的卡：已读）
             with _lock, idb() as conn:
-                conn.execute("UPDATE inbox SET result=?, updated_at=? WHERE id=?", (done["result"], now_iso(), iid))
+                conn.execute("UPDATE inbox SET result=?, updated_at=?" + (", status='done'" if done.get("status") == "done" else "") + " WHERE id=?",
+                             (done["result"], now_iso(), iid))
             out["item"] = it = item(iid)
     else:
         log_activity(L(f"让{who}把「{title}」改一下", f'Asked {who} to revise "{title}"'), "edit")

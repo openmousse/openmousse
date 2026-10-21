@@ -190,7 +190,7 @@ export function AppDetailScreen() {
             <Pressable onPress={() => {
               appsApi.connect(id, draft.trim()).then((r) => { close(); if (r.app) load(); }).catch((e) => showError(L('更换令牌失败', "Couldn't change the token"), e));
             }} accessibilityRole="button" style={({ pressed }) => [styles.primary, { marginHorizontal: 0, marginTop: 0, backgroundColor: t.cyan, opacity: pressed ? 0.7 : 1 }]}>
-              <T v="headline" color="#FFFFFF">{L('更换', 'Replace')}</T>
+              <T v="headline" color={t.onCyan}>{L('更换', 'Replace')}</T>
             </Pressable>
           </View>
         ),
@@ -249,7 +249,7 @@ export function AppDetailScreen() {
           {app.status !== 'connected' && app.error ? <T v="callout" color={t.warn}>{app.error}</T> : null}
           <View style={{ flexDirection: 'row', gap: 10 }}>
             <Pressable onPress={reconnect} accessibilityRole="button" style={({ pressed }) => [styles.btn, { borderColor: t.line, opacity: pressed ? 0.6 : 1 }, app.status === 'needs_auth' ? { backgroundColor: t.cyan, borderColor: t.cyan } : null]}>
-              <T v="callout" color={app.status === 'needs_auth' ? '#FFFFFF' : t.ink} style={{ fontWeight: '600' }}>{app.status === 'needs_auth' ? L('重新连接', 'Reconnect') : app.auth === 'oauth' ? L('切换账号', 'Switch account') : app.auth === 'token' ? L('更换令牌', 'Change token') : L('重新加载', 'Reload')}</T>
+              <T v="callout" color={app.status === 'needs_auth' ? t.onCyan : t.ink} style={{ fontWeight: '600' }}>{app.status === 'needs_auth' ? L('重新连接', 'Reconnect') : app.auth === 'oauth' ? L('切换账号', 'Switch account') : app.auth === 'token' ? L('更换令牌', 'Change token') : L('重新加载', 'Reload')}</T>
             </Pressable>
             <Pressable onPress={remove} accessibilityRole="button" style={({ pressed }) => [styles.btn, { borderColor: t.line, opacity: pressed ? 0.6 : 1 }]}>
               <T v="callout" color={t.bad} style={{ fontWeight: '600' }}>{L('断开', 'Disconnect')}</T>
@@ -380,7 +380,7 @@ export function CustomAppScreen() {
         {msg ? <T v="callout" color={t.bad} style={{ marginHorizontal: space.lg + 4, marginTop: space.md }}>{msg}</T> : null}
         <Pressable onPress={busy ? undefined : add} accessibilityRole="button"
           style={({ pressed }) => [styles.primary, { backgroundColor: t.cyan, opacity: pressed || busy ? 0.7 : 1 }]}>
-          {busy ? <ActivityIndicator color="#FFFFFF" /> : <T v="headline" color="#FFFFFF">{auth === 'oauth' ? L('添加并授权', 'Add and sign in') : L('添加', 'Add')}</T>}
+          {busy ? <ActivityIndicator color={t.onCyan} /> : <T v="headline" color={t.onCyan}>{auth === 'oauth' ? L('添加并授权', 'Add and sign in') : L('添加', 'Add')}</T>}
         </Pressable>
       </KeyboardScroll>
     </Screen>
@@ -427,7 +427,7 @@ export function StarterScreen() {
         )}
         <View style={{ flex: 1 }} />
         <Pressable onPress={done} accessibilityRole="button" style={({ pressed }) => [styles.primary, { backgroundColor: t.cyan, opacity: pressed ? 0.7 : 1 }]}>
-          <T v="headline" color="#FFFFFF">{L('开始', 'Start')}</T>
+          <T v="headline" color={t.onCyan}>{L('开始', 'Start')}</T>
         </Pressable>
         <Pressable onPress={done} accessibilityRole="button" style={{ height: 44, alignItems: 'center', justifyContent: 'center', marginTop: 6 }}>
           <T v="callout" color={t.ink2}>{L('暂时跳过', 'Skip for now')}</T>

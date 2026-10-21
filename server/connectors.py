@@ -7,8 +7,11 @@ fix（不是 ok 时怎么修，否则 null）, open（可选：app 里能跳去�
 
 规矩：每一项都是尽力而为，检查本身出了错也不抛（那一项显示「读不到它的状态」，不影响别的）；不返回、不记录任何密钥或配置的值：
 只看密钥的名字在不在、文件的修改时间、条数、服务的运行状态（rclone.conf、openclaw.json、tree.json 在代码里读，只取布尔值、时间和端口）。
-这一页主要照着作者自己的实例写（训记、Canvas、邮件摘要、Google Drive、Obsidian 都是他的脚本和服务）：别的机器上脚本 / 服务 / 目录不在的，
+有几项读的是工作区里可选的脚本和服务（训记、Canvas、邮件摘要、Google Drive、Obsidian 同步）：脚本 / 服务 / 目录不在的，
 那一项就不出现；OpenMousse 自带的（Apple 健康、iPhone 日历订阅、推送）没用上时显示「没接」。
+server.json（可选，每次读文件）："connectors": {"units": {"browser": "登 Canvas 用的浏览器服务", "mail": "邮件摘要的定时器",
+"obsidian": "Obsidian 库的同步服务", "tree": "世界树的共享服务"}, "canvas_courses": "跟踪的课（JSON：{课号: 课名}）的路径"}：
+systemd 用户单元和文件不叫默认那个名字时才写（默认见 UNIT_DEFAULTS、canvas_courses_file）。
 """
 from __future__ import annotations
 
@@ -32,14 +35,15 @@ from fastapi import APIRouter
 import sources
 from chat import _lock, db, run_cli
 import claw
-from config import TZ, raw, settings
+from config import TZ, is_owner, raw, settings
 from data import when
 from i18n import L, lang
+from stored_values import TREE_AGENT_PREFIX, TREE_SOURCE
 
 router = APIRouter()
 TTL = 60                 # 整份结果
 CHANNEL_TTL = 120        # 聊天渠道的在线状态（openclaw channels status，1 秒多）
-UNITS = ("grava-browser.service", "grava-mail.timer", "obsidian-sync.service", "grava-tree.service", "mousse-tree.service")
+UNIT_DEFAULTS = {"browser": "mousse-browser.service", "mail": "mousse-mail.timer", "obsidian": "obsidian-sync.service", "tree": "mousse-tree.service"}
 PLATFORMS = {"claude": "Claude", "chatgpt": "ChatGPT", "gemini": "Gemini", "claude-code": "Claude Code", "notion": "Notion"}
 _cache: dict[str, tuple[float, dict]] = {}
 _channels: tuple[float, dict | None] | None = None
@@ -139,6 +143,30 @@ def units(names: tuple[str, ...]) -> dict[str, dict]:
         if kv.get("Id"):
             res[kv["Id"]] = kv
     return res
+
+
+def connectors_cfg() -> dict:
+    c = raw().get("connectors")
+    return c if isinstance(c, dict) else {}
+
+
+def unit_name(key: str) -> str:
+    """连接页认的 systemd 用户单元叫什么：server.json 的 connectors.units.<key>，没写用 UNIT_DEFAULTS 的。不带后缀的当 .service。"""
+    u = connectors_cfg().get("units")
+    v = u.get(key) if isinstance(u, dict) else None
+    name = v.strip() if isinstance(v, str) and v.strip() else UNIT_DEFAULTS[key]
+    return name if "." in name else f"{name}.service"
+
+
+def short_unit(name: str) -> str:
+    """给人看的命令里：服务不写 .service（systemctl 自己补），定时器照写。"""
+    return name.removesuffix(".service")
+
+
+def canvas_courses_file() -> Path:
+    """跟踪的课：connectors.canvas_courses，没写 = <openclaw_home>/canvas/tracked.json。"""
+    v = connectors_cfg().get("canvas_courses")
+    return Path(v).expanduser() if isinstance(v, str) and v.strip() else settings.openclaw_home / "canvas/tracked.json"
 
 
 def unit_loaded(u: dict | None) -> bool:
@@ -311,7 +339,7 @@ def check_canvas(env: set[str], state: dict[str, dict]) -> dict | None:
     if not (settings.scripts / "canvas.py").is_file():
         return None
     home = settings.openclaw_home
-    tracked = read_json(home / "grava/canvas/tracked.json")
+    tracked = read_json(canvas_courses_file())
     courses = [str(v) for v in tracked.values()] if isinstance(tracked, dict) else []
     dl = home / "cache/canvas/deadlines.json"
     rows = read_json(dl)
@@ -319,7 +347,7 @@ def check_canvas(env: set[str], state: dict[str, dict]) -> dict | None:
     cutoff = now().strftime("%Y-%m-%d %H:%M")
     left = sum(1 for r in rows if isinstance(r, dict) and not r.get("submitted") and str(r.get("due") or "") >= cutoff) if isinstance(rows, list) else None
     token = "CANVAS_TOKEN" in env
-    browser = state.get("grava-browser.service")
+    browser = state.get(unit_name("browser"))
     facts = [(L("跟踪的课", "Courses"), "、".join(courses) if courses else L("还没选", "None yet")),
              (L("还没交的作业", "Due, not submitted"), L(f"{left} 份", f"{left}") if left is not None else None),
              (L("作业上次同步", "Coursework synced"), ago(synced)),
@@ -333,12 +361,12 @@ def check_canvas(env: set[str], state: dict[str, dict]) -> dict | None:
                     L(f"跟 {app()} 说要跟踪哪几门课就行。", f"Tell {app()} which courses to follow."))
     if not token and unit_loaded(browser) and not unit_active(browser):
         return item("canvas", name, icon, "warn", L("登录用的浏览器没开", "The sign-in browser isn't running"), facts, uses,
-                    L("在服务器上运行 systemctl --user restart grava-browser；登录过期的话，用 noVNC 打开那个浏览器重新登录 Canvas。",
-                      "On the server run systemctl --user restart grava-browser; if the login expired, open that browser via noVNC and sign in to Canvas again."))
+                    L(f"在服务器上运行 systemctl --user restart {short_unit(unit_name('browser'))}；登录过期的话，打开那个浏览器重新登录 Canvas。",
+                      f"On the server run systemctl --user restart {short_unit(unit_name('browser'))}; if the login expired, open that browser and sign in to Canvas again."))
     if age_h(synced) > 12:
         return item("canvas", name, icon, "warn", L("半天多没同步到作业", "Coursework not synced for over 12 hours"), facts, uses,
-                    L("Canvas 的登录可能过期了：用 noVNC 打开服务器上的浏览器，重新登录一次（含两步验证）。",
-                      "The Canvas login may have expired: open the server's browser via noVNC and sign in again (with 2FA)."))
+                    L("Canvas 的登录可能过期了：打开服务器上登录用的那个浏览器，重新登录一次（含两步验证）。",
+                      "The Canvas login may have expired: open the sign-in browser on the server and sign in again (with 2FA)."))
     return item("canvas", name, icon, "ok", L(f"{len(courses)} 门课 · 作业同步于 {at(synced)}", f"{len(courses)} courses · coursework synced {at(synced)}"), facts, uses)
 
 
@@ -362,15 +390,15 @@ def check_calendar(env: set[str]) -> dict | None:
                       f"Put your school calendar's ICS link in the server's .env as {', '.join(missing) or 'the ICS variable'}."))
     if age_h(fetched) > 24:
         return item("calendar", name, icon, "warn", L("一天多没拉到新课表", "Timetable not refreshed for over a day") if fetched else L("还没拉到过课表", "Never fetched"),
-                    facts, uses, L("链接可能失效了：在 Outlook 网页版里重新发布日历，把新的 ICS 链接换进服务器的 .env。",
-                                   "The link may have expired: republish the calendar in Outlook on the web and put the new ICS link in the server's .env."))
+                    facts, uses, L("链接可能失效了：在日历那边重新发布或复制一次 ICS 链接，换进服务器的 .env。",
+                                   "The link may have expired: publish or copy the calendar's ICS link again and put the new one in the server's .env."))
     return item("calendar", name, icon, "ok", L(f"上次拉到 {at(fetched)}", f"Last fetched {at(fetched)}"), facts, uses)
 
 
 def check_mail(state: dict[str, dict]) -> dict | None:
     conf = (raw().get("remember") or {}).get("mail") or {}
     items_path = Path(conf["items"]).expanduser() if isinstance(conf, dict) and conf.get("items") else None
-    timer = state.get("grava-mail.timer")
+    timer = state.get(unit_name("mail"))
     if not items_path:  # 服务器没配 remember.mail：邮件条目进不来，这一项不出现
         return None
     st = read_json(items_path.parent / "state.json") if items_path else None
@@ -387,16 +415,16 @@ def check_mail(state: dict[str, dict]) -> dict | None:
              (L("要办的事", "To-dos"), L(f"{todo} 件", f"{todo}") if todo is not None else None),
              (L("钱和动态", "Money & updates"), L(f"{len(opened) - todo} 条", f"{len(opened) - todo}") if opened is not None and todo is not None else None),
              (L("定时", "Schedule"), (L("开着", "On") if unit_active(timer) else L("关着", "Off")) if unit_loaded(timer) else None)]
-    uses = L("每天早晚各看一遍主邮箱，把要办的事、钱、状态变化挑进「要记得的」；邮件原文不存。",
-             "Reads your main inbox every morning and evening and picks out to-dos, money and status changes for To remember; it never keeps the emails.")
+    uses = L("按定时看一遍主邮箱，把要办的事、钱、状态变化挑进「要记得的」；邮件原文不存。",
+             "Reads your main inbox on a schedule and picks out to-dos, money and status changes for To remember; it never keeps the emails.")
     name, icon = L("邮件摘要", "Mail digest"), "mail"
     if unit_loaded(timer) and not unit_active(timer):
         return item("mail", name, icon, "warn", L("定时没开", "The schedule is off"), facts, uses,
-                    L("在服务器上运行 systemctl --user enable --now grava-mail.timer。", "On the server run systemctl --user enable --now grava-mail.timer."))
+                    L(f"在服务器上运行 systemctl --user enable --now {unit_name('mail')}。", f"On the server run systemctl --user enable --now {unit_name('mail')}."))
     if res.get("ok") is False or age_h(ok_at) > 26:
         return item("mail", name, icon, "warn", L("上一次没跑成", "The last run failed") if res.get("ok") is False else L("一天多没看过邮箱", "Inbox not read for over a day"),
-                    facts, uses, L("多半是 Claude 的 Gmail 连接断了：在 claude.ai 的 设置 → 连接器 里重新连一下 Gmail。",
-                                   "Most likely Claude's Gmail connection dropped: reconnect Gmail in claude.ai under Settings → Connectors."))
+                    facts, uses, L("多半是读邮箱用的那个连接断了：把邮箱重新授权一次；还不行就看一下邮件摘要的日志。",
+                                   "Most likely the connection it reads your inbox through dropped: authorize the mailbox again; if that doesn't help, check the mail digest's log."))
     line = L(f"{at(ok_at)} 看过一遍", f"Read {at(ok_at)}") + (L(f" · {todo} 件要办", f" · {todo} to-dos") if todo else "")
     return item("mail", name, icon, "ok", line, facts, uses)
 
@@ -528,15 +556,15 @@ def check_obsidian(state: dict[str, dict]) -> dict | None:
     if not vault or not vault.is_dir():
         return None
     n, changed = scan_vault(vault)
-    unit = state.get("obsidian-sync.service")
+    unit = state.get(unit_name("obsidian"))
     sync = (L("在跑", "Running") if unit_active(unit) else L("停了", "Stopped")) if unit_loaded(unit) else L("没开（只在服务器上）", "Off (server only)")
     facts = [(L("笔记", "Notes"), L(f"{n} 篇", f"{n}")), (L("最近改动", "Last change"), ago(changed)), (L("同步", "Sync"), sync)]
     uses = L("你的数据库：世界树的真身就在这里，你在手机上改了会同步回来。", "Your database: the memory tree lives here, and edits on your phone sync back.")
     name, icon = L("Obsidian 库", "Obsidian vault"), "notebook"
     if unit_loaded(unit) and not unit_active(unit):
         return item("obsidian", name, icon, "warn", L("同步停了", "Sync stopped"), facts, uses,
-                    L("在服务器上运行 systemctl --user restart obsidian-sync；还不行就让 Claude Code 看一下它的日志。",
-                      "On the server run systemctl --user restart obsidian-sync; if that doesn't help, ask Claude Code to check its log."))
+                    L(f"在服务器上运行 systemctl --user restart {short_unit(unit_name('obsidian'))}；还不行就看一下它的日志。",
+                      f"On the server run systemctl --user restart {short_unit(unit_name('obsidian'))}; if that doesn't help, check its log."))
     line = L(f"同步在跑 · {n} 篇笔记", f"Syncing · {n} notes") if unit_loaded(unit) else L(f"{n} 篇笔记", f"{n} notes")
     return item("obsidian", name, icon, "ok", line, facts, uses)
 
@@ -588,18 +616,18 @@ def check_tree(state: dict[str, dict]) -> dict | None:
     with contextlib.suppress(Exception):  # noqa: BLE001
         port = int((mt.load_config() or {}).get("port") or 8787)  # tree.json 里只取端口
     health = mcp_health(port)
-    tree_unit = "grava-tree" if unit_loaded(state.get("grava-tree.service")) else "mousse-tree"  # 作者的实例叫 grava-tree，安装器装的叫 mousse-tree
-    unit = state.get(f"{tree_unit}.service")
+    tree_unit = short_unit(unit_name("tree"))  # 安装器装的叫 mousse-tree；叫别的名字写 connectors.units.tree
+    unit = state.get(unit_name("tree"))
     platforms = [p for p in (health or {}).get("platforms") or [] if isinstance(p, str)]
     shown = [p for p in PLATFORMS if p in platforms or p in last] + [p for p in platforms if p not in PLATFORMS]
     facts: list[tuple[str, str | None]] = [(L("当前的叶子", "Current leaves"), L(f"{current} 片", f"{current}") if current is not None else None)]
     for p in shown:
         wrote = parse_ts(last.get(p))
         facts.append((PLATFORMS.get(p, p), L(f"最近写过 {at(wrote)}", f"Last wrote {at(wrote)}") if wrote else L("还没写过", "Hasn't written yet")))
-    import memtree  # 自己的 Agent 写的：grava-<id>（作者的实例）、openclaw-<id>，或者内核 / tree 工具经 MOUSSE_AGENT 记的 Agent id 本身
+    import memtree  # 自己的 Agent 写的：TREE_AGENT_PREFIX + <id>（工作区那份世界树脚本的写法）、openclaw-<id>，或者内核 / tree 工具经 MOUSSE_AGENT 记的 Agent id 本身
     agents = memtree.agent_names()
-    grava = latest(*(parse_ts(v) for k, v in last.items() if k == "grava" or k.startswith("grava-") or memtree.agent_of(k, agents)))
-    facts.append((L(f"{app()} 的 Agent", f"{app()}'s agents"), L(f"最近写过 {at(grava)}", f"Last wrote {at(grava)}") if grava else L("还没写过", "Haven't written yet")))
+    ours = latest(*(parse_ts(v) for k, v in last.items() if k == TREE_SOURCE or k.startswith(TREE_AGENT_PREFIX) or memtree.agent_of(k, agents)))
+    facts.append((L(f"{app()} 的 Agent", f"{app()}'s agents"), L(f"最近写过 {at(ours)}", f"Last wrote {at(ours)}") if ours else L("还没写过", "Haven't written yet")))
     uses = L(f"Claude、ChatGPT、Gemini、Claude Code 和 {app()} 共用的记忆：在一个平台说过的，别的平台也知道。",
              f"Memory shared by Claude, ChatGPT, Gemini, Claude Code and {app()}: what you tell one, the others know too.")
     name, icon = L("世界树", "Memory tree"), "tree"
@@ -610,11 +638,11 @@ def check_tree(state: dict[str, dict]) -> dict | None:
     if issues:
         return item("tree", name, icon, "warn", L(f"有 {issues} 篇笔记格式不对，先跳过了", f"{issues} note(s) have a formatting problem and were skipped"), facts, uses,
                     L(f"跟 {app()} 说「检查世界树的笔记」，它会告诉你是哪篇、哪里不对。", f'Ask {app()} to "check the memory tree notes"; it will tell you which one and what\'s wrong.'), go)
-    writers = {k: parse_ts(v) for k, v in last.items() if k in PLATFORMS or k in ("leo", "owner") or k == "grava" or k.startswith(("grava-", "openclaw-"))}
+    writers = {k: parse_ts(v) for k, v in last.items() if k in PLATFORMS or is_owner(k) or k == TREE_SOURCE or k.startswith((TREE_AGENT_PREFIX, "openclaw-"))}
     newest = max((k for k in writers if writers[k]), key=lambda k: writers[k], default=None)  # 最近一次是谁写的（每周修剪不算）
     who = None
     if newest:
-        who = PLATFORMS.get(newest) or (L("你自己", "You") if newest in ("leo", "owner") else L(f"{app()} 的 Agent", f"{app()}'s agent"))
+        who = PLATFORMS.get(newest) or (L("你自己", "You") if is_owner(newest) else L(f"{app()} 的 Agent", f"{app()}'s agent"))
     line = (L(f"{current} 片叶子", f"{current} leaves") if current is not None else L("共享服务在跑", "The sharing service is running")) + (
         L(f" · {who} {day_at(writers[newest])}写过", f" · {who} wrote {day_at(writers[newest])}") if who else "")
     return item("tree", name, icon, "ok", line, facts, uses, None, go)
@@ -761,13 +789,13 @@ def safe(fn, *args) -> Any:
         key = fn.__name__.removeprefix("check_")
         zh, en, icon = FALLBACK.get(key, (key, key, "plug"))
         return item(key, L(zh, en), icon, "warn", L("读不到它的状态", "Couldn't check it"), [], L("这一项的检查出错了。", "The check for this one failed."),
-                    L("让 Claude Code 看一下服务日志里 [connectors] 开头的那一行。", "Ask Claude Code to look at the [connectors] line in the server log."))
+                    L("看一下服务日志里 [connectors] 开头的那一行。", "Look for the [connectors] line in the server log."))
 
 
 def local_part() -> tuple[dict[str, list], dict]:
     """除了聊天渠道的在线状态，其余都在这里（在线程里跑）。→ (各组的项, openclaw.json)。"""
     env = env_names()
-    state = units(UNITS)
+    state = units(tuple(unit_name(k) for k in UNIT_DEFAULTS))
     oc = openclaw_config()
     return {
         "data": [safe(check_xunji, env), safe(check_nutrition), safe(check_health), safe(check_canvas, env, state)],

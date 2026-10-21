@@ -20,8 +20,9 @@
   PUT    /api/setup/models/{id}             存：{"key"?, "region"?, "url"?}；目录里没有的 id = 自定义的地址 {"name"?, "url", "api"?, "key"?}
   POST   /api/setup/models/{id}/test        测一下：存下的，或者请求里还没存的 {"key"?, "url"?, "region"?, "model"?}
   DELETE /api/setup/models/{id}             删掉 app 里存的密钥（自定义的连同 engine.providers 那一项）
-  GET    /api/setup/purposes                按用途选模型（能选的只列连上的；推荐 = 理由 + 代价；只有一家时的 auto）
-  PUT    /api/setup/purposes                {"chat"?, "background"?, "writing"?, "outsider"?, "card"?, "doorman"?, "embeddings"?, "models"?}
+  GET    /api/setup/purposes                按用途选模型（能选的只列连上的；推荐 = 理由 + 代价；只有一家时的 auto）；10/20 起多两行一问一答（json）、
+                                            压缩摘要（compact），每一行都带现在真用哪个、是不是套餐、套餐跑不跑得了、出问题换谁、最近一次套餐没做成
+  PUT    /api/setup/purposes                {"chat"?, "background"?, "writing"?, "json"?, "compact"?, "outsider"?, "card"?, "doorman"?, "embeddings"?, "models"?}
                                             第 3 批：媒体那几样也在这里（"vision"?、"pdf"?：引用 | {"model", …选项} | null，engine/media.py；
                                             GET 回的是另一栏 media，purposes 那几行不变）
   GET    /api/setup/search                  搜索：开没开、用哪家、每家连没连
@@ -44,6 +45,7 @@ import json
 import os
 import re
 import shutil
+import sqlite3
 import sys
 import threading
 import time
@@ -59,6 +61,7 @@ import config
 import secretstore
 from config import settings
 from i18n import L
+from stored_values import SESSION_TAG
 
 from . import catalog, models, probe
 from . import usage as usage_mod
@@ -428,6 +431,17 @@ def login_rows() -> list[dict]:
                                                         "callback": "POST /api/engine/chatgpt/callback", "disconnect": "POST /api/engine/chatgpt/disconnect"},
                 "how": catalog.text(catalog.LOGINS["chatgpt"]["how"]), "docs": catalog.LOGINS["chatgpt"]["docs"],
                 "cost": catalog.text(catalog.KIND_NOTES["plan"])})
+    from . import grok_plan  # Grok 订阅（10/20）：xAI 的设备码登录（engine/grok_plan.py）；终端里是 setup_ctl.py grok login
+    gs = grok_plan.status()
+    out.append({"id": "grok", "kind": "login", "role": "chat", "name": catalog.text(catalog.LOGINS["grok"]["name"]),
+                "ready": bool(gs["ready"]), "connected": gs["connected"], "email": gs["email"], "needsReconnect": gs["needsReconnect"],
+                "denied": gs["denied"], "enabled": gs["enabled"], "lastError": gs["lastError"], "background": gs["background"],
+                "models": gs["models"], "defaultModel": gs["defaultModel"], "catalog": gs["catalog"],
+                "login": {"start": "POST /api/engine/grok/login", "status": "GET /api/engine/grok/login", "cancel": "DELETE /api/engine/grok/login",
+                          "logout": "POST /api/engine/grok/logout", "background": "PUT /api/engine/grok/background",
+                          "cli": "python3 setup_ctl.py grok login"},
+                "how": catalog.text(catalog.LOGINS["grok"]["how"]), "docs": catalog.LOGINS["grok"]["docs"],
+                "cost": catalog.text(catalog.KIND_NOTES["plan"])})
     cx = runners.available().get("codex")
     out.append({"id": "codex", "kind": "login", "role": "helper", "name": "Codex", "ready": cx is not None, "auth": (cx or {}).get("auth"),
                 "billing": (cx or {}).get("billing"), "viaPlan": bool((cx or {}).get("chatgpt_plan")), "enabled": runners.enabled("codex"),
@@ -570,8 +584,9 @@ def choices_of(conn: dict[str, dict]) -> list[dict]:
     rows = []
     for pid, d in conn.items():
         for ref in d["models"]:
+            # oneShot：一问一答、压缩摘要能不能选它（套餐里命令行的那几家不行，models.one_shot_plan）
             rows.append({"ref": ref, "provider": pid, "providerName": d["name"], "model": ref.split("/", 1)[1], "kind": d["kind"],
-                         "plan": d["plan"], "listed": d["listed"]})
+                         "plan": d["plan"], "listed": d["listed"], "oneShot": models.one_shot_plan(ref) if d["plan"] else True})
     return rows
 
 
@@ -1155,7 +1170,144 @@ def purposes_now() -> dict:
         return models._first(v) if isinstance(v, (list, str)) else v  # noqa: SLF001
     return {"chat": models.default_model() or None, "background": models._first(_use("background")) or None,  # noqa: SLF001
             "writing": models._first(_use("writing")) or None,  # noqa: SLF001
+            "json": one(_use("json")), "compact": models._first(_use("compact")) or None,  # noqa: SLF001
             "card": one(_use("card")), "doorman": one(_use("doorman")), "embeddings": cur["id"] if cur else None}
+
+
+# 10/20：一问一答（json：llmjson.ask、/api/engine/oneshot）和压缩摘要（compact）也各占一行，每一行都说清现在真用哪个、是不是套餐、
+# 套餐现在跑不跑得了、出问题时换谁（backups 空 = 不自动换，只能自己来这里换）、最近一次套餐没做成是什么时候、哪一类
+ROUTED = ("card", "doorman", "writing", "json", "compact")  # 走 models.route 的那几件：engine.use.<这件事> 写成列表 = 它自己的链
+LOOKBACK = 400  # 找「最近一次套餐没做成」只看最近这么多轮（engine_turns 按写进去的先后倒着读，不扫全表）
+
+
+def _pins_path() -> Path:
+    return settings.data_dir / "setup" / "pins.json"
+
+
+def _pins() -> dict:
+    """app 里单独选过的（PUT 写进去的值）：{"json": 引用}。一问一答写的和后台的一样时，靠它分得清是单独选的还是跟着后台的。"""
+    try:
+        d = json.loads(_pins_path().read_text(encoding="utf8"))
+    except (OSError, ValueError):
+        return {}
+    return d if isinstance(d, dict) else {}
+
+
+def _pin(key: str, value: str | None) -> None:
+    d = {k: v for k, v in _pins().items() if k != key}
+    if value:
+        d[key] = value
+    p = _pins_path()
+    p.parent.mkdir(parents=True, exist_ok=True)
+    tmp = p.with_name(f".{p.name}.{os.getpid()}.tmp")
+    tmp.write_text(json.dumps(d, ensure_ascii=False), encoding="utf8")
+    tmp.replace(p)
+
+
+def _json_pinned(use: dict) -> bool:
+    """一问一答是在 app 里单独选的（写的还是选的那个；server.json 后来被手改成别的不算）。"""
+    j, p = use.get("json"), _pins().get("json")
+    return isinstance(p, str) and bool(p) and isinstance(j, (str, list)) and models._first(j) == p  # noqa: SLF001
+
+
+def _json_follows(use: dict) -> bool:
+    """一问一答还跟着「后台和定时」吗（没单独设过）：没写、true（默认模型）、或者和 background 写的一样，而且不是在 app 里单独选的。
+    PUT background 只在这时一起改它（10/20 以前不管怎样都一起改）。"""
+    j, b = use.get("json"), use.get("background")
+    return not _json_pinned(use) and (j is None or j is True or (b is not None and j == b))
+
+
+def _json_shows(use: dict) -> str | None:
+    """一问一答那一行的 follows：background = 跟「后台和定时」一样；chat = 主对话的模型（没写、关着：走以前的退路，builtin 下是主对话的
+    模型；true 而后台另写了一个：默认模型）；None = 单独选的。"""
+    j, b = use.get("json"), use.get("background")
+    if j is None or j is False:
+        return "chat"
+    if _json_pinned(use):
+        return None
+    if j is True:
+        return "background" if b is None else "chat"
+    return "background" if b is not None and j == b else None
+
+
+def _with_head(old, ref: str):
+    """换这件事的主模型：原来写成列表的（主模型 + 它自己的链）只换第一个、后面的链照留（撤销时原样回得去；新选的在链里就从链里拿掉）；
+    别的写成一个引用。"""
+    if isinstance(old, list):
+        return [ref, *(x for x in old[1:] if not (isinstance(x, str) and models.canonical(x.strip()) == ref))]
+    return ref
+
+
+def backups_of(purpose: str, ref: str | None) -> list[str]:
+    """ref 出问题时按顺序换谁（不连网）：engine.use.<这件事> 写成列表的那条（models.purpose_chain），没写按模型找（它自己写的链，
+    再不然 engine.fallbacks：models.chain_after）。套餐不进链；只列真换得过去的（有密钥，同 fallback.backup，冷却不算）。空 = 不自动换。"""
+    if not ref:
+        return []
+    own = models.purpose_chain(purpose, ref) if purpose in ROUTED else None
+    rest = models.chain_after(ref) if own is None else own
+    return [r for r in dict.fromkeys(rest) if r != ref and not models.subscription(r) and models.has_key(r)]
+
+
+def plan_failure_kind(text: str | None) -> str:
+    """套餐没做成的那句报错是哪一类：auth 没登录 / quota 额度用完 / timeout 超时 / broken 命令坏了 / error 别的。认的是 Claude Code
+    自己报的字眼（claude_brain 的 LOGIN、QUOTA、BROKEN）和我们给的那几句（claude_brain.advice、超时），中英文都认。"""
+    from . import claude_brain
+    t = str(text or "")
+    if claude_brain.LOGIN.search(t) or re.search(r"signed out|isn't signed in|not signed in|reconnect|登录掉了|没登录|重新连", t, re.I):
+        return "auth"
+    if claude_brain.QUOTA.search(t) or re.search(r"quota|额度", t, re.I):
+        return "quota"
+    if re.search(r"didn't answer within|went quiet|took longer than|timed? ?out|秒没答完|没有动静|超时", t, re.I):
+        return "timeout"
+    if claude_brain.BROKEN.search(t) or re.search(r"won't run|跑不起来", t, re.I):
+        return "broken"
+    return "error"
+
+
+def _in_scope(purpose: str, r) -> bool:
+    """engine_turns 的这一轮算不算这件事：一问一答 = llmjson.ask、/api/engine/oneshot（对话记成 json），没配 engine.use.json 时退回的那条路
+    （agent:main:<SESSION_TAG>:json-…）；压缩摘要 = compact:<对话>；主对话 = 主人自己在 app 的对话里说的；后台 = 定时任务、心跳、后台任务。"""
+    conv = str(r["conversation"] or "")
+    if purpose == "json":
+        return conv == "json" or conv.startswith(f"agent:main:{SESSION_TAG}:json-")
+    if purpose == "compact":
+        return conv.startswith("compact:")
+    if purpose == "chat":
+        return r["kind"] == "owner" and r["origin"] in ("user", "relay") and ":" not in conv and conv != "json"
+    if purpose == "background":
+        return r["kind"] == "owner" and r["origin"] in ("auto", "task")
+    return False
+
+
+def last_plan_failure(purpose: str, ref: str | None) -> dict | None:
+    """这件事最近一次用这个套餐（ref）没做成、之后也还没做成过 → {"at", "kind"（plan_failure_kind）, "error": 那句报错}；做成过、最近没用过、
+    不是套餐 → None。从内核的回合记录（engine_turns）找，只看最近 LOOKBACK 轮；读不了 → None。"""
+    from . import store
+    if not ref or not models.subscription(ref) or not store.exists():
+        return None
+    try:
+        with store.read() as conn:
+            rows = conn.execute("SELECT conversation, kind, model, origin, status, error, started_at FROM engine_turns ORDER BY rowid DESC LIMIT ?",
+                                (LOOKBACK,)).fetchall()
+    except sqlite3.Error:
+        return None
+    for r in rows:
+        if models.canonical(r["model"]) != ref or not _in_scope(purpose, r):
+            continue
+        if r["status"] in ("done", "refused"):
+            return None
+        if r["status"] == "error":
+            return {"at": r["started_at"], "kind": plan_failure_kind(r["error"]), "error": str(r["error"] or "")[:200]}
+    return None
+
+
+def plan_fields(purpose: str, ref: str | None, may_plan: bool) -> dict:
+    """每一行都多给的（10/20）：plan = ref 是谁家的套餐（models.subscription：claude-code / chatgpt / codex / copilot……，不是套餐 = None）、
+    planReady = 这台机器上现在跑不跑得了（models.subscription_ready）、mayPlan = 这件事能不能用套餐、backups = 出问题时按顺序换谁、
+    lastFailure = 最近一次用套餐没做成（last_plan_failure）。"""
+    sub = models.subscription(ref) if ref else None
+    return {"plan": sub, "planReady": models.subscription_ready(ref) if sub else None, "mayPlan": may_plan, "backups": backups_of(purpose, ref),
+            "lastFailure": last_plan_failure(purpose, ref) if sub else None}
 
 
 async def purposes_view(probe_local: bool = True) -> dict:
@@ -1165,26 +1317,44 @@ async def purposes_view(probe_local: bool = True) -> dict:
     card, door = now["card"], now["doorman"]
     outsider = card if card == door else "mixed"
     picked = {"card": recommend("card", conn), "doorman": recommend("doorman", conn)}  # 外人回合的两件分开推荐（评测结果）
+    use = models.cfg().get("use")
+    use = use if isinstance(use, dict) else {}
+    eff = {"background": models.background_model() or now["chat"], "writing": models.route("writing", kind="owner", origin="user") or now["chat"],
+           # 一问一答没写的走以前的退路（llmjson.via_complete → 主对话的模型；别的 claw 是它自己的 llm-task，这里说不出是哪个）
+           "json": models.route("json", kind="owner", origin="user") or (now["chat"] if builtin else None),
+           "compact": models.route("compact", kind="owner", origin="user") or now["chat"], "card": models.route("card")}
+    j = now["json"]
     rows = [
         {"id": "chat", "label": L("主对话（默认）", "Main chat (default)"), "applies": builtin, "accepts": {"plans": True},
-         "current": now["chat"], "effective": now["chat"], "usable": usable(now["chat"]), "recommended": recommend("chat", conn)},
+         "current": now["chat"], "effective": now["chat"], "usable": usable(now["chat"]), "recommended": recommend("chat", conn),
+         **plan_fields("chat", now["chat"], True)},
         {"id": "background", "label": L("后台和定时", "Background and scheduled"), "applies": builtin, "accepts": {"plans": True},
-         "current": now["background"], "effective": models.background_model() or now["chat"], "follows": "chat" if not now["background"] else None,
-         "recommended": recommend("background", conn)},
+         "current": now["background"], "effective": eff["background"], "follows": "chat" if not now["background"] else None,
+         "recommended": recommend("background", conn), **plan_fields("background", eff["background"], True)},
         {"id": "writing", "label": L("写作（长文、文书）", "Writing (long pieces, documents)"), "applies": builtin, "accepts": {"plans": True},
-         "current": now["writing"], "effective": models.route("writing", kind="owner", origin="user") or now["chat"],
-         "follows": "chat" if not now["writing"] else None, "recommended": recommend("writing", conn)},
+         "current": now["writing"], "effective": eff["writing"], "follows": "chat" if not now["writing"] else None,
+         "recommended": recommend("writing", conn), **plan_fields("writing", eff["writing"], True)},
+        {"id": "json", "label": L("一问一答（会议纪要、学习页、播客、朋友画像……）", "One-shot answers (meeting minutes, study pages, podcasts, friend profiles…)"),
+         "applies": builtin, "accepts": {"plans": True}, "current": "default" if j is True else j if isinstance(j, str) and j else None,
+         "effective": eff["json"], "usable": usable(eff["json"]), "follows": _json_shows(use), "recommended": None,
+         **plan_fields("json", eff["json"], True)},
+        {"id": "compact", "label": L("压缩摘要（长对话的摘要）", "Compaction summaries (long conversations)"), "applies": builtin, "accepts": {"plans": True},
+         "current": now["compact"], "effective": eff["compact"], "usable": usable(eff["compact"]), "follows": "chat" if not now["compact"] else None,
+         "recommended": None, **plan_fields("compact", eff["compact"], True),
+         # 用户自己的 Claude Code 没做成：链走完了最后还有这一轮自己的模型（不是 Claude Code 的时候，engine/compact.py）
+         "thenOwn": models.subscription(eff["compact"]) == "claude-code"},
         {"id": "outsider", "label": L("外人回合（名片 Agent、Doorman）", "Other people's turns (card agent, Doorman)"), "applies": True,
          "accepts": {"plans": False}, "current": outsider if outsider is not True else "default",
-         "parts": {"card": {"value": "default" if card is True else card, "effective": models.route("card"), "recommended": picked["card"]},
+         "parts": {"card": {"value": "default" if card is True else card, "effective": eff["card"], "recommended": picked["card"]},
                    "doorman": {"value": "default" if door is True else door, "effective": models.route("doorman"), "recommended": picked["doorman"]}},
-         "recommended": picked["card"]},
+         "recommended": picked["card"], "effective": eff["card"], **plan_fields("card", eff["card"], False)},
         {"id": "embeddings", "label": L("向量（按意思搜记忆）", "Embeddings (search memory by meaning)"), "applies": builtin,
-         "current": current_embeddings(), "recommended": recommend("embeddings", conn)},
+         "current": current_embeddings(), "recommended": recommend("embeddings", conn), **plan_fields("embeddings", None, False)},
     ]
     if not builtin:
-        why = L("主对话、后台、写作和向量由你的 claw 管；这里只能选外人回合用的模型",
-                "Your claw handles the main chat, background work, writing and memory; only other people's turns can be chosen here")
+        why = L("主对话、后台、写作、一问一答、压缩摘要和向量由你的 claw 管；这里只能选外人回合用的模型",
+                "Your claw handles the main chat, background work, writing, one-shot answers, compaction summaries and memory; only other "
+                "people's turns can be chosen here")
         for r in rows:
             if not r["applies"]:
                 r["why"] = why
@@ -1246,14 +1416,17 @@ def media_plan(b: dict, builtin: bool) -> list[Callable[[dict], None]]:
 
 @router.get("/api/setup/purposes")
 async def get_purposes(probe: int = 1):
-    """按用途选模型。→ {"ok", "claw", "purposes": [chat、background、writing、outsider、embeddings 各一行 {"id", "label", "applies", "accepts",
-    "current", "effective", "follows"?, "recommended": {"value", "why", "cost"} | null, …}]（outsider 那一行的 parts.card / parts.doorman
-    各有自己的 recommended，评测结果；这一行的 recommended 照名片 Agent 的）, "choices": {"models": [{"ref", "provider", "providerName", "model", "kind", "plan", "listed"}],
-    "embeddings": [{"id", "name", "provider", "model", "dims", "local", "models"?}]}, "providers", "auto": {"provider", "chat", "outsider"} | null}"""
+    """按用途选模型。→ {"ok", "claw", "purposes": [chat、background、writing、json、compact、outsider、embeddings 各一行 {"id", "label", "applies",
+    "accepts", "current", "effective", "follows"?, "recommended": {"value", "why", "cost"} | null, "plan", "planReady", "mayPlan", "backups",
+    "lastFailure": {"at", "kind", "error"} | null, …}]（outsider 那一行的 parts.card / parts.doorman 各有自己的 recommended，评测结果；这一行的
+    recommended 照名片 Agent 的；plan… 那几样见 plan_fields；json 的 follows：background = 跟「后台和定时」一样、chat = 主对话的模型、
+    null = 单独选的；compact 的 thenOwn = 套餐没做成、链走完了最后用这一轮自己的模型）, "choices": {"models": [{"ref", "provider",
+    "providerName", "model", "kind", "plan", "listed", "oneShot"}], "embeddings": [{"id", "name", "provider", "model", "dims", "local", "models"?}]},
+    "providers", "auto": {"provider", "chat", "outsider"} | null}"""
     return await purposes_view(bool(probe))
 
 
-def _need_ref(v, allowed: set[str], plans: bool, field: str) -> str:
+def _need_ref(v, allowed: set[str], plans: bool, field: str, *, one_shot: bool = False) -> str:
     if not isinstance(v, str) or not v.strip():
         raise SetupError(400, L(f"{field} 要写成 provider/model", f"{field} must look like provider/model"), field=field)
     ref = models.canonical(v.strip())  # google/models/… 也认，写进去的是 google/…
@@ -1264,23 +1437,32 @@ def _need_ref(v, allowed: set[str], plans: bool, field: str) -> str:
     if not plans and models.subscription(ref):
         raise SetupError(400, L("外人回合不能花你自己的套餐，换一个按量付费或本机的模型", "Other people's turns can't use your own plan; pick a pay-as-you-go or local model"),
                          field=field)
+    if one_shot and models.subscription(ref) and not models.one_shot_plan(ref):  # 一问一答、压缩摘要：命令行的套餐（Codex、Copilot）接不了
+        raise SetupError(400, L(f"{ref} 是命令行的套餐，不接一问一答、压缩摘要这种一次性的调用（只会改走按量的）：换一个",
+                                f"{ref} is a command-line plan and doesn't take one-off calls like these (they'd go pay-as-you-go instead); pick another"),
+                         field=field)
     return ref
 
 
 @router.put("/api/setup/purposes")
 async def put_purposes(request: Request):
     """{"chat"?: 引用, "background"?: 引用 | "default" | null（都是跟主对话）, "writing"?: 引用 | "default" | null（都是跟主对话；能选套餐，
-    用的时候照 may_spend）, "outsider"?: 引用 | "default" | null（不走内核）, "card"? / "doorman"?（单独改）,
-    "embeddings"?: {"id", "model"?, "dims"?} | "off" | null, "models"?: [app 里能切换的引用]}。只改给了的。→ 新的 purposes_view + backup"""
+    用的时候照 may_spend）, "json"?: 引用 | "default"（跟「后台和定时」一样）| null（不写：走以前的退路）, "compact"?: 引用 | "default" | null
+    （都是跟这个对话自己的模型）, "outsider"?: 引用 | "default" | null（不走内核）, "card"? / "doorman"?（单独改）,
+    "embeddings"?: {"id", "model"?, "dims"?} | "off" | null, "models"?: [app 里能切换的引用]}。只改给了的。→ 新的 purposes_view + backup
+    json、compact 能选套餐（真用的时候能不能花照 may_spend）；原来写成列表的（主模型 + 它自己的链）只换主模型，链照留（_with_head）。
+    background：一问一答还跟着它（_json_follows：没单独设过）才一起改；10/20 以前是不管怎样都一起改。"""
     b = await body_of(request)
     conn = await connected()
     allowed = {r["ref"] for r in choices_of(conn)} | {v for v in purposes_now().values() if isinstance(v, str)}
     builtin = claw.is_builtin()
-    for k in ("chat", "background", "writing", "embeddings", "models"):
+    for k in ("chat", "background", "writing", "json", "compact", "embeddings", "models"):
         if k in b and not builtin:
-            raise SetupError(409, L("主对话、后台、写作和向量由你的 claw 管（OpenClaw / 别的 claw），这里不改",
-                                    "Your claw handles the main chat, background work, writing and memory; they aren't changed here"), field=k)
+            raise SetupError(409, L("主对话、后台、写作、一问一答、压缩摘要和向量由你的 claw 管（OpenClaw / 别的 claw），这里不改",
+                                    "Your claw handles the main chat, background work, writing, one-shot answers, compaction summaries and memory; "
+                                    "they aren't changed here"), field=k)
     plan: list[Callable[[dict], None]] = []
+    pins: dict[str, str | None] = {}
     if "chat" in b:
         ref = _need_ref(b["chat"], allowed, True, "chat")
 
@@ -1307,15 +1489,44 @@ async def put_purposes(request: Request):
 
         def bg(data: dict, r: str | None = ref) -> None:
             use = section(data, "engine", "use")
+            follows = _json_follows(use)  # 改之前看：一问一答没单独设过，才跟着后台一起改
             if r is None:
                 old = use.pop("background", None)
-                if old is not None and use.get("json") == old:
+                if follows and old is not None and use.get("json") == old:
                     use["json"] = True  # 一次性 JSON 是跟着后台一起改的：一起回到默认模型
             else:
                 use["background"] = r
-                use["json"] = r  # 一次性 JSON（llmjson：会议纪要、学习页、朋友画像……）也是没人在看的后台活
+                if follows:
+                    use["json"] = r  # 一次性 JSON（llmjson：会议纪要、学习页、朋友画像……）也是没人在看的后台活
             prune(data, "engine", "use")
         plan.append(bg)
+    if "json" in b:
+        v = b["json"]
+        ref = None if v in (None, "default") else _need_ref(v, allowed, True, "json", one_shot=True)
+
+        def js(data: dict, r: str | None = ref, follow: bool = v == "default") -> None:
+            use = section(data, "engine", "use")
+            if follow:  # 跟「后台和定时」一样：照抄它现在写的（后台没写 = true，默认模型）；以后改后台时一起改
+                use["json"] = copy.deepcopy(use["background"]) if use.get("background") is not None else True
+            elif r is None:
+                use.pop("json", None)
+            else:
+                use["json"] = _with_head(use.get("json"), r)
+            prune(data, "engine", "use")
+        plan.append(js)
+        pins["json"] = ref  # 单独选的记一笔（_json_pinned）；跟后台、不写 = 清掉
+    if "compact" in b:
+        v = b["compact"]
+        ref = None if v in (None, "default") else _need_ref(v, allowed, True, "compact", one_shot=True)
+
+        def cp(data: dict, r: str | None = ref) -> None:
+            use = section(data, "engine", "use")
+            if r is None:
+                use.pop("compact", None)
+            else:
+                use["compact"] = _with_head(use.get("compact"), r)
+            prune(data, "engine", "use")
+        plan.append(cp)
     if "writing" in b:
         v = b["writing"]
         ref = None if v in (None, "default") else _need_ref(v, allowed, True, "writing")
@@ -1374,6 +1585,8 @@ async def put_purposes(request: Request):
         for fn in plan:
             fn(data)
     res = edit(go)
+    for k, v in pins.items():
+        _pin(k, v)
     out_ = await purposes_view(probe_local=False)
     return {**out_, "backup": res["backup"], "changed": res["changed"]}
 
@@ -1389,6 +1602,8 @@ def search_rows() -> list[dict]:
                      "unofficial": bool(s.get("unofficial")), "keyEnv": s.get("key_env"), "key": info,
                      "url": web.url_of(sid) or None if s.get("self_hosted") else None, "connected": web.usable(sid),
                      "keyUrl": s.get("key_url"), "docs": s.get("docs"), "free": catalog.text(s.get("free")), "note": catalog.text(s.get("note"))})
+        if sid == "grok":  # 10/20：登录了 Grok 订阅时先走订阅（engine/web.py）：没有密钥也算连上
+            rows[-1]["viaPlan"] = web.on_plan()
     return rows
 
 
@@ -1648,5 +1863,7 @@ async def test_embeddings(request: Request):
 @router.get("/api/engine/usage")
 async def get_usage(days: int = 30):
     """用量（engine/usage.py）。→ {"ok", "since", "until", "days", "currency", "total", "byDay", "byModel", "byPurpose", "embeddings": {"total",
-    "byDay", "byModel", "byKind", "recordedSince"}, "notCounted"}"""
-    return {"ok": True, **await asyncio.to_thread(usage_mod.summary, days)}
+    "byDay", "byModel", "byKind", "recordedSince"}, "notCounted", "plans": {"grok": 订阅这一段的额度}（10/20：登录了 Grok 订阅才有，见 engine/grok_plan.py）}"""
+    from . import grok_plan
+    q = await grok_plan.quota_now()
+    return {"ok": True, **await asyncio.to_thread(usage_mod.summary, days), "plans": {"grok": q} if q else {}}

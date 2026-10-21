@@ -4,6 +4,7 @@
 import React, { useEffect, useState } from 'react';
 import { AccessibilityInfo, ActivityIndicator, Animated, Easing, Platform, Pressable, StyleSheet, Text, TextInput, View, type TextInputProps, type ViewProps } from 'react-native';
 import Svg, { Circle } from 'react-native-svg';
+import { markMetrics } from './markGeom';
 import * as Clipboard from 'expo-clipboard';
 import { Spinner } from './ChatCards';
 import { ChevronLeft, ChevronRight } from './icons';
@@ -342,15 +343,16 @@ export function LoadState({ error, onRetry }: { error?: string | null; onRetry?:
 const AnimatedCircle = Animated.createAnimatedComponent(Circle);
 
 /**
- * OpenMousse 的标志：一个环和 1 点半位置上的一颗点。先把整圈描完（900ms，cubic-bezier(.65,0,.35,1)），描完时在 1 点半弹出 t.cyan 的点
- * （560ms，cubic-bezier(.34,1.4,.64,1)）。系统开了「减少动态效果」就直接画好。
+ * 「设好了」那一下：同一个标志，先把整圈描完（900ms，cubic-bezier(.65,0,.35,1)），描完时在 1 点半弹出青点
+ * （560ms，cubic-bezier(.34,1.4,.64,1)）。比例和颜色与静态标志相同。系统开了「减少动态效果」就直接画好。
  */
 export function BrandRing({ size = 88 }: { size?: number }) {
   const t = useTheme();
   const still = useReduceMotion();
-  const sw = Math.max(4, size * 0.072);
-  const r = (size - sw) / 2 - size * 0.06;
+  const m = markMetrics(size);
+  const { ringR: r, stroke: sw, dotX: cx, dotY: cy } = m;
   const c = 2 * Math.PI * r;
+  const dot = m.dotR * 2;
   const [draw] = useState(() => new Animated.Value(0));
   const [pop] = useState(() => new Animated.Value(0));
   useEffect(() => {
@@ -365,10 +367,7 @@ export function BrandRing({ size = 88 }: { size?: number }) {
     return () => a.stop();
   }, [still, draw, pop]);
   const offset = draw.interpolate({ inputRange: [0, 1], outputRange: [c, 0] });
-  const dot = size * 0.2;
-  // 1 点半：从 12 点顺时针 45°
-  const cx = size / 2 + r * Math.sin(Math.PI / 4);
-  const cy = size / 2 - r * Math.cos(Math.PI / 4);
+  const light = t.mode === 'light';
   return (
     <View style={{ width: size, height: size }} accessible accessibilityRole="image" accessibilityLabel={L('设置完成', 'Setup complete')}>
       <Svg width={size} height={size}>
@@ -377,8 +376,9 @@ export function BrandRing({ size = 88 }: { size?: number }) {
           strokeDasharray={`${c} ${c}`} strokeDashoffset={offset} transform={`rotate(-90 ${size / 2} ${size / 2})`} />
       </Svg>
       <Animated.View style={{
-        position: 'absolute', left: cx - dot / 2, top: cy - dot / 2, width: dot, height: dot, borderRadius: dot / 2, backgroundColor: t.cyan,
-        borderWidth: Math.max(2, size * 0.03), borderColor: t.bg, opacity: pop.interpolate({ inputRange: [0, 0.15, 1], outputRange: [0, 1, 1] }),
+        position: 'absolute', left: cx - dot / 2, top: cy - dot / 2, width: dot, height: dot, borderRadius: dot / 2, backgroundColor: t.dot,
+        borderWidth: light ? m.dotStroke : 0, borderColor: t.dotEdge,
+        opacity: pop.interpolate({ inputRange: [0, 0.15, 1], outputRange: [0, 1, 1] }),
         transform: [{ scale: pop }],
       }} />
     </View>

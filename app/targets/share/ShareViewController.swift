@@ -2,7 +2,7 @@ import SwiftUI
 import UIKit
 
 /// 分享扩展的入口（Info.plist 的 NSExtensionPrincipalClass）。
-/// 在微信、Safari、小红书、相册里点「分享 → Grava」：弹一张卡，写一句备注，存进 Zen（有链接或文件存成收藏，只有文字记成想法），存完自己收起，不跳出原来的 App。
+/// 在微信、Safari、小红书、相册里点「分享 → 这个 app」：弹一张卡，写一句备注，存进 Zen（有链接或文件存成收藏，只有文字记成想法），存完自己收起，不跳出原来的 App。
 /// 直接传给服务器；没连上（没开 Tailscale、断网）就先存在 App Group 的 outbox 里，下次打开 app 时补传。
 class ShareViewController: UIViewController {
   private let model = ShareModel()

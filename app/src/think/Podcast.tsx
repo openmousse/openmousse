@@ -3,6 +3,8 @@
 //   今日话题：服务器从 Zen、库里「还没想清的」、学习台、截止、世界树里挑，写明从哪来；点一条直接开始
 //   节目：存入库的几期（点播放听整期）
 //   底部：四种录法 + 一句说明 +「先讨论」（录前先聊，出提纲卡）/「开始录制」。录、整理、存库在 PodcastScreens.tsx。
+// 主线第三步：服务器开着群聊和赛博时，「先讨论」是这一期的录前讨论群（PodDiscuss 选录法、嘉宾、素材 → 群聊页，提纲钉在群顶），
+//   「制作中」的卡多画参与者和约好的录制时间（PrepShelfCard），点开进那个群；没开就照旧走 PodPrep 那个小对话。
 import React, { useCallback, useState } from 'react';
 import { ActivityIndicator, Alert, Platform, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
 import { useFocusEffect, useNavigation } from '@react-navigation/native';
@@ -12,6 +14,9 @@ import { useSheet } from '../components/Sheet';
 import { Btn, PullRefresh, T, showError } from '../components/ui';
 import * as pod from '../api/podcast';
 import type { PodBrief, PodHome, PodMode, PodSegment, PodSource, PodSuggestion } from '../api/podcast';
+import { useCybersOn } from '../api/cybers';
+import { useGroupsOn } from '../api/groups';
+import { PrepShelfCard, openPrepGroup, type PrepRow } from '../components/agents/PrepBits';
 import { L } from '../i18n';
 import { radius, space, type, useTheme, type Theme } from '../theme';
 import { usePodPlayer } from './podAudio';
@@ -78,6 +83,9 @@ export function Podcast() {
   const [mode, setMode] = useState<PodMode>('host');
   const [busy, setBusy] = useState<string | null>(null);
   const player = usePodPlayer(NO_SEGMENTS);
+  const groupsOn = useGroupsOn();
+  const cybersOn = useCybersOn();
+  const prepOn = groupsOn === true && cybersOn === true;  // 录前讨论群（服务器 podprep.py 要群聊和赛博都开着）
 
   const pick = useCallback(async (exclude: string[] = []) => {
     setPicking(true);
@@ -102,7 +110,7 @@ export function Podcast() {
     setBusy(title);
     try {
       const e = await pod.create({ title, mode: m, source });
-      nav.navigate(then === 'prep' ? 'PodPrep' : 'PodRec', { id: e.id });
+      nav.navigate(then === 'prep' ? (prepOn ? 'PodDiscuss' : 'PodPrep') : 'PodRec', { id: e.id });
     } catch (e) { showError(L('无法开始', "Couldn't start"), e); } finally { setBusy(null); }
   };
   const fromSuggestion = (s: PodSuggestion) => (s.mode === 'friends'  // 朋友画像来的「约小林聊…」：去约朋友那页（人和题目带过去，等他在了再开录）
@@ -144,6 +152,12 @@ export function Podcast() {
               {making.map((e) => {
                 const lk = modeLook(t, e.mode);
                 const sg = stageOf(e);
+                const row = e as PodBrief & PrepRow;
+                if (prepOn && row.steps) {
+                  // 有录前讨论群的进群；还在录前、没有群的去「先讨论」（那一页也能回到原来的录前聊天）
+                  const open = () => (row.prepGroup ? openPrepGroup(nav, row.prepGroup) : e.status === 'prep' ? nav.navigate('PodDiscuss', { id: e.id }) : openEpisode(nav, e));
+                  return <PrepShelfCard key={e.id} title={e.title} date={rowTime(e.updatedAt)} row={{ ...row, latest: row.latest || sg.state }} waiting={sg.waiting} onPress={open} onLongPress={() => del(e)} />;
+                }
                 return (
                   <ShelfCard key={e.id} title={e.title} date={rowTime(e.updatedAt)} Icon={lk.Icon} tint={lk} stage={sg.stage} state={sg.state} waiting={sg.waiting}
                     steps={L('讨论、录制、整理、存入', 'prep, record, organize, save')} onPress={() => openEpisode(nav, e)} onLongPress={() => del(e)} />

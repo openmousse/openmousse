@@ -3,6 +3,7 @@
 // 想改：「今天」页上点「有要改的？去对话里说」，带着这件事的引用回到那个对话，直接说；对话里就直接打字。
 // 执行命令（OpenClaw 的审批）沿用「拒绝 / 这一次同意」：同意只放行这一次，不会变成长期授权。
 // 处理过的（回执、「已处理」列表的一行）点开是详情：做了什么、为什么、结果、时间；没做完可以「跟进」，带着这件事回到那个对话接着说。
+// 只读的通知（kind info，服务器 inbox.info）：没有同意、拒绝、修改，只有一个不显眼的「知道了」：点了服务器记成已读、不起一轮，卡收成一行「已读 · 标题」。
 import React, { useCallback, useState } from 'react';
 import { ActivityIndicator, Platform, Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
 import type { InboxAction, InboxItem, InboxKind, InboxProposalInfo, InboxStatus } from '../data/types';
@@ -23,12 +24,24 @@ export const kindLabel = (k: InboxKind | string): string => ({
   exec: L('执行命令', 'Run command'), task: L('后台任务', 'Task'), write: L('写入', 'Write'), send: L('发送', 'Send'), spend: L('支出', 'Spend'),
   schedule: L('定时任务', 'Schedule'), push: L('推送', 'Notification'), skill: L('新 skill', 'New skill'), agent: L('新 Agent', 'New Agent'),
   block: L('看板功能块', 'Board block'), project: L('项目', 'Project'), code: L('代码改动', 'Code change'), calendar: L('日程', 'Calendar'),
-  social: L('好友', 'Friends'), egress: L('代办', 'Errand'), app: L('连接器', 'Connector'), tool: L('操作', 'Action'), other: L('其他', 'Other'),
+  social: L('好友', 'Friends'), egress: L('代办', 'Errand'), app: L('连接器', 'Connector'), tool: L('操作', 'Action'), info: L('通知', 'Notice'),
+  other: L('其他', 'Other'),
 } as Record<string, string>)[k] ?? L('其他', 'Other');
 
 /** 动到外面的（写、发、花钱、日程、派活）用警示色；提案类用金色（助手自己想做的）；执行命令中性。 */
 const kindTone = (k: InboxKind): 'warn' | 'gold' | 'neutral' =>
-  (['write', 'send', 'spend', 'calendar', 'task', 'social', 'egress', 'app', 'tool'].includes(k) ? 'warn' : k === 'exec' ? 'neutral' : 'gold');
+  (['write', 'send', 'spend', 'calendar', 'task', 'social', 'egress', 'app', 'tool'].includes(k) ? 'warn' : k === 'exec' || k === 'info' ? 'neutral' : 'gold');
+
+/** 卡上的类别标签。通知（info）是中性的描边（设计第 31 张：只写类别，不催你做什么）；别的照 kindTone 上色。 */
+function KindTag({ kind }: { kind: InboxKind }) {
+  const t = useTheme();
+  if (kind !== 'info') return <Pill label={kindLabel(kind)} tone={kindTone(kind)} />;
+  return (
+    <View style={[styles.tag, { borderColor: t.line }]}>
+      <Text style={[type.caption, { color: t.ink2 }]}>{kindLabel(kind)}</Text>
+    </View>
+  );
+}
 
 const pad = (n: number) => String(n).padStart(2, '0');
 /** 刚刚 / 5 分钟前 / 14:05 / 昨天 14:05 / 9月24日 */
@@ -54,13 +67,14 @@ export function clock(iso: string | null | undefined): string {
   return `${pad(d.getHours())}:${pad(d.getMinutes())}`;
 }
 
-/** 中文里名字是英文（比如 Grava）时，和汉字之间空一格。 */
+/** 中文里名字是英文（比如 Mousse）时，和汉字之间空一格。 */
 const zh = (name: string, rest: string) => (/[A-Za-z0-9]$/.test(name) ? `${name} ${rest}` : `${name}${rest}`);
 
 /** 回执两行：「已同意 · 标题」+ 说明。 */
 export function receiptText(item: InboxItem, name: string): { head: string; sub: string } {
   const exec = item.kind === 'exec';
   const title = item.title;
+  if (item.kind === 'info' && item.status === 'done') return { head: L(`已读 · ${title}`, `Read · ${title}`), sub: '' };  // 只读的通知：收起了就是读过了
   if (item.kind === 'social' && item.social?.ask === 'review') {
     // Doorman 扣下的一句（server/cardagent.py 的 release）：点了就已经送到对方那里
     const peer = item.social.peer;
@@ -106,6 +120,7 @@ export function handledText(item: InboxItem, name: string): string {
   const sep = L('：', ': ');
   const exec = item.kind === 'exec';
   const extra = (s: string) => (s ? `${sep}${s}` : '');
+  if (item.kind === 'info' && item.status === 'done') return `${name} · ${L('已读', 'Read')}`;
   switch (item.status) {
     case 'done': return `${name} · ${L('完成', 'Done')}${extra(item.result)}`;
     case 'failed': return `${name} · ${L('失败', 'Failed')}${extra(item.result)}`;
@@ -173,6 +188,7 @@ function PendingCard({ item, chat }: { item: InboxItem; chat: boolean }) {
   const [alertShown, setAlertShown] = useState(false);  // 提醒卡画出了通知预览：detail 是同一句的文字版，不再显示
   const [rewrite, setRewrite] = useState<string | null>(null);  // Doorman 扣下的那句 / 扣下的代办请求：「改一下」时你写的话
   const exec = item.kind === 'exec';
+  const notice = item.kind === 'info';  // 只读的通知：只有一个「知道了」
   const review = item.kind === 'social' && item.social?.ask === 'review';
   const act = (action: InboxAction, note?: string) => {
     if (busy) return;
@@ -190,7 +206,7 @@ function PendingCard({ item, chat }: { item: InboxItem; chat: boolean }) {
       <View style={styles.head}>
         {chat ? null : <SourceBadge source={item.source} size={28} />}
         {chat ? null : <T v="caption" color={t.ink2} numberOfLines={1} style={{ fontSize: 13, fontWeight: '600', flexShrink: 1 }}>{name}</T>}
-        <Pill label={kindLabel(item.kind)} tone={kindTone(item.kind)} />
+        <KindTag kind={item.kind} />
         <View style={{ flex: 1 }} />
         <T v="caption" color={t.ink3}>{relTime(item.createdAt) || item.whenText || ''}</T>
       </View>
@@ -230,14 +246,21 @@ function PendingCard({ item, chat }: { item: InboxItem; chat: boolean }) {
           ))}
         </View>
       ) : null}
-      {!exec && !chat && item.thread ? (
+      {!exec && !notice && !chat && item.thread ? (
         <Pressable onPress={talk} disabled={!!busy} hitSlop={6} accessibilityRole="button" style={({ pressed }) => [styles.link, { opacity: pressed ? 0.6 : 1 }]}>
           <T v="callout" color={t.gold} style={{ fontWeight: '600' }}>{L('需要修改？在对话中说明', 'Need changes? Explain in chat')}</T>
           <ChevronRight size={16} color={t.gold} />
         </Pressable>
       ) : null}
       <View style={styles.actions}>
-        {exec ? (
+        {notice ? (
+          // 只读的通知：没有同意、拒绝、修改（没有要你决定的）。留一个不显眼的「知道了」收起它（= approve，服务器记成已读、不起一轮），
+          // 不然它一直挂在「等你点头」里
+          <>
+            <View style={{ flex: 1 }} />
+            <CardBtn kind="quiet" label={L('知道了', 'Got it')} busy={busy === 'approve'} disabled={!!busy} onPress={() => act('approve')} />
+          </>
+        ) : exec ? (
           <>
             <CardBtn kind="quiet" label={L('拒绝', 'Deny')} busy={busy === 'reject'} disabled={!!busy} onPress={() => act('reject')} />
             <CardBtn kind="primary" label={L('允许一次', 'Allow once')} busy={busy === 'approve'} disabled={!!busy} onPress={() => act('approve')} />
@@ -347,7 +370,7 @@ function stamp(iso: string | null | undefined): string {
   return `${d.toLocaleDateString(L('zh-CN', 'en'), { month: 'short', day: 'numeric' })} ${hm}`;
 }
 
-/** 中文里名字是英文（比如 Grava）时，前面空一格。 */
+/** 中文里名字是英文（比如 Mousse）时，前面空一格。 */
 const lead = (name: string) => (/^[A-Za-z0-9]/.test(name) ? ` ${name}` : name);
 
 /** 详情顶上那一句：现在是什么状态。 */
@@ -356,7 +379,7 @@ function statusWord(item: InboxItem): string {
   switch (item.status) {
     case 'approved':
       return exec ? L('已允许一次', 'Allowed once') : item.followedAt ? L('已跟进，处理中', 'Followed up, back in progress') : L('已同意，处理中', 'Approved, in progress');
-    case 'done': return L('已完成', 'Done');
+    case 'done': return item.kind === 'info' ? L('已读', 'Read') : L('已完成', 'Done');
     case 'failed': return L('失败', 'Failed');
     case 'rejected': return exec ? L('已拒绝', 'Denied') : L('已拒绝', 'Declined');
     case 'revising': return L('已要求修改，等待重新提交', 'Changes requested, waiting for resubmission');
@@ -368,6 +391,7 @@ function statusWord(item: InboxItem): string {
 
 /** 「跟进」上面那句：点了会怎样。 */
 function followHint(item: InboxItem, name: string): string {
+  if (item.kind === 'info') return L('跟进：在对话中附上此通知，接着说。', 'Follow up to talk about this notice, with it attached.');
   switch (item.status) {
     case 'approved':
       return L(zh(name, '尚未报告结果。跟进：在对话中附上此事项，询问进展。'), `${name} hasn't reported back yet. Follow up to ask for progress, with this item attached.`);
@@ -406,7 +430,10 @@ function InboxDetail({ item, close }: { item: InboxItem; close: () => void }) {
   const fields = item.fields ?? [];
   const keyW = Math.min(96, Math.max(28, ...fields.map((f) => [...f.k].reduce((w, ch) => w + (/[　-鿿]/.test(ch) ? 13 : 8), 0))));
   const times: [string, string][] = [[L('提出', 'Raised'), stamp(item.createdAt)]];
-  if (item.decidedAt) times.push([item.status === 'rejected' ? L('你拒绝', 'You declined') : item.status === 'revising' ? L('你要求修改', 'You asked for changes') : L('你同意', 'You approved'), stamp(item.decidedAt)]);
+  if (item.decidedAt) {
+    times.push([item.kind === 'info' ? L('你已读', 'You read it') : item.status === 'rejected' ? L('你拒绝', 'You declined')
+      : item.status === 'revising' ? L('你要求修改', 'You asked for changes') : L('你同意', 'You approved'), stamp(item.decidedAt)]);
+  }
   if (item.followedAt) times.push([L('你跟进', 'You followed up'), stamp(item.followedAt)]);
   const last = Math.max(Date.parse(item.decidedAt ?? '') || 0, Date.parse(item.followedAt ?? '') || 0, Date.parse(item.createdAt) || 0);
   if (item.updatedAt && (Date.parse(item.updatedAt) || 0) - last > 60_000) {
@@ -421,11 +448,11 @@ function InboxDetail({ item, close }: { item: InboxItem; close: () => void }) {
           <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
             <SourceBadge source={item.source} size={20} />
             <T v="caption" color={t.ink2} numberOfLines={1} style={{ fontSize: 13, fontWeight: '600', flexShrink: 1 }}>{name}</T>
-            <Pill label={kindLabel(item.kind)} tone={kindTone(item.kind)} />
+            <KindTag kind={item.kind} />
           </View>
         </View>
       </View>
-      {item.result ? (
+      {item.result && item.kind !== 'info' ? (
         <View style={[styles.box, { backgroundColor: item.status === 'failed' ? t.badSoft : t.surface, borderColor: t.line }]}>
           <T v="caption" color={t.ink3} style={{ fontWeight: '600' }}>{item.status === 'failed' ? L('失败原因', 'Why it failed') : L('结果', 'Result')}</T>
           <T v="callout" selectable style={{ lineHeight: 21 }}>{item.result.length > 4000 ? `${item.result.slice(0, 4000)}\n…${L(`（其余 ${item.result.length - 4000} 字未显示）`, ` (${item.result.length - 4000} more characters)`)}` : item.result}</T>
@@ -583,4 +610,5 @@ const styles = StyleSheet.create({
   quote: { gap: 1, paddingVertical: 2 },
   prevIcon: { width: 24, height: 24, borderRadius: 8, alignItems: 'center', justifyContent: 'center' },
   rewrite: { borderWidth: StyleSheet.hairlineWidth, borderRadius: radius.md, paddingHorizontal: space.md, paddingVertical: 10, minHeight: 72, textAlignVertical: 'top' },
+  tag: { borderWidth: 1, borderRadius: radius.pill, paddingHorizontal: 8, paddingVertical: 2 },
 });

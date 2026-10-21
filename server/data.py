@@ -1,33 +1,33 @@
-"""Grava API：app 里对话和看板之外的全部数据。2026-09-23 起每一项都来自真实来源，不再有示例。
+"""服务器接口：app 里对话和看板之外的全部数据。2026-09-23 起每一项都来自真实来源，不再有示例。
 
 | 页面 | 真源 |
 |---|---|
-| Groups、独立空间、建议、形象设置、app 侧活动 | grava.db（记忆规范的 L4） |
-| 主对话顶上的「从这里开始」（新实例第一次打开） | `/api/health` 的 `first_run`：grava.db 的 `messages` 和 `groups` 都还是空的（见 first_run） |
-| 目标（你和 Agent 都能加、改、标完成、不做了，每次改动能撤销） | grava.db `goals` + `goal_log`（Agent 经 `server/goals_ctl.py` 写）；体重、体脂的当前值和趋势读训记（真源）+ Apple 健康 `health_metrics`（对照），不自动算体脂（见 goals.py） |
-| 编辑 Agent（`PATCH /api/groups/{id}`：名字 / 图标 / 颜色 / 职责 / 模型） | grava.db `groups`（color：NULL = 默认色）+ `threads.model`；名字、职责同时换掉 Agent 工作区 IDENTITY.md 里 `<!-- mousse:role -->` 那一段，模型同时写 openclaw.json 的 `agents.entries.<id>.model`（见 agents.py） |
-| 等你点头（收件箱） | grava.db `inbox`（各 Agent 经 `server/inbox_ctl.py` 写：要你同意才做的事、它们自己的提议；见 inbox.py）+ OpenClaw 执行审批队列（`openclaw approvals pending / resolve`，旧的 /api/approvals 仍在） |
-| 未读、「今天」页的新卡片、app 角标 | grava.db `read_marks` + `messages.origin` + `feed_items.seen_at`（见 unread.py） |
-| Agent 的产出（标签栏上方的浮动标签、按 kind 套模板的小板子、对话里的产出卡片） | grava.db `feed_items`（kind + data；`thread` / `message_id` = 挂在哪条回复下）+ 饮食看板的营养目标 + 健康数据源的恢复分（见 outputs.py） |
+| Groups、独立空间、建议、形象设置、app 侧活动 | mousse.db（记忆规范的 L4） |
+| 主对话顶上的「从这里开始」（新实例第一次打开） | `/api/health` 的 `first_run`：mousse.db 的 `messages` 和 `groups` 都还是空的（见 first_run） |
+| 目标（你和 Agent 都能加、改、标完成、不做了，每次改动能撤销） | mousse.db `goals` + `goal_log`（Agent 经 `server/goals_ctl.py` 写）；体重、体脂的当前值和趋势读训记（真源）+ Apple 健康 `health_metrics`（对照），不自动算体脂（见 goals.py） |
+| 编辑 Agent（`PATCH /api/groups/{id}`：名字 / 图标 / 颜色 / 职责 / 模型） | mousse.db `groups`（color：NULL = 默认色）+ `threads.model`；名字、职责同时换掉 Agent 工作区 IDENTITY.md 里 `<!-- mousse:role -->` 那一段，模型同时写 openclaw.json 的 `agents.entries.<id>.model`（见 agents.py） |
+| 等你点头（收件箱） | mousse.db `inbox`（各 Agent 经 `server/inbox_ctl.py` 写：要你同意才做的事、它们自己的提议；见 inbox.py）+ OpenClaw 执行审批队列（`openclaw approvals pending / resolve`，旧的 /api/approvals 仍在） |
+| 未读、「今天」页的新卡片、app 角标 | mousse.db `read_marks` + `messages.origin` + `feed_items.seen_at`（见 unread.py） |
+| Agent 的产出（标签栏上方的浮动标签、按 kind 套模板的小板子、对话里的产出卡片） | mousse.db `feed_items`（kind + data；`thread` / `message_id` = 挂在哪条回复下）+ 饮食看板的营养目标 + 健康数据源的恢复分（见 outputs.py） |
 | 推送 | Expo Push，三档 ring / quiet / none + server.json 的 `push.quiet_hours`（见 push.py） |
-| 日程、要记得的 | 课表（calendar 数据源）+ grava.db `schedule_items` / `schedule_marks` / `schedule_log` + 课程 ddl（study.deadlines_cmd）+ 邮件条目（server.json 的 remember.mail）+ `applications`（见 schedule.py） |
-| 「今天」页（待处理 / 日程 / 报告，周 / 月） | 上面「日程、要记得的」的同一批来源 + 收件箱 + `feed_items`（归到日程的计划和复盘、报告卡）+ Apple 健康的恢复分；推迟记在 grava.db `today_snooze`（见 today.py） |
+| 日程、要记得的 | 课表（calendar 数据源）+ mousse.db `schedule_items` / `schedule_marks` / `schedule_log` + 课程 ddl（study.deadlines_cmd）+ 邮件条目（server.json 的 remember.mail）+ `applications`（见 schedule.py） |
+| 「今天」页（待处理 / 日程 / 报告，周 / 月） | 上面「日程、要记得的」的同一批来源 + 收件箱 + `feed_items`（归到日程的计划和复盘、报告卡）+ Apple 健康的恢复分；推迟记在 mousse.db `today_snooze`（见 today.py） |
 | 接下来会自动做的事 | OpenClaw cron（`cron.list / cron.update`）+ systemd user timer（只读）；claw 选 builtin：内核的定时任务和心跳（engine/jobs.py、heartbeat.py；开关 = 暂停 / 恢复，见 engine/appdata.py） |
 | 任务 | OpenClaw 子会话：列表读 OpenClaw 的任务台账（`state/openclaw.sqlite`，读不到再走 `tasks.list`）；详情读子会话的 `chat.history`；额度和对话里的任务卡、转交卡见 cards.py |
 | 活动记录 | app 的 activity_log + Gateway 审计（`audit.activity.list`，只有元数据）+ 定时任务的运行记录；claw 选 builtin：内核的 engine_turns（谁、在哪、哪个模型、成没成、花了多少、用了哪些工具）+ engine_job_runs，不调 Gateway（engine/appdata.py） |
-| 基础档案 | L0 `~/.openclaw/shared/profile/USER.md`：改一条就写回，旧版本存 `grava/profile-history.md`（不在检索路径里） |
+| 基础档案 | L0 `~/.openclaw/shared/profile/USER.md`：改一条就写回，旧版本存 `<data_dir>/profile-history.md`（不在检索路径里） |
 | 记忆 | L1 各 agent 工作区的 `MEMORY.md`：忘记 = 删掉这一条，活动记录只留一行、不含内容 |
-| 世界树（我 → 世界树） | workspace 的 `scripts/memory_tree.py`（可选数据源 tree）：真身是 Obsidian 库 `世界树/` 里一条一篇的笔记，索引 `grava/tree_index.db`；没有它就用开源版世界树（`~/.mousse-tree`，treelib.py：tree.db 或笔记文件夹，有枝、规则和每周修剪，修剪的卡在 treeprune.py / grava.db `tree_prune`）；确认 / 忘记 / 挪枝都经它做，活动记录由它写、不含内容（见 memtree.py） |
-| 连接（我 → 连接） | 服务器上的实测：密钥的名字在不在、缓存文件的时间、grava.db 里的健康同步时间和推送登记、systemd user 单元的状态、`openclaw channels status`（2 分钟缓存）；整份缓存 60 秒，不返回任何密钥或配置的值（见 connectors.py） |
-| 思考（想法、主题、想完了的笔记） | 库的收件箱里一条一篇的 Markdown 笔记（server.json `think.vault`，没配放 `<data_dir>/think/`），主题和草稿在 grava.db `think_topics`，想完了写进库的 笔记/ 或 写作/，要记的经 workspace 的 `memory_tree.py` 进世界树（见 think.py） |
-| 冥想时间 | grava.db `think_focus` + `think_focus_held`（期间 push.send_push 不推、记下来，结束时给小结；见 think.py） |
-| 收藏 | grava.db `think_saves` + `<data_dir>/saves/` 里的原件和抽出来的正文（存的时候不调模型；见 saves.py） |
-| 分享（我 → 分享出去的；链接页 /s/<令牌>） | grava.db `shares`：分享时抄一份正文快照，加上认出来要挡的地方（档案里的住址和家人名字、邮箱电话、身体数字）；卡片图在服务器上画，缓存在 `<data_dir>/shares/`；外网只经 public.py 的小服务（见 share.py） |
-| 日志（Group 记忆页、我 → 日志） | grava.db `journal`（Grava 经 `scripts/grava_journal.py` 写） |
-| Agent 看板里的积木（Agent 自己的表、看板配置和版本） | grava.db `collections` / `records` / `boards`（Agent 经 `server/board_ctl.py` 写；提案走收件箱 kind block；见 boards.py） |
-| 日结提案（主对话每晚回看这一周，提「加一个 skill」「建一个 Agent」） | grava.db `proposals`（main 经 `server/proposals_ctl.py` 交；同意后服务端写 skills/、改 openclaw.json 的允许列表或建好 Agent；见 proposals.py） |
-| 饮食记录（饮食看板的今日进度、今日饮食、本周，「今天」页的摄入，一键「记录这一餐」） | grava.db `diet_entries` / `diet_foods` / `diet_targets`（2026-10-13 起；Agent 经 `server/diet_ctl.py` 写；server.json 的 `diet.source` = xunji 时还从训记读；查营养的外部来源和缓存在 `<data_dir>/nutrition.db`；见 diet.py、nutrition.py） |
-| 求职 / 申请学校看板 | grava.db `applications`（Grava 经 `scripts/grava_apps.py` 写；kind=masters 进「申请学校」，其余进「求职」） |
+| 世界树（我 → 世界树） | workspace 的 `scripts/memory_tree.py`（可选数据源 tree）：真身是 Obsidian 库 `世界树/` 里一条一篇的笔记，索引在那个脚本自己的目录里；没有它就用开源版世界树（`~/.mousse-tree`，treelib.py：tree.db 或笔记文件夹，有枝、规则和每周修剪，修剪的卡在 treeprune.py / mousse.db `tree_prune`）；确认 / 忘记 / 挪枝都经它做，活动记录由它写、不含内容（见 memtree.py） |
+| 连接（我 → 连接） | 服务器上的实测：密钥的名字在不在、缓存文件的时间、mousse.db 里的健康同步时间和推送登记、systemd user 单元的状态、`openclaw channels status`（2 分钟缓存）；整份缓存 60 秒，不返回任何密钥或配置的值（见 connectors.py） |
+| 思考（想法、主题、想完了的笔记） | 库的收件箱里一条一篇的 Markdown 笔记（server.json `think.vault`，没配放 `<data_dir>/think/`），主题和草稿在 mousse.db `think_topics`，想完了写进库的 笔记/ 或 写作/，要记的经 workspace 的 `memory_tree.py` 进世界树（见 think.py） |
+| 冥想时间 | mousse.db `think_focus` + `think_focus_held`（期间 push.send_push 不推、记下来，结束时给小结；见 think.py） |
+| 收藏 | mousse.db `think_saves` + `<data_dir>/saves/` 里的原件和抽出来的正文（存的时候不调模型；见 saves.py） |
+| 分享（我 → 分享出去的；链接页 /s/<令牌>） | mousse.db `shares`：分享时抄一份正文快照，加上认出来要挡的地方（档案里的住址和家人名字、邮箱电话、身体数字）；卡片图在服务器上画，缓存在 `<data_dir>/shares/`；外网只经 public.py 的小服务（见 share.py） |
+| 日志（Group 记忆页、我 → 日志） | mousse.db `journal`（Agent 经 `packs/core/scripts/journal.py` 写；工作区里的 `scripts/grava_journal.py` 也写这张表） |
+| Agent 看板里的积木（Agent 自己的表、看板配置和版本） | mousse.db `collections` / `records` / `boards`（Agent 经 `server/board_ctl.py` 写；提案走收件箱 kind block；见 boards.py） |
+| 日结提案（主对话每晚回看这一周，提「加一个 skill」「建一个 Agent」） | mousse.db `proposals`（main 经 `server/proposals_ctl.py` 交；同意后服务端写 skills/、改 openclaw.json 的允许列表或建好 Agent；见 proposals.py） |
+| 饮食记录（饮食看板的今日进度、今日饮食、本周，「今天」页的摄入，一键「记录这一餐」） | mousse.db `diet_entries` / `diet_foods` / `diet_targets`（2026-10-13 起；Agent 经 `server/diet_ctl.py` 写；server.json 的 `diet.source` = xunji 时还从训记读；查营养的外部来源和缓存在 `<data_dir>/nutrition.db`；见 diet.py、nutrition.py） |
+| 求职 / 申请学校看板 | mousse.db `applications`（工作区里的 `scripts/grava_apps.py` 写，有这个脚本才有；kind=masters 进「申请学校」，其余进「求职」） |
 | 模型与计费 | openclaw.json 的默认链、子会话默认、允许列表 + `models.authStatus`；claw 选 builtin：engine.models、备用链、按用途选的、Claude Code / ChatGPT 套餐的登录、这 30 天的用量（engine/appdata.py） |
 | 安全 | 配置和运行状态的实测结果，外加蓝图里还没做的计划项（标明"计划"）；claw 选 builtin：主机命令的放行名单、工具档位、沙箱给了谁、等你点头的内核的卡（engine/appdata.py） |
 | 新建 Agent 的工作区（claw 选 builtin） | 主工作区旁边的 workspace-<id>/（AGENTS.md、IDENTITY.md、MEMORY.md、memory/、skills/）+ server.json 的 agent_workspaces 和技能名单 engine.skills.agents.<id>（agents.provision_builtin；名单在 app 里改：/api/setup/skills/{id}，engine/agent_skills.py） |
@@ -58,8 +58,11 @@ router = APIRouter()
 
 import agents  # noqa: E402
 import cards  # noqa: E402
+import profile_tags  # noqa: E402
+from config import raw as raw_config  # noqa: E402
 from config import settings as cfg  # noqa: E402 — 这个模块里 settings 是接口函数名
 from i18n import L, lang  # noqa: E402
+from stored_values import SESSION_TAG  # noqa: E402
 
 HOME = cfg.openclaw_home
 PROFILE = cfg.profile
@@ -186,7 +189,7 @@ def surface(key: str, names: dict[str, str]) -> str:
     if key == "agent:main:main":
         return L("主对话", "Main chat")
     parts = key.split(":")
-    if len(parts) >= 4 and parts[2] == "grava":
+    if len(parts) >= 4 and parts[2] == SESSION_TAG:
         tid = ":".join(parts[3:])
         return names.get(tid) or L(f"app 线程 {tid}", f"App thread {tid}")
     if len(parts) >= 3 and parts[2] == "subagent":
@@ -325,7 +328,7 @@ def create_group(body: GroupIn):
         conn.execute("INSERT INTO groups(id, name, icon, color, purpose, created_at) VALUES(?,?,?,?,?,?)", (gid, name, icon, color, body.purpose.strip(), ts))
         conn.execute("INSERT INTO threads(id, model, updated_at) VALUES(?,?,?) ON CONFLICT(id) DO UPDATE SET model=excluded.model", (gid, body.model, ts))
     log_activity(L(f"新建 Agent「{name}」", f'Created agent "{name}"'), "edit")
-    import treelib  # 开源版世界树：给它长一根小枝（agents 填它的 id）；作者那份世界树、没装世界树的什么都不做，出错也不影响建 Agent
+    import treelib  # 开源版世界树：给它长一根小枝（agents 填它的 id）；工作区那份世界树、没装世界树的什么都不做，出错也不影响建 Agent
     treelib.agent_created(gid, name, body.purpose.strip())
     if template == "study":
         import studyapp  # 延迟导入：studyapp 依赖本模块
@@ -507,7 +510,7 @@ async def delete_side_chat(sid: str):
     return {"ok": True}
 
 
-# —— 日志（L4 journal，Grava 经 scripts/grava_journal.py 写） ——————————————————
+# —— 日志（L4 journal，Agent 经 journal.py 或工作区的 scripts/grava_journal.py 写） ——————————————————
 
 @router.get("/api/journal")
 def journal(group: str | None = None, days: int = 90, limit: int = 100):
@@ -531,7 +534,7 @@ def delete_journal(jid: str):
     return {"ok": bool(n)}
 
 
-# —— 求职与申请（L4 applications，Grava 经 scripts/grava_apps.py 写） ——————————————
+# —— 求职与申请（L4 applications，工作区的 scripts/grava_apps.py 写） ——————————————
 
 @router.get("/api/applications")
 def applications(all: int = 0):
@@ -593,25 +596,42 @@ def feed_seen(body: SeenBody):
 
 
 # —— 接下来会自动做的事：OpenClaw cron + systemd timer ——————————————————
+# 哪些要起个好认的名字放在 server.json 的 upcoming 段（每次读文件，不用重启；不写 = 都不起名）：
+#   "upcoming": {"titles": {"<OpenClaw 定时任务的名字> 或 <systemd 定时器单元>": {"zh": "…", "en": "…", "repeat": "weekly"}},
+#                "reminder_prefix": "<一次性提醒的单元名前缀>"}
+# 定时任务的名字按 slug 比（小写，别的字符换成 -）；systemd 定时器只列 titles 里有的（repeat 不写 = 每天）；
+# 一次性提醒（systemd-run --unit=<前缀>…）只有配了 reminder_prefix 才列，标题取单元的 Description。
+
+def upcoming_cfg() -> dict:
+    u = raw_config().get("upcoming")
+    return u if isinstance(u, dict) else {}
+
+
+def configured_titles() -> dict[str, dict]:
+    """upcoming.titles → {名字: {"title": 按当前语言的标题, "repeat": daily | weekly}}。值可以只写一个字符串（两种语言一样）。"""
+    t = upcoming_cfg().get("titles")
+    out: dict[str, dict] = {}
+    for k, v in (t.items() if isinstance(t, dict) else ()):
+        if isinstance(v, str) and v.strip():
+            out[str(k)] = {"title": v.strip(), "repeat": "daily"}
+        elif isinstance(v, dict) and (v.get("zh") or v.get("en")):
+            zh, en = str(v.get("zh") or v.get("en")), str(v.get("en") or v.get("zh"))
+            out[str(k)] = {"title": L(zh, en), "repeat": "weekly" if v.get("repeat") == "weekly" else "daily"}
+    return out
+
 
 def cron_titles() -> dict[str, str]:
-    return {
-        "heartbeat-main": L("心跳检查（main）", "Heartbeat check (main)"),
-        "heartbeat-gemini": L("心跳检查（gemini）", "Heartbeat check (gemini)"),
-        "memory-dreaming-promotion": L("记忆整理：把工作记忆晋升为长期记忆（Dreaming）", "Memory tidy-up: promote working memory to long-term memory (Dreaming)"),
-        "skill-collection-review-main": L("技能库复查（main）", "Skill library review (main)"),
-        "skill-collection-review-gemini": L("技能库复查（gemini）", "Skill library review (gemini)"),
-    }
+    return {slug(k): v["title"] for k, v in configured_titles().items() if not k.endswith(".timer")}
 
 
 def timer_titles() -> dict[str, str]:
-    return {
-        "lunar-birthday.timer": L("父母农历生日提醒", "Parents' lunar birthday reminder"),
-        "daily-backup.timer": L("每日加密备份", "Daily encrypted backup"),
-        "weekly-maintenance.timer": L("每周系统维护", "Weekly system maintenance"),
-        "system-alert.timer": L("系统告警检查", "System alert check"),
-        "log-sanitizer.timer": L("日志脱敏", "Log redaction"),
-    }
+    return {k: v["title"] for k, v in configured_titles().items() if k.endswith(".timer")}
+
+
+def reminder_prefix() -> str:
+    """一次性提醒的单元名前缀（upcoming.reminder_prefix）；没配 = 不列一次性提醒。"""
+    p = upcoming_cfg().get("reminder_prefix")
+    return p.strip() if isinstance(p, str) else ""
 
 
 def slug(text: str) -> str:
@@ -643,8 +663,14 @@ def dow_words() -> dict[str, str]:
 
 
 def tz_names() -> dict[str, str]:
-    return {"Asia/Shanghai": L("北京时间", "Beijing time"), "Europe/London": L("伦敦时间", "London time"),
-            "America/New_York": L("纽约时间", "New York time"), "UTC": "UTC", cfg.timezone: ""}  # 自己的时区不加后缀
+    """定时任务自己带的时区怎么说（不在表里的照原样写 IANA 的名字）；和 server.json 的时区一样就不加后缀。"""
+    return {"Asia/Shanghai": L("北京时间", "Beijing time"), "Asia/Hong_Kong": L("香港时间", "Hong Kong time"), "Asia/Taipei": L("台北时间", "Taipei time"),
+            "Asia/Singapore": L("新加坡时间", "Singapore time"), "Asia/Tokyo": L("东京时间", "Tokyo time"), "Asia/Seoul": L("首尔时间", "Seoul time"),
+            "Asia/Kolkata": L("印度时间", "India time"), "Asia/Dubai": L("迪拜时间", "Dubai time"), "Australia/Sydney": L("悉尼时间", "Sydney time"),
+            "Europe/London": L("伦敦时间", "London time"), "Europe/Paris": L("巴黎时间", "Paris time"), "Europe/Berlin": L("柏林时间", "Berlin time"),
+            "America/New_York": L("纽约时间", "New York time"), "America/Chicago": L("芝加哥时间", "Chicago time"),
+            "America/Los_Angeles": L("洛杉矶时间", "Los Angeles time"), "America/Sao_Paulo": L("圣保罗时间", "São Paulo time"),
+            "UTC": "UTC", cfg.timezone: ""}  # 自己的时区不加后缀
 
 
 def cron_words(expr: str, hm: str, tz: str | None) -> str:
@@ -693,26 +719,27 @@ async def timers() -> list[dict]:
     proc = await asyncio.create_subprocess_exec("systemctl", "--user", "list-timers", "--all", "--output=json",
                                                 stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE)
     out, _ = await asyncio.wait_for(proc.communicate(), 10)
-    titles = timer_titles()
+    titles = configured_titles()
+    prefix = reminder_prefix()
     rows = []
     for t in json.loads(out or b"[]"):
         unit = t.get("unit") or ""
-        if unit.startswith("grava-reminder-") and unit.endswith(".timer"):
+        if prefix and unit.startswith(prefix) and unit.endswith(".timer"):
             rows.append(await reminder_row(t))
             continue
-        if unit not in titles:
+        if unit not in titles or not unit.endswith(".timer"):
             continue
         nxt = datetime.fromtimestamp(t["next"] / 1e6, TZ) if t.get("next") else None
         last = datetime.fromtimestamp(t["last"] / 1e6, TZ) if t.get("last") else None
-        rows.append({"id": t["unit"], "source": "systemd", "title": titles[t["unit"]], "rawName": t["unit"], "agent": L("系统", "System"), "modelId": None,
-                     "when": when(nxt), "repeat": L("每天", "Daily") if t["unit"] not in ("weekly-maintenance.timer",) else L("每周", "Weekly"),
+        rows.append({"id": t["unit"], "source": "systemd", "title": titles[t["unit"]]["title"], "rawName": t["unit"], "agent": L("系统", "System"), "modelId": None,
+                     "when": when(nxt), "repeat": L("每周", "Weekly") if titles[t["unit"]]["repeat"] == "weekly" else L("每天", "Daily"),
                      "enabled": bool(nxt), "toggleable": False, "nextAt": int(nxt.timestamp() * 1000) if nxt else 0,
                      "last": {"status": None, "when": when(last)} if last else None})
     return rows
 
 
 async def reminder_row(t: dict) -> dict:
-    """Grava 一次性提醒（systemd-run --unit=grava-reminder-*），标题取 unit 的 Description。"""
+    """一次性提醒（systemd-run --unit=<upcoming.reminder_prefix>…），标题取 unit 的 Description。"""
     unit = t["unit"]
     proc = await asyncio.create_subprocess_exec("systemctl", "--user", "show", unit, "-p", "Description", "--value",
                                                 stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE)
@@ -874,7 +901,8 @@ def task_summary(t: dict, detail: dict | None) -> dict:
             "error": t.get("error"), "toolUseCount": t.get("toolUseCount") or 0, "lastTool": t.get("lastToolName"),
             "tokens": info.get("totalTokens") or 0, "costUsd": info.get("estimatedCostUsd"), "updatedAt": t.get("updatedAt") or 0,
             "createdMs": t.get("createdAt") or 0, "minutes": minutes, "timedOut": bool(t.get("timedOut")),
-            "step": cards.step_of(t["id"], t.get("lastToolName")) if status == "进行中" else ""}
+            "step": cards.step_of(t["id"], t.get("lastToolName")) if status == "进行中" else "",
+            "interrupted": cards.interrupted(t)}  # 10/20 只新增：自己的内核被服务重启打断的（app 写「被重启打断」、给「重派」）
 
 
 def text_of(content: Any) -> str:
@@ -1099,7 +1127,7 @@ async def activity(limit: int = 80):
 
 # —— 基础档案（L0） ——————————————————————————————————————————————
 
-TAIL = re.compile(r"\s*((?:\[[A-Za-z]+\])+)\s*(\d{4}-\d{2}(?:-\d{2})?)?\s*$")
+TAIL = profile_tags.TAIL  # 一条末尾的标签和日子（格式和标签见 profile_tags.py）
 
 
 def item_id(section: str, line: str) -> str:
@@ -1139,9 +1167,8 @@ def split_tags(raw: str) -> tuple[str, list[str], str | None]:
 
 
 def source_names() -> dict[str, str]:
-    """档案条目末尾的来源标签 → 显示名。"""
-    return {"G": L("Gemini 导出", "Gemini export"), "C": L("Claude 导出", "Claude export"), "P": L("ChatGPT 导出", "ChatGPT export"),
-            "Gr": L("对话", "Chat"), "L": L("你确认过", "Confirmed by you")}
+    """档案条目末尾的来源标签 → 显示名（新旧标签都认，见 profile_tags.py）。"""
+    return profile_tags.names()
 
 
 @router.get("/api/profile")
@@ -1168,7 +1195,7 @@ def rewrite(path: Path, lines: list[str], start: int, end: int, new: list[str]) 
 
 @router.put("/api/profile/{iid}")
 def edit_profile(iid: str, body: ProfileEdit):
-    """改一条：写成用户当天确认的版本（[L] 日期）；旧的一版存到 profile-history.md（不在检索路径里）。"""
+    """改一条：写成用户当天确认的版本（[U] 日期，见 profile_tags.py）；旧的一版存到 profile-history.md（不在检索路径里）。"""
     with _lock:
         lines, items = parse_bullets(PROFILE)
         it = next((x for x in items if x["id"] == iid), None)
@@ -1176,7 +1203,7 @@ def edit_profile(iid: str, body: ProfileEdit):
             raise HTTPException(409, L("这一条已经变了，刷新再改", "This item has changed. Refresh and try again."))
         today = date.today().isoformat()
         text = "" if body.text is None else re.sub(r"\s+", " ", body.text).strip()  # 别写进 f-string 的 {} 里：3.11 不允许反斜杠
-        new = [] if body.text is None else [f"- {text} [L] {today}"]
+        new = [] if body.text is None else [f"- {text} {profile_tags.confirmed(today)}"]
         rewrite(PROFILE, lines, it["start"], it["end"], new)
         PROFILE_HISTORY.parent.mkdir(parents=True, exist_ok=True)
         verb = L("删除", "Deleted") if body.text is None else L("改写", "Edited")

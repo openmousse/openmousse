@@ -18,7 +18,7 @@
   你收到一张 kind review 的卡：照发 / 改一下 / 不发），复查不了就换成固定句子。
 - 陌生人（不在好友表里的、签名认不出的、删掉的朋友）默认一律不理：server.json 的 card.strangers 是 true 才答（只有固定句子、不出卡）。
 
-表（grava.db）
+表（mousse.db）
 - card_log：进来的（dir in）和说出去的（dir out）每一句。status：in = received；out = sent / blocked（被服务端拦下、没发出去）
   / limited / retracted（你收回的）/ replaced（你改过的）。used = 用了哪些资料的 id。
 - card_asks：出给你的卡（inbox_id 一行）：谁、哪个渠道、哪段对话（ref）、决定还是私事、提议的时间地点、结果。
@@ -88,7 +88,7 @@ HM = re.compile(r"^([01]?\d|2[0-3]):([0-5]\d)$")
 
 # 渠道：名片 agent 替你答完、或你在卡上点了以后，怎么把话送到对方那里。a2a.py 注册 "a2a"，social.py（第二层）注册 "chat"。
 # deliver(ask: dict, text: str, data: dict) -> bool；data = {"outcome": "accepted" | "declined" | "counter" | "ack" | "private_declined",
-# "proposal": {...}, "note": ...}
+# "proposal": {...}, "note": ...}。渠道自己把约好的事记进了日程时往 data 里写 "scheduled": <那一条的 id>，这里就不另加（friendgroup.py 注册 "group"）
 DELIVER: dict[str, Callable[[dict, str, dict], Awaitable[bool]]] = {}
 # 收件箱 social 类的卡按 dedupe 前缀分给谁处理：card:（这里）、friend:（第二层）。fn(item, action, note) -> dict | None（同 inbox.HOOKS）
 SOCIAL_HOOKS: dict[str, Callable[[dict, str, str], Awaitable[dict | None]]] = {}
@@ -182,6 +182,12 @@ def scopes(tier: str) -> dict:
         if out["shares"] != "public":
             out["shares"] = "public"
     return out
+
+
+def tightest(tiers: list[str]) -> dict:
+    """几档的人都看得到同一句时（好友群里管家的回答）：每一类取其中最紧的那一级（LEVELS 从松排到紧）。"""
+    each = [scopes(t) for t in tiers]
+    return {cat: max((s[cat] for s in each), key=LEVELS[cat].index) for cat in CATEGORIES}
 
 
 def tier_label(tier: str) -> str:
@@ -759,10 +765,12 @@ def history_of(ref: str, cap: int) -> list[dict]:
 # —— 对外：答一句 ————————————————————————————————————————————————————
 
 async def answer(friend: dict | None, question: str, *, channel: str = "chat", material: list[dict] | None = None,
-                 history: list[dict] | None = None, ref: str | None = None, kid: str | None = None, name: str = "") -> dict:
+                 history: list[dict] | None = None, ref: str | None = None, kid: str | None = None, name: str = "",
+                 audience: list[str] | None = None) -> dict:
     """名片 agent 答对方一句。friend = 好友表一行（None = 陌生：kid 是签了名的钥匙，name 是对方自称的名字，只拿来显示）。
     material = 调用方递进来的资料（分享的快照），history = 这段对话之前几轮 [{from: them|you, text}]（不给就按 ref 从记录里取），
-    ref = 这段对话（share:<id> / a2a:<context>）。
+    ref = 这段对话（share:<id> / a2a:<context>）。audience = 这一句还有谁看得到（他们在你这边的档位；好友群里管家的回答全群都看得到）：
+    每一类按问的人和他们里最紧的那一级放资料，Doorman 也按这一份查（tightest）。
     → {text, used, usedNames, usedLabel, defer, declined, limited, log_id, via}（陌生人不让问时 text 是空的、refused 为真）：used 是资料的 id，usedNames 是给人看的名字；
       text 发给对方的话；defer = None 或 {kind: decision|private, inbox_id, summary}（出了卡、等你点）；limited = 到了今天的上限（text 是一句客气话，
       发不发调用方定）；log_id 给「收回」「我来改」用。"""
@@ -786,7 +794,7 @@ async def answer(friend: dict | None, question: str, *, channel: str = "chat", m
             for h in (history if history is not None else history_of(ref, lim["history"]))
             if str(h.get("text") or "").strip()][-lim["history"]:]
     in_id = write_log(peer, channel, ref, "in", q, "received")
-    scope = scopes(peer["tier"])
+    scope = tightest([peer["tier"], *audience]) if audience else scopes(peer["tier"])
     mats, aux = build_material(scope, lang, material)
     if peer["tier"] == "stranger" and not mats:
         # 陌生人这一档什么资料都没有：不调模型（省一次调用，也没有可被带偏的东西），在约、问私事的一律「先加朋友」，不出卡
@@ -1035,7 +1043,9 @@ async def decide(it: dict, action: str, note: str = "") -> dict | None:
         outcome = "counter"
     data = {"outcome": outcome, "proposal": p, "note": note if action == "revise" else ""}
     ok = await deliver(ask, text, data)
-    if ok and outcome == "accepted" and p and p.get("date") and p.get("start"):
+    if ok and data.get("scheduled"):  # 渠道自己记了日程（好友群里约好的播客录制时间 = 这一期的那一条，friendgroup.py）：不另加一条
+        sched_id = str(data["scheduled"])[:80]
+    elif ok and outcome == "accepted" and p and p.get("date") and p.get("start"):
         end = p.get("end") or hhmm(min(schedule.minutes(p["start"]) + 120, 23 * 60 + 59))
         try:
             res = await schedule.add_item(schedule.ItemIn(

@@ -4,10 +4,12 @@ import { useNavigation } from '@react-navigation/native';
 import { agentName } from '../brand';
 import { GroupBadge } from '../components/GroupIcon';
 import { AGENT_COLORS, IconColorPicker } from '../components/IconColorPicker';
-import { BookOpen, ChevronRight, MessageCircle } from '../components/icons';
+import { BookOpen, Check, ChevronRight, MessageCircle } from '../components/icons';
 import { ModelField } from '../components/ModelPicker';
-import { SheetProvider } from '../components/Sheet';
-import { Btn, NavHeader, Screen, SectionLabel, T } from '../components/ui';
+import { SheetProvider, useSheet } from '../components/Sheet';
+import { Btn, Card, NavHeader, Screen, SectionLabel, T } from '../components/ui';
+import { DescribeBox, QuestionsStep, answersOf, errText } from '../components/agents/NewFlow';
+import { cybersApi, useCybersOn, type AgentDraft, type Question } from '../api/cybers';
 import type { AgentColor, GroupIcon } from '../data/types';
 import { L } from '../i18n';
 import { openThread } from '../navigation';
@@ -16,8 +18,244 @@ import { radius, space, type, useTheme } from '../theme';
 import { KeyboardScroll } from '../components/keyboard';
 
 // 这一页是原生 modal，盖在根部 SheetProvider 之上；弹层要在页内自己挂一个，不然模型列表会被压在这一页后面。
+// 主线第三步（2026-10-21）：服务器开着赛博时，新建功能 Agent 和新建赛博走同一条路（一句话 → 补问 → 方案草稿，NewAgentFlow）；
+// 没开（或老服务器）照旧是下面这张自己填的表（NewGroupForm）。「尚未确定？先讨论方案」两边都留着。
 export function NewGroupScreen() {
-  return <SheetProvider><NewGroupForm /></SheetProvider>;
+  const on = useCybersOn();
+  return <SheetProvider>{on === null ? <Waiting /> : on ? <NewAgentFlow /> : <NewGroupForm />}</SheetProvider>;
+}
+
+function Waiting() {
+  const t = useTheme();
+  const nav = useNavigation<any>();
+  return (
+    <Screen>
+      <NavHeader title={L('新建 Agent', 'New Agent')} onBack={() => nav.goBack()} />
+      <T v="callout" color={t.ink3} style={{ padding: space.lg }}>{L('正在加载…', 'Loading…')}</T>
+    </Screen>
+  );
+}
+
+/** 「尚未确定？先讨论方案」：开一个项目，把想法发过去，跳到那个项目里接着聊（新的、老的两条路共用）。 */
+function useTalkFirst() {
+  const { createSideChat, send, connected, threadModel } = useStore();
+  return (name: string, purpose: string): Promise<void> => {
+    if (!connected) return Promise.reject(new Error(L('未连接服务器，无法创建项目', "Not connected to the server, can't open a project")));
+    return createSideChat({
+      title: L(`新 Agent：${name || '还没起名'}`, `New agent: ${name || 'unnamed'}`),
+      purpose: L('一起想清楚新 Agent 管什么，想好了出方案', 'Work out what the new agent should do, then draft a plan'),
+      modelId: threadModel.main,
+    }).then((id) => { send(id, openingMessage(name, purpose)); openThread(id, false); });
+  };
+}
+
+function TalkCard({ onPress, busy }: { onPress: () => void; busy: boolean }) {
+  const t = useTheme();
+  return (
+    <Pressable onPress={onPress} disabled={busy} accessibilityRole="button" accessibilityState={{ busy }}
+      style={({ pressed }) => [styles.talk, { backgroundColor: t.goldSoft, opacity: pressed || busy ? 0.7 : 1 }]}>
+      <View style={[styles.talkIcon, { backgroundColor: t.surface }]}><MessageCircle size={18} color={t.gold} /></View>
+      <View style={{ flex: 1, gap: 2 }}>
+        <T v="headline" style={{ fontSize: 15, fontWeight: '700' }}>{busy ? L('正在创建项目…', 'Creating a project…') : L('尚未确定？先讨论方案', 'Not sure yet? Talk it through')}</T>
+        <T v="callout" color={t.ink2} style={{ fontSize: 13, lineHeight: 19 }}>{L('想得比较大的，走「先讨论方案」开一个项目。', 'For bigger ideas, talk it through in a project first.')}</T>
+      </View>
+      <ChevronRight size={16} color={t.gold} />
+    </Pressable>
+  );
+}
+
+type AgentStep = 'start' | 'ask' | 'draft';
+
+/** 一句话新建功能 Agent（设计稿第 41 张 ④）：描述 → 补问 → 方案草稿（名字和图标、职责、它会做的三行：看板 / 表 / 提醒、模型跟主对话一样）→ 创建。
+ *  提醒建好后先停着，各出一张卡，你点「开」才开。「学习」那个例子照旧带学习台（走原来的建法）。 */
+function NewAgentFlow() {
+  const t = useTheme();
+  const nav = useNavigation<any>();
+  const sheet = useSheet();
+  const { addGroup, connected, threadModel, reload } = useStore();
+  const talkFirst = useTalkFirst();
+  const [step, setStep] = useState<AgentStep>('start');
+  const [text, setText] = useState('');
+  const [example, setExample] = useState<string | null>(null);
+  const [questions, setQuestions] = useState<Question[] | null>(null);
+  const [picked, setPicked] = useState<Record<string, string>>({});
+  const [draft, setDraft] = useState<AgentDraft | null>(null);
+  const [keep, setKeep] = useState<Record<number, boolean>>({});
+  const [model, setModel] = useState(threadModel.main);
+  const [busy, setBusy] = useState<'ask' | 'draft' | 'create' | 'talk' | null>(null);
+  const [err, setErr] = useState('');
+
+  const pickExample = (k: string) => {
+    const ex = EXAMPLES().find((x) => x.key === k);
+    if (!ex) return;
+    setExample(example === k ? null : k);
+    if (example !== k) setText(ex.purpose);
+    setErr('');
+  };
+  const ask = () => {
+    if (busy) return;
+    if (!text.trim()) { setErr(L('先写一句描述，或者选一个例子', 'Describe it in a sentence first, or pick an example')); return; }
+    if (!connected) { setErr(L('未连接服务器，无法创建', "Not connected to the server, can't create it")); return; }
+    setBusy('ask');
+    setErr('');
+    cybersApi.questions({ kind: 'agent', text: text.trim() })
+      .then((r) => { setQuestions(r.questions); setPicked({}); setStep('ask'); })
+      .catch((e) => setErr(errText(e)))
+      .finally(() => setBusy(null));
+  };
+  const makeDraft = () => {
+    if (busy) return;
+    setBusy('draft');
+    setErr('');
+    cybersApi.agentDraft({ text: text.trim(), answers: answersOf(questions, picked) })
+      .then((d) => { setDraft(d); setModel(d.model || threadModel.main); setKeep({}); setStep('draft'); })
+      .catch((e) => setErr(errText(e)))
+      .finally(() => setBusy(null));
+  };
+  const talk = (name: string) => {
+    if (busy) return;
+    setBusy('talk');
+    talkFirst(name, text.trim()).catch((e) => { setErr(errText(e)); setBusy(null); });
+  };
+  const study = () => {  // 「学习」的例子：照旧带学习台（学习看板 + 功能包 + 改课的 skill）
+    if (busy) return;
+    const ex = EXAMPLES().find((x) => x.key === 'study');
+    if (!ex) return;
+    setBusy('create');
+    addGroup({ name: ex.label, purpose: text.trim() || ex.purpose, icon: ex.icon, color: 'cyan', modelId: model, template: 'study' })
+      .then((id) => nav.replace('Group', { id, tab: 'board' }))
+      .catch((e) => { setErr(errText(e)); setBusy(null); });
+  };
+  const create = () => {
+    if (busy || !draft) return;
+    if (!draft.name.trim()) { setErr(L('请先为此 Agent 命名', 'Give this Agent a name first')); return; }
+    setBusy('create');
+    setErr('');
+    cybersApi.createAgent({ name: draft.name.trim(), icon: draft.icon, color: draft.color, purpose: draft.purpose, model, table: draft.table, board: draft.board,
+      reminders: draft.reminders.filter((_, i) => keep[i] !== false) })
+      .then(async (r) => {
+        await reload('groups', 'chats', 'activity', 'inbox').catch(() => {});
+        nav.replace('Group', { id: r.id });
+      })
+      .catch((e) => { setErr(errText(e)); setBusy(null); });
+  };
+  const pickLook = () => {
+    if (!draft) return;
+    sheet.open({ title: L('图标和颜色', 'Icon and color'), content: () => <LookPicker draft={draft} onChange={setDraft} /> });
+  };
+
+  if (step === 'draft' && draft) {
+    const name = draft.name.trim();
+    return (
+      <Screen>
+        <NavHeader title={L('方案草稿', 'Plan')} onBack={() => setStep(questions ? 'ask' : 'start')}
+          right={<Pressable onPress={create} hitSlop={8} accessibilityRole="button"><T v="headline" color={t.gold}>{L('创建', 'Create')}</T></Pressable>} />
+        <KeyboardScroll contentContainerStyle={{ padding: space.lg, paddingBottom: space.xxl }} keyboardShouldPersistTaps="handled" keyboardDismissMode="interactive">
+          {draft.fallback ? <Card style={{ marginBottom: space.md }}><T v="callout" color={t.ink2}>{L('模型没有回应，先按你的描述和选项填好了，哪里不对改哪里。', "The model didn't answer, so this is filled from your description and choices. Change anything that's off.")}</T></Card> : null}
+          <View style={styles.preview}>
+            <Pressable onPress={pickLook} accessibilityRole="button" accessibilityLabel={L('换图标和颜色', 'Change icon and color')}>
+              <GroupBadge icon={draft.icon} color={(draft.color ?? 'cyan') as AgentColor} size={64} />
+            </Pressable>
+            <View style={{ flex: 1, gap: 4 }}>
+              <TextInput value={draft.name} onChangeText={(v) => setDraft({ ...draft, name: v })} placeholder={L('名称', 'Name')} placeholderTextColor={t.ink3}
+                accessibilityLabel={L('Agent 名称', 'Agent name')} style={[type.title, styles.input, { backgroundColor: t.surface, color: t.ink, paddingVertical: 8 }]} />
+              <T v="callout" color={t.ink3} style={{ fontSize: 13 }}>{L('功能 Agent · 管一个领域，能动手', 'Agent · looks after one area and gets things done')}</T>
+            </View>
+          </View>
+          {draft.quote ? <T v="callout" color={t.ink2} style={{ marginTop: space.md }}>{L(`「${draft.quote}」`, `"${draft.quote}"`)}</T> : null}
+
+          <SectionLabel>{L('职责', 'What it does')}</SectionLabel>
+          <TextInput value={draft.purpose} onChangeText={(v) => setDraft({ ...draft, purpose: v })} multiline placeholderTextColor={t.ink3}
+            accessibilityLabel={L('Agent 职责', 'Agent purpose')} style={[type.body, styles.input, { backgroundColor: t.surface, color: t.ink, minHeight: 72, textAlignVertical: 'top' }]} />
+
+          <SectionLabel>{L('它会做的', 'What it will do')}</SectionLabel>
+          <Card style={{ gap: space.sm }}>
+            {draft.does.map((line) => <T key={line} v="callout">{line}</T>)}
+            <T v="caption" color={t.ink3} style={{ marginTop: space.xs }}>{L(`表「${draft.table.title}」：${draft.table.fields.map((f) => f.label).join('、')}`,
+              `Table "${draft.table.title}": ${draft.table.fields.map((f) => f.label).join(', ')}`)}</T>
+          </Card>
+          {draft.reminders.length ? (
+            <>
+              <SectionLabel>{L('提醒', 'Reminders')}</SectionLabel>
+              <Card style={{ gap: space.xs, paddingVertical: space.sm }}>
+                {draft.reminders.map((r, i) => {
+                  const on = keep[i] !== false;
+                  return (
+                    <Pressable key={`${r.name}-${i}`} onPress={() => setKeep((k) => ({ ...k, [i]: !on }))} accessibilityRole="checkbox" accessibilityState={{ checked: on }}
+                      style={({ pressed }) => [styles.remind, { opacity: pressed ? 0.6 : 1 }]}>
+                      <View style={{ flex: 1, gap: 2 }}>
+                        <T v="headline" style={{ fontSize: 15 }}>{`${r.name} · ${r.describe}`}</T>
+                        <T v="callout" color={t.ink2} style={{ fontSize: 13 }}>{r.task}</T>
+                      </View>
+                      <View style={[styles.check, { borderColor: on ? t.goldFill : t.line, backgroundColor: on ? t.goldFill : 'transparent' }]}>{on ? <Check size={13} color={t.onGold} /> : null}</View>
+                    </Pressable>
+                  );
+                })}
+                <T v="caption" color={t.ink3}>{L('建好以后每个提醒先停着，各出一张卡，你点「开」才开。', 'Each reminder starts off with its own card; it runs only once you turn it on.')}</T>
+              </Card>
+            </>
+          ) : null}
+
+          <SectionLabel>{L('模型', 'Model')}</SectionLabel>
+          <ModelField value={model} onChange={setModel} />
+          <T v="callout" color={t.ink3} style={{ marginTop: 6, paddingHorizontal: space.xs }}>{L('跟主对话一样；进入对话后可随时切换。', 'Same as the main chat; you can switch any time in the chat.')}</T>
+
+          <View style={{ marginTop: space.lg }}><TalkCard onPress={() => talk(name)} busy={busy === 'talk'} /></View>
+          <View style={{ marginTop: space.xl }}>
+            <Btn label={busy === 'create' ? L('正在创建…', 'Creating…') : L(`创建 ${name || 'Agent'}`, `Create ${name || 'Agent'}`)} onPress={create} />
+          </View>
+          {err ? <T v="callout" color={t.bad} style={{ marginTop: 6 }}>{err}</T> : null}
+        </KeyboardScroll>
+      </Screen>
+    );
+  }
+  return (
+    <Screen>
+      <NavHeader title={L('新建 Agent', 'New Agent')} onBack={() => (step === 'ask' ? setStep('start') : nav.goBack())} />
+      <KeyboardScroll contentContainerStyle={{ padding: space.lg, paddingBottom: space.xxl }} keyboardShouldPersistTaps="handled" keyboardDismissMode="interactive">
+        {step === 'ask' && questions ? (
+          <QuestionsStep said={text.trim()} questions={questions} picked={picked} busy={busy === 'draft'} error={err}
+            onPick={(q, o) => setPicked((p) => ({ ...p, [q.id]: p[q.id] === o ? '' : o }))} onGo={makeDraft} />
+        ) : (
+          <View style={{ gap: space.md }}>
+            <DescribeBox value={text} onChange={(v) => { setText(v); setErr(''); }} label={L('描述你想要的功能 Agent', 'Describe the Agent you want')}
+              placeholder={L('一句话说它管什么。例如：记录我每周跑步的距离和配速，周日提醒我复盘。', 'Say what it looks after in a sentence. E.g. Log my weekly runs, distance and pace, and remind me to review on Sundays.')} />
+            <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: space.sm }}>
+              {EXAMPLES().map((ex) => {
+                const on = example === ex.key;
+                return (
+                  <Pressable key={ex.key} onPress={() => pickExample(ex.key)} accessibilityRole="button" accessibilityState={{ selected: on }}
+                    style={[styles.example, { borderColor: on ? t.cyan : t.line, backgroundColor: on ? t.cyanSoft : t.surface }]}>
+                    <T v="callout" color={on ? t.cyan : t.ink2} style={{ fontWeight: '600' }}>{ex.label}</T>
+                  </Pressable>
+                );
+              })}
+            </View>
+            {example === 'study' ? (
+              <View style={[styles.studyNote, { backgroundColor: t.cyanSoft }]}>
+                <BookOpen size={18} color={t.cyan} />
+                <View style={{ flex: 1, gap: 2 }}>
+                  <T v="headline" style={{ fontSize: 14 }}>{L('附带学习台', 'Includes the study desk')}</T>
+                  <T v="callout" color={t.ink2} style={{ fontSize: 13, lineHeight: 18 }}>{L('添加课程后，每节课都有学习页、学习路线、闪卡和小测。', 'Add courses; every session gets study notes, a study path, flashcards and a quiz.')}</T>
+                </View>
+              </View>
+            ) : null}
+            <Btn label={busy === 'ask' || busy === 'create' ? L('正在生成…', 'Generating…') : example === 'study' ? L('创建 学习', 'Create Study') : L('生成方案', 'Draft a plan')}
+              onPress={example === 'study' ? study : ask} />
+            <T v="callout" color={t.ink3}>{L('会写好名字和图标、职责、看板起步的几块、数据表和提醒，之后都能改。', 'It fills in the name and icon, what it does, the first board blocks, a table and reminders; you can change them later.')}</T>
+            {err ? <T v="callout" color={t.bad}>{err}</T> : null}
+            <TalkCard onPress={() => talk('')} busy={busy === 'talk'} />
+          </View>
+        )}
+      </KeyboardScroll>
+    </Screen>
+  );
+}
+
+function LookPicker({ draft, onChange }: { draft: AgentDraft; onChange: (d: AgentDraft) => void }) {
+  const [icon, setIcon] = useState<GroupIcon>(draft.icon as GroupIcon);
+  const [color, setColor] = useState<AgentColor>((draft.color ?? 'cyan') as AgentColor);
+  return <IconColorPicker icon={icon} color={color} onIcon={(i) => { setIcon(i); onChange({ ...draft, icon: i, color }); }} onColor={(c) => { setColor(c); onChange({ ...draft, icon, color: c }); }} />;
 }
 
 /** 「先聊聊」发进新空间的第一句：让助手帮着想清楚，想好了按 agent-builder 出方案、用收件箱交一张新 Agent 的卡。 */
@@ -178,4 +416,6 @@ const styles = StyleSheet.create({
   talkIcon: { width: 36, height: 36, borderRadius: 18, alignItems: 'center', justifyContent: 'center' },
   example: { height: 34, paddingHorizontal: 14, borderRadius: 17, borderWidth: 1.5, alignItems: 'center', justifyContent: 'center' },
   studyNote: { flexDirection: 'row', alignItems: 'flex-start', gap: space.md, borderRadius: 14, padding: space.md, marginTop: space.md },
+  remind: { flexDirection: 'row', alignItems: 'center', gap: space.md, paddingVertical: space.sm },
+  check: { width: 22, height: 22, borderRadius: 11, borderWidth: 1.5, alignItems: 'center', justifyContent: 'center' },
 });

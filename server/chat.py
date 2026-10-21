@@ -1,10 +1,10 @@
-"""Grava API 第二档：真实对话。
+"""服务器接口的第二档：真实对话。
 
 - 转发到 Gateway 自带的 OpenAI 兼容接口（只在 loopback），每个线程一个显式 session key。
-- 主对话用 `agent:main:main`，和 Telegram 共用同一个会话与记忆；Group 与独立空间用 `agent:main:grava:<id>`
+- 主对话用 `agent:main:main`，和 Telegram 共用同一个会话与记忆；Group 与独立空间用 `agent:main:<SESSION_TAG>:<id>`（stored_values.py；会话键里的值别改）
   （Group 还没拆成独立 agent 之前，暂借 main 的记忆）。
 - 模型切换用 `x-openclaw-model` 做单次覆盖，不改 agent 默认值。
-- 显示用的对话记录存在 Grava 自己的 SQLite（L6 会话记录的 app 侧副本）；模型上下文由 Gateway 会话维护。
+- 显示用的对话记录存在服务器自己的 SQLite（mousse.db，L6 会话记录的 app 侧副本）；模型上下文由 Gateway 会话维护。
 - 长按消息：删除只动 app 侧记录；撤回 / 重新编辑用 Gateway 的 `sessions.rewind` 把会话退回到那条消息之前，
   模型上下文里也一起去掉（工具已经做过的事、写过的文件不会回滚）。
 - 执行和连接分开：一次回复在服务端后台跑到底并入库，手机切后台、断网都不会丢；客户端随时用 /api/chat/stream 重新接上。
@@ -36,6 +36,7 @@ from pydantic import BaseModel
 import claw  # noqa: E402
 from config import TZ, raw, settings, user_word  # noqa: E402
 from i18n import L, LS  # noqa: E402
+from stored_values import ASSISTANT_ROLE, SESSION_TAG  # noqa: E402
 
 OPENCLAW = settings.openclaw_json
 DB = settings.db
@@ -95,6 +96,7 @@ class Run:
     used: dict | None = None  # builtin：这一轮用了哪几样手册、技能、叶子（13c，engine/used.py 的 summary）：回完存进回复那一行，done 带上
     relay_hops: int = 0  # builtin 的转交（origin relay，第 1 批 b）：这一轮是第几跳、这一串里在等回答的 Agent（engine/sessions.py 的 Hop）
     relay_chain: tuple = ()
+    switches: list = field(default_factory=list)  # builtin（10/20）：这一轮换过的模型 {from, to, reason}，按先后（SSE model_switch；重连时补发最后一次）
 
     def publish(self, item: tuple[str, dict]) -> None:
         for q in list(self.queues):
@@ -192,18 +194,18 @@ def session_key(thread: str) -> str:
         return "agent:main:main"
     if thread in settings.group_agents:
         return f"agent:{thread}:main"
-    return f"agent:{agent_of(thread)}:grava:{thread}"
+    return f"agent:{agent_of(thread)}:{SESSION_TAG}:{thread}"
 
 
 def thread_of(key: str | None) -> str | None:
-    """session_key 反过来：agent:main:main → main，agent:main:grava:<id> → <id>，agent:<Agent>:main → 那个 Agent。
+    """session_key 反过来：agent:main:main → main，agent:main:<SESSION_TAG>:<id> → <id>，agent:<Agent>:main → 那个 Agent。
     别的会话（定时任务、Telegram 群、子会话）不是 app 的线程，返回 None。"""
     parts = (key or "").split(":")
     if key == "agent:main:main":
         return "main"
-    if len(parts) >= 4 and parts[:3] == ["agent", "main", "grava"]:
+    if len(parts) >= 4 and parts[:3] == ["agent", "main", SESSION_TAG]:
         return ":".join(parts[3:])
-    if len(parts) >= 4 and parts[0] == "agent" and parts[2] == "grava" and parts[1] in settings.group_agents:
+    if len(parts) >= 4 and parts[0] == "agent" and parts[2] == SESSION_TAG and parts[1] in settings.group_agents:
         return ":".join(parts[3:])  # 归到某个 Agent 的学习台线程
     if len(parts) == 3 and parts[0] == "agent" and parts[2] == "main" and parts[1] in settings.group_agents:
         return parts[1]
@@ -314,7 +316,7 @@ def row_to_msg(r: sqlite3.Row) -> dict:
     keys = r.keys()
     att = r["attachments"] if "attachments" in keys else None
     fwd = r["forward"] if "forward" in keys else None
-    out = {"id": f"db{r['id']}", "role": "user" if r["role"] == "user" else "auto" if r["role"] == "auto" else "grava", "text": r["text"],
+    out = {"id": f"db{r['id']}", "role": "user" if r["role"] == "user" else "auto" if r["role"] == "auto" else ASSISTANT_ROLE, "text": r["text"],
            "modelId": r["model"], "fallbackFrom": fallback, "time": hhmm(r["ts"]), "status": r["status"],
            "attachments": json.loads(att) if att else None}
     if fwd:
@@ -342,7 +344,7 @@ def used_payload(raw) -> dict | None:
 def with_quote(m: dict, ref: sqlite3.Row | None) -> dict:
     """长按「引用」着发的那条：带上引的是哪条、原话（app 在气泡上面显示一行）。"""
     if ref is not None:
-        m["replyTo"] = {"id": f"db{ref['id']}", "role": "user" if ref["role"] == "user" else "grava", "text": " ".join(ref["text"].split())[:200]}
+        m["replyTo"] = {"id": f"db{ref['id']}", "role": "user" if ref["role"] == "user" else ASSISTANT_ROLE, "text": " ".join(ref["text"].split())[:200]}
     return m
 
 
@@ -425,7 +427,7 @@ def search(q: str, thread: str | None = None, limit: int = 60):
                          "ts": r["ts"], "time": hhmm(r["ts"]), "snippet": snippet(r["text"], words)})
         fq = "SELECT id, group_id, title, body, created_at FROM feed_items WHERE " + " AND ".join(["(lower(title) LIKE ? OR lower(body) LIKE ?)"] * len(words)) + (" AND group_id=?" if thread else "") + " ORDER BY created_at DESC LIMIT ?"
         for r in conn.execute(fq, (*[a for w in args for a in (w, w)], *([thread] if thread else []), limit)).fetchall():
-            hits.append({"kind": "card", "id": r["id"], "thread": r["group_id"], "role": "grava", "day": day_of(r["created_at"]),
+            hits.append({"kind": "card", "id": r["id"], "thread": r["group_id"], "role": ASSISTANT_ROLE, "day": day_of(r["created_at"]),
                          "ts": r["created_at"], "time": hhmm(r["created_at"]), "snippet": r["title"] + " · " + snippet(r["body"] or "", words, 60)})
         jq = "SELECT id, group_id, text, ts FROM journal WHERE status='active' AND " + like + (" AND group_id=?" if thread else "") + " ORDER BY ts DESC LIMIT ?"
         for r in conn.execute(jq, (*args, *([thread] if thread else []), limit)).fetchall():
@@ -544,7 +546,8 @@ async def engine_stream(run: Run, content: str | list) -> None:
     OpenClaw 的对话通道一样有「在想 / 在做」、插话、停）：
     - 进度：内核的事件经 note_engine 画成 run.progress（和 note_progress 一样的形状），推 SSE progress；重连时 attach 补发。
     - 插话：回复进行中又说的一句经 run.control 进这一轮（steer_engine）。写进会话了（steer 事件）= 并进了这一轮；这一轮没来得及用上
-      就结束了 = 排到队首，回完和排着的一起变成下一轮（drain 发，那几条的连接接到那一轮上）——不丢。
+      就结束了 = 排到队首，回完和排着的一起变成下一轮（drain 发，那几条的连接接到那一轮上）——不丢；这时在这一轮上推一个 SSE
+      steer_missed {userIds}（10/20），app 把那几条的「已插入」改成「未赶上本轮」。
     - 停：/api/chat/stop → run.control.abort()：已经出来的字留着，正在跑的工具收到取消，会话补完整，这一轮记成 stopped；
       等你点头的收件箱卡不受影响（关卡交卡就返回了，卡照样在收件箱里等）。会话里补一句「用户停了」（engine/loop.note_stopped）：
       下一轮、压缩摘要都不把它当成没做完的接着做。
@@ -553,6 +556,8 @@ async def engine_stream(run: Run, content: str | list) -> None:
     - ⑫b：用户自己说的这一轮（run.watched）有 ask_user：问题是回复里的一段字，同时推 SSE 的 ask_user 事件（以后 app 画选项按钮），
       用户插的下一句就是回答（answer 事件：那条的连接接到这一轮上，和插话一样）；todo、plan_mode 事件也推成 SSE（以后 app 画）。
       app 现在不认这几个事件，直接跳过（同 card、progress）。
+    - 换模型（10/20）：备用链换了模型（model_switch 事件；同一个型号换一把密钥不算）推 SSE model_switch {from, to, reason}，记在
+      run.switches，重连时补发最后一次；done 带 fallbackReason（第一次换的原因，不进库）。app 在这条回复下面当场写一行。
     模型出错 → RuntimeError（run_gateway 记成没拿到回复）。被取消（硬停、服务关了）照常往外抛，内核已经把会话补完整。"""
     from engine import Control, user_hooks  # 延迟导入：内核只在 builtin 时用
     from engine import owner as engine_owner
@@ -585,6 +590,12 @@ async def engine_stream(run: Run, content: str | list) -> None:
             run.text = str(ev.get("text") or "")
             run.publish(("text", {"text": run.text}))
             return
+        if t == "model_switch":  # 10/20：备用链换了模型（engine/fallback.py、owner.py）：推给 app，这条回复下面当场一行小字；重连时补发。
+            sw = {k: str(ev.get(k) or "") for k in ("from", "to", "reason")}  # 同一个型号换一把密钥（from = to）不算换模型
+            if sw["from"] and sw["to"] and sw["from"] != sw["to"]:
+                run.switches.append(sw)
+                run.publish(("model_switch", sw))
+            return
         if ev.get("type") == "task" and isinstance(ev.get("task"), dict):  # 这一轮派的后台任务（第 5 项发）：当场出任务卡，重连时补发
             import cards as cards_mod  # 延迟导入：cards.py 依赖本模块
             cards_mod.publish(run, cards_mod.task_json(ev["task"]))
@@ -604,6 +615,10 @@ async def engine_stream(run: Run, content: str | list) -> None:
         if run.thread.startswith("task:"):  # 后台任务的线程（改一下、接着说，第 5 项）：在那个任务的子会话里接着跑一轮
             from engine import tasks as engine_tasks
             res = await engine_tasks.round_turn(run.thread[5:], content, on_text, origin=run.origin, control=run.control, on_event=on_event)
+        elif run.thread.startswith("cy-"):  # 赛博的一对一（cybers.py，主线第三步）：赛博回合，不是主人回合
+            import cybers as cybers_mod  # 延迟导入：cybers.py 依赖本模块
+            run.model = cybers_mod.thread_model(run.thread)  # 排着的合成一轮（drain）照线程的模型开跑：换成这位赛博的
+            res = await cybers_mod.respond(run.thread, content, on_text, origin=run.origin, control=run.control, on_event=on_event, ref=run.user_id)
         else:
             res = await engine_owner.respond(run.thread, day_of(run.started), content, run.model, on_text, ref=run.user_id, origin=run.origin,
                                              control=run.control, on_event=on_event, watched=run.watched, via=run.via)
@@ -616,6 +631,9 @@ async def engine_stream(run: Run, content: str | list) -> None:
             ids = [it.user_id for it in left]
             with _lock, db() as conn:
                 conn.execute(f"UPDATE messages SET status='queued' WHERE id IN ({','.join('?' * len(ids))})", ids)
+            # 10/20：告诉 app 这几条没赶上（「已插入」当场改成「未赶上本轮」）。推在这一轮上：那几条自己的连接还在等下一轮，
+            # 收到的是这一轮的连接（发上一条的、并进来的插话），app 按对话找到那几条改（老 app 不认，跳过）
+            run.publish(("steer_missed", {"userIds": [f"db{i}" for i in ids]}))
         close_steps(run)
     run.turn, run.usage = res.turn, dict(res.usage or {})
     try:  # 13c：这一轮用了哪几样（记号在事件流里，engine/used.py）：回完存进回复那一行，done 带上
@@ -679,8 +697,10 @@ def note_engine(run: Run, ev: dict) -> bool:
     """自己的内核（builtin）的事件（engine/loop.py 开头列的）→ run.progress，和 note_progress 一样的形状，app 不用改：
       phase（建会话备料、压缩：preparing_context）→ phase；model（又要问模型了）→ waiting_for_model，思考从这次重新攒；
       thinking → thought（这次调模型的思考的最后 PROGRESS_THOUGHT 字，同对话通道）；
-      tool_run → 一步 running，tool = 工具名，detail = Tool.title（一句标题，不放参数原文）；
-      tool_end → done / failed（交给你点头的算 done，detail 后面写「等你点头」；被关卡挡下、出错、超时、点了停的算 failed）。
+      tool_run → 一步 running，tool = 工具名，detail = Tool.title（一句标题）；
+      tool_end → done / failed（交给你点头的算 done，detail 后面写「等你确认」；被关卡挡下、出错、超时、点了停的算 failed）。
+    10/20 起每一步多几样（engine/steps.py，只新增：老 app 不认就跳过，照旧画 tool + detail）：label（「查看日程」）、doing（「正在查看日程」）、
+    note（label 里没有的：文件名、域名、技能名，没有就空；不放参数原文）、wait（交给你点头了，true 才有）。
     返回 False = 这个事件不改变显示。"""
     t = ev.get("type")
     pr = run.progress or {"since": round(run.t0, 1), "phase": "", "steps": [], "thought": ""}
@@ -706,15 +726,22 @@ def note_engine(run: Run, ev: dict) -> bool:
             return False
         old = next((x for x in pr["steps"] if x["id"] == sid), None)
         detail = str(ev.get("detail") or "").strip()[:120] or (old or {}).get("detail", "")
+        said = {k: old[k] for k in ("label", "doing", "note") if k in old} if old and t == "tool_end" else {}
+        if not said:
+            from engine import steps as engine_steps  # 延迟导入：内核只在 builtin 时用
+            d = engine_steps.describe(name, detail)
+            said = {"label": d["label"], "doing": d["doing"], "note": d["detail"]}
+        wait = False
         if t == "tool_run":
             status = "running"
         else:
             how = str(ev.get("status") or ("ok" if ev.get("ok") else "error"))
             status = "done" if how in ("ok", "pending") else "failed"
             if how == "pending":
-                wait = L("等你点头", "waiting for your OK")
-                detail = f"{detail} · {wait}" if detail else wait
-        step = {"id": sid, "tool": name, "detail": detail, "status": status}
+                wait = True
+                note = L("等你确认", "awaiting your approval")
+                detail = f"{detail} · {note}" if detail else note
+        step = {"id": sid, "tool": name, "detail": detail, "status": status, **said, **({"wait": True} if wait else {})}
         if step == old:
             return False
         steps = [step if x["id"] == sid else x for x in pr["steps"]] if old else [*pr["steps"], step]
@@ -943,7 +970,7 @@ async def run_gateway(run: Run, text: str | list | None, token: str) -> None:
     run.finished = now_iso()
     with _lock, db() as conn:
         cur = conn.execute("INSERT INTO messages(thread, role, text, model, requested, ts, status, origin, used) VALUES(?,?,?,?,?,?,?,?,?)",
-                           (run.thread, "grava", run.text, run.model, run.requested, run.finished, run.status, run.origin,
+                           (run.thread, ASSISTANT_ROLE, run.text, run.model, run.requested, run.finished, run.status, run.origin,
                             json.dumps(run.used, ensure_ascii=False) if run.used else None))
         run.reply_id = cur.lastrowid
     if run.digest and run.status == "ok" and run.text.strip():
@@ -986,6 +1013,8 @@ def done_payload(run: Run) -> dict:
            "status": run.status, "error": run.error, "seconds": round(time.time() - run.t0, 1)}
     if run.used:  # 13c：「按『写文书』手册 · 用了 2 片叶子 ›」那一行要的（老 app 不认这个键，跳过）
         out["used"] = used_payload(run.used)
+    if fallback and run.switches:  # 10/20：为什么没用原来要的那个（第一次换的原因：rate_limit / overloaded / cooldown …）；只在这次推送里，不进库
+        out["fallbackReason"] = run.switches[0]["reason"]
     return out
 
 
@@ -1021,6 +1050,8 @@ async def attach(run: Run) -> AsyncIterator[bytes]:
             yield sse("todo", {"items": run.todo})
         if run.asking and not run.done:
             yield sse("ask_user", run.asking)
+        if run.switches and not run.done:  # 10/20：换过模型（老 app 不认，跳过）；回完了看 done 的 fallbackFrom / fallbackReason
+            yield sse("model_switch", run.switches[-1])
         if run.text:
             yield sse("delta", {"text": run.text})
         if run.done:
@@ -1068,6 +1099,11 @@ def start_run(thread: str, text: str, model: str | None, key: str | None = None,
         raise HTTPException(409, L("上一条还没回完，等它结束或先接回去看。", "The last reply isn't finished yet. Wait for it, or reconnect to see it."))
     if thread.startswith("grp-"):  # 会议的线程：成员各有各的会话，走 /api/meetings（meetings.py），不在这里发给主对话的 agent
         raise HTTPException(400, L("会议消息请用 /api/meetings/{id}/send", "Send meeting messages with /api/meetings/{id}/send"))
+    if thread.startswith("cy-"):  # 赛博的一对一（cybers.py，主线第三步）：开着、有这位才发；模型是这位赛博自己的
+        import cybers as cybers_mod  # 延迟导入：cybers.py 依赖本模块
+        model = cybers_mod.thread_model(thread)
+    if thread.startswith("gc-"):  # 群聊（groupchat.py，主线第三步）：成员各走各的回合，走 /api/groupchats，不在这里发给主对话的 agent
+        raise HTTPException(400, L("群聊消息请用 /api/groupchats/{id}/send", "Send group chat messages with /api/groupchats/{id}/send"))
     token = gateway_token() if claw.is_openclaw() else ""
     import files as files_mod  # 延迟导入：files.py 依赖本模块
     rows = files_mod.load_pending(thread, attachment_ids or [])
@@ -1292,7 +1328,7 @@ def failed_run(thread: str, ids: list[int], error: str) -> Run:
     with _lock, db() as conn:
         conn.execute(f"UPDATE messages SET status='ok' WHERE id IN ({','.join('?' * len(ids))})", ids)
         run.reply_id = conn.execute("INSERT INTO messages(thread, role, text, model, ts, status, origin) VALUES(?,?,?,?,?,?,?)",
-                                    (thread, "grava", run.text, None, ts, "error", "user")).lastrowid
+                                    (thread, ASSISTANT_ROLE, run.text, None, ts, "error", "user")).lastrowid
     return run
 
 
@@ -1426,7 +1462,7 @@ async def wait_reply(thread: str, key: str, since: float, minutes: int = 15) -> 
 def save_recovered(thread: str, text: str) -> None:
     with _lock, db() as conn:
         conn.execute("INSERT INTO messages(thread, role, text, model, ts, status, origin) VALUES(?,?,?,?,?,?,?)",
-                     (thread, "grava", text, None, now_iso(), "ok", "user"))
+                     (thread, ASSISTANT_ROLE, text, None, now_iso(), "ok", "user"))
     log_activity(L("服务重启时补回了一条回复", "Recovered a reply after a server restart"), "edit")
 
 
@@ -1476,7 +1512,7 @@ def settle_restarted(t: dict, said: str, refs: set[int]) -> bool:
     thread = t["conversation"]
     skip = f"IFNULL(origin, '') NOT IN ({','.join('?' * len(COMMAND_ORIGINS))})"  # 第 2 批：命令那一句和它的回答不算（回复在跑时也能打 /btw、/status）
     with _lock, db() as conn:
-        last = conn.execute(f"SELECT IFNULL(MAX(id), 0) FROM messages WHERE thread=? AND role='grava' AND {skip}", (thread, *COMMAND_ORIGINS)).fetchone()[0]
+        last = conn.execute(f"SELECT IFNULL(MAX(id), 0) FROM messages WHERE thread=? AND role='{ASSISTANT_ROLE}' AND {skip}", (thread, *COMMAND_ORIGINS)).fetchone()[0]
         asked = conn.execute(f"SELECT id, status FROM messages WHERE thread=? AND id>? AND role IN ('user','auto') AND status IN ('ok','steered') "
                              f"AND {skip} ORDER BY id", (thread, last, *COMMAND_ORIGINS)).fetchall()
         if not asked:
@@ -1488,7 +1524,7 @@ def settle_restarted(t: dict, said: str, refs: set[int]) -> bool:
         text = (f"{said}\n\n" + L("（服务重启了，这一轮没做完）", "(The server restarted; this turn didn't finish.)") if said
                 else L(f"（没拿到回复：{why}）", f"(Didn't get a reply: {why})"))
         conn.execute("INSERT INTO messages(thread, role, text, model, requested, ts, status, origin) VALUES(?,?,?,?,?,?,?,?)",
-                     (thread, "grava", text, t.get("model"), t.get("model"), now_iso(), "error", t.get("origin") or "user"))
+                     (thread, ASSISTANT_ROLE, text, t.get("model"), t.get("model"), now_iso(), "error", t.get("origin") or "user"))
     log_activity(L("服务重启，打断了一轮正在进行的回复", "A server restart cut off a reply in progress"), "failed")
     return True
 
@@ -1521,7 +1557,7 @@ def resume_shutdown_stopped() -> None:
         return
     cutoff = time.time() - engine_resume.within() * 60
     with _lock, db() as conn:
-        rows = conn.execute("SELECT m.thread, m.text, m.ts, m.origin FROM messages m WHERE m.role='grava' AND m.status='stopped' "
+        rows = conn.execute(f"SELECT m.thread, m.text, m.ts, m.origin FROM messages m WHERE m.role='{ASSISTANT_ROLE}' AND m.status='stopped' "
                             "AND m.id=(SELECT MAX(id) FROM messages WHERE thread=m.thread)").fetchall()
     for r in rows:
         if instant(r["ts"]) >= cutoff and (r["text"] or "").rstrip().endswith(RESTART_TAIL):
@@ -1577,7 +1613,7 @@ def command_reply(thread: str, text: str) -> StreamingResponse | None:
         fin = now_iso()
         with _lock, db() as conn:
             rid = conn.execute("INSERT INTO messages(thread, role, text, model, ts, status, origin) VALUES(?,?,?,?,?,?,?)",
-                               (thread, "grava", reply.text, None, fin, "ok", reply.origin)).lastrowid
+                               (thread, ASSISTANT_ROLE, reply.text, None, fin, "ok", reply.origin)).lastrowid
         shown = None
         if reply.files:  # 回答带的附件（/export 导出的文件）：挂到这一行上，app 照附件画
             import files as files_mod  # 延迟导入：files.py 依赖本模块

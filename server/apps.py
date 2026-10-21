@@ -25,6 +25,7 @@
   就还是那张卡，不重推。你点「照做」→ 钩子照原样调一次（不超过 60 秒），结果当「做完了」发回那个 Agent 的对话（收件箱的 done 知会）；
   没做成也告诉它一声。拒绝、撤回：远端什么都不动。「改一下」：参数改不了，让它改好参数重新调（出一张新卡），这张作废。
   卡交上来以后被改过（inbox update）就不照做：卡上写的和要调的对不上。
+  卡默认 24 小时过期（apps.ask_ttl_hours）：过了收件箱标成 expired，不能再批；点头时再对一次时间，过了就不去调对方。
 - 安全：从对方学来的地址（资源元数据、授权服务器元数据、各个端点）要 https、不能解析到本机 / 内网 / 链路本地 / CGNAT 地址
   （和 MCP 地址同源的除外：那就是你选的服务；测试时 MCP 地址是本机、server.json apps.allow_local 为 true 也放行）；元数据跟跳转
   每一跳都查，POST 不跟跳转；MCP 会话只跟同源的跳转。你自己填的 MCP 地址：https，或者只给本机 / Tailscale（100.64.0.0/10）的 http。
@@ -48,7 +49,14 @@ server.json 的 apps 段（都可以不写，每次读文件）：
                       或 {"<id>": {…要改的字段} 或 null（藏起来）},
            "client_id_url": "https://…/client.json",   CIMD：对方支持就拿这个网址当 client_id（文档要你自己放在那个网址上）
            "redirect_uris": ["https://…"],             网页版、测试用的 http(s) 回调地址（精确匹配）
-           "allow_local": false}                        只给测试：MCP 地址是本机时，对方给的本机 / http 地址也连
+           "allow_local": false,                       只给测试：MCP 地址是本机时，对方给的本机 / http 地址也连
+           "desc_max": 600,                            给模型看的工具说明最多多少字（默认 600；写错或不是正数就用默认）。只在自己的内核里
+                                                       （claw 是 builtin）；接的是 OpenClaw 这类别的 claw 时照旧 MAX_DESC（8000），那条路不变
+           "ask_ttl_hours": 24,                        「先问我」的卡几小时过期（默认 24；写错或不是正数就用默认）。过了标成 expired，不能再批。
+                                                       只在自己的内核里（claw 是 builtin）；别的 claw 的卡照旧不过期，那条路不变
+           "<连接器 id>": {"disabled_tools": ["工具名"], "enabled_tools": ["工具名"]}}
+                                                       按远端工具名关：disabled 黑名单，enabled 白名单（空名单 = 全关）；
+                                                       不是列表就当没写。档位 off 照旧。调用关掉的工具会说明怎么开回去，不会去连对方
 文件（<data_dir>/apps/，目录 700、文件 600，先写临时文件再改名）：apps.json 各应用的状态、权限和工具（没有秘密）；
 secrets.json 令牌、客户端、授权服务器的端点；clients.json 注册过的客户端；pending.json 进行中的授权；calls.json 等你点头的调用。
 """
@@ -70,7 +78,7 @@ import sqlite3
 import threading
 import time
 from contextlib import asynccontextmanager, contextmanager, suppress
-from datetime import timedelta
+from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any, Awaitable, Callable
 from urllib.parse import parse_qsl, quote, urlencode, urljoin, urlsplit, urlunsplit
@@ -88,11 +96,12 @@ from mcp.shared.exceptions import McpError
 from pydantic import BaseModel
 
 import chat
+import claw
 import data
 import inbox
 import mcp_bridge
 from chat import log_activity, now_iso
-from config import raw, settings
+from config import TZ, raw, settings
 from i18n import L, LS
 
 router = APIRouter()
@@ -107,7 +116,9 @@ PENDING_TTL = 600      # 授权要在 10 分钟内做完
 REFRESH_AHEAD = 60     # 令牌离过期不到这么多秒就先刷新
 MAX_OUT = 30000        # 回给模型的文字最多多少字（和 mcp_bridge 一样掐中间）
 MAX_ARGS = 100000      # 一次调用的参数（JSON）最多多少字
-MAX_DESC = 8000        # 远端工具的说明交给 claw 时最多多少字
+MAX_DESC = 8000        # mcp_servers（engine/mcp_client.py）的工具说明交给模型时最多多少字；claw 不是 builtin 时连接器的工具说明也是它（clip_desc）
+DESC_MAX = 600         # 连接器给模型看的工具说明默认最多多少字（apps.desc_max 可改）
+ASK_TTL_HOURS = 24     # 「先问我」的卡默认几小时过期（apps.ask_ttl_hours 可改）
 PARALLEL = asyncio.Semaphore(4)
 ID_RE = re.compile(r"^[a-z0-9][a-z0-9-]{0,39}$")
 SCHEME_RE = re.compile(r"^([a-z][a-z0-9+.-]{1,30})://oauth/callback$")
@@ -299,6 +310,76 @@ def mark(aid: str, status: str, error: str = "") -> None:
 def cfg() -> dict:
     v = raw().get("apps")
     return v if isinstance(v, dict) else {}
+
+
+# apps 段里这些键是总设置，不是某一个连接器的 id
+_APP_KEYS = {"catalog", "client_id_url", "redirect_uris", "allow_local", "desc_max", "ask_ttl_hours"}
+
+
+def app_block(aid: str) -> dict:
+    """server.json 的 apps.<连接器 id>（disabled_tools / enabled_tools）。总设置和写错的不当成一个连接器。"""
+    if aid in _APP_KEYS:
+        return {}
+    v = cfg().get(aid)
+    return v if isinstance(v, dict) else {}
+
+
+def name_list(value: Any) -> list[str] | None:
+    """字符串列表；不是列表就当没写（None）。空列表是空列表。"""
+    if not isinstance(value, list):
+        return None
+    return [x.strip() for x in value if isinstance(x, str) and x.strip()]
+
+
+def desc_max() -> int:
+    """给模型看的连接器工具说明上限（字）。apps.desc_max，默认 600；写错或不是正数就用默认。"""
+    try:
+        n = int(cfg().get("desc_max", DESC_MAX))
+    except (TypeError, ValueError):
+        return DESC_MAX
+    return n if n > 0 else DESC_MAX
+
+
+def ask_ttl() -> float:
+    """「先问我」的卡多久过期（秒）。apps.ask_ttl_hours，默认 24 小时；写错或不是正数就用默认。"""
+    try:
+        hours = float(cfg().get("ask_ttl_hours", ASK_TTL_HOURS))
+    except (TypeError, ValueError):
+        hours = float(ASK_TTL_HOURS)
+    if not hours > 0:  # 0、负数、NaN
+        hours = float(ASK_TTL_HOURS)
+    return hours * 3600
+
+
+def ask_deadline() -> str:
+    return (datetime.now(TZ) + timedelta(seconds=ask_ttl())).isoformat(timespec="seconds")
+
+
+def card_expired(it: dict) -> bool:
+    """这张卡的期限到了没有。没写期限的（旧卡）不过期。"""
+    exp = inbox.parse_time(it.get("expiresAt"))
+    return bool(exp and exp <= datetime.now(TZ))
+
+
+def clip_desc(text: str) -> str:
+    """说明正文掐到 desc_max()：只在自己的内核里（claw 是 builtin）；接的是 OpenClaw 这类别的 claw 时照旧 MAX_DESC，/mcp 给它们的说明不变。
+    应用名和「先问我」那句是后加上的，不占这些字。"""
+    text = (text or "").strip()
+    n = desc_max() if claw.is_builtin() else MAX_DESC
+    return text if len(text) <= n else text[:n] + "…"
+
+
+def closure(app: dict, tool_name: str) -> str | None:
+    """配置里关掉了这个工具就回一句人话，否则 None。enabled_tools 是白名单（写了空名单 = 全关）；disabled_tools 是黑名单。不是列表就当没写。"""
+    block = app_block(str(app.get("id") or ""))
+    enabled = name_list(block.get("enabled_tools")) if "enabled_tools" in block else None
+    disabled = name_list(block.get("disabled_tools")) or []
+    if (enabled is not None and tool_name not in enabled) or tool_name in disabled:
+        aid = app.get("id") or ""
+        return L(
+            f"{app.get('name') or aid} 的「{tool_name}」在 server.json 里关掉了（apps.{aid} 的 disabled_tools 或 enabled_tools）。要再用就改那里",
+            f"\"{tool_name}\" on {app.get('name') or aid} is turned off in server.json (apps.{aid} disabled_tools or enabled_tools). Edit that to turn it back on")
+    return None
 
 
 def text_of(v: Any) -> str:
@@ -1172,9 +1253,44 @@ def exposed() -> dict[str, tuple[dict, dict]]:
         if app.get("status") != "connected":
             continue
         for t in app.get("tools") or []:
-            if level_of(app, t) != "off":
+            if not isinstance(t, dict) or not t.get("name"):
+                continue
+            if level_of(app, t) != "off" and closure(app, t["name"]) is None:
                 out[mcp_name(aid, t["name"])] = (app, t)
     return out
+
+
+def find_tool(name: str) -> tuple[dict, dict] | None:
+    """/mcp 上的名字对得上的 (应用, 工具)，连没连上、开没开都算。对不上 → None。"""
+    for aid, app in all_apps().items():
+        if not isinstance(app, dict):
+            continue
+        for t in app.get("tools") or []:
+            if isinstance(t, dict) and t.get("name") and mcp_name(aid, t["name"]) == name:
+                return app, t
+    return None
+
+
+def blocked_reason(name: str) -> str | None:
+    """这个工具现在不能调的原因。能调，或者根本不是连接器的工具 → None。"""
+    if name in exposed():
+        return None
+    found = find_tool(name)
+    if found is None:
+        return None
+    app, t = found
+    if app.get("status") != "connected":
+        return L(f"没有 {name} 这个工具了：{app.get('name') or app.get('id')} 断开了",
+                 f"{name} isn't available: {app.get('name') or app.get('id')} is disconnected")
+    why = closure(app, t["name"])
+    if why:
+        return why
+    if level_of(app, t) == "off":
+        label = app.get("name") or app.get("id")
+        return L(f"{label} 的「{t['name']}」关掉了（设置 → 连接器 → {label}）",
+                 f"\"{t['name']}\" on {label} is turned off (Settings → Connectors → {label})")
+    return L(f"没有 {name} 这个工具了：连接器可能断开了，或者这个工具在 设置 → 连接器 里关掉了",
+             f"{name} isn't available: the connector may be disconnected, or the tool turned off in Settings → Connectors")
 
 
 def agent_key(tool: dict) -> str:
@@ -1188,9 +1304,7 @@ def tool_def(name: str, app: dict, t: dict) -> types.Tool:
     schema.update(type="object", properties={**props, agent_key(t): {"type": "string", "description": L(
         "你是哪个 Agent（它的 id，比如 diet）；主对话不填。这个应用要在用户的设置里给了这个 Agent 才能用",
         "Which Agent you are (its id, e.g. diet); leave empty in the main chat. The user has to allow that Agent for this app in settings")}})
-    desc = (t.get("description") or t.get("title") or t["name"]).strip()
-    if len(desc) > MAX_DESC:
-        desc = desc[:MAX_DESC] + "…"
+    desc = clip_desc(t.get("description") or t.get("title") or t["name"])
     text = f"[{app['name']}] {desc}"
     if level_of(app, t) == "ask":
         text += "\n\n" + L("（这个工具每次都要用户先点头：调用会给他发一张卡，马上返回；他同意后服务器照原样调用一次，把结果发进你的对话。）",
@@ -1209,10 +1323,13 @@ async def mcp_call(name: str, arguments: dict, who: dict) -> types.CallToolResul
     """给 mcp_bridge 调工具用：不是连接器的工具回 None。"""
     hit = exposed().get(name)
     if hit is None:
-        if "__" not in name:
-            return None
-        return failed(L(f"没有 {name} 这个工具了：连接器可能断开了，或者这个工具在 设置 → 连接器 里关掉了",
-                        f"{name} isn't available: the connector may be disconnected, or the tool turned off in Settings → Connectors"))
+        why = blocked_reason(name)
+        if why is None:
+            if "__" not in name:
+                return None
+            why = L(f"没有 {name} 这个工具了：连接器可能断开了，或者这个工具在 设置 → 连接器 里关掉了",
+                    f"{name} isn't available: the connector may be disconnected, or the tool turned off in Settings → Connectors")
+        return failed(why)
     app, t = hit
     try:
         text = await run_tool(app, t, dict(arguments or {}), who)
@@ -1237,9 +1354,13 @@ async def run_tool(app: dict, t: dict, args: dict, who: dict) -> str:
     if agent not in (app.get("agents") or []):
         raise ToolError(L(f"{agent_name(agent)}还不能用 {name}：请用户在 设置 → 连接器 → {name} 里给它打开",
                           f"{agent_name(agent)} can't use {name} yet: ask the user to allow it in Settings → Connectors → {name}"))
+    why = closure(app, t["name"])  # 配置里关掉的：明确说是哪一个、怎么开回去，而且不去连对方
+    if why:
+        raise ToolError(why)
     level = level_of(app, t)
     if level == "off":
-        raise ToolError(L(f"{name} 的这个工具关掉了（设置 → 连接器 → {name}）", f"This {name} tool is turned off (Settings → Connectors → {name})"))
+        raise ToolError(L(f"{name} 的「{t['name']}」关掉了（设置 → 连接器 → {name}）",
+                          f"\"{t['name']}\" on {name} is turned off (Settings → Connectors → {name})"))
     if len(json.dumps(args, ensure_ascii=False)) > MAX_ARGS:
         raise ToolError(L("参数太长了", "The arguments are too long"))
     schema = t.get("inputSchema")
@@ -1330,7 +1451,8 @@ async def ask(app: dict, t: dict, args: dict, agent: str) -> str:
         calls[dedupe] = {"app": app["id"], "tool": t["name"], "args": args, "agent": agent, "ts": time.time(), "createdAt": now_iso(),
                          "card": card_hash(card["title"], card["why"], card["changes"], card["detail"])}
         store("calls.json", calls)
-    res = await inbox.add(inbox.ItemIn(kind="app", source=agent, thread=thread_of(agent), dedupe=dedupe, **card))
+    res = await inbox.add(inbox.ItemIn(kind="app", source=agent, thread=thread_of(agent), dedupe=dedupe,
+                                       expiresAt=ask_deadline() if claw.is_builtin() else None, **card))  # 期限只在自己的内核里加
     if not isinstance(res, dict) or not res.get("ok"):  # 409：30 天内拒过一模一样的
         try:
             body = json.loads(bytes(res.body)) if isinstance(res, JSONResponse) else {}
@@ -1371,6 +1493,9 @@ async def on_decided(it: dict, action: str) -> dict | None:
         why = L("这张卡交上来以后被改过，和要调用的对不上，没有照做", "This card was edited after it was sent, so it no longer matches the call; nothing was run")
     elif not app:
         why = L("这个连接器已经删掉了，没有照做", "That connector was removed, so nothing was run")
+    elif card_expired(it):  # 点头时再对一次：交卡之后过了期限（或期限被改到了过去）就不去调对方
+        why = L("这张卡过期了，没有照做。要做的话让它重新调用，会出一张新卡",
+                "This card has expired, so nothing was run. To do it, have it call the tool again; that makes a new card")
     else:
         try:
             text, is_error = await call(app["id"], c["tool"], c["args"])

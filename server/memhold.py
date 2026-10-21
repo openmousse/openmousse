@@ -16,13 +16,13 @@
   同一个人说的同一句还在待定里 = 那一条（duplicate）。一个人一天最多 PER_WHO_DAY 条、待定里一共最多 MAX_OPEN 条，多了不收。
   调用方自己定什么值得记（engine/writeback.py 的写回：对话结束时从名片 Agent 的对话里挑；群聊那一步照它来）。
 每周修剪：
-  - 那一周的修剪卡（dedupe tree:prune:<周日>：开源版 treeprune.py 交的、作者那份 memory_tree.py 经 inbox_ctl 交的）带着条目进收件箱时，
+  - 那一周的修剪卡（dedupe tree:prune:<周日>：开源版 treeprune.py 交的、工作区那份 memory_tree.py 经 inbox_ctl 交的）带着条目进收件箱时，
     inbox.add 把还在待定里的接在后面（card_items，一条一条，id = held-<id>，data = {"held": id}，默认「拒绝」：主人点了同意才算）。
   - 那一周没有修剪卡：到点（WEEKLY，周日晚上）自己出一张只有待定的卡（kind other，itemsKind memory-held，静默）。
   - 定下来以后（inbox.AFTER_ITEMS）：逐条提交的（新 app 的「提交」）同意 → 长成叶子，拒绝 → rejected；老 app 一下子点「同意 / 拒绝」整张卡的，
     待定的这几条不动（看不到逐条，不能替主人定），下周再列。
   - 卡上「修改」一条：一次零工具的模型调用按主人写的那句改这一句（原话、出处不变），回到没定。
-长成叶子（grow）：写进 sources.py 选中的那棵树（开源版直接调包；作者那份跑 memory_tree.py add），source 记成主对话（main / grava），
+长成叶子（grow）：写进 sources.py 选中的那棵树（开源版直接调包；工作区那份跑 memory_tree.py add），source 记成主对话（main / TREE_SOURCE），
   出处 platform = channel（friend / a2a / group）、thread、message、quote = 对方的原话：读的时候算「推断」那一档（原话不是主人的），
   别的平台也看得出这是别人说的。关于别人的挂「人」那根枝（规则里写了：一片叶子写一个人的一件事）。
 接口：GET /api/memory/held?status=held|all（记忆页的「待定」）、POST /api/memory/held/{id} {action: approve | reject | edit, text?, branch?}。
@@ -44,6 +44,7 @@ import inbox
 from chat import _lock, db, log_activity, now_iso
 from config import TZ, raw
 from i18n import L, LS
+from stored_values import TREE_SOURCE
 
 router = APIRouter()  # main.py 挂上；这个模块一导入就把收件箱的几个钩子挂好（文件最后）
 CHANNELS = ("friend", "a2a", "card", "group")
@@ -179,8 +180,18 @@ def _row(hid: str):
 
 # —— 长成叶子 ——————————————————————————————————————————————————————————————————
 
+def _engine_builtin() -> bool:
+    """记性这条路是不是自己的内核。导入不了 claw（单独跑命令）就当不是。"""
+    try:
+        import claw
+    except ImportError:
+        return False
+    return claw.is_builtin()
+
+
 def grow(hid: str, *, text: str | None = None, branch: str | None = None, by: str = "") -> dict:
-    """主人同意了：写进 sources.py 选中的那棵树（见文件开头）→ {"leaf", "duplicate"}。不在待定里了（定过了）抛 LookupError。"""
+    """主人同意了：写进 sources.py 选中的那棵树（见文件开头）→ {"leaf", "duplicate"}。不在待定里了（定过了）抛 LookupError。
+    builtin：开源包写完把叶子上已经隐去的正文、原话抄回这一行；工作区那份脚本则在交给它之前先换掉。OpenClaw 这一行照旧。"""
     import sources
     r = _row(hid)
     if r is None or r["status"] not in ("held", "rejected"):
@@ -192,16 +203,21 @@ def grow(hid: str, *, text: str | None = None, branch: str | None = None, by: st
     br = (branch if branch is not None else r["branch"]) or (L("人", "People") if r["about"] == "person" else "")
     said = {"quote": r["quote"], "platform": "group" if r["channel"] == "group" else "a2a" if r["channel"] in ("a2a", "card") else "friend",
             "thread": r["thread"] or r["who_id"], "message": r["message"]}
+    cues = [c for c in (r["cues"] or "").split("\n") if c]
     script = sources.tree_script()
+    from engine import memgate
+    if script is not None and _engine_builtin():
+        text = memgate.scrub_script(text)
+        said = {k: memgate.scrub_script(v) if isinstance(v, str) else v for k, v in said.items()}
+        cues = [memgate.scrub_script(c) for c in cues]
     if script is None:
-        out = mt.remember(text, source="main", kind=r["kind"], branch=br or None, cues=[c for c in (r["cues"] or "").split("\n") if c],
-                          **{k: v for k, v in said.items() if v})
+        out = mt.remember(text, source="main", kind=r["kind"], branch=br or None, cues=cues, **{k: v for k, v in said.items() if v})
     else:
-        cmd = ["python3", str(script), "add", "--source", "grava", "--kind", r["kind"], "--text", text]
+        cmd = ["python3", str(script), "add", "--source", TREE_SOURCE, "--kind", r["kind"], "--text", text]
         cmd += ["--branch", br] if br else []
         for k, v in said.items():
             cmd += [f"--{k}", v] if v else []
-        for c in (r["cues"] or "").split("\n"):
+        for c in cues:
             cmd += ["--cue", c] if c else []
         p = subprocess.run(cmd, capture_output=True, text=True, timeout=60)  # noqa: S603 — 自己的脚本，参数一项一个
         try:
@@ -209,10 +225,32 @@ def grow(hid: str, *, text: str | None = None, branch: str | None = None, by: st
         except (ValueError, IndexError):
             raise RuntimeError((p.stderr or p.stdout or "").strip()[:200] or f"exit {p.returncode}") from None
     leaf = str(out.get("id") or "")
+    cleaned = None  # (text, quote, cues)；只有真隐去过才改待定这一行，平时的更新和以前一样
+    if script is None and _engine_builtin() and leaf and out.get("duplicate"):
+        # 树里已经有这一片（可能是早先另一次写的）：别拿它的正文、原话、「用得上的时候」盖掉这一行，只换掉这一行自己的密钥
+        own = (text, r["quote"] or "", r["cues"] or "")
+        mine = tuple(memgate.scrub(v) for v in own)
+        cleaned = mine if mine != own else None
+    elif script is None and _engine_builtin() and leaf:
+        try:
+            conn = mt.connect()
+            try:
+                got = conn.execute("SELECT text, quote, cues, redacted FROM tree WHERE id=?", (leaf,)).fetchone()
+            finally:
+                conn.close()
+        except sqlite3.OperationalError:
+            got = None
+        if got is not None and int(got["redacted"] or 0) > 0:
+            cleaned = (got["text"] or text, got["quote"] or "", got["cues"] or "")
+    elif script is not None and _engine_builtin():
+        cleaned = (text, said.get("quote") or "", "\n".join(cues))
     with _lock, hdb() as conn:
-        conn.execute("UPDATE memory_held SET status='approved', decided_at=?, leaf=?, text=?, note=? WHERE id=?",
-                     (now_iso(), leaf, text, _clip(by, 80), hid))
-    from engine import memgate
+        if cleaned is None:
+            conn.execute("UPDATE memory_held SET status='approved', decided_at=?, leaf=?, text=?, note=? WHERE id=?",
+                         (now_iso(), leaf, text, _clip(by, 80), hid))
+        else:
+            conn.execute("UPDATE memory_held SET status='approved', decided_at=?, leaf=?, text=?, quote=?, cues=?, note=? WHERE id=?",
+                         (now_iso(), leaf, cleaned[0], cleaned[1], cleaned[2], _clip(by, 80), hid))
     memgate.approved("leaf", "add", target=f"tree:{leaf}", author=r["who_id"] or r["who"], conversation=r["thread"], agent="main",
                      result=f"held:{hid}")
     return {"leaf": leaf, "duplicate": bool(out.get("duplicate"))}

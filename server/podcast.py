@@ -1,6 +1,6 @@
 """播客（2026-09-28）：「思考」里的第三块，「聊聊」的语音版。说出来，录完帮你理成笔记。
 
-一期（episode，grava.db pod_episodes，id pe-xxxxxxxx）
+一期（episode，mousse.db pod_episodes，id pe-xxxxxxxx）
 - 四种录法：solo 自己讲（它只听）/ host 有主持人（你停下它才问，一次一个）/ feynman 费曼（它扮聪明的外行追问，讲完对照学习台的课件）/
   friends 约朋友（坐一起用一台手机，录完按声音分人，第一次让你认谁是谁）。
   远程一起录还没做，接口先留着（2026-09-28 定：怎么实现还没定，也许 app 里直接打电话）：以后每人一条音轨，按 track（谁）和开录后的秒数
@@ -50,15 +50,18 @@ import files as files_mod
 import llmjson
 import people
 import podmaterials
+import podprep
 from people import PersonPick
 import think
 from chat import _lock, db, log_activity, now_iso
 from config import settings, user_word
 from i18n import L, LS
+from stored_values import NOTE_SOURCE_PODCAST
 
 router = APIRouter()
 router.include_router(podmaterials.router)
 router.include_router(people.router)
+router.include_router(podprep.router)  # 主线第三步：录前讨论群（要开着群聊和赛博）
 
 MODES = ("solo", "host", "feynman", "friends")
 ID_RE = re.compile(r"^pe-[0-9a-f]{8}$")
@@ -106,6 +109,9 @@ def pdb() -> sqlite3.Connection:
         if "people" not in cols:  # 朋友画像（people.py）：people = 开录前选的谁在 [人的 id]，speaker_people = 认人时对上的 {声音: 人的 id}
             conn.execute("ALTER TABLE pod_episodes ADD COLUMN people TEXT")
             conn.execute("ALTER TABLE pod_episodes ADD COLUMN speaker_people TEXT")
+        if "prep_group" not in cols:  # 主线第三步：这一期的录前讨论群（podprep.py）、约好的录制时间
+            conn.execute("ALTER TABLE pod_episodes ADD COLUMN prep_group TEXT")
+            conn.execute("ALTER TABLE pod_episodes ADD COLUMN booked_at TEXT")
         _ready = True
     return conn
 
@@ -616,9 +622,14 @@ def last_prep_roles(ids: list[str]) -> dict[str, str]:
 
 
 def brief(r: sqlite3.Row, last_prep: str | None = None) -> dict:
-    return {"id": r["id"], "title": r["title"], "mode": r["mode"], "status": r["status"], "duration": round(r["duration"] or 0, 1),
-            "createdAt": r["created_at"], "updatedAt": r["updated_at"], "source": jload(r["source"], {}), "chip": chip_of(r),
-            **stage_of(r, last_prep)}
+    out = {"id": r["id"], "title": r["title"], "mode": r["mode"], "status": r["status"], "duration": round(r["duration"] or 0, 1),
+           "createdAt": r["created_at"], "updatedAt": r["updated_at"], "source": jload(r["source"], {}), "chip": chip_of(r),
+           **stage_of(r, last_prep)}
+    try:  # 主线第三步：「制作中」那一行要的（参与者、约好的时间、最新一句、四格、录前讨论群，podprep.row_fields）
+        out.update(podprep.row_fields(r, last_prep))
+    except Exception as e:  # noqa: BLE001 — 录前讨论群那边出错：这一行照旧
+        print(f"[podcast] {r['id']} 的录前讨论群没读到：{e}")
+    return out
 
 
 def present_people(r: sqlite3.Row) -> list[str]:
@@ -881,6 +892,7 @@ class EpisodePatch(BaseModel):
     cur: int | None = None
     speakers: dict[str, str] | None = None  # 坐一起录的：{"A": "@me", "B": "小林"}（@me = 你自己）
     people: dict[str, PersonPick] | None = None  # 认人时对上的人 {"B": {id} | {friend} | {name} | {name, skip}}：名字跟着人走
+    bookedAt: str | None = None  # 约好的录制时间（YYYY-MM-DDTHH:MM，当地时间；"" = 不约了）：你自己定的直接进日程（podprep.py）
 
 
 @router.patch("/api/podcast/episodes/{eid}")
@@ -917,17 +929,40 @@ async def patch_episode(eid: str, body: EpisodePatch):
         cols["cur"] = max(0, min(body.cur, max(0, len(outline) - 1)))
     if body.speakers is not None:
         cols["speakers"] = json.dumps({str(k)[:4]: str(v).strip()[:20] for k, v in body.speakers.items() if str(v).strip()}, ensure_ascii=False)
+    if body.bookedAt is not None:
+        cols["booked_at"] = await book(eid, r, body.bookedAt)
     if cols:
         touch(eid, **cols)
+    if "booked_at" in cols and cols["booked_at"] != (r["booked_at"] if "booked_at" in r.keys() else None):
+        await asyncio.to_thread(podprep.announce_booking, eid, cols["booked_at"])  # 有好友的录前讨论：管家在群里说一声
     if body.speakers is not None and r["status"] == "naming":  # 认完了：接着整理
         touch(eid, status="processing")
         start_job(eid)
     return {"ok": True, "episode": episode_json(eid)}
 
 
+async def book(eid: str, r: sqlite3.Row, when: str) -> str | None:
+    """约录制时间：进日程（key podcast:<期>:rec，改时间 = 改那一条）；"" = 不约了（日程里那一条删掉）。→ 存进 booked_at 的值。"""
+    import schedule as schedule_mod
+    key = f"podcast:{eid}:rec"
+    if not when.strip():
+        with _lock, pdb() as conn:
+            conn.execute("UPDATE schedule_items SET deleted_at=? WHERE key=? AND deleted_at IS NULL", (now_iso(), key))
+        return None
+    try:
+        d = datetime.fromisoformat(when.strip()[:16])
+    except ValueError:
+        raise HTTPException(400, L("录制时间要写成 YYYY-MM-DDTHH:MM", "bookedAt must be YYYY-MM-DDTHH:MM")) from None
+    await schedule_mod.add_item(schedule_mod.ItemIn(title=L(f"录播客：{r['title']}", f"Record: {r['title']}"), date=d.date().isoformat(),
+                                                    start=d.strftime("%H:%M"), kind="event", key=key, source="main",
+                                                    note=L("播客的约录时间", "Podcast recording")))
+    return d.strftime("%Y-%m-%dT%H:%M")
+
+
 @router.delete("/api/podcast/episodes/{eid}")
 async def delete_episode(eid: str):
     r = load(eid)
+    await podprep.drop_episode(eid)  # 主线第三步：它的录前讨论群和「放进」的卡
     for (e, i), t in list(_seg_tasks.items()):
         if e == eid:
             t.cancel()
@@ -1589,7 +1624,7 @@ def save_sync(eid: str, body: SaveIn) -> dict:
     mode_name = {"solo": LS("自己讲", "solo"), "host": LS("有主持人", "with a host"), "feynman": LS("费曼", "Feynman"), "friends": LS("和朋友", "with friends")}
     parts.append("---\n" + LS(f"原声和逐字稿在服务器上：播客「{r['title']}」（{clock(r['duration'])}，{mode_name[r['mode']]}）",
                               f"Audio and transcript stay on the server: episode “{r['title']}” ({clock(r['duration'])}, {mode_name[r['mode']]})"))
-    meta = {"created_at": r["saved_at"] or now_iso(), "updated_at": now_iso(), "source": "grava-podcast", "episode": eid, "mode": r["mode"],
+    meta = {"created_at": r["saved_at"] or now_iso(), "updated_at": now_iso(), "source": NOTE_SOURCE_PODCAST, "episode": eid, "mode": r["mode"],
             "duration": clock(r["duration"]), "keywords": kws, "tags": think.obsidian_tags(kws)}
     if src.get("course"):
         meta["course"] = src["course"]

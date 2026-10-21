@@ -2,13 +2,13 @@
 
 - 上限对齐主流 LLM 产品：一条消息最多 10 个附件、每个 30 MB；图片最多 8 张随消息直接给模型（Gateway 的上限）。
 - 图片：原图存盘，给模型的是缩到 1600px 的 JPEG（省 token），app 里的缩略图 512px 按需生成。
-- 文档：PDF / Word / Excel / PowerPoint / 文本 / 代码在服务端抽成文字，每个最多 60k 字、一条消息合计 150k 字，塞进发给 Grava 的消息里。
+- 文档：PDF / Word / Excel / PowerPoint / 文本 / 代码在服务端抽成文字，每个最多 60k 字、一条消息合计 150k 字，塞进发给助手的消息里。
 - 音频：OpenAI 转写（gpt-4o-transcribe，失败退 whisper-1），转写文字塞进消息；语音输入也走这条路（/api/chat/transcribe）。
   第 3 批：server.json 配了 engine.use.stt 就改走内核选的那一家（engine/stt.py：OpenAI、Groq、Gemini、Deepgram、ElevenLabs、本机 whisper.cpp）。
 - 视频：只存盘；第 3 批：开了 engine.media.describe_video（配了 engine.use.video）就先让看视频的模型看一遍，描述塞进消息（engine/video.py）。
-- 其它类型：只存盘，消息里给路径，Grava 需要时用工具读。
+- 其它类型：只存盘，消息里给路径，助手需要时用工具读。
 - 在 app 里点开看（页图、Word / Excel 转好的内容）：preview.py。
-- 文件存 ~/.openclaw/grava/uploads/<thread>/，记录在 grava.db 的 attachments 表；消息行的 attachments 列存给 app 显示的摘要。
+- 文件存 <data_dir>/uploads/<thread>/（server.json 的 uploads），记录在 mousse.db 的 attachments 表；消息行的 attachments 列存给 app 显示的摘要。
 """
 from __future__ import annotations
 
