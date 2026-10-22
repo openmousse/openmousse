@@ -20,7 +20,7 @@ The next-generation personal OS where human intuition and autonomous agents conv
 
 ## What it is
 
-OpenMousse is an open-source personal AI agent system that runs on your own server on top of a claw (an agent runtime: OpenClaw by default, with presets for Hermes, nanobot, and Letta, or any agent with an OpenAI-compatible API; a built-in engine where you just pick a model is coming soon), with clients for iPhone (TestFlight invitation), Android (APK), web (`npm run web:build` in `app/`, needs Node.js), and a desktop workspace (coming soon).
+OpenMousse is an open-source personal AI agent system that runs on your own server. It uses its own built-in engine by default, so you just pick a model after installing; it can also run on top of a claw (an agent runtime: OpenClaw, with presets for Hermes, nanobot, and Letta, or any agent with an OpenAI-compatible API). Clients: iPhone (TestFlight invitation), Android ([download the APK](https://github.com/openmousse/openmousse/releases/tag/android-v1.0.7)), web (`npm run web:build` in `app/`, needs Node.js), and a desktop workspace (coming soon).
 
 - **Memory tree.** One long-term memory on your server (SQLite, or Markdown notes in any folder, which a notes app such as Obsidian can open), where facts, preferences, decisions, and mature views become leaves carrying their source. Uncertain items can wait for your approval. Claude, ChatGPT, Gemini, Notion, and Claude Code connect over MCP with five tools (`profile`, `recall`, `remember`, `recent`, `forget`) without touching raw data; it also runs standalone as `mousse-tree` (`tree/`).
 - **Three kinds of agents.** Main chat is the entry point: it hands work to functional agents and can call short meetings whose minutes wait for your confirmation. Each functional agent looks after one area with its own chat, memory, tools, and board (table, kanban, calendar, timeline, and chart views); after install there are none, and you create them by asking in chat ("make me an Agent for sleep"). Cybers, thinking partners with their own persona, are coming soon.
@@ -37,7 +37,7 @@ OpenMousse is an open-source personal AI agent system that runs on your own serv
 
 ## Quick start
 
-**What you need.** A Linux, macOS, or Windows (WSL 2) machine that stays on, with a claw running (for OpenClaw: a model configured and Gateway running), plus Python 3.11+, `git`, and `curl`.
+**What you need.** A Linux, macOS, or Windows (WSL 2) machine that stays on, with Python 3.11+, `git`, and `curl`. The built-in engine needs nothing else; to use a claw, have it running first (for OpenClaw: a model configured and Gateway running).
 
 **Install.** Run one command:
 
@@ -45,9 +45,9 @@ OpenMousse is an open-source personal AI agent system that runs on your own serv
 curl -fsSL https://openmousse.ai/install | bash
 ```
 
-**What it asks.** The installer asks which claw to use (press Enter for OpenClaw, or choose `hermes`, `nanobot`, `letta`, or the OpenAI-compatible URL of another agent; the built-in engine is coming soon). It also asks for your language, your timezone, and the assistant's name, followed by two optional settings: a notes folder already synced to this server (an Obsidian vault, for example), and whether to open public HTTPS through Tailscale Funnel (so Claude.ai, ChatGPT, and other MCP clients can reach the memory tree, shares get links, and friends can reach you; only those paths are opened, never the app's API). Running the installer again is safe.
+**What it asks.** The installer asks for your language first, then asks everything else in that language only: which engine to use (pick a number; Enter takes the built-in engine, or choose OpenClaw, Hermes, nanobot, Letta, or the OpenAI-compatible URL of another agent), your timezone, and the assistant's name, followed by two optional settings: a notes folder already synced to this server (an Obsidian vault, for example), and whether to open public HTTPS through Tailscale Funnel (not asked without Tailscale; it lets Claude.ai, ChatGPT, and other MCP clients can reach the memory tree, shares get links, and friends can reach you; only those paths are opened, never the app's API). Dependencies install after the questions, and then you can choose the model, web search, and memory right in the terminal. Running the installer again is safe.
 
-**Connect your phone.** Everything installs under `~/.openmousse`, the server starts, and the terminal prints a one-time pairing link valid for 10 minutes alongside the server address and code.
+**Connect your phone.** Install the app: on iPhone through a TestFlight invitation, on Android by [downloading the APK](https://github.com/openmousse/openmousse/releases/tag/android-v1.0.7). Everything installs under `~/.openmousse`, the server starts, and the terminal prints a one-time pairing link valid for 10 minutes alongside the server address and code.
 
 **Or let your agent install it.** Send your agent:
 

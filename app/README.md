@@ -2,7 +2,7 @@
 
 [中文](README.zh-CN.md) · **English**
 
-iOS / Web client (Expo, React Native). It is a shell: chat, Agents, Today, Goals, Memory. All data lives on your own server ([`../server/`](../server/)).
+iOS / Android / Web client (Expo, React Native). It is a shell: chat, Agents, Today, Goals, Memory. All data lives on your own server ([`../server/`](../server/)).
 
 ```bash
 cd app
@@ -12,7 +12,9 @@ npm run web            # run in the browser (enter server address and token on t
 npm run web:build      # produce dist/, served by the server as the web version
 ```
 
-## Using the OpenMousse TestFlight build
+## Using the OpenMousse app
+
+On iPhone, install it through a TestFlight invitation. On Android, open [Releases](https://github.com/openmousse/openmousse/releases/tag/android-v1.0.7) on the phone and install `OpenMousse-1.0.7.apk` (Android 7.0 or later; allow installing unknown apps when asked). Push notifications aren't supported on Android yet, and widgets, Live Activities, and Apple Health are iPhone-only.
 
 The first screen is the connection page: enter the server address (`https://your.domain` or Tailscale's `http://100.x.x.x:8080`) and a token (generated on the server with `python3 tokens.py add phone`), or tap **Connect with code** after `python3 tokens.py pair` on the server so nothing has to be copied. The assistant's name comes from your server.
 

@@ -2,7 +2,7 @@
 
 **中文** · [English](README.md)
 
-iOS / Web 客户端（Expo，React Native）。它是一个壳：对话、Agents、今天、目标、记忆，所有数据都在你自己的服务器上（[`../server/`](../server/)）。
+iOS / Android / Web 客户端（Expo，React Native）。它是一个壳：对话、Agents、今天、目标、记忆，所有数据都在你自己的服务器上（[`../server/`](../server/)）。
 
 ```bash
 cd app
@@ -12,7 +12,9 @@ npm run web            # 本机浏览器里跑（连接页填服务器地址和�
 npm run web:build      # 生成 dist/，由 server 托管成网页版
 ```
 
-## 用 OpenMousse 的 TestFlight 装
+## 用 OpenMousse 的 app
+
+iPhone 通过 TestFlight 邀请安装。Android 在手机上打开 [Releases](https://github.com/openmousse/openmousse/releases/tag/android-v1.0.7) 下载 `OpenMousse-1.0.7.apk` 安装（需 Android 7.0 及以上，系统询问时允许安装未知应用）；暂不支持推送通知，小组件、实时活动与 Apple 健康仅限 iPhone。
 
 装上后首页是连接页：填服务器地址（`https://你的域名` 或 Tailscale 的 `http://100.x.x.x:8080`）和令牌（服务器上 `python3 tokens.py add 手机` 生成）；也可以在服务器上跑 `python3 tokens.py pair`，再点 **使用配对码连接**，什么都不用抄。助手的名字来自你的服务器。
 

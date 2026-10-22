@@ -19,7 +19,7 @@
 
 ## 这是什么
 
-OpenMousse 是运行在你自己服务器上的开源个人 AI Agent 系统，当前运行在 claw（Agent 运行时：默认为 OpenClaw，内置 Hermes、nanobot 与 Letta 预设，也支持任何提供 OpenAI 兼容接口的 Agent）之上，直接选模型即可使用的内置引擎（即将推出）；提供 iPhone（TestFlight 邀请）、Android（APK）、网页端（在 `app/` 下执行 `npm run web:build`，需 Node.js）以及桌面工作台（即将推出）。
+OpenMousse 是运行在你自己服务器上的开源个人 AI Agent 系统。默认使用自带的内核，装好后选一个模型即可使用；也可以运行在 claw（Agent 运行时：OpenClaw，内置 Hermes、nanobot 与 Letta 预设，也支持任何提供 OpenAI 兼容接口的 Agent）之上。提供 iPhone（TestFlight 邀请）、Android（[下载 APK](https://github.com/openmousse/openmousse/releases/tag/android-v1.0.7)）、网页端（在 `app/` 下执行 `npm run web:build`，需 Node.js）以及桌面工作台（即将推出）。
 
 - **世界树。** 服务器上的统一长期记忆（SQLite，或任意文件夹里的 Markdown 笔记，可以用 Obsidian 这类笔记软件打开），事实、偏好、决定与推敲成熟的观点都成为带有出处的叶子，拿不准的可以先进「待确认」。Claude、ChatGPT、Gemini、Notion 与 Claude Code 通过 MCP 的五个工具（`profile`、`recall`、`remember`、`recent`、`forget`）授权读写，触及不到原始数据；也可作为 `mousse-tree`（`tree/`）独立运行。
 - **三类 Agent。** 主对话是入口，负责把工作交给功能 Agent，也能召集简短会议并生成待你确认的纪要。每个功能 Agent 照看一个领域，拥有独立的对话、记忆、工具与看板（表格、看板、日历、时间线与图表视图）；安装后默认为空，在对话中提出需求（如「帮我建一个管睡眠的 Agent」）即可创建。拥有独立人格的思考伙伴「赛博」（即将推出）。
@@ -36,7 +36,7 @@ OpenMousse 是运行在你自己服务器上的开源个人 AI Agent 系统，�
 
 ## 快速开始
 
-**准备条件。** 一台保持开机的 Linux、macOS 或 Windows（WSL 2）设备，已运行 claw（若用 OpenClaw，需配置好模型并启动 Gateway），并装有 Python 3.11+、`git` 与 `curl`。
+**准备条件。** 一台保持开机的 Linux、macOS 或 Windows（WSL 2）设备，装有 Python 3.11+、`git` 与 `curl`。使用自带的内核无需另装其他软件；使用 claw 时需先运行它（OpenClaw 需配置好模型并启动 Gateway）。
 
 **安装。** 执行以下命令：
 
@@ -44,9 +44,9 @@ OpenMousse 是运行在你自己服务器上的开源个人 AI Agent 系统，�
 curl -fsSL https://openmousse.ai/install | bash
 ```
 
-**安装问答。** 安装脚本会询问使用哪个 claw（直接回车使用 OpenClaw，或输入 `hermes`、`nanobot`、`letta`，或其他 Agent 的 OpenAI 兼容地址），内置引擎（即将推出），随后询问语言、时区和助手名字，以及两个可选项：已同步到该服务器的笔记文件夹（例如 Obsidian 库），和是否通过 Tailscale Funnel 开启公网 HTTPS（开启后 Claude.ai、ChatGPT 等 MCP 客户端可连接世界树、分享可生成链接、好友可直连；仅开放上述路径，绝不暴露应用 API）。重复运行该命令是安全的。
+**安装问答。** 安装脚本先询问语言，之后的问题都只用这种语言：使用哪个内核（按编号选择，直接回车即自带的内核；也可选择 OpenClaw、Hermes、nanobot、Letta，或填写其他 Agent 的 OpenAI 兼容地址）、时区和助手名字，以及两个可选项：已同步到该服务器的笔记文件夹（例如 Obsidian 库），和是否通过 Tailscale Funnel 开启公网 HTTPS（未安装 Tailscale 时不询问；开启后 Claude.ai、ChatGPT 等 MCP 客户端可连接世界树、分享可生成链接、好友可直连；仅开放上述路径，绝不暴露应用 API）。问答结束后才安装依赖；安装完成后可直接在终端中选择模型、搜索与记忆。重复运行该命令是安全的。
 
-**连接手机。** 所有文件安装在 `~/.openmousse` 下，服务启动后终端会打印有效期 10 分钟的一次性配对链接，以及服务器地址与配对码。
+**连接手机。** iPhone 通过 TestFlight 邀请安装 app，Android [下载 APK](https://github.com/openmousse/openmousse/releases/tag/android-v1.0.7) 安装。所有文件安装在 `~/.openmousse` 下，服务启动后终端会打印有效期 10 分钟的一次性配对链接，以及服务器地址与配对码。
 
 **或让 Agent 代为安装。** 发给你的 Agent：
 
