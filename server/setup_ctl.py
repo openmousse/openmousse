@@ -88,11 +88,21 @@ def interactive() -> bool:
     return True
 
 
+def flush_typeahead(t) -> None:
+    """清掉之前按下的键：装依赖、等网络时按的回车不算这一题的回答（同安装器）。"""
+    try:
+        import termios
+        termios.tcflush(t, termios.TCIFLUSH)
+    except Exception:  # Windows 没有 termios；管道、文件不是终端
+        pass
+
+
 def ask(prompt: str, default: str = "") -> str:
     """问一句，回车 = default。读不到（没有终端）= default。"""
     t = _tty()
     if t is None:
         return default
+    flush_typeahead(t)
     print(f"  {prompt}" + (f" [{default}]" if default else "") + ": ", end="", flush=True)
     try:
         line = t.readline()
@@ -106,18 +116,27 @@ def ask(prompt: str, default: str = "") -> str:
 
 def secret(prompt: str) -> str:
     """问密钥：不回显（getpass 自己开 /dev/tty）。"""
+    t = _tty()
+    if t is not None:
+        flush_typeahead(t)
+        if t is not sys.stdin:
+            t.close()
     return getpass.getpass(f"  {prompt}: ").strip()
 
 
 def yes(prompt: str, default: bool = False) -> bool:
-    a = ask(prompt + L("（y/n）", " (y/n)"), "y" if default else "n").lower()
-    return a.startswith(("y", "是", "1"))
+    """是 / 否，回车 = default；写法同安装器：[Y/n] 默认是，[y/N] 默认否。"""
+    a = ask(f"{prompt} {'[Y/n]' if default else '[y/N]'}").lower()
+    return a.startswith(("y", "是", "1", "好", "要")) if a else default
 
 
 def pick(prompt: str, options: list[tuple[str, str]], default: str = "") -> str:
     """列出来让挑：[(值, 给人看的)] → 值。可以填编号，也可以直接填值；回车 = default（可以是空 = 跳过）。"""
     for i, (_v, label) in enumerate(options, 1):
         say(f"  {i}) {label}")
+    values = [v for v, _ in options]
+    if default in values:  # 列了编号，默认也写编号：方括号里是 [1]，同安装器
+        default = str(values.index(default) + 1)
     while True:
         a = ask(prompt, default)
         if not a:

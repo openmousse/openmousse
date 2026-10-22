@@ -1695,6 +1695,11 @@ def tty_yes(prompt: str, default: bool = True) -> bool:
         return False
     try:
         with open("/dev/tty", encoding="utf8") as t:
+            try:  # 先清掉装依赖时按下的键，不然那几下回车就把这一题答了（同安装器）
+                import termios
+                termios.tcflush(t, termios.TCIFLUSH)
+            except Exception:  # Windows 没有 termios
+                pass
             print(f"{prompt} {'[Y/n]' if default else '[y/N]'}: ", end="", flush=True)
             ans = t.readline().strip().lower()
     except OSError:

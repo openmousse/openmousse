@@ -6,6 +6,7 @@ import importlib.util
 import json
 import os
 import plistlib
+import re
 import shutil
 import subprocess
 import sys
@@ -174,6 +175,13 @@ def test_install_sh_parses_and_knows_the_mac_and_trial_paths():
     text = (REPO / "install.sh").read_text()
     for needle in ("/opt/homebrew/bin/python3", "xcode-select --install", "MOUSSE_TRIAL", "--no-systemd", "MOUSSE_BIND=127.0.0.1", "MOUSSE_CLONED=1"):
         assert needle in text, needle
+
+
+def test_install_sh_braces_variables_before_non_ascii_text():
+    """macOS 自带的 bash 3.2 把紧跟在变量名后的中文字节也算进名字：「$MOUSSE_TZ」」在 set -u 下报 unbound variable（10/22 Mac 上试装撞到）。要写 ${MOUSSE_TZ}」。"""
+    text = (REPO / "install.sh").read_text(encoding="utf8")
+    bad = [line.strip() for line in text.splitlines() if re.search(r"\$[A-Za-z_][A-Za-z0-9_]*[^\x00-\x7f]", line)]
+    assert not bad, bad
 
 
 # —— 装自带内核时问要不要搬（第 9 批 15.8）——————————————————————————————————————————————————
