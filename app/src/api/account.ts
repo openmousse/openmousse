@@ -6,12 +6,19 @@
 // access token 只在内存里（一小时过期，快到了拿 refresh token 换）。claw 列表是 public.claws 表（行级权限：只能看写自己的），
 // 删账号走 rpc delete_user（见 docs 里的 supabase.sql）。
 import Constants from 'expo-constants';
+import { readLocal, writeLocal } from '../deviceStore';
 import { L } from '../lang';
 import { readItem, writeItem } from './base';
 
 type Cfg = { url: string; anonKey: string };
 const KEY_REFRESH = 'mousse.account.refresh';
 const KEY_USER = 'mousse.account.user';
+/** 发过码的邮箱和时间（deviceStore）：app 重载、被系统收掉以后回来，登录页接着停在输验证码那一步。 */
+const KEY_PENDING = 'mousse.account.pending';
+/** 验证码 10 分钟内有效（Supabase 后台 Email OTP Expiration，9/29 设的）。 */
+const CODE_TTL_MS = 10 * 60_000;
+/** 同一个邮箱 60 秒内只能发一次码（Supabase 的默认间隔）：早点再发只会得到 429。 */
+export const RESEND_S = 60;
 
 export function accountConfig(): Cfg | null {
   const a = (Constants.expoConfig?.extra as { account?: Partial<Cfg> } | undefined)?.account;
@@ -49,6 +56,8 @@ export class AccountError extends Error {
   status?: number;
   /** 连不上账号服务（没网、服务挂了），不是账号本身的问题 */
   network?: boolean;
+  /** 429 里写着「N 秒后再试」：这个邮箱刚发过码，码已经在邮箱里。没写秒数的 429 是整个项目的发信上限。 */
+  retryAfter?: number;
 }
 
 /** Supabase 回的错误换成人话。 */
@@ -88,8 +97,12 @@ async function call<T>(path: string, init: { method?: string; body?: unknown; us
     let j: unknown = {};
     try { j = text ? JSON.parse(text) : {}; } catch { j = {}; }
     if (!r.ok) {
-      const e = new AccountError(explain(r.status, (j && typeof j === 'object' ? j : {}) as Record<string, unknown>));
+      const body = (j && typeof j === 'object' ? j : {}) as Record<string, unknown>;
+      const e = new AccountError(explain(r.status, body));
       e.status = r.status;
+      // 「you can only request this after 42 seconds」/「once every 60 seconds」
+      const after = r.status === 429 ? /(?:after|every) (\d+) seconds?/i.exec(String(body.msg || body.message || '')) : null;
+      if (after) e.retryAfter = Math.max(1, Number(after[1]));
       throw e;
     }
     return j as T;
@@ -172,14 +185,41 @@ async function fresh(): Promise<Session | null> {
 
 const clean = (email: string) => email.trim().toLowerCase();
 
+const rememberCode = (email: string, at: number) => writeLocal(KEY_PENDING, JSON.stringify({ email, at }));
+/** 不再接着输这个码了（登录上了、换邮箱）。 */
+export const forgetCode = () => writeLocal(KEY_PENDING, '');
+
+/** 这台设备上次发的码还有效：→ 邮箱和还要等几秒才能重发；没有 → null。 */
+export function pendingCode(): { email: string; wait: number } | null {
+  try {
+    const raw = readLocal(KEY_PENDING);
+    const p = raw ? (JSON.parse(raw) as { email?: unknown; at?: unknown }) : null;
+    if (typeof p?.email !== 'string' || !p.email || typeof p.at !== 'number') return null;
+    const age = Date.now() - p.at;
+    if (age < 0 || age > CODE_TTL_MS) return null;
+    return { email: p.email, wait: Math.max(0, Math.ceil(RESEND_S - age / 1000)) };
+  } catch {
+    return null;
+  }
+}
+
 /** 往邮箱发 6 位验证码（没有这个账号就顺便建一个）。 */
 export async function sendCode(email: string): Promise<void> {
-  await call('/auth/v1/otp', { method: 'POST', body: { email: clean(email), create_user: true } });
+  const e = clean(email);
+  try {
+    await call('/auth/v1/otp', { method: 'POST', body: { email: e, create_user: true } });
+    rememberCode(e, Date.now());
+  } catch (err) {
+    // 一分钟内刚给这个邮箱发过（比如发完码 app 重载了，回来又点了一次）：码在邮箱里，照样记下
+    if (err instanceof AccountError && err.retryAfter) rememberCode(e, Date.now() - Math.max(0, RESEND_S - err.retryAfter) * 1000);
+    throw err;
+  }
 }
 
 /** 验证码换会话：登录成功。 */
 export async function verifyCode(email: string, code: string): Promise<AccountUser> {
   session = take(await call<TokenResp>('/auth/v1/verify', { method: 'POST', body: { type: 'email', email: clean(email), token: code.replace(/\s/g, '') } }));
+  forgetCode();
   await persist(session);
   emit();
   return session.user;

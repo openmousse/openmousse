@@ -10,7 +10,8 @@ import { Group, GroupLabel, GroupNote, Row, RoundButton, SettingsHeader } from '
 import { useSheet } from '../components/Sheet';
 import { Btn, Screen, T, showError } from '../components/ui';
 import {
-  AccountError, deleteAccount, initialsOf, listAccountClaws, sendCode, setAccountName, signOut, syncClaw, verifyCode, type AccountClaw,
+  AccountError, deleteAccount, forgetCode, initialsOf, listAccountClaws, pendingCode, RESEND_S, sendCode, setAccountName, signOut, syncClaw, verifyCode,
+  type AccountClaw,
 } from '../api/account';
 import { getBase } from '../api/base';
 import { L } from '../i18n';
@@ -24,7 +25,6 @@ let skipped = false;
 export const loginSkipped = () => skipped;
 
 const EMAIL = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-const RESEND_S = 45;
 
 export function LoginScreen() {
   const t = useTheme();
@@ -32,13 +32,16 @@ export function LoginScreen() {
   const route = useRoute<any>();
   const fromSettings = route.params?.from === 'settings';
   const { needsServer, connected, appName, claw } = useStore();
-  const [step, setStep] = useState<'email' | 'code'>('email');
-  const [email, setEmail] = useState('');
+  // 码发出去还没用上（10 分钟内）：app 重载、被系统收掉以后回来，直接接着输验证码
+  const [pending] = useState(pendingCode);
+  const [step, setStep] = useState<'email' | 'code'>(pending ? 'code' : 'email');
+  const [email, setEmail] = useState(pending?.email ?? '');
   const [code, setCode] = useState('');
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState<string | null>(null);
+  const [note, setNote] = useState<string | null>(null);
   const [offline, setOffline] = useState(false);
-  const [wait, setWait] = useState(0);
+  const [wait, setWait] = useState(pending?.wait ?? 0);
   const codeRef = useRef<TextInput>(null);
 
   useEffect(() => {
@@ -58,21 +61,36 @@ export function LoginScreen() {
     setMsg(e instanceof Error ? e.message : String(e));
   };
 
+  const toCode = (seconds: number, why: string | null) => {
+    setStep('code'); setCode(''); setWait(seconds); setNote(why);
+    setTimeout(() => codeRef.current?.focus(), 300);
+  };
+
   const send = async () => {
     const v = email.trim();
     if (!EMAIL.test(v)) { setMsg(L('邮箱格式无效', 'Invalid email address')); return; }
-    setBusy(true); setMsg(null); setOffline(false);
+    setBusy(true); setMsg(null); setNote(null); setOffline(false);
     try {
       await sendCode(v);
-      setStep('code'); setCode(''); setWait(RESEND_S);
-      setTimeout(() => codeRef.current?.focus(), 300);
-    } catch (e) { fail(e); } finally { setBusy(false); }
+      toCode(RESEND_S, null);
+    } catch (e) {
+      // 这个邮箱一分钟内刚发过码（发完码 app 重载了、退回来又点一次）：不报错，去输邮件里那个码
+      if (e instanceof AccountError && e.retryAfter) toCode(e.retryAfter, L('验证码刚刚已发送，请使用邮件中最新的一封。', 'A code was sent a moment ago. Use the latest one in your email.'));
+      else fail(e);
+    } finally { setBusy(false); }
+  };
+
+  /** 邮箱里已经有码（比如限流发不出新的）：不发，直接去输。 */
+  const haveCode = () => {
+    if (!EMAIL.test(email.trim())) { setMsg(L('请先填写邮箱', 'Enter your email first')); return; }
+    setMsg(null); setOffline(false);
+    toCode(0, null);
   };
 
   const verify = async (c = code) => {
     const v = c.replace(/\D/g, '');
     if (v.length < 6) { setMsg(L('验证码为 6 位数字', 'The code is 6 digits')); return; }
-    setBusy(true); setMsg(null); setOffline(false);
+    setBusy(true); setMsg(null); setNote(null); setOffline(false);
     try {
       await verifyCode(email, v);
       // 已经连着一台 claw（老用户第一次登录）：记进账号
@@ -109,6 +127,9 @@ export function LoginScreen() {
                 {busy ? <ActivityIndicator color={t.onCyan} /> : <T v="headline" color={t.onCyan} style={{ fontSize: 17 }}>{L('发送验证码', 'Send code')}</T>}
               </Pressable>
               {offline ? <Btn kind="quiet" label={L('暂时跳过，下次登录', 'Continue for now, sign in later')} onPress={() => { skipped = true; goOn(); }} /> : null}
+              <Pressable onPress={busy ? undefined : haveCode} accessibilityRole="button" style={{ height: 36, alignItems: 'center', justifyContent: 'center' }}>
+                <T v="callout" color={t.cyan}>{L('已有验证码', 'I have a code')}</T>
+              </Pressable>
             </View>
             <T v="caption" color={t.ink3} style={{ textAlign: 'center', lineHeight: 18, fontWeight: '400', paddingBottom: space.xl }}>
               {L('无需密码：我们会向你的邮箱发送 6 位验证码。账号仅用于识别你的身份并记录你连接的 claw，对话和记忆不会上传。',
@@ -118,7 +139,7 @@ export function LoginScreen() {
         ) : (
           <View style={{ flex: 1, paddingHorizontal: space.xl }}>
             <View style={{ paddingTop: 6 }}>
-              <RoundButton onPress={() => { setStep('email'); setMsg(null); }} label={L('更换邮箱', 'Use another email')}><ChevronLeft size={22} color={t.ink} /></RoundButton>
+              <RoundButton onPress={() => { setStep('email'); setMsg(null); setNote(null); forgetCode(); }} label={L('更换邮箱', 'Use another email')}><ChevronLeft size={22} color={t.ink} /></RoundButton>
             </View>
             <View style={{ gap: 8, marginTop: space.xl }}>
               <T v="largeTitle" style={{ fontSize: 28 }}>{L('查看邮箱', 'Check your email')}</T>
@@ -132,6 +153,7 @@ export function LoginScreen() {
               <Mail size={20} color={t.cyan} />
               <T v="callout" color={t.ink2} style={{ flex: 1 }}>{L('iPhone 会在键盘上方显示邮件中的验证码，轻点即可填入。', 'Your iPhone shows the code from Mail above the keyboard; tap it to fill it in.')}</T>
             </View>
+            {note && !msg ? <T v="callout" color={t.ink2} style={{ marginTop: space.md }}>{note}</T> : null}
             {msg ? <T v="callout" color={t.bad} style={{ marginTop: space.md }}>{msg}</T> : null}
             <View style={{ flex: 1 }} />
             <View style={{ gap: 6, paddingBottom: space.xl }}>

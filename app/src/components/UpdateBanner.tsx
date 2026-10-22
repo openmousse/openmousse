@@ -6,15 +6,22 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import * as Updates from 'expo-updates';
 import { T } from './ui';
 import { L } from '../i18n';
+import { navigationRef } from '../navigation';
 import { space, useTheme } from '../theme';
 
 const CHECK_EVERY_MS = 60_000;
+/** 这两页不放：重载会丢掉填到一半的东西（10/22 朋友收到验证码后点了重载，回到填邮箱，再发就被限流）。下载好的新版本下次冷启动照样生效。 */
+const QUIET = new Set(['Login', 'Connect']);
+const routeName = () => (navigationRef.isReady() ? navigationRef.getCurrentRoute()?.name : undefined);
 
 export function UpdateBanner() {
   const t = useTheme();
   const insets = useSafeAreaInsets();
   const [ready, setReady] = useState(false);
+  const [route, setRoute] = useState<string | undefined>(undefined);
   const last = useRef(0);
+
+  useEffect(() => navigationRef.addListener('state', () => setRoute(routeName())), []);
 
   useEffect(() => {
     if (Platform.OS === 'web' || !Updates.isEnabled || __DEV__) return undefined;
@@ -26,7 +33,7 @@ export function UpdateBanner() {
         const r = await Updates.checkForUpdateAsync();
         if (!r.isAvailable) return;
         await Updates.fetchUpdateAsync();
-        if (alive) setReady(true);
+        if (alive) { setRoute(routeName()); setReady(true); }
       } catch { /* 没网或服务不可达：下次再查 */ }
     };
     check();
@@ -34,7 +41,7 @@ export function UpdateBanner() {
     return () => { alive = false; sub.remove(); };
   }, []);
 
-  if (!ready) return null;
+  if (!ready || (route && QUIET.has(route))) return null;
   return (
     <View pointerEvents="box-none" style={[styles.wrap, { top: insets.top + 6 }]}>
       <Pressable onPress={() => Updates.reloadAsync().catch(() => setReady(false))} accessibilityRole="button"
