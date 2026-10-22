@@ -16,6 +16,7 @@ import json
 import os
 import re
 import shutil
+import signal
 import sqlite3
 import subprocess
 import sys
@@ -281,17 +282,20 @@ def state(svc: Service) -> dict:
 
 
 def manual_stop_cmd(svc: Service) -> str:
-    """自己起的服务怎么停（同 packs/core/setup.py 的 stop_cmd：只认自己的进程，命令行要以 venv 的 python 开头）。"""
-    py = "^$HOME/.openmousse/venv/bin/python[0-9.]*"
-    pat = f"{py} [^ ]*mousse-tree serve" if svc is TREE else f"{py} run.py"
+    """自己起的服务怎么停（同 packs/core/setup.py 的 stop_cmd：只认自己的进程，python 跑 ~/.openmousse 里的那个 run.py / mousse-tree；
+    「|」前面是 10/22 以前的起法）。"""
+    if svc is TREE:
+        pat = "[Pp]ython[0-9.]* $HOME/.openmousse/venv/bin/mousse-tree serve$"
+    else:
+        pat = "^$HOME/.openmousse/venv/bin/python[0-9.]* run.py$|[Pp]ython[0-9.]* $HOME/.openmousse/repo/server/run.py$"
     return f'pkill -u "$(id -u)" -f "{pat}"'
 
 
 def manual_start_cmd(svc: Service) -> str:
-    """自己起的服务怎么起（同 packs/core/setup.py 的 start_cmd）。"""
+    """自己起的服务怎么起（同 packs/core/setup.py 的 start_cmd：run.py 写全路径，macOS 上 Python 换成 Python.app 以后 stop 也认得出）。"""
     if svc is TREE:
         return "nohup ~/.openmousse/venv/bin/mousse-tree serve >> ~/.mousse-tree/tree.log 2>&1 &"
-    return f"cd {REPO_TILDE}/server && nohup {PY} run.py >> ~/.openmousse/logs/{svc.log or 'server.log'} 2>&1 &"
+    return f"cd {REPO_TILDE}/server && nohup {PY} {REPO_TILDE}/server/run.py >> ~/.openmousse/logs/{svc.log or 'server.log'} 2>&1 &"
 
 
 def restart_cmd(svc: Service = SERVER) -> str:
@@ -322,21 +326,48 @@ def start_cmd(svc: Service = SERVER) -> str:
     return manual_start_cmd(svc)
 
 
+def _ere(s: str) -> str:
+    """路径放进 pkill 的正则（POSIX ERE）：只转义 ERE 里有意思的字符（re.escape 还转义 - 和空格，ERE 里那是未定义的写法）。"""
+    return re.sub(r"([][.^$*+?(){}|\\])", r"\\\1", s)
+
+
+def stop_old_mac_server(server_dir: Path) -> bool:
+    """10/22 以前起服务用相对路径 `python run.py`：macOS 上 python.org、Homebrew 的 Python 把命令行开头换成
+    …/Python.app/Contents/MacOS/Python，pkill 认不出是我们的。按工作目录认（同 packs/core/setup.py 的 stop_old_mac_server）。→ 停了没有。"""
+    if sys.platform != "darwin":
+        return False
+    stopped = False
+    for pid in run(["pgrep", "-u", str(os.getuid()), "-f", r"/Python\.app/Contents/MacOS/Python run\.py$"], timeout=15).stdout.split():
+        out = run(["lsof", "-a", "-p", pid, "-d", "cwd", "-Fn"], timeout=15).stdout
+        cwd = next((x[1:] for x in out.splitlines() if x.startswith("n")), "")
+        if cwd and Path(cwd).resolve() == server_dir.resolve():
+            with contextlib.suppress(OSError, ValueError):
+                os.kill(int(pid), signal.SIGTERM)
+                stopped = True
+    return stopped
+
+
 def _manual(svc: Service, action: str) -> tuple[bool, str]:
-    """没有服务管理器：照安装器打印的那两行停 / 起（只认 venv 的 python 起的那个进程）。"""
+    """没有服务管理器：照安装器打印的那两行停 / 起（只认 python 跑 ~/.openmousse 里的那个 run.py / mousse-tree 的进程，见 manual_stop_cmd）。"""
     py = str(venv() / "bin" / "python")
-    pat = f"^{re.escape(py)}[0-9.]* run.py" if svc is not TREE else f"^{re.escape(py)}[0-9.]* [^ ]*mousse-tree serve"
+    script = repo_link() / "server" / "run.py"
+    if svc is TREE:
+        pat = f"[Pp]ython[0-9.]* {_ere(str(venv() / 'bin' / 'mousse-tree'))} serve$"
+    else:
+        pat = f"^{_ere(py)}[0-9.]* run.py$|[Pp]ython[0-9.]* {_ere(str(script))}$"
     if action in ("stop", "restart"):
         r = run(["pkill", "-u", str(os.getuid()), "-f", pat], timeout=15)
         if r.returncode not in (0, 1):  # 1 = 没有在跑的
             return False, (r.stderr or r.stdout).strip()[-300:]
+        if svc is not TREE:
+            stop_old_mac_server(script.parent)
         if action == "stop":
             return True, ""
         time.sleep(1)
     if svc is TREE:
         args, cwd, log = [str(venv() / "bin" / "mousse-tree"), "serve"], None, tree_home() / "tree.log"
     else:
-        args, cwd, log = [py, "run.py"], repo_link() / "server", log_dir() / (svc.log or "server.log")
+        args, cwd, log = [py, str(script)], script.parent, log_dir() / (svc.log or "server.log")
     log.parent.mkdir(parents=True, exist_ok=True)
     try:
         with open(log, "ab") as out:

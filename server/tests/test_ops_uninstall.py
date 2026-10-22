@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import json
 import os
-import re
 import sqlite3
 import subprocess
 from pathlib import Path
@@ -207,7 +206,7 @@ def test_a_background_server_the_installer_started_is_stopped_under_systemd(h):
     p = U.plan(False, False)
     assert any(s.kind == "service" and s.target == "server" for s in p.steps)
     assert go() == 0
-    assert "run.py" in log.read_text() and re.escape(str(h.mousse / "venv")) in log.read_text()   # 只停 venv 的 python 起的那个
+    assert "run.py" in log.read_text() and U.C._ere(str(h.mousse / "venv")) in log.read_text()   # 只停 ~/.openmousse 里的那个
 
 
 def test_deletable():

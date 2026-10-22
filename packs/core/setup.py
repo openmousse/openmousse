@@ -57,9 +57,11 @@ import os
 import re
 import secrets
 import shutil
+import signal
 import sqlite3
 import subprocess
 import sys
+import time
 from datetime import datetime
 from pathlib import Path
 
@@ -260,18 +262,39 @@ def log_file(name: str) -> Path:
 
 
 def start_cmd(name: str) -> str:
-    """没有 systemd / launchd 时自己起服务（放后台，输出进 log_file）。"""
+    """没有 systemd / launchd 时自己起服务（放后台，输出进 log_file）。run.py 写全路径：macOS 上 python.org、Homebrew 的 Python
+    起来以后把命令行开头换成 …/Python.app/Contents/MacOS/Python，stop_cmd 只能靠后面这个路径认出是我们的。"""
     if name == "mousse-tree":
         return f"nohup ~/.openmousse/venv/bin/mousse-tree serve >> {tilde(log_file(name))} 2>&1 &"
-    return f"cd ~/.openmousse/repo/server && nohup ~/.openmousse/venv/bin/python run.py >> {tilde(log_file(name))} 2>&1 &"
+    return f"cd ~/.openmousse/repo/server && nohup ~/.openmousse/venv/bin/python ~/.openmousse/repo/server/run.py >> {tilde(log_file(name))} 2>&1 &"
 
 
 def stop_cmd(name: str) -> str:
-    """停掉自己起的那个（start_cmd 起的命令行）：只认自己的进程，而且命令行要以 venv 的 python 开头。跑这一行的 shell（脚本里、
-    bash -c 里）命令行里也带着这串字，但它以 bash / sh 开头，不会把自己停掉。"""
-    py = "^$HOME/.openmousse/venv/bin/python[0-9.]*"
-    pat = f"{py} [^ ]*mousse-tree serve" if name == "mousse-tree" else f"{py} run.py"
+    """停掉自己起的那个（start_cmd 起的命令行）：只认自己的进程，而且是 python 跑 ~/.openmousse 里的那个 run.py / mousse-tree（全路径，
+    命令行到它为止）；「|」前面是 10/22 以前的起法（venv 的 python 跑相对路径的 run.py）。跑这一行的 shell（脚本里、bash -c 里）
+    命令行里也带着这串字，但它以 bash / sh 开头、后面还跟着别的，不会把自己停掉。"""
+    if name == "mousse-tree":
+        pat = "[Pp]ython[0-9.]* $HOME/.openmousse/venv/bin/mousse-tree serve$"
+    else:
+        pat = "^$HOME/.openmousse/venv/bin/python[0-9.]* run.py$|[Pp]ython[0-9.]* $HOME/.openmousse/repo/server/run.py$"
     return f'pkill -u "$(id -u)" -f "{pat}"'
+
+
+def stop_old_mac_server(server_dir: Path) -> bool:
+    """10/22 以前的安装器起服务用相对路径 `python run.py`：macOS 上 python.org、Homebrew 的 Python 起来以后把命令行开头换成
+    …/Python.app/Contents/MacOS/Python，stop_cmd 认不出是我们的（重跑安装器停不掉旧的：新起的抢不到端口，跑的还是旧代码；10/22 Mac 上试装撞到）。
+    按工作目录认：Python.app 跑相对路径的 run.py、工作目录是这个仓库的 server/ 的，停掉（同 server/ops/common.py）。→ 停了没有。"""
+    if not IS_MAC or not shutil.which("pgrep") or not shutil.which("lsof"):
+        return False
+    stopped = False
+    for pid in run(["pgrep", "-u", str(os.getuid()), "-f", r"/Python\.app/Contents/MacOS/Python run\.py$"]).stdout.split():
+        out = run(["lsof", "-a", "-p", pid, "-d", "cwd", "-Fn"]).stdout
+        cwd = next((x[1:] for x in out.splitlines() if x.startswith("n")), "")
+        if cwd and Path(cwd).resolve() == server_dir.resolve():
+            with contextlib.suppress(OSError, ValueError):
+                os.kill(int(pid), signal.SIGTERM)
+                stopped = True
+    return stopped
 
 
 def restart_cmd(name: str) -> str:
@@ -1319,12 +1342,17 @@ def start_background(repo: Path, venv: Path) -> bool:
     """试装、没装成服务（--no-systemd，或者这台没有 launchd / systemd）：在后台先起一次，装完就能打开（先停掉上次自己起的那个）。
     输出进 ~/.openmousse/logs/server.log。记进安装清单：卸载时照 stop 停掉它。→ 起了没有。"""
     name = "openmousse-server"
-    run(["sh", "-c", stop_cmd(name)])
+    stopped = run(["sh", "-c", stop_cmd(name)]).returncode == 0
+    if stop_old_mac_server(repo / "server") or stopped:
+        time.sleep(1)  # 等旧的放开端口（同 mousse restart）
     LOG_DIR.mkdir(parents=True, exist_ok=True)
     record("dir", LOG_DIR)
+    server = MOUSSE_HOME / "repo/server"  # 全路径、走 ~/.openmousse/repo：stop_cmd 照这个认（见 start_cmd）
+    if not (server / "run.py").is_file() or server.resolve() != (repo / "server").resolve():
+        server = repo / "server"  # ~/.openmousse/repo 不是指向这个仓库的软链（write_server_json 没动它）：起这个仓库的
     try:
         with open(log_file(name), "ab") as log:
-            subprocess.Popen([str(venv / "bin/python"), "run.py"], cwd=str(repo / "server"), stdout=log, stderr=log,  # noqa: S603
+            subprocess.Popen([str(venv / "bin/python"), str(server / "run.py")], cwd=str(server), stdout=log, stderr=log,  # noqa: S603
                              stdin=subprocess.DEVNULL, start_new_session=True)
     except OSError as e:
         say(L(f"服务没起来：{e}", f"The server didn't start: {e}"))
@@ -1622,8 +1650,8 @@ def main() -> None:
                 "`~/.openmousse/venv/bin/python ~/.openmousse/repo/server/tokens.py pair --server <that address>`"))
     else:
         print(L(f"  app 连接页填 {url} 和令牌", f"  Enter {url} and the token in the app"))
-    print(L("  app：怎么装见仓库里的 app/README.zh-CN.md（OpenMousse 的 TestFlight，或自己构建 app/）",
-            "  The app: see app/README.md in the repository (the OpenMousse TestFlight build, or build app/ yourself)."))
+    print(L("  app：iPhone 用 OpenMousse 的 TestFlight，安卓下载 APK（https://github.com/openmousse/openmousse/releases），或自己构建 app/（见 app/README.zh-CN.md）",
+            "  The app: OpenMousse on TestFlight for iPhone, the APK for Android (https://github.com/openmousse/openmousse/releases), or build app/ yourself (see app/README.md)."))
     if public is not None:
         print()
         print(L("AI 平台怎么连世界树：", "Connecting AI platforms to the memory tree:"))
@@ -1674,7 +1702,10 @@ def setup_ctl(venv: Path, repo: Path, *args: str, capture: bool = True) -> subpr
     cmd = [str(venv / "bin/python"), str(repo / "server/setup_ctl.py"), *args]
     if capture:
         return run(cmd, cwd=str(repo / "server"))
-    return subprocess.run(cmd, cwd=str(repo / "server"), check=False)  # noqa: S603 — 问答要接着这个终端
+    try:
+        return subprocess.run(cmd, cwd=str(repo / "server"), check=False)  # noqa: S603 — 问答要接着这个终端
+    except KeyboardInterrupt:  # Ctrl-C 停三步：setup_ctl 自己说了「停了」，这边别再吐一屏 traceback（10/22 Mac 上试装看到的）
+        return subprocess.CompletedProcess(cmd, 130)
 
 
 def builtin_status(venv: Path, repo: Path) -> bool:

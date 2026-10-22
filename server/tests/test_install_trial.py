@@ -144,10 +144,19 @@ def test_trial_without_a_service_starts_it_once_and_records_how_to_stop(setup, t
         def __init__(self, args, **kw):
             started.append((args, kw["cwd"], kw["start_new_session"]))
     monkeypatch.setattr(setup.subprocess, "Popen", P)
+    monkeypatch.setattr(setup.time, "sleep", lambda s: None)  # 假的 pkill 回 0 =「停了一个」：不用真等它放开端口
     venv, repo = tmp_path / "venv", tmp_path / "repo"
-    assert setup.start_background(repo, venv)
-    assert started == [([str(venv / "bin/python"), "run.py"], str(repo / "server"), True)]
+    assert setup.start_background(repo, venv)  # ~/.openmousse/repo 还没指向它：起这个仓库的
+    assert started == [([str(venv / "bin/python"), str(repo / "server/run.py")], str(repo / "server"), True)]
     assert setup.calls[0][:2] == ["sh", "-c"] and "pkill" in setup.calls[0][2]          # 先停掉上次自己起的
+    (repo / "server").mkdir(parents=True)
+    (repo / "server/run.py").write_text("")
+    setup.MOUSSE_HOME.mkdir(parents=True, exist_ok=True)
+    (setup.MOUSSE_HOME / "repo").symlink_to(repo)
+    started.clear()
+    assert setup.start_background(repo, venv)  # run.py 写全路径、走 ~/.openmousse/repo：stop_cmd 照这个认
+    link = setup.MOUSSE_HOME / "repo/server"
+    assert started == [([str(venv / "bin/python"), str(link / "run.py")], str(link), True)]
     m = json.loads(setup.MANIFEST.read_text())
     proc = next(x for x in m["items"] if x["kind"] == "process")
     assert proc["name"] == "openmousse-server" and "pkill" in proc["stop"] and "run.py" in proc["start"]
@@ -182,6 +191,36 @@ def test_install_sh_braces_variables_before_non_ascii_text():
     text = (REPO / "install.sh").read_text(encoding="utf8")
     bad = [line.strip() for line in text.splitlines() if re.search(r"\$[A-Za-z_][A-Za-z0-9_]*[^\x00-\x7f]", line)]
     assert not bad, bad
+
+
+def test_rerun_on_a_mac_stops_the_server_started_the_old_way(setup, tmp_path, monkeypatch):
+    """10/22 以前起的服务：命令行是 Python.app 跑相对路径的 run.py（macOS 上 Python 把自己换成 Python.app），pkill 认不出来。
+    按工作目录认：只停工作目录是这个仓库 server/ 的那个，别的项目的 run.py 不动。"""
+    (tmp_path / "repo/server").mkdir(parents=True)
+    (tmp_path / "elsewhere").mkdir()
+    cwd = {"101": tmp_path / "repo/server", "202": tmp_path / "elsewhere"}
+
+    def fake_run(cmd, **kw):
+        if cmd[0] == "pgrep":
+            return subprocess.CompletedProcess(cmd, 0, "101\n202\n", "")
+        return subprocess.CompletedProcess(cmd, 0, f"p{cmd[3]}\nfcwd\nn{cwd[cmd[3]]}\n", "")
+    killed = []
+    monkeypatch.setattr(setup, "IS_MAC", True)
+    monkeypatch.setattr(setup.shutil, "which", lambda name: f"/usr/bin/{name}")
+    monkeypatch.setattr(setup, "run", fake_run)
+    monkeypatch.setattr(setup.os, "kill", lambda pid, sig: killed.append((pid, sig)))
+    assert setup.stop_old_mac_server(tmp_path / "repo/server")
+    assert killed == [(101, setup.signal.SIGTERM)]
+    monkeypatch.setattr(setup, "IS_MAC", False)
+    assert not setup.stop_old_mac_server(tmp_path / "repo/server")
+
+
+def test_ctrl_c_in_the_wizard_ends_quietly(setup, tmp_path, monkeypatch):
+    """三步里按 Ctrl-C：setup_ctl 自己说「停了」；安装器这边只是走完，不吐 traceback。"""
+    def interrupted(*a, **kw):
+        raise KeyboardInterrupt
+    monkeypatch.setattr(setup.subprocess, "run", interrupted)
+    assert setup.setup_ctl(tmp_path, tmp_path, capture=False).returncode == 130
 
 
 # —— 装自带内核时问要不要搬（第 9 批 15.8）——————————————————————————————————————————————————

@@ -1243,16 +1243,24 @@ def test_installer_uses_systemd_only_when_it_runs(monkeypatch, tmp_path):
     monkeypatch.setattr(m, "SYSTEMD_RUN", tmp_path)
     assert m.has_systemd()
     monkeypatch.setattr(m, "MANAGED", False)
-    assert m.restart_cmd("openmousse-server") == ('pkill -u "$(id -u)" -f "^$HOME/.openmousse/venv/bin/python[0-9.]* run.py"; '
-                                                 "cd ~/.openmousse/repo/server && nohup ~/.openmousse/venv/bin/python run.py >> ~/.openmousse/logs/server.log 2>&1 &")
+    assert m.restart_cmd("openmousse-server") == (
+        'pkill -u "$(id -u)" -f "^$HOME/.openmousse/venv/bin/python[0-9.]* run.py$|[Pp]ython[0-9.]* $HOME/.openmousse/repo/server/run.py$"; '
+        "cd ~/.openmousse/repo/server && nohup ~/.openmousse/venv/bin/python ~/.openmousse/repo/server/run.py >> ~/.openmousse/logs/server.log 2>&1 &")
     # 停的那一半认得出服务，却认不出跑这一行的 shell 自己（脚本里、bash -c 里它的命令行也带着这串字）。只比对，不真的 pkill：
     # 跑测试的机器上可能正开着自己的 OpenMousse
     import re
-    for name, proc in (("openmousse-server", "/home/x/.openmousse/venv/bin/python run.py"),
-                       ("mousse-tree", "/home/x/.openmousse/venv/bin/python /home/x/.openmousse/venv/bin/mousse-tree serve")):
+    app = "/Library/Frameworks/Python.framework/Versions/3.12/Resources/Python.app/Contents/MacOS/Python"  # macOS 上 Python 把自己换成的那个
+    for name, proc in (("openmousse-server", "/home/x/.openmousse/venv/bin/python run.py"),                         # 10/22 以前起的
+                       ("openmousse-server", "/home/x/.openmousse/venv/bin/python3.12 /home/x/.openmousse/repo/server/run.py"),
+                       ("openmousse-server", f"{app} /home/x/.openmousse/repo/server/run.py"),
+                       ("mousse-tree", "/home/x/.openmousse/venv/bin/python /home/x/.openmousse/venv/bin/mousse-tree serve"),
+                       ("mousse-tree", f"{app} /home/x/.openmousse/venv/bin/mousse-tree serve")):
         pat = re.search(r'-f "([^"]+)"', m.stop_cmd(name)).group(1).replace("$HOME", "/home/x")
         assert re.search(pat, proc)
         assert not re.search(pat, f"bash -c {m.restart_cmd(name)}".replace("$HOME", "/home/x").replace("~", "/home/x"))
+    pat = re.search(r'-f "([^"]+)"', m.stop_cmd("openmousse-server")).group(1).replace("$HOME", "/home/x")
+    for other in (f"{app} run.py", "/usr/bin/python3 /home/x/other/server/run.py", "vim /home/x/.openmousse/repo/server/run.py"):
+        assert not re.search(pat, other)  # 别人的 run.py（Python.app 跑相对路径的那种按工作目录认：stop_old_mac_server）
     assert m.logs_cmd("openmousse-server") == "tail -n 50 ~/.openmousse/logs/server.log"
 
 
